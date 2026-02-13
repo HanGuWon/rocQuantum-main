@@ -1,10 +1,11 @@
 #pragma once
 
 #include <complex>
+#include <cstddef>
 #include <string>
 #include <vector>
 
-struct hipDoubleComplex;
+#include "rocquantum/hipStateVec.h"
 
 namespace rocquantum {
 
@@ -36,7 +37,8 @@ private:
 
     unsigned num_qubits_;
     size_t state_vec_size_;
-    hipDoubleComplex* device_state_vector_;
+    rocsvHandle_t sim_handle_;
+    rocComplex* device_state_vector_;
 };
 
 using QSim = QuantumSimulator;

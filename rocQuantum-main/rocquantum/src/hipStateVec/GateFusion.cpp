@@ -1,9 +1,9 @@
 #include "rocquantum/GateFusion.h"
-#include <map>
-#include <iostream>
+
+#include <cmath>
 #include <complex>
-#include <numeric>
 #include <algorithm>
+#include <hip/hip_runtime.h>
 
 namespace rocquantum {
 
@@ -86,6 +86,37 @@ bool get_gate_matrix_2x2(const GateOp& op, c128* matrix) {
 GateFusion::GateFusion(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits)
     : handle_(handle), d_state_(d_state), numQubits_(numQubits) {}
 
+GateFusion::~GateFusion() {
+    if (d_fused_matrix_buffer_) {
+        hipFree(d_fused_matrix_buffer_);
+        d_fused_matrix_buffer_ = nullptr;
+        fused_matrix_buffer_bytes_ = 0;
+    }
+}
+
+rocqStatus_t GateFusion::ensure_fused_matrix_buffer(size_t required_bytes) {
+    if (required_bytes == 0) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+    if (d_fused_matrix_buffer_ && fused_matrix_buffer_bytes_ >= required_bytes) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    if (d_fused_matrix_buffer_) {
+        if (hipFree(d_fused_matrix_buffer_) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        d_fused_matrix_buffer_ = nullptr;
+        fused_matrix_buffer_bytes_ = 0;
+    }
+
+    if (hipMalloc(&d_fused_matrix_buffer_, required_bytes) != hipSuccess) {
+        return ROCQ_STATUS_ALLOCATION_FAILED;
+    }
+    fused_matrix_buffer_bytes_ = required_bytes;
+    return ROCQ_STATUS_SUCCESS;
+}
+
 rocqStatus_t GateFusion::processQueue(const std::vector<GateOp>& queue) {
     std::vector<bool> processed(queue.size(), false);
 
@@ -95,6 +126,9 @@ rocqStatus_t GateFusion::processQueue(const std::vector<GateOp>& queue) {
         // --- CNOT Fusion Pattern ---
         if (queue[i].name == "CNOT") {
             const auto& cnot_op = queue[i];
+            if (cnot_op.controls.empty() || cnot_op.targets.empty()) {
+                return ROCQ_STATUS_INVALID_VALUE;
+            }
             unsigned ctrl = cnot_op.controls[0];
             unsigned targ = cnot_op.targets[0];
 
@@ -137,14 +171,44 @@ rocqStatus_t GateFusion::processQueue(const std::vector<GateOp>& queue) {
             matmul_4x4(temp_matrix, cnot_matrix, pre_matrix);
             matmul_4x4(final_matrix, post_matrix, temp_matrix);
 
-            rocComplex* d_fused_matrix;
-            hipMalloc(&d_fused_matrix, 16 * sizeof(rocComplex));
-            hipMemcpy(d_fused_matrix, final_matrix, 16 * sizeof(rocComplex), hipMemcpyHostToDevice);
-            
-            unsigned qubit_indices[] = {std::min(ctrl, targ), std::max(ctrl, targ)};
-            rocsvApplyMatrix(handle_, d_state_, numQubits_, qubit_indices, 2, d_fused_matrix, 4);
+            rocqStatus_t status = ensure_fused_matrix_buffer(16 * sizeof(rocComplex));
+            if (status != ROCQ_STATUS_SUCCESS) {
+                return status;
+            }
 
-            hipFree(d_fused_matrix);
+            rocComplex final_matrix_col_major[16];
+            for (int row = 0; row < 4; ++row) {
+                for (int col = 0; col < 4; ++col) {
+                    const c128 v = final_matrix[row * 4 + col];
+#ifdef ROCQ_PRECISION_DOUBLE
+                    final_matrix_col_major[row + col * 4] = rocComplex{v.real(), v.imag()};
+#else
+                    final_matrix_col_major[row + col * 4] =
+                        rocComplex{static_cast<float>(v.real()), static_cast<float>(v.imag())};
+#endif
+                }
+            }
+
+            if (hipMemcpy(d_fused_matrix_buffer_,
+                          final_matrix_col_major,
+                          sizeof(final_matrix_col_major),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                return ROCQ_STATUS_HIP_ERROR;
+            }
+
+            // Preserve [control, target] basis ordering used to build the fused matrix.
+            unsigned qubit_indices[] = {ctrl, targ};
+            status = rocsvApplyMatrix(handle_,
+                                      d_state_,
+                                      numQubits_,
+                                      qubit_indices,
+                                      2,
+                                      d_fused_matrix_buffer_,
+                                      4);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                return status;
+            }
+
             processed[i] = true;
             continue;
         }

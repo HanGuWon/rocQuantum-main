@@ -84,3 +84,37 @@ def test_custom_gate_application():
         sim.ApplyGate(pauli_x, target_qubit=0)
     except Exception as e:
         pytest.fail(f"ApplyGate with a NumPy array failed: {e}")
+
+
+def test_two_qubit_apply_matrix_path():
+    """
+    Validates the general apply_matrix path with a 4x4 CNOT matrix.
+    """
+    sim = rocquantum_bind.QSim(num_qubits=2)
+    sim.ApplyGate("H", target_qubit=0)
+
+    cnot = np.array(
+        [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 0, 1],
+            [0, 0, 1, 0],
+        ],
+        dtype=np.complex128,
+    )
+    sim.apply_matrix(cnot, [0, 1])
+    sim.Execute()
+
+    final_state_vector = sim.GetStateVector()
+    expected_state = np.array([1 / np.sqrt(2), 0, 0, 1 / np.sqrt(2)], dtype=np.complex128)
+    assert np.allclose(final_state_vector, expected_state)
+
+
+def test_apply_matrix_dimension_validation():
+    """
+    apply_matrix should reject matrix sizes that do not match target qubit count.
+    """
+    sim = rocquantum_bind.QSim(num_qubits=2)
+    bad = np.eye(2, dtype=np.complex128)
+    with pytest.raises(Exception):
+        sim.apply_matrix(bad, [0, 1])

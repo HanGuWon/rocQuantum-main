@@ -47,10 +47,23 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              [](rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
                 const std::vector<unsigned>& targets) {
-                 if (matrix.ndim() != 2 || matrix.shape(0) != 2 || matrix.shape(1) != 2) {
-                     throw std::invalid_argument("apply_matrix expects a 2x2 complex matrix.");
+                 if (targets.empty()) {
+                     throw std::invalid_argument("apply_matrix requires at least one target qubit.");
                  }
-                 std::vector<std::complex<double>> host(4);
+                 if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                     throw std::invalid_argument("apply_matrix expects a square complex matrix.");
+                 }
+                 if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+                     throw std::invalid_argument("Too many target qubits for apply_matrix.");
+                 }
+
+                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
+                 if (actual_dim != expected_dim) {
+                     throw std::invalid_argument("apply_matrix dimension must be 2^len(targets).");
+                 }
+
+                 std::vector<std::complex<double>> host(actual_dim * actual_dim);
                  std::memcpy(host.data(), matrix.data(), host.size() * sizeof(std::complex<double>));
                  self.apply_matrix(host, targets);
              },
