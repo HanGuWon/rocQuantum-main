@@ -118,6 +118,15 @@ __global__ void apply_multi_qubit_generic_matrix_kernel(
 // The compiler might inline this.
 // Alternatively, rocsvApplyMatrix can directly call apply_multi_qubit_generic_matrix_kernel with correct m.
 
+__global__ void apply_two_qubit_generic_matrix_kernel(
+    rocComplex* state,
+    unsigned numQubits,
+    const unsigned* targetQubitIndices_gpu, // GPU accessible array of 2 indices
+    const rocComplex* matrixDevice) {       // 4x4 matrix on device
+
+    apply_multi_qubit_generic_matrix_kernel(state, numQubits, targetQubitIndices_gpu, 2, matrixDevice);
+}
+
 __global__ void apply_three_qubit_generic_matrix_kernel(
     rocComplex* state,
     unsigned numQubits,
