@@ -2,9 +2,20 @@
 #define HIP_TENSOR_NET_H
 
 #include "rocquantum/rocTensorUtil.h" // For rocTensor, rocqStatus_t, rocDataType_t, rocComplex, etc.
+#include "rocquantum/rocWorkspaceManager.h"
 #include <vector>
 #include <string>
 #include <utility>
+
+#ifndef ROCQ_DATATYPE_T_DEFINED
+#define ROCQ_DATATYPE_T_DEFINED
+typedef enum {
+    ROC_DATATYPE_F32 = 0,
+    ROC_DATATYPE_F64 = 1,
+    ROC_DATATYPE_C64 = 2,
+    ROC_DATATYPE_C128 = 3
+} rocDataType_t;
+#endif
 
 // Opaque handle for the TensorNetwork object from the C API
 typedef struct rocTnStruct* rocTensorNetworkHandle_t;
@@ -28,6 +39,8 @@ public:
                                   rocquantum::util::rocTensor* result_tensor,
                                   rocblas_handle blas_handle,
                                   hipStream_t stream) = 0;
+
+    virtual rocDataType_t data_type() const = 0;
     
     // If other public methods need to be exposed via C-API, add them here.
 };
@@ -60,6 +73,12 @@ public:
                           rocquantum::util::rocTensor* result_tensor,
                           rocblas_handle blas_handle,
                           hipStream_t stream) override;
+
+    rocDataType_t data_type() const override { return ROC_DATATYPE_C64; }
+
+    const std::vector<rocquantum::util::rocTensor>& get_initial_tensors() const {
+        return initial_tensors_;
+    }
 
 private:
     // Helper structure for pathfinding

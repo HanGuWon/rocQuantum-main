@@ -3,6 +3,7 @@
 #include <pybind11/numpy.h>
 #include "rocquantum/hipStateVec.h"
 #include "rocquantum/hipTensorNet.h" // Include new header
+#include "rocquantum/hipTensorNet_api.h"
 #include <complex>                 // For std::complex
 
 namespace py = pybind11;
@@ -638,17 +639,22 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         .def("contract", [](RocTensorNetworkHandleWrapper& self, 
                                  py::object config_obj, // Can be dict or None
                                  rocquantum::util::rocTensor& result_tensor_py) {
-            // This part of the binding remains largely the same, as the C-API signature for contract hasn't changed.
             hipTensorNetContractionOptimizerConfig_t config;
-            // Default values
-            config.memory_limit = 0; // 0 means no limit
+            config.pathfinder_algorithm = ROCTN_PATHFINDER_ALGO_GREEDY;
+            config.algo_config.kahypar_config.imbalance_factor = 0.03;
+            config.memory_limit_bytes = 0;
+            config.num_slices = 0;
 
             if (!config_obj.is_none()) {
                 py::dict config_dict = py::cast<py::dict>(config_obj);
-                if (config_dict.contains("memory_limit")) {
-                    config.memory_limit = config_dict["memory_limit"].cast<size_t>();
+                if (config_dict.contains("memory_limit_bytes")) {
+                    config.memory_limit_bytes = config_dict["memory_limit_bytes"].cast<size_t>();
+                } else if (config_dict.contains("memory_limit")) {
+                    config.memory_limit_bytes = config_dict["memory_limit"].cast<size_t>();
                 }
-                // Add other optimizer params here as they are added to the struct
+                if (config_dict.contains("num_slices")) {
+                    config.num_slices = config_dict["num_slices"].cast<int>();
+                }
             }
 
             // TODO: The rocblas_handle and hipStream_t should be retrieved from the simulator handle.
@@ -659,11 +665,8 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
 
             rocqStatus_t status = rocTensorNetworkContract(self.get(), &config, &result_tensor_py, blas_h, stream);
             
-            if (status != ROCQ_STATUS_SUCCESS && status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+            if (status != ROCQ_STATUS_SUCCESS) {
                 throw std::runtime_error("rocTensorNetworkContract failed: " + std::to_string(status));
-            }
-            if (status == ROCQ_STATUS_NOT_IMPLEMENTED) {
-                py::print("Warning: rocTensorNetworkContract path execution is not fully implemented yet.");
             }
         }, py::arg("optimizer_config"), py::arg("result_tensor").noconvert(), "Contracts the tensor network. Result tensor must be pre-allocated.");
 

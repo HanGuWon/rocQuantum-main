@@ -130,6 +130,17 @@ __global__ void sample_from_cdf_kernel(const double* cdf,
                                        unsigned numShots,
                                        unsigned long long seed);
 
+__global__ void reduce_measure_prob0_kernel(const rocComplex* state,
+                                            size_t numElements,
+                                            unsigned targetQubit,
+                                            double* blockSums);
+
+__global__ void collapse_and_renorm_measure_kernel(rocComplex* state,
+                                                   size_t numElements,
+                                                   unsigned targetQubit,
+                                                   int measuredOutcome,
+                                                   double invNorm);
+
 struct rocsvInternalHandle {
     hipStream_t streams[1];
     bool ownsPrimaryStream = false;
@@ -862,6 +873,54 @@ __global__ void sample_from_cdf_kernel(const double* cdf,
     results[shot] = static_cast<uint64_t>(low);
 }
 
+__global__ void reduce_measure_prob0_kernel(const rocComplex* state,
+                                            size_t numElements,
+                                            unsigned targetQubit,
+                                            double* blockSums) {
+    extern __shared__ double ssum[];
+    const unsigned tid = threadIdx.x;
+    const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + tid;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+
+    double local = 0.0;
+    for (size_t idx = gid; idx < numElements; idx += stride) {
+        if (((idx >> targetQubit) & 1ULL) == 0ULL) {
+            local += amp_abs2(state[idx]);
+        }
+    }
+
+    ssum[tid] = local;
+    __syncthreads();
+    for (unsigned s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            ssum[tid] += ssum[tid + s];
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        blockSums[blockIdx.x] = ssum[0];
+    }
+}
+
+__global__ void collapse_and_renorm_measure_kernel(rocComplex* state,
+                                                   size_t numElements,
+                                                   unsigned targetQubit,
+                                                   int measuredOutcome,
+                                                   double invNorm) {
+    const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+
+    for (size_t idx = gid; idx < numElements; idx += stride) {
+        const int bit = ((idx >> targetQubit) & 1ULL) ? 1 : 0;
+        if (bit != measuredOutcome) {
+            state[idx] = make_complex(0.0, 0.0);
+            continue;
+        }
+        state[idx].x = static_cast<real_t>(static_cast<double>(state[idx].x) * invNorm);
+        state[idx].y = static_cast<real_t>(static_cast<double>(state[idx].y) * invNorm);
+    }
+}
+
 inline int compute_reduction_blocks(size_t elements, int threadsPerBlock) {
     if (elements == 0 || threadsPerBlock <= 0) {
         return 1;
@@ -1133,7 +1192,12 @@ rocqStatus_t rocsvAllocateDistributedState(rocsvHandle_t handle,
         return ROCQ_STATUS_HIP_ERROR;
     }
     if (device_count > 1) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        static bool warned = false;
+        if (!warned) {
+            std::cerr << "hipStateVec distributed API compatibility mode: allocating a full state on the current device. "
+                         "True multi-GPU sharding is not enabled in this build.\n";
+            warned = true;
+        }
     }
 
     rocComplex* buffer = nullptr;
@@ -1142,13 +1206,6 @@ rocqStatus_t rocsvAllocateDistributedState(rocsvHandle_t handle,
 
 rocqStatus_t rocsvInitializeDistributedState(rocsvHandle_t handle) {
     if (!handle) return ROCQ_STATUS_INVALID_VALUE;
-    int device_count = 0;
-    if (hipGetDeviceCount(&device_count) != hipSuccess) {
-        return ROCQ_STATUS_HIP_ERROR;
-    }
-    if (device_count > 1) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
     if (!handle->d_state || handle->numQubits == 0) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
@@ -1159,13 +1216,6 @@ rocqStatus_t rocsvSwapIndexBits(rocsvHandle_t handle,
                                 unsigned qubit_idx1,
                                 unsigned qubit_idx2) {
     if (!handle) return ROCQ_STATUS_INVALID_VALUE;
-    int device_count = 0;
-    if (hipGetDeviceCount(&device_count) != hipSuccess) {
-        return ROCQ_STATUS_HIP_ERROR;
-    }
-    if (device_count > 1) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
     if (!handle->d_state || handle->numQubits == 0) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
@@ -1829,22 +1879,38 @@ rocqStatus_t rocsvMeasure(rocsvHandle_t handle,
         return ROCQ_STATUS_INVALID_VALUE;
     }
 
-    std::vector<rocComplex> host_state(state_elements);
-    rocqStatus_t status = copy_device_to_host(host_state.data(),
-                                              state,
-                                              state_elements * sizeof(rocComplex),
-                                              handle->streams[0]);
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(state_elements, threads_per_block);
+
+    void* d_block_sums_void = nullptr;
+    rocqStatus_t status = device_malloc(handle, &d_block_sums_void, static_cast<size_t>(blocks) * sizeof(double));
     if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    double* d_block_sums = static_cast<double*>(d_block_sums_void);
+
+    hipLaunchKernelGGL(reduce_measure_prob0_kernel,
+                       dim3(blocks),
+                       dim3(threads_per_block),
+                       threads_per_block * sizeof(double),
+                       handle->streams[0],
+                       state,
+                       state_elements,
+                       qubitToMeasure,
+                       d_block_sums);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_block_sums);
         return status;
     }
 
     double prob0 = 0.0;
-    for (size_t i = 0; i < host_state.size(); ++i) {
-        if (((i >> qubitToMeasure) & 1ULL) == 0ULL) {
-            prob0 += static_cast<double>(host_state[i].x) * host_state[i].x +
-                     static_cast<double>(host_state[i].y) * host_state[i].y;
-        }
+    status = reduce_blocks_to_scalar(handle, d_block_sums, blocks, &prob0);
+    device_free(handle, d_block_sums);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
     }
+
     prob0 = clamp_probability(prob0);
     const double prob1 = clamp_probability(1.0 - prob0);
 
@@ -1869,20 +1935,17 @@ rocqStatus_t rocsvMeasure(rocsvHandle_t handle,
     }
 
     const double inv_norm = 1.0 / std::sqrt(measured_prob);
-    for (size_t i = 0; i < host_state.size(); ++i) {
-        const bool bit = ((i >> qubitToMeasure) & 1ULL) != 0ULL;
-        if (static_cast<int>(bit) != measured) {
-            host_state[i] = make_complex(0.0, 0.0);
-            continue;
-        }
-        host_state[i].x = static_cast<real_t>(host_state[i].x * inv_norm);
-        host_state[i].y = static_cast<real_t>(host_state[i].y * inv_norm);
-    }
-
-    return copy_host_to_device(state,
-                               host_state.data(),
-                               state_elements * sizeof(rocComplex),
-                               handle->streams[0]);
+    hipLaunchKernelGGL(collapse_and_renorm_measure_kernel,
+                       dim3(blocks),
+                       dim3(threads_per_block),
+                       0,
+                       handle->streams[0],
+                       state,
+                       state_elements,
+                       qubitToMeasure,
+                       measured,
+                       inv_norm);
+    return check_last_hip_error();
 }
 
 rocqStatus_t rocsvGetExpectationWorkspaceSize(rocsvHandle_t handle,
