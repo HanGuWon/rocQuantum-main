@@ -163,7 +163,15 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
 
     // Wrapper for the handle
     py::class_<RocsvHandleWrapper>(m, "RocsvHandle")
-        .def(py::init<>());
+        .def(py::init<>())
+        .def("get_num_gpus", [](const RocsvHandleWrapper& self) {
+            int count = 0;
+            rocqStatus_t status = rocsvGetNumGpus(self.get(), &count);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetNumGpus failed: " + std::to_string(status));
+            }
+            return count;
+        });
         // The handle itself is mostly opaque to Python users of this direct binding layer.
         // Higher-level Python classes (Simulator) will use it.
 
@@ -386,7 +394,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                 return 1.0; // Expectation of Identity
             }
 
-            rocStatus_t status = rocsvGetExpectationPauliString(
+            rocqStatus_t status = rocsvGetExpectationPauliString(
                                                handle_wrapper.get(),
                                                d_state_buffer.get_ptr<rocComplex>(),
                                                numQubits,
@@ -562,28 +570,6 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         // ... (existing implementation)
     }, py::arg("output_tensor").noconvert(), py::arg("input_tensor"), py::arg("permutation_map"));
 
-    // --- NEW SVD BINDING ---
-    m.def("tensor_svd",
-        [](RocTensorNetworkHandleWrapper& handle, const rocquantum::util::rocTensor& A) {
-            if (A.rank() != 2) {
-                throw std::runtime_error("SVD input must be a 2D tensor (matrix).");
-            }
-            // NOTE: Workspace management is simplified here. A robust implementation
-            // would query rocsolver for the required workspace size.
-            DeviceBuffer workspace(1, 1); // Placeholder
-
-            auto U = rocquantum::util::rocTensor();
-            auto S = rocquantum::util::rocTensor();
-            auto V = rocquantum::util::rocTensor();
-
-            rocqStatus_t status = rocTensorSVD(handle.get(), &U, &S, &V, &A, workspace.ptr_);
-            if (status != ROCQ_STATUS_SUCCESS) {
-                throw std::runtime_error("rocTensorSVD failed: " + std::to_string(status));
-            }
-            return std::make_tuple(U, S, V);
-        }, py::arg("handle"), py::arg("A"), "Performs SVD on a 2D tensor A, returning (U, S, V).");
-    // --- END NEW SVD BINDING ---
-
     // --- hipTensorNet Bindings ---
     // ... (rest of the file)
 
@@ -680,6 +666,28 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                 py::print("Warning: rocTensorNetworkContract path execution is not fully implemented yet.");
             }
         }, py::arg("optimizer_config"), py::arg("result_tensor").noconvert(), "Contracts the tensor network. Result tensor must be pre-allocated.");
+
+    // --- NEW SVD BINDING ---
+    m.def("tensor_svd",
+        [](RocTensorNetworkHandleWrapper& handle, const rocquantum::util::rocTensor& A) {
+            if (A.rank() != 2) {
+                throw std::runtime_error("SVD input must be a 2D tensor (matrix).");
+            }
+            // NOTE: Workspace management is simplified here. A robust implementation
+            // would query rocsolver for the required workspace size.
+            DeviceBuffer workspace(1, 1); // Placeholder
+
+            auto U = rocquantum::util::rocTensor();
+            auto S = rocquantum::util::rocTensor();
+            auto V = rocquantum::util::rocTensor();
+
+            rocqStatus_t status = rocTensorSVD(handle.get(), &U, &S, &V, &A, workspace.ptr_);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocTensorSVD failed: " + std::to_string(status));
+            }
+            return std::make_tuple(U, S, V);
+        }, py::arg("handle"), py::arg("A"), "Performs SVD on a 2D tensor A, returning (U, S, V).");
+    // --- END NEW SVD BINDING ---
 
     // --- GateFusion Bindings ---
     py::class_<rocquantum::GateOp>(m, "GateOp")

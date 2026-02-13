@@ -2,6 +2,7 @@
 #define HIPSTATEVEC_H
 
 #include <hip/hip_runtime.h> // For hipFloatComplex, hipDoubleComplex, hipError_t
+#include <stdint.h>
 
 // Define rocComplex based on precision
 #ifdef ROCQ_PRECISION_DOUBLE
@@ -30,6 +31,15 @@ typedef enum {
     // Add more specific error codes as needed
 } rocqStatus_t;
 
+typedef rocqStatus_t (*rocqDeviceMallocFn_t)(void** ptr, size_t bytes, void* userData);
+typedef rocqStatus_t (*rocqDeviceFreeFn_t)(void* ptr, void* userData);
+
+typedef struct {
+    rocqDeviceMallocFn_t device_malloc;
+    rocqDeviceFreeFn_t device_free;
+    void* user_data;
+} rocqDeviceMemHandler_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -49,6 +59,36 @@ rocqStatus_t rocsvCreate(rocsvHandle_t* handle);
  * @return rocqStatus_t Status of the operation.
  */
 rocqStatus_t rocsvDestroy(rocsvHandle_t handle);
+
+/**
+ * @brief Binds a user-provided stream to a handle.
+ *
+ * If this is called, all subsequent async work launched by hipStateVec APIs
+ * uses this stream until changed again.
+ */
+rocqStatus_t rocsvSetStream(rocsvHandle_t handle, hipStream_t stream);
+
+/**
+ * @brief Retrieves the currently bound stream for a handle.
+ */
+rocqStatus_t rocsvGetStream(rocsvHandle_t handle, hipStream_t* stream);
+
+/**
+ * @brief Installs custom device allocation callbacks for a handle.
+ *
+ * Pass nullptr to reset to default hipMalloc/hipFree behavior.
+ */
+rocqStatus_t rocsvSetDeviceMemHandler(rocsvHandle_t handle, const rocqDeviceMemHandler_t* handler);
+
+/**
+ * @brief Retrieves the current device allocation callback configuration.
+ */
+rocqStatus_t rocsvGetDeviceMemHandler(rocsvHandle_t handle, rocqDeviceMemHandler_t* handler);
+
+/**
+ * @brief Returns the number of visible GPUs.
+ */
+rocqStatus_t rocsvGetNumGpus(rocsvHandle_t handle, int* num_gpus);
 
 /**
  * @brief Allocates memory for the state vector on the device.
@@ -155,6 +195,16 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
                               unsigned numTargetQubits,
                               const rocComplex* matrixDevice, // Changed from 'matrix'
                               unsigned matrixDim);
+
+/**
+ * @brief Reports temporary workspace size required by rocsvApplyMatrix.
+ *
+ * Current implementation requires no extra workspace and reports 0.
+ */
+rocqStatus_t rocsvApplyMatrixGetWorkspaceSize(rocsvHandle_t handle,
+                                              unsigned numQubits,
+                                              unsigned numTargetQubits,
+                                              size_t* workspaceSizeBytes);
 
 /**
  * @brief Measures a single qubit in the computational basis.
@@ -421,6 +471,15 @@ rocqStatus_t rocsvGetExpectationPauliString(rocsvHandle_t handle,
                                             const unsigned* targetQubits,
                                             unsigned numTargetPaulis,
                                             double* result);
+
+/**
+ * @brief Reports temporary workspace size required by expectation APIs.
+ *
+ * Current implementation requires no extra workspace and reports 0.
+ */
+rocqStatus_t rocsvGetExpectationWorkspaceSize(rocsvHandle_t handle,
+                                              unsigned numQubits,
+                                              size_t* workspaceSizeBytes);
 
 
 /**

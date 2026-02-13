@@ -45,6 +45,7 @@ class Circuit:
         self.simulator = simulator
         self._sim_handle = simulator._handle_wrapper
         self.is_multi_gpu = multi_gpu
+        self.batch_size = 1
         self._d_state_buffer = None
         self._gate_queue = []
         self._is_dirty = False
@@ -188,12 +189,63 @@ class Circuit:
         self._enqueue_gate("CSWAP", targets=[target_qubit1, target_qubit2], controls=[control_qubit])
 
     def apply_unitary(self, qubit_indices: list[int], matrix: np.ndarray):
-        self.flush() # Flush before complex operations
-        # ... (rest of apply_unitary)
+        self.flush()
+        if not qubit_indices:
+            raise ValueError("qubit_indices cannot be empty.")
+        for idx in qubit_indices:
+            self._validate_qubit_index(idx, "qubit_indices element")
+        if len(set(qubit_indices)) != len(qubit_indices):
+            raise ValueError("qubit_indices must be unique.")
+
+        matrix = np.asarray(matrix, dtype=np.complex64, order='C')
+        dim = 1 << len(qubit_indices)
+        if matrix.shape != (dim, dim):
+            raise ValueError(f"Matrix shape must be ({dim}, {dim}) for {len(qubit_indices)} target qubits.")
+
+        d_matrix = self.simulator.create_device_matrix(matrix)
+        status = backend.apply_matrix(
+            self._sim_handle,
+            self._get_d_state_for_backend(),
+            self.num_qubits,
+            qubit_indices,
+            d_matrix,
+            dim,
+        )
+        if status != backend.rocqStatus.SUCCESS:
+            raise RuntimeError(f"apply_matrix failed: {status}")
 
     def apply_controlled_unitary(self, control_qubits: list[int], target_qubits: list[int], matrix: np.ndarray):
-        self.flush() # Flush before complex operations
-        # ... (rest of apply_controlled_unitary)
+        self.flush()
+        if not target_qubits:
+            raise ValueError("target_qubits cannot be empty.")
+        if len(set(control_qubits)) != len(control_qubits):
+            raise ValueError("control_qubits must be unique.")
+        if len(set(target_qubits)) != len(target_qubits):
+            raise ValueError("target_qubits must be unique.")
+        if set(control_qubits).intersection(target_qubits):
+            raise ValueError("control_qubits and target_qubits must be disjoint.")
+
+        for idx in control_qubits:
+            self._validate_qubit_index(idx, "control_qubits element")
+        for idx in target_qubits:
+            self._validate_qubit_index(idx, "target_qubits element")
+
+        matrix = np.asarray(matrix, dtype=np.complex64, order='C')
+        dim = 1 << len(target_qubits)
+        if matrix.shape != (dim, dim):
+            raise ValueError(f"Matrix shape must be ({dim}, {dim}) for {len(target_qubits)} target qubits.")
+
+        d_matrix = self.simulator.create_device_matrix(matrix)
+        status = backend.apply_controlled_matrix(
+            self._sim_handle,
+            self._get_d_state_for_backend(),
+            self.num_qubits,
+            control_qubits,
+            target_qubits,
+            d_matrix,
+        )
+        if status != backend.rocqStatus.SUCCESS:
+            raise RuntimeError(f"apply_controlled_matrix failed: {status}")
 
     def measure(self, qubit_to_measure: int) -> tuple[int, float]:
         self.flush()
@@ -233,10 +285,14 @@ class Circuit:
         self.flush()
         if self.batch_size > 1:
             raise NotImplementedError("get_statevector is not yet supported for batch_size > 1.")
-        
-        num_elements = 1 << self.num_qubits
-        np_state = backend.get_state_vector(self._sim_handle, self._get_d_state_for_backend(), num_elements)
-        return np_state
+
+        return backend.get_state_vector_slice(
+            self._sim_handle,
+            self._get_d_state_for_backend(),
+            self.num_qubits,
+            self.batch_size,
+            0,
+        )
 
     def expval(self, pauli_operator: 'PauliOperator') -> float:
         """
