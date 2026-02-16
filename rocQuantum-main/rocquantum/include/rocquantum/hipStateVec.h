@@ -2,6 +2,7 @@
 #define HIPSTATEVEC_H
 
 #include <hip/hip_runtime.h> // For hipFloatComplex, hipDoubleComplex, hipError_t
+#include <stddef.h>
 #include <stdint.h>
 
 // Define rocComplex based on precision
@@ -39,6 +40,15 @@ typedef struct {
     rocqDeviceFreeFn_t device_free;
     void* user_data;
 } rocqDeviceMemHandler_t;
+
+typedef struct {
+    int distributed_mode;
+    int gpu_count;
+    unsigned global_num_qubits;
+    unsigned local_num_qubits_per_gpu;
+    unsigned global_slice_qubits;
+    size_t local_slice_elements;
+} rocsvDistributedInfo_t;
 
 #ifdef __cplusplus
 extern "C" {
@@ -89,6 +99,19 @@ rocqStatus_t rocsvGetDeviceMemHandler(rocsvHandle_t handle, rocqDeviceMemHandler
  * @brief Returns the number of visible GPUs.
  */
 rocqStatus_t rocsvGetNumGpus(rocsvHandle_t handle, int* num_gpus);
+
+/**
+ * @brief Retrieves distributed state metadata for the current handle.
+ */
+rocqStatus_t rocsvGetDistributedInfo(rocsvHandle_t handle, rocsvDistributedInfo_t* info);
+
+/**
+ * @brief Explicit synchronization point for work enqueued by hipStateVec APIs.
+ *
+ * Enqueue-oriented APIs do not implicitly synchronize. Call this function when
+ * the host needs completion guarantees without using a host-returning API.
+ */
+rocqStatus_t rocsvSynchronize(rocsvHandle_t handle);
 
 /**
  * @brief Allocates memory for the state vector on the device.
@@ -178,6 +201,9 @@ rocqStatus_t rocsvSwapIndexBits(rocsvHandle_t handle,
 
 /**
  * @brief Applies a quantum gate (matrix) to the specified qubits in the state vector.
+ *
+ * This API enqueues device work on the handle stream and returns without
+ * synchronizing.
  *
  * @param[in] handle The hipStateVec handle.
  * @param[in] d_state Pointer to the device state vector.
