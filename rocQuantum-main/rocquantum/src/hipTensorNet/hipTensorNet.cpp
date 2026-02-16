@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <rocblas/rocblas.h>
+#include <rocsolver/rocsolver.h>
 
 struct rocTnStruct {
     rocquantum::TensorNetworkBase* tn_instance = nullptr;
@@ -365,13 +366,186 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
                           rocquantum::util::rocTensor* V,
                           const rocquantum::util::rocTensor* A,
                           void* workspace) {
-    (void)handle;
-    (void)U;
-    (void)S;
-    (void)V;
-    (void)A;
     (void)workspace;
-    return ROCQ_STATUS_NOT_IMPLEMENTED;
+    if (!handle || !U || !S || !V || !A || !A->data_) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (handle->dtype != ROC_DATATYPE_C64) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (A->rank() != 2 || A->dimensions_.size() != 2) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (A->dimensions_[0] <= 0 || A->dimensions_[1] <= 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const rocblas_int m = static_cast<rocblas_int>(A->dimensions_[0]);
+    const rocblas_int n = static_cast<rocblas_int>(A->dimensions_[1]);
+    const rocblas_int min_mn = std::min(m, n);
+
+    auto ensure_output_tensor = [](rocquantum::util::rocTensor* tensor,
+                                   const std::vector<long long>& expected_dims) -> rocqStatus_t {
+        if (!tensor) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        if (tensor->data_ && !tensor->owned_) {
+            if (tensor->dimensions_ != expected_dims) {
+                return ROCQ_STATUS_INVALID_VALUE;
+            }
+            if (tensor->strides_.empty()) {
+                tensor->calculate_strides();
+            }
+            return ROCQ_STATUS_SUCCESS;
+        }
+        tensor->dimensions_ = expected_dims;
+        tensor->calculate_strides();
+        return rocquantum::util::rocTensorAllocate(tensor);
+    };
+
+    rocqStatus_t status = ensure_output_tensor(U, {static_cast<long long>(m), static_cast<long long>(m)});
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    status = ensure_output_tensor(V, {static_cast<long long>(n), static_cast<long long>(n)});
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    status = ensure_output_tensor(S, {static_cast<long long>(min_mn)});
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    rocquantum::util::rocTensor A_work;
+    A_work.dimensions_ = A->dimensions_;
+    A_work.calculate_strides();
+    status = rocquantum::util::rocTensorAllocate(&A_work);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    if (hipMemcpy(A_work.data_,
+                  A->data_,
+                  static_cast<size_t>(m) * static_cast<size_t>(n) * sizeof(rocComplex),
+                  hipMemcpyDeviceToDevice) != hipSuccess) {
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    float* d_singular_values = nullptr;
+    if (hipMalloc(&d_singular_values, static_cast<size_t>(min_mn) * sizeof(float)) != hipSuccess) {
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_ALLOCATION_FAILED;
+    }
+
+    float* d_superdiag = nullptr;
+    const size_t superdiag_size = static_cast<size_t>(std::max<rocblas_int>(1, min_mn - 1));
+    if (hipMalloc(&d_superdiag, superdiag_size * sizeof(float)) != hipSuccess) {
+        hipFree(d_singular_values);
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_ALLOCATION_FAILED;
+    }
+
+    rocblas_int* d_info = nullptr;
+    if (hipMalloc(&d_info, sizeof(rocblas_int)) != hipSuccess) {
+        hipFree(d_superdiag);
+        hipFree(d_singular_values);
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_ALLOCATION_FAILED;
+    }
+    if (hipMemset(d_info, 0, sizeof(rocblas_int)) != hipSuccess) {
+        hipFree(d_info);
+        hipFree(d_superdiag);
+        hipFree(d_singular_values);
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    rocblas_handle blas_handle = nullptr;
+    if (rocblas_create_handle(&blas_handle) != rocblas_status_success) {
+        hipFree(d_info);
+        hipFree(d_superdiag);
+        hipFree(d_singular_values);
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_FAILURE;
+    }
+
+    const rocblas_status svd_status = rocsolver_cgesvd(blas_handle,
+                                                       rocblas_svect_all,
+                                                       rocblas_svect_all,
+                                                       m,
+                                                       n,
+                                                       reinterpret_cast<rocblas_float_complex*>(A_work.data_),
+                                                       m,
+                                                       d_singular_values,
+                                                       reinterpret_cast<rocblas_float_complex*>(U->data_),
+                                                       m,
+                                                       reinterpret_cast<rocblas_float_complex*>(V->data_),
+                                                       n,
+                                                       d_superdiag,
+                                                       rocblas_outofplace,
+                                                       d_info);
+    rocblas_destroy_handle(blas_handle);
+
+    if (svd_status != rocblas_status_success) {
+        hipFree(d_info);
+        hipFree(d_superdiag);
+        hipFree(d_singular_values);
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_FAILURE;
+    }
+
+    rocblas_int info_h = 0;
+    if (hipMemcpy(&info_h, d_info, sizeof(rocblas_int), hipMemcpyDeviceToHost) != hipSuccess) {
+        hipFree(d_info);
+        hipFree(d_superdiag);
+        hipFree(d_singular_values);
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    if (info_h != 0) {
+        hipFree(d_info);
+        hipFree(d_superdiag);
+        hipFree(d_singular_values);
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_FAILURE;
+    }
+
+    std::vector<float> singular_values_host(static_cast<size_t>(min_mn), 0.0f);
+    if (hipMemcpy(singular_values_host.data(),
+                  d_singular_values,
+                  singular_values_host.size() * sizeof(float),
+                  hipMemcpyDeviceToHost) != hipSuccess) {
+        hipFree(d_info);
+        hipFree(d_superdiag);
+        hipFree(d_singular_values);
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    std::vector<rocComplex> singular_values_complex(static_cast<size_t>(min_mn));
+    for (rocblas_int i = 0; i < min_mn; ++i) {
+        singular_values_complex[static_cast<size_t>(i)] = {
+            singular_values_host[static_cast<size_t>(i)],
+            0.0f};
+    }
+
+    if (hipMemcpy(S->data_,
+                  singular_values_complex.data(),
+                  singular_values_complex.size() * sizeof(rocComplex),
+                  hipMemcpyHostToDevice) != hipSuccess) {
+        hipFree(d_info);
+        hipFree(d_superdiag);
+        hipFree(d_singular_values);
+        rocquantum::util::rocTensorFree(&A_work);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    hipFree(d_info);
+    hipFree(d_superdiag);
+    hipFree(d_singular_values);
+    rocquantum::util::rocTensorFree(&A_work);
+    return ROCQ_STATUS_SUCCESS;
 }
 
 } // extern "C"

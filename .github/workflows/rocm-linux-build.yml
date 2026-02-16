@@ -9,9 +9,21 @@ on:
 
 jobs:
   build:
+    name: Build ROCm ${{ matrix.rocm_label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rocm_image: rocm/dev-ubuntu-22.04:6.2.2
+            rocm_label: "6.2.2"
+            experimental: false
+          - rocm_image: rocm/dev-ubuntu-22.04:7.2.0
+            rocm_label: "7.2.0"
+            experimental: true
+    continue-on-error: ${{ matrix.experimental }}
     runs-on: ubuntu-22.04
     container:
-      image: rocm/dev-ubuntu-22.04:6.2.2
+      image: ${{ matrix.rocm_image }}
     defaults:
       run:
         shell: bash
@@ -28,7 +40,11 @@ jobs:
             ninja-build \
             python3-dev \
             python3-pip \
+            ripgrep \
             pybind11-dev
+
+      - name: Async Contract Gate
+        run: bash scripts/check_async_contract.sh
 
       - name: Configure
         env:
@@ -36,8 +52,16 @@ jobs:
         run: |
           cmake -S . -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=OFF \
+            -DBUILD_TESTING=ON \
             -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc
 
       - name: Build
         run: cmake --build build-ci --parallel
+
+      - name: Run hipTensorNet Contraction Regression
+        run: |
+          if [ ! -e /dev/kfd ]; then
+            echo "No ROCm runtime device detected. Skipping GPU runtime tests."
+            exit 0
+          fi
+          ctest --test-dir build-ci --output-on-failure -R HipTensorNetContractionRegression

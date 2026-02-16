@@ -274,7 +274,8 @@ inline rocqStatus_t rocTensorFree(rocTensor* tensor) {
 rocqStatus_t rocTensorPermute(
     rocTensor* output_tensor,
     const rocTensor* input_tensor,
-    const std::vector<int>& host_permutation_map);
+    const std::vector<int>& host_permutation_map,
+    hipStream_t stream = 0);
 
 
 /**

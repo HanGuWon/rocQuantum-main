@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "rocquantum/hipTensorNet.h"
+#include "rocquantum/hipTensorNet_api.h"
 #include "rocquantum/rocTensorUtil.h"
 #include "rocquantum/rocWorkspaceManager.h"
 #include "rocquantum/hipStateVec.h"
@@ -114,7 +115,7 @@ void teardown_global_test_resources() {
 
 rocquantum::util::rocTensor create_gpu_tensor(const std::vector<long long>& dims, const std::vector<std::string>& labels, const std::vector<rocComplex>& h_data) {
     rocquantum::util::rocTensor tensor;
-    tensor.dims_ = dims;
+    tensor.dimensions_ = dims;
     tensor.labels_ = labels;
     rocquantum::util::rocTensorAllocate(&tensor);
     HIP_ASSERT(hipMemcpy(tensor.data_, h_data.data(), h_data.size() * sizeof(rocComplex), hipMemcpyHostToDevice));

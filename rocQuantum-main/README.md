@@ -24,6 +24,17 @@ The core goal of rocQuantum is to offer a seamless user experience where a quant
     ```
     *(Note: Specific provider SDKs like `qiskit` or `cirq` should be installed as needed).*
 
+## Build Hygiene
+
+Use out-of-tree build directories and do not commit generated files:
+
+```bash
+cmake -S . -B build-ci -G Ninja
+cmake --build build-ci --parallel
+```
+
+Build outputs such as `build/`, `build-hip/`, `build-codex/`, and `build-ci/` are local artifacts and should stay untracked.
+
 ## Configuration
 
 To access third-party backends, you must configure your credentials using environment variables.

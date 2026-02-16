@@ -1,15 +1,16 @@
 #include "rocquantum/rocTensorUtil.h"
-#include "rocquantum/hipStateVec.h" // For rocqStatus_t, rocComplex, checkHipError (from common header)
+#include "rocquantum/hipStateVec.h"
 #include <hip/hip_runtime.h>
-#include <rocblas/rocblas.h> // For rocblas_handle, rocblas_cgemm etc.
+#include <rocblas/rocblas.h>
+#include <cctype>
 #include <vector>
 #include <string>
-#include <numeric>      // For std::accumulate, std::iota
-#include <stdexcept>    // For error reporting
-#include <algorithm>    // For std::sort, std::find, std::set_difference etc.
-#include <map>          // For mapping mode indices
-#include <set>          // For finding unique labels
-#include <sstream>      // For parsing (though simple parsing is used here)
+#include <numeric>
+#include <stdexcept>
+#include <algorithm>
+#include <map>
+#include <set>
+#include <sstream>
 
 
 // Forward declare the kernel (it's in rocTensorUtil_kernels.hip, but this .cpp file compiles separately)
@@ -28,10 +29,19 @@ __global__ void permute_tensor_kernel(
 namespace rocquantum {
 namespace util {
 
+namespace {
+
+inline rocqStatus_t status_from_hip(hipError_t err) {
+    return err == hipSuccess ? ROCQ_STATUS_SUCCESS : ROCQ_STATUS_HIP_ERROR;
+}
+
+}  // namespace
+
 rocqStatus_t rocTensorPermute(
     rocTensor* output_tensor,
     const rocTensor* input_tensor,
-    const std::vector<int>& host_permutation_map
+    const std::vector<int>& host_permutation_map,
+    hipStream_t stream
 ) {
     if (!output_tensor || !input_tensor) {
         return ROCQ_STATUS_INVALID_VALUE;
@@ -42,10 +52,12 @@ rocqStatus_t rocTensorPermute(
     if (input_tensor->rank() == 0) {
         if (input_tensor->get_element_count() == 1 && output_tensor->get_element_count() == 1) {
             if (output_tensor->data_ && input_tensor->data_) {
-                 hipError_t err = hipMemcpy(output_tensor->data_, input_tensor->data_, sizeof(rocComplex), hipMemcpyDeviceToDevice);
-                 // Assuming checkHipError is available globally or in this namespace from hipStateVec.h
-                 // If not, it needs to be defined or included properly. For now, assume it is.
-                  return rocquantum::checkHipError(err, "rocTensorPermute hipMemcpy scalar");
+                return status_from_hip(
+                    hipMemcpyAsync(output_tensor->data_,
+                                   input_tensor->data_,
+                                   sizeof(rocComplex),
+                                   hipMemcpyDeviceToDevice,
+                                   stream));
             }
             return ROCQ_STATUS_SUCCESS;
         }
@@ -116,16 +128,14 @@ rocqStatus_t rocTensorPermute(
 
     if (num_blocks > 0) {
         hipLaunchKernelGGL(permute_tensor_kernel,
-                           dim3(num_blocks), dim3(threads_per_block), 0, 0,
+                           dim3(num_blocks), dim3(threads_per_block), 0, stream,
                            output_tensor->data_, input_tensor->data_,
                            d_input_dims, d_input_strides,
                            d_output_dims, d_output_strides,
                            d_permutation_map_gpu, num_modes, total_elements);
 
         hip_err = hipGetLastError();
-        if (hip_err != hipSuccess) { status = rocquantum::checkHipError(hip_err, "permute_tensor_kernel launch"); goto perm_cleanup;}
-        hip_err = hipStreamSynchronize(0);
-        if (hip_err != hipSuccess) { status = rocquantum::checkHipError(hip_err, "rocTensorPermute hipStreamSynchronize");}
+        if (hip_err != hipSuccess) { status = status_from_hip(hip_err); goto perm_cleanup; }
     }
 
 perm_cleanup:
@@ -205,9 +215,11 @@ rocqStatus_t rocTensorContractPair_internal(
     if (M == 0 || N == 0 || K == 0) {
         if (M * N != result_tensor->get_element_count() && result_tensor->get_element_count() !=0 ) return ROCQ_STATUS_INVALID_VALUE;
         if (result_tensor->data_ && result_tensor->get_element_count() > 0) {
-            hipMemsetAsync(result_tensor->data_, 0, result_tensor->get_element_count() * sizeof(rocComplex), stream);
-            hipStreamSynchronize(stream);
-            return ROCQ_STATUS_SUCCESS;
+            return status_from_hip(
+                hipMemsetAsync(result_tensor->data_,
+                               0,
+                               result_tensor->get_element_count() * sizeof(rocComplex),
+                               stream));
         } else if (result_tensor->get_element_count() == 0) {
              return ROCQ_STATUS_SUCCESS; // Contracting to a 0-element tensor
         }
@@ -224,17 +236,11 @@ rocqStatus_t rocTensorContractPair_internal(
     status_check = rocTensorAllocate(&permutedB_tensor);
     if (status_check != ROCQ_STATUS_SUCCESS) { rocTensorFree(&permutedA_tensor); return status_check; }
 
-    status_check = rocTensorPermute(&permutedA_tensor, tensorA, permA_map_new_idx_is_old_idx);
+    status_check = rocTensorPermute(&permutedA_tensor, tensorA, permA_map_new_idx_is_old_idx, stream);
     if (status_check != ROCQ_STATUS_SUCCESS) { rocTensorFree(&permutedA_tensor); rocTensorFree(&permutedB_tensor); return status_check; }
 
-    status_check = rocTensorPermute(&permutedB_tensor, tensorB, permB_map_new_idx_is_old_idx);
+    status_check = rocTensorPermute(&permutedB_tensor, tensorB, permB_map_new_idx_is_old_idx, stream);
     if (status_check != ROCQ_STATUS_SUCCESS) { rocTensorFree(&permutedA_tensor); rocTensorFree(&permutedB_tensor); return status_check; }
-
-    hipError_t hip_sync_err = hipStreamSynchronize(stream);
-    if(hip_sync_err != hipSuccess) {
-        rocTensorFree(&permutedA_tensor); rocTensorFree(&permutedB_tensor);
-        return rocquantum::checkHipError(hip_sync_err, "ContractPair sync after permute");
-    }
 
     int gemm_M = static_cast<int>(M);
     int gemm_N = static_cast<int>(N);
@@ -253,13 +259,11 @@ rocqStatus_t rocTensorContractPair_internal(
         result_tensor->data_, gemm_M
     );
 
-    hip_sync_err = hipStreamSynchronize(stream);
-
     rocTensorFree(&permutedA_tensor);
     rocTensorFree(&permutedB_tensor);
 
     if (blas_status_err != rocblas_status_success) return ROCQ_STATUS_FAILURE;
-    if(hip_sync_err != hipSuccess) return rocquantum::checkHipError(hip_sync_err, "ContractPair sync after GEMM");
+    if (hipGetLastError() != hipSuccess) return ROCQ_STATUS_HIP_ERROR;
 
     return ROCQ_STATUS_SUCCESS;
 }
@@ -283,19 +287,6 @@ bool parse_simple_einsum_spec(
     result_dims.clear();
     result_labels.clear();
 
-    size_t arrow_pos = spec.find("->");
-    if (arrow_pos == std::string::npos) return false; // Invalid format
-
-    std::string inputs_str = spec.substr(0, arrow_pos);
-    std::string output_str = spec.substr(arrow_pos + 2);
-
-    size_t comma_pos = inputs_str.find(',');
-    if (comma_pos == std::string::npos) return false; // Must have two input tensors
-
-    std::string tensorA_spec_str = inputs_str.substr(0, comma_pos);
-    std::string tensorB_spec_str = inputs_str.substr(comma_pos + 1);
-
-    // Extract labels for A, B, and Result
     // Helper to trim whitespace from a string
     auto trim_string = [](std::string& s) {
         s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
@@ -353,7 +344,9 @@ bool parse_simple_einsum_spec(
         if (labels_vec.empty() && !actual_labels_str.empty()) { // Try space delimiter if comma yields nothing but string is not empty
              labels_vec = split_string(actual_labels_str, ' ');
         }
-        if (labels_vec.size() != expected_rank) return std::vector<std::string>(); // Mismatch
+        if (expected_rank != 0 && labels_vec.size() != expected_rank) {
+            return std::vector<std::string>(); // Mismatch
+        }
         return labels_vec;
     };
 
