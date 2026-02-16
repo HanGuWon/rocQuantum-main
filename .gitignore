@@ -1,0 +1,20 @@
+# Generated build trees
+/rocQuantum-main/build/
+/rocQuantum-main/build-hip/
+/rocQuantum-main/build-codex/
+/rocQuantum-main/build-ci/
+/rocQuantum-main/build-*/
+
+# CMake and build artifacts
+**/CMakeCache.txt
+**/CMakeFiles/
+**/*.cmake.user
+**/compile_commands.json
+**/Testing/
+**/CTestTestfile.cmake
+
+# Python artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+

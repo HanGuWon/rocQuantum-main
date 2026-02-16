@@ -4,6 +4,10 @@ This document outlines the strategic vision for the future development of the ro
 
 ## Short-Term Goals (Next 3-6 Months)
 
+*   ### Repository Hygiene
+    *   **Out-of-tree Builds:** Keep all generated artifacts in local build folders (`build-ci/`, `build/`, `build-hip/`, etc.) and out of Git history.
+    *   **Packaging Readiness:** Maintain clean source trees to simplify CMake exports and downstream integration.
+
 *   ### Expand Gate Set
     *   **Multi-Controlled Gates:** Implement efficient HIP kernels for multi-controlled gates like the Toffoli (CCX) and Fredkin (CSWAP) gates.
     *   **Controlled Rotation Gates:** Add support for controlled rotation gates (CRX, CRY, CRZ), which are crucial for many quantum algorithms.
