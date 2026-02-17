@@ -46,8 +46,13 @@ To access third-party backends, you must configure your credentials using enviro
 
 *   **For Quantinuum:**
     ```bash
-    export CUDAQ_QUANTINUUM_CREDENTIALS="YOUR_USERNAME,YOUR_PASSWORD"
+    export CUDAQ_QUANTINUUM_CREDENTIALS="/path/to/credentials.json"
     ```
+    The JSON file must contain an `access_token` key.
+
+    > **Note:** The `USERNAME,PASSWORD` inline format shown in earlier documentation
+    > is recognized but not yet functional (token exchange is not implemented).
+    > Use a JSON file with a pre-obtained access token instead.
 
 *   **For Rigetti (via AWS Braket):**
     The Rigetti backend uses the `boto3` library, which automatically finds AWS credentials. Configure them using standard AWS methods, such as:
@@ -58,6 +63,11 @@ To access third-party backends, you must configure your credentials using enviro
         export AWS_SESSION_TOKEN="YOUR_SESSION_TOKEN" # (Optional)
         ```
     *   Shared Credentials File (`~/.aws/credentials`)
+
+    You must also specify the S3 output location for Braket task results:
+    ```bash
+    export ROCQ_RIGETTI_S3_OUTPUT="s3://your-bucket/braket-results"
+    ```
 
 *   **For Pasqal & Infleqtion:**
     Set `PASQAL_API_KEY` and `SUPERSTAQ_API_KEY` respectively.

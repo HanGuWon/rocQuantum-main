@@ -6,7 +6,7 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def Quantum_Dialect : Dialect {
   let name = "quantum";
-  let cppNamespace = "quantum";
+  let cppNamespace = "rocq::mlir::quantum";
   let summary = "A dialect for quantum computing.";
 }
 

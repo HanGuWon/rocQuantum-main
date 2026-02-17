@@ -59,10 +59,18 @@ class RocQDevice(QubitDevice):
         return self._state
 
     def generate_samples(self):
-        measured_wires = self.wires.indices(self.observables[0].wires)
-        probs = self.analytic_probability(wires=measured_wires)
-        samples = np.random.multinomial(self.shots, probs, size=1).T
-        return self.states_to_binary(np.arange(len(probs)), samples)
+        probs = self.analytic_probability(wires=self.wires)
+        num_states = len(probs)
+        samples_count = np.random.multinomial(self.shots, probs)
+        # Expand counts into individual shot outcomes
+        sample_indices = np.repeat(np.arange(num_states), samples_count)
+        num_wires = len(self.wires)
+        # Convert each outcome index to a binary array (one row per shot)
+        return np.array(
+            [[(idx >> (num_wires - 1 - w)) & 1 for w in range(num_wires)]
+             for idx in sample_indices],
+            dtype=int,
+        )
 
     def analytic_probability(self, wires=None):
         if self._state is None: return None

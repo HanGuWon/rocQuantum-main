@@ -34,11 +34,18 @@ add_subdirectory(rocquantum/src/hipStateVec)
 add_subdirectory(rocquantum/src/hipTensorNet)
 add_subdirectory(rocquantum/src/hipDensityMat)
 
+option(ROCQUANTUM_BUILD_LEGACY_KERNELS
+       "Include legacy kernels.hip.cpp in the core library (experimental)." OFF)
+
 add_library(rocquantum STATIC
     rocquantum/src/simulator.cpp
-    rocquantum/src/kernels.hip.cpp
     rocqCompiler/HipStateVecBackend.cpp
 )
+
+if(ROCQUANTUM_BUILD_LEGACY_KERNELS)
+    target_sources(rocquantum PRIVATE rocquantum/src/kernels.hip.cpp)
+    message(STATUS "Legacy kernels.hip.cpp included (experimental)")
+endif()
 
 target_include_directories(rocquantum
     PUBLIC

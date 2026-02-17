@@ -75,12 +75,11 @@ class SumOperator(QuantumOperator):
 
     def __add__(self, other):
         if isinstance(other, SumOperator):
-            self.terms.extend(other.terms)
+            return SumOperator(list(self.terms) + list(other.terms))
         elif isinstance(other, QuantumOperator):
-            self.terms.append(other)
+            return SumOperator(list(self.terms) + [other])
         else:
             raise NotImplementedError
-        return self
 
     def to_string(self) -> str:
         return " + ".join([f"({term.to_string()})" for term in self.terms])
@@ -89,38 +88,14 @@ class SumOperator(QuantumOperator):
 def get_expectation_value(kernel: QuantumKernel, operator: QuantumOperator, backend: str, **kwargs):
     """Computes the expectation value of an operator.
 
-    This function first executes a quantum kernel to prepare a state, then
-    computes the expectation value of the given operator with respect to that
-    state. This is a key operation for variational quantum algorithms.
+    .. note::
+        This function is not yet connected to a backend implementation.
+        Use the hipStateVec C++ API directly for expectation values.
 
-    Note:
-        The actual backend logic for the expectation value calculation is
-        a placeholder in this version.
-
-    Args:
-        kernel (QuantumKernel): The kernel that prepares the quantum state.
-        operator (QuantumOperator): The operator (e.g., a Hamiltonian) for
-            which to compute the expectation value.
-        backend (str): The simulation backend to use for state preparation.
-        **kwargs: The runtime values for the kernel's parameters.
-
-    Returns:
-        float: The computed expectation value (a placeholder value in this
-               implementation).
+    Raises:
+        NotImplementedError: Always, until a backend integration is available.
     """
-    print(f"\n--- COMPUTING EXPECTATION VALUE ---")
-    print(f"Operator: {operator.to_string()}")
-
-    # 1. Execute the kernel to prepare the quantum state
-    print("Step 1: Preparing state using the kernel...")
-    final_state = execute(kernel, backend=backend, **kwargs)
-
-    # 2. Compute the expectation value using the final state and the operator
-    # This part is a placeholder for the backend-specific C++ implementation.
-    print(f"Step 2: Computing expectation value with the prepared state ({final_state})...")
-    # e.g., backend.get_expectation_value(final_state, operator)
-    expectation_value = 42.0  # Dummy value
-    
-    print(f"Result: <H> = {expectation_value}")
-    print(f"--- COMPUTATION COMPLETE ---")
-    return expectation_value
+    raise NotImplementedError(
+        "Expectation value computation is not yet connected to a backend. "
+        "Use the hipStateVec C++ API directly for expectation values."
+    )

@@ -14,10 +14,11 @@ import time
 
 from rocquantum.circuit import QuantumCircuit
 from rocquantum.core import set_target, get_active_backend
-from rocquantum.backends.base import \
+from rocquantum.backends.base import (
     BackendAuthenticationError,
     JobSubmissionError,
-    ResultRetrievalError
+    ResultRetrievalError,
+)
 
 def create_bell_circuit() -> QuantumCircuit:
     """Creates a standard 2-qubit Bell State circuit."""
@@ -34,6 +35,12 @@ def check_environment_vars(backend_name: str):
         raise EnvironmentError("Error: CUDAQ_QUANTINUUM_CREDENTIALS environment variable not set.")
     if backend_name == 'rigetti' and not os.getenv('AWS_ACCESS_KEY_ID'):
         raise EnvironmentError("Error: AWS credentials (e.g., AWS_ACCESS_KEY_ID) not set.")
+    if backend_name == 'rigetti' and not os.getenv('ROCQ_RIGETTI_S3_OUTPUT'):
+        raise EnvironmentError(
+            "Error: ROCQ_RIGETTI_S3_OUTPUT environment variable not set. "
+            "Set it to an S3 URI for Braket task output, e.g. "
+            "'s3://your-bucket/braket-results'."
+        )
     # Add other backend checks here as needed
 
 def main():

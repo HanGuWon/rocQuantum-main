@@ -1,5 +1,6 @@
 #include "MLIRCompiler.h"
 #include <iostream>
+#include <stdexcept>
 #include <string>
 
 // MLIR Core & Passes
@@ -82,9 +83,9 @@ std::string MLIRCompiler::emit_qir(const std::string& mlir_string) {
 std::vector<std::complex<double>> MLIRCompiler::compile_and_execute(
     const std::string& mlir_string,
     const std::map<std::string, bool>& args) {
-    // This function remains the same as before, using the sim dialect interpreter.
-    // ... (implementation from previous step)
-    return {}; // Placeholder
+    throw std::runtime_error(
+        "compile_and_execute() is not yet implemented. Use emit_qir() to "
+        "generate QIR and execute through the hipStateVec backend directly.");
 }
 
 } // namespace rocq

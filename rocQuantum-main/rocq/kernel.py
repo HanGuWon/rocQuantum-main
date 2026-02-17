@@ -62,23 +62,58 @@ class QuantumKernel:
         self.num_qubits = ctx._next_qubit_index
         return ctx
 
+    # Supported gate -> MLIR op name mapping
+    _GATE_TO_MLIR = {
+        "h": "quantum.h", "x": "quantum.x", "y": "quantum.y",
+        "z": "quantum.z", "cnot": "quantum.cnot", "cx": "quantum.cnot",
+    }
+    _PARAM_GATE_TO_MLIR = {
+        "rx": "quantum.rx", "ry": "quantum.ry", "rz": "quantum.rz",
+    }
+
     def mlir(self, *args, **kwargs) -> str:
+        """Emit minimal textual MLIR for supported core gates.
+
+        Supported: H, X, Y, Z, CNOT, RX, RY, RZ.
+        Unsupported gates raise ``NotImplementedError`` with the gate name.
+        """
         ctx = self.build(*args, **kwargs)
-        lines = [
-            "// rocq kernel MLIR stub",
-            f"// kernel: {self.name}",
-            f"// qubits: {self.num_qubits}",
-            f"// ops: {len(ctx.ops)}",
-        ]
-        return "\n".join(lines)
+        n = ctx._next_qubit_index
+        body_lines = []
+        body_lines.append(f'    %qreg = "quantum.qalloc"() {{size = {n} : i64}} : () -> !quantum.qubit')
+        for op in ctx.ops:
+            gate = op.name.lower()
+            if gate in self._GATE_TO_MLIR:
+                targets = ", ".join(f"%qreg" for _ in op.targets)
+                body_lines.append(
+                    f'    "{ self._GATE_TO_MLIR[gate]}"({targets}) : '
+                    f'({"!quantum.qubit, " * (len(op.targets) - 1)}!quantum.qubit) -> ()'
+                )
+            elif gate in self._PARAM_GATE_TO_MLIR:
+                angle = list(op.params.values())[0]
+                body_lines.append(
+                    f'    "{ self._PARAM_GATE_TO_MLIR[gate]}"(%qreg) '
+                    f'{{angle = {angle:.6e} : f64}} : (!quantum.qubit) -> ()'
+                )
+            else:
+                raise NotImplementedError(
+                    f"MLIR emission does not yet support gate '{op.name}'. "
+                    f"Extend QuantumKernel._GATE_TO_MLIR to add it."
+                )
+        body = "\n".join(body_lines)
+        return (
+            f'module {{\n'
+            f'  func.func @{self.name}() {{\n'
+            f'{body}\n'
+            f'    return\n'
+            f'  }}\n'
+            f'}}'
+        )
 
     def qir(self, *args, **kwargs) -> str:
         if rocquantum_bind is None:
             raise RuntimeError("rocquantum_bind is required to emit QIR.")
         mlir_code = self.mlir(*args, **kwargs)
-        if mlir_code.startswith("// rocq kernel MLIR stub"):
-            raise NotImplementedError("MLIR emission for Python kernels is not implemented yet.")
-
         compiler = rocquantum_bind.MLIRCompiler(self.num_qubits, "hip_statevec")
         return compiler.emit_qir(mlir_code)
 
@@ -104,7 +139,7 @@ def kernel(func):
     return QuantumKernel(func)
 
 
-def execute(kernel_obj: QuantumKernel, backend: str = "state_vector", *args, **kwargs):
+def execute(kernel_obj: QuantumKernel, backend: str = "state_vector", noise_model=None, *args, **kwargs):
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("execute() expects a QuantumKernel instance.")
-    return kernel_obj.execute(backend=backend, *args, **kwargs)
+    return kernel_obj.execute(backend=backend, noise_model=noise_model, *args, **kwargs)
