@@ -55,6 +55,11 @@ class Decoder(ABC):
 class QEC_Experiment:
     """Orchestrates a QEC experiment using a "Circuit Fragmentation" strategy."""
     def __init__(self, backend: str = "state_vector"):
+        if rocq is None:
+            raise RuntimeError(
+                "Canonical 'rocq' package is not available. Install the Python package "
+                "before running QEC experiments."
+            )
         self.backend = backend
 
     def run_single_round(
@@ -70,11 +75,21 @@ class QEC_Experiment:
         stabilizer_circuits = code.generate_stabilizer_circuits(
             initial_state_kernel, num_qubits, self.backend
         )
+        if len(stabilizer_circuits) != len(ancilla_qubit_indices):
+            raise ValueError(
+                "Number of ancilla_qubit_indices must match the number of generated "
+                "stabilizer circuits."
+            )
 
         print("Step 2: Measuring syndrome by executing each fragment...")
         syndrome = []
         for i, stab_program in enumerate(stabilizer_circuits):
             ancilla_idx = ancilla_qubit_indices[i]
+            if not hasattr(stab_program, "circuit_ref") or not hasattr(stab_program.circuit_ref, "measure"):
+                raise NotImplementedError(
+                    "QEC fragment execution requires 'circuit_ref.measure(...)' support. "
+                    "The canonical backend bridge is not fully wired yet."
+                )
             outcome, _ = stab_program.circuit_ref.measure(ancilla_idx)
             print(f"  - Measured stabilizer {i} on ancilla q[{ancilla_idx}]: outcome = {outcome}")
             syndrome.append(outcome)

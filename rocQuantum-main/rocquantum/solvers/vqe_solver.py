@@ -1,4 +1,4 @@
-# Copyright (c) 2025-2026, rocQuantum Developers.
+﻿# Copyright (c) 2025-2026, rocQuantum Developers.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -131,15 +131,15 @@ class VQE_Solver:
         """
         Internal objective function evaluated by the classical optimizer.
         """
-        program = execute(ansatz_kernel, backend="state_vector", *params)
-        # TODO: Wire up to get_expectation_value once backend support is available
-        # energy = get_expectation_value(ansatz_kernel, hamiltonian, backend="state_vector")
-        energy = 0.0  # Placeholder — requires hipStateVec expectation API
-
-        self._intermediate_results.append({'params': params.tolist(), 'energy': energy})
-        print(f"Evaluated parameters {params.tolist()}, Energy: {energy:.8f}")
-
-        return energy
+        if execute is None:
+            raise RuntimeError(
+                "Canonical 'rocq' package is not available. Install the Python package "
+                "and retry."
+            )
+        raise NotImplementedError(
+            "VQE objective evaluation is not yet wired to a backend expectation API. "
+            "Placeholder energies are intentionally disabled."
+        )
 
     def solve(
         self,

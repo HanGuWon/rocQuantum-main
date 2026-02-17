@@ -32,6 +32,11 @@ all = ["rocquantum[backends,pennylane,dev]"]
 [project.scripts]
 rocq = "rocq_cli:main"
 
+[tool.setuptools]
+py-modules = ["rocq_cli"]
+
 [tool.setuptools.packages.find]
+where = ["."]
+namespaces = true
 include = ["rocq*", "rocquantum*"]
 exclude = ["tests*", "build*", "examples*"]
