@@ -1,4 +1,4 @@
-# Copyright (c) 2025-2026, rocQuantum Developers.
+﻿# Copyright (c) 2025-2026, rocQuantum Developers.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -11,9 +11,18 @@ from typing import Callable, List, Dict, Any
 import numpy as np
 from abc import ABC, abstractmethod
 
-# --- Real rocQuantum Imports ---
-import rocquantum.python.rocq as roc_q
-from rocquantum.python.rocq import PauliOperator
+# --- rocQuantum Imports ---
+try:
+    import rocq
+    from rocq.operator import PauliOperator
+    from rocq.kernel import QuantumKernel, execute
+except ImportError:
+    # Fallback: allow module to be imported for inspection even if rocq
+    # is not installed in the current environment.
+    rocq = None  # type: ignore
+    PauliOperator = None  # type: ignore
+    QuantumKernel = None  # type: ignore
+    execute = None  # type: ignore
 
 # --- Third-party Imports ---
 from scipy.optimize import minimize, OptimizeResult
@@ -98,21 +107,16 @@ class VQE_Solver:
 
     def __init__(
         self,
-        simulator: roc_q.Simulator,
         optimizer: Optimizer = None
     ):
         """
         Initializes the VQE_Solver.
 
         Args:
-            simulator (roc_q.Simulator): A rocQuantum simulator instance.
             optimizer (Optimizer, optional): A concrete optimizer instance that
                 adheres to the Optimizer interface. If None, a default
                 `SciPyOptimizer` is used.
         """
-        if not isinstance(simulator, roc_q.Simulator):
-            raise TypeError("A valid roc_q.Simulator instance is required.")
-        self.simulator = simulator
         self.optimizer = optimizer if optimizer is not None else SciPyOptimizer()
 
         self._intermediate_results = []
@@ -127,13 +131,15 @@ class VQE_Solver:
         """
         Internal objective function evaluated by the classical optimizer.
         """
-        program = roc_q.build(ansatz_kernel, num_qubits, self.simulator, *params)
-        energy = roc_q.get_expval(program=program, hamiltonian=hamiltonian)
-
-        self._intermediate_results.append({'params': params.tolist(), 'energy': energy})
-        print(f"Evaluated parameters {params.tolist()}, Energy: {energy:.8f}")
-
-        return energy
+        if execute is None:
+            raise RuntimeError(
+                "Canonical 'rocq' package is not available. Install the Python package "
+                "and retry."
+            )
+        raise NotImplementedError(
+            "VQE objective evaluation is not yet wired to a backend expectation API. "
+            "Placeholder energies are intentionally disabled."
+        )
 
     def solve(
         self,
@@ -168,11 +174,10 @@ class VQE_Solver:
 if __name__ == '__main__':
     # 1. Initialize the rocQuantum Simulator
     try:
-        sim = roc_q.Simulator()
-        print("rocQuantum Simulator initialized successfully.")
+        # VQE_Solver no longer requires a simulator argument
+        print("rocQuantum VQE example (canonical API).")
     except Exception as e:
-        print(f"Failed to initialize simulator: {e}")
-        print("This example requires a functional rocQuantum installation.")
+        print(f"Failed to initialize: {e}")
         exit()
 
     # 2. Problem Definition
@@ -183,7 +188,7 @@ if __name__ == '__main__':
     })
     print("Hamiltonian:\n", hamiltonian)
 
-    @roc_q.kernel
+    @rocq.kernel
     def simple_ansatz(q, theta_0: float, theta_1: float):
         q.h(0)
         q.h(1)
@@ -197,7 +202,7 @@ if __name__ == '__main__':
     # 3. Instantiate and Run the Solver
     # Plug in the desired optimizer strategy.
     scipy_optimizer = SciPyOptimizer(options={'method': 'COBYLA', 'tol': 1e-6})
-    vqe_solver = VQE_Solver(simulator=sim, optimizer=scipy_optimizer)
+    vqe_solver = VQE_Solver(optimizer=scipy_optimizer)
 
     vqe_result = vqe_solver.solve(
         hamiltonian=hamiltonian,

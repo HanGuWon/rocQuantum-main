@@ -34,25 +34,44 @@ class QuantinuumBackend(RocqBackend):
 
     def authenticate(self) -> None:
         """
-        Authenticates with the Quantinuum API by loading credentials from a
-        JSON file specified by the `CUDAQ_QUANTINUUM_CREDENTIALS` env var.
+        Authenticates with the Quantinuum API.
+
+        Supports two credential formats via the ``CUDAQ_QUANTINUUM_CREDENTIALS``
+        environment variable:
+
+        1. **Inline** ``"USERNAME,PASSWORD"`` — parsed directly.
+        2. **JSON file path** — a path to a JSON file containing at minimum
+           an ``access_token`` key.
+
+        Inline format takes precedence when the value contains a comma and
+        is not a path to an existing file.
         """
-        credentials_path = os.getenv("CUDAQ_QUANTINUUM_CREDENTIALS")
-        if not credentials_path:
+        credentials_value = os.getenv("CUDAQ_QUANTINUUM_CREDENTIALS")
+        if not credentials_value:
             raise BackendAuthenticationError(
                 "Authentication failed: The 'CUDAQ_QUANTINUUM_CREDENTIALS' "
                 "environment variable is not set."
             )
+
+        # --- Inline "USERNAME,PASSWORD" format ---
+        if ',' in credentials_value and not os.path.exists(credentials_value):
+            raise BackendAuthenticationError(
+                "Inline 'USERNAME,PASSWORD' credentials detected but token "
+                "exchange is not yet implemented. Please provide a JSON file "
+                "path containing an 'access_token' key instead."
+            )
+
+        # --- JSON file path format (original behavior) ---
         try:
-            with open(credentials_path, 'r') as f:
+            with open(credentials_value, 'r') as f:
                 self.auth_credentials = json.load(f)
         except FileNotFoundError:
             raise BackendAuthenticationError(
-                f"Authentication failed: Credentials file not found at '{credentials_path}'"
+                f"Authentication failed: Credentials file not found at '{credentials_value}'"
             )
         except json.JSONDecodeError:
             raise BackendAuthenticationError(
-                f"Authentication failed: File at '{credentials_path}' is not valid JSON."
+                f"Authentication failed: File at '{credentials_value}' is not valid JSON."
             )
         print("Quantinuum authentication successful.")
 

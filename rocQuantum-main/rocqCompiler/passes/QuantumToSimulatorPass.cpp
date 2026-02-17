@@ -26,6 +26,32 @@ private:
     std::string gate_name;
 };
 
+// Lowering pattern for parametric single-qubit gates that carry an `angle` attr.
+template <typename SourceOp>
+struct ParamGateLoweringPattern : public mlir::OpRewritePattern<SourceOp> {
+    using mlir::OpRewritePattern<SourceOp>::OpRewritePattern;
+
+    ParamGateLoweringPattern(mlir::MLIRContext *context, std::string gate_name)
+        : mlir::OpRewritePattern<SourceOp>(context), gate_name(std::move(gate_name)) {}
+
+    mlir::LogicalResult matchAndRewrite(SourceOp op, mlir::PatternRewriter &rewriter) const override {
+        mlir::FloatAttr angle_attr = op->template getAttrOfType<mlir::FloatAttr>("angle");
+        if (!angle_attr) {
+            return mlir::LogicalResult::failure();
+        }
+
+        rewriter.replaceOpWithNewOp<rocq::mlir::sim::ApplyParamGateOp>(
+            op,
+            rewriter.getStringAttr(gate_name),
+            angle_attr,
+            op->getOperands());
+        return mlir::LogicalResult::success();
+    }
+
+private:
+    std::string gate_name;
+};
+
 // The main pass definition
 struct QuantumToSimulatorPass : public mlir::PassWrapper<QuantumToSimulatorPass, mlir::OperationPass<mlir::ModuleOp>> {
     MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(QuantumToSimulatorPass)
@@ -44,7 +70,10 @@ struct QuantumToSimulatorPass : public mlir::PassWrapper<QuantumToSimulatorPass,
         patterns.add<GateLoweringPattern<rocq::mlir::quantum::XOp>>(&getContext(), "x");
         patterns.add<GateLoweringPattern<rocq::mlir::quantum::YOp>>(&getContext(), "y");
         patterns.add<GateLoweringPattern<rocq::mlir::quantum::CnotOp>>(&getContext(), "cnot");
-        // Add other gate lowerings here...
+        patterns.add<GateLoweringPattern<rocq::mlir::quantum::ZOp>>(&getContext(), "z");
+        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RxOp>>(&getContext(), "rx");
+        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RyOp>>(&getContext(), "ry");
+        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RzOp>>(&getContext(), "rz");
 
         if (failed(applyPartialConversion(getOperation(), target, std::move(patterns)))) {
             signalPassFailure();

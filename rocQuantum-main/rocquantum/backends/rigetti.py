@@ -9,6 +9,8 @@ encapsulating the logic for authentication, job submission, and result
 retrieval for Rigetti QPUs.
 """
 
+import os
+
 import boto3
 from botocore.exceptions import ClientError
 from typing import Dict, Any
@@ -34,17 +36,21 @@ class RigettiBackend(RocqBackend):
     API-based methods to use the boto3 SDK for AWS communication.
     """
 
-    def __init__(self, backend_name: str = "rigetti", aws_region: str = DEFAULT_AWS_REGION):
+    def __init__(self, backend_name: str = "rigetti", aws_region: str = DEFAULT_AWS_REGION,
+                 s3_output: str = None):
         """
         Initializes the Rigetti backend client.
 
         Args:
             backend_name (str): The name of the backend.
             aws_region (str): The AWS region where the Braket service is hosted.
+            s3_output (str): S3 URI for Braket task output. Falls back to
+                ``ROCQ_RIGETTI_S3_OUTPUT`` env var if not provided.
         """
         super().__init__(backend_name=backend_name, api_endpoint="")  # API endpoint not used
         self.aws_region = aws_region
         self.braket_client = None
+        self.s3_output = s3_output or os.getenv("ROCQ_RIGETTI_S3_OUTPUT")
 
     def authenticate(self) -> None:
         """
@@ -96,10 +102,13 @@ class RigettiBackend(RocqBackend):
         if self.braket_client is None:
             raise JobSubmissionError("Braket client not initialized. Please call authenticate() first.")
 
-        # This requires the user to have an S3 bucket for Braket results.
-        # For this example, we'll assume a placeholder. In a real scenario,
-        # this should be configurable.
-        s3_output_location = f"s3://amazon-braket-{self.aws_region}-<YOUR_ACCOUNT_ID>/rigetti-tasks"
+        if not self.s3_output:
+            raise JobSubmissionError(
+                "Rigetti S3 output location not configured. Set the "
+                "'ROCQ_RIGETTI_S3_OUTPUT' environment variable or pass "
+                "s3_output= to the RigettiBackend constructor."
+            )
+        s3_output_location = self.s3_output
 
         try:
             response = self.braket_client.create_quantum_task(

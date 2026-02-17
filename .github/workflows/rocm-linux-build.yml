@@ -8,6 +8,49 @@ on:
   pull_request:
 
 jobs:
+  python-tests:
+    name: Python Tests (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+    defaults:
+      run:
+        shell: bash
+        working-directory: rocQuantum-main
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install numpy scipy
+
+      - name: Installability Smoke Test
+        run: |
+          python -c "import rocq; import rocquantum"
+          python -m rocq_cli --help
+
+      - name: Run Unit Tests
+        run: |
+          python -m unittest tests.test_p0_fixes -v
+          python -m unittest tests.test_p1_compiler -v
+          python -m unittest tests.test_p2_packaging -v
+          python -m unittest tests.test_cirq_integration -v
+          python -m unittest tests.test_pennylane_integration -v
+          python -m unittest tests.test_cpp_expectation -v
+
   build:
     name: Build ROCm ${{ matrix.rocm_label }}
     strategy:
