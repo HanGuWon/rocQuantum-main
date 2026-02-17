@@ -62,13 +62,19 @@ class QuantumKernel:
         self.num_qubits = ctx._next_qubit_index
         return ctx
 
-    # Supported gate -> MLIR op name mapping
+    # Supported gate -> (MLIR op name, arity)
     _GATE_TO_MLIR = {
-        "h": "quantum.h", "x": "quantum.x", "y": "quantum.y",
-        "z": "quantum.z", "cnot": "quantum.cnot", "cx": "quantum.cnot",
+        "h": ("quantum.h", 1),
+        "x": ("quantum.x", 1),
+        "y": ("quantum.y", 1),
+        "z": ("quantum.z", 1),
+        "cnot": ("quantum.cnot", 2),
+        "cx": ("quantum.cnot", 2),
     }
     _PARAM_GATE_TO_MLIR = {
-        "rx": "quantum.rx", "ry": "quantum.ry", "rz": "quantum.rz",
+        "rx": "quantum.rx",
+        "ry": "quantum.ry",
+        "rz": "quantum.rz",
     }
 
     def mlir(self, *args, **kwargs) -> str:
@@ -80,20 +86,68 @@ class QuantumKernel:
         ctx = self.build(*args, **kwargs)
         n = ctx._next_qubit_index
         body_lines = []
-        body_lines.append(f'    %qreg = "quantum.qalloc"() {{size = {n} : i64}} : () -> !quantum.qubit')
+
+        qubit_values = [f"%q{i}" for i in range(n)]
+        if n == 0:
+            body_lines.append(
+                '    "quantum.qalloc"() '
+                f'{{size = {n} : i64}} : () -> ()'
+            )
+        elif n == 1:
+            body_lines.append(
+                '    %q0 = "quantum.qalloc"() '
+                f'{{size = {n} : i64}} : () -> !quantum.qubit'
+            )
+        else:
+            lhs = ", ".join(qubit_values)
+            rhs_types = ", ".join("!quantum.qubit" for _ in range(n))
+            body_lines.append(
+                f'    {lhs} = "quantum.qalloc"() '
+                f'{{size = {n} : i64}} : () -> ({rhs_types})'
+            )
+
+        def _resolve_target_refs(targets: List[int]) -> List[str]:
+            refs: List[str] = []
+            for t in targets:
+                if t < 0 or t >= n:
+                    raise ValueError(
+                        f"Gate target index {t} is out of bounds for {n} qubits."
+                    )
+                refs.append(qubit_values[t])
+            return refs
+
         for op in ctx.ops:
             gate = op.name.lower()
             if gate in self._GATE_TO_MLIR:
-                targets = ", ".join(f"%qreg" for _ in op.targets)
+                mlir_name, arity = self._GATE_TO_MLIR[gate]
+                refs = _resolve_target_refs(op.targets)
+                if len(refs) != arity:
+                    raise ValueError(
+                        f"Gate '{op.name}' expects {arity} target(s), got {len(refs)}."
+                    )
+                targets = ", ".join(refs)
+                operand_types = ", ".join("!quantum.qubit" for _ in range(arity))
                 body_lines.append(
-                    f'    "{ self._GATE_TO_MLIR[gate]}"({targets}) : '
-                    f'({"!quantum.qubit, " * (len(op.targets) - 1)}!quantum.qubit) -> ()'
+                    f'    "{mlir_name}"({targets}) : ({operand_types}) -> ()'
                 )
             elif gate in self._PARAM_GATE_TO_MLIR:
-                angle = list(op.params.values())[0]
+                refs = _resolve_target_refs(op.targets)
+                if len(refs) != 1:
+                    raise ValueError(
+                        f"Gate '{op.name}' expects exactly one target, got {len(refs)}."
+                    )
+                angle = op.params.get("theta")
+                if angle is None:
+                    angle = op.params.get("phi")
+                if angle is None and op.params:
+                    angle = next(iter(op.params.values()))
+                if angle is None:
+                    raise ValueError(
+                        f"Gate '{op.name}' requires a numeric parameter."
+                    )
                 body_lines.append(
-                    f'    "{ self._PARAM_GATE_TO_MLIR[gate]}"(%qreg) '
-                    f'{{angle = {angle:.6e} : f64}} : (!quantum.qubit) -> ()'
+                    f'    "{self._PARAM_GATE_TO_MLIR[gate]}"({refs[0]}) '
+                    f'{{angle = {float(angle):.17g} : f64}} : (!quantum.qubit) -> ()'
                 )
             else:
                 raise NotImplementedError(
