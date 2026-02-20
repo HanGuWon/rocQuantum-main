@@ -1,0 +1,155 @@
+name: ROCm Nightly
+
+on:
+  schedule:
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rocm-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rocm-multigpu-perf-smoke:
+    name: ROCm Multi-GPU / Perf Smoke
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - rocm
+      - rocm-multigpu
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+        working-directory: rocQuantum-main
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Capture runner environment
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          mkdir -p "${ARTIFACT_DIR}"
+          {
+            echo "timestamp_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "runner_name=${RUNNER_NAME}"
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            uname -a
+            cmake --version || true
+            ninja --version || true
+            hipcc --version || true
+            rocminfo || true
+            rocm-smi || true
+            ls -l /dev/kfd || true
+          } | tee "${ARTIFACT_DIR}/runner-env.log"
+
+      - name: Configure
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          set -o pipefail
+          HIPCC_PATH="$(command -v hipcc)"
+          cmake -S . -B build-rocm-nightly -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DROCQUANTUM_BUILD_BINDINGS=OFF \
+            -DCMAKE_HIP_COMPILER="${HIPCC_PATH}" \
+            2>&1 | tee "${ARTIFACT_DIR}/configure.log"
+
+      - name: Build
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          set -o pipefail
+          cmake --build build-rocm-nightly --parallel 2>&1 | tee "${ARTIFACT_DIR}/build.log"
+
+      - name: Run multi-GPU + runtime smoke tests
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+          TEST_REGEX: MultiGPUTests|HipTensorNetContractionRegression
+        run: |
+          if [ ! -e /dev/kfd ]; then
+            echo "ROCm runtime device /dev/kfd is missing on nightly runner." | tee "${ARTIFACT_DIR}/ctest-nightly.log"
+            exit 1
+          fi
+          set -o pipefail
+          if ctest --help | grep -q -- "--output-junit"; then
+            ctest --test-dir build-rocm-nightly --output-on-failure \
+              --output-junit "${ARTIFACT_DIR}/ctest-nightly.junit.xml" \
+              -R "${TEST_REGEX}" \
+              2>&1 | tee "${ARTIFACT_DIR}/ctest-nightly.log"
+          else
+            ctest --test-dir build-rocm-nightly --output-on-failure -R "${TEST_REGEX}" \
+              2>&1 | tee "${ARTIFACT_DIR}/ctest-nightly.log"
+          fi
+
+      - name: Perf smoke timing
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          START_TIME="$(date +%s)"
+          set -o pipefail
+          ctest --test-dir build-rocm-nightly --output-on-failure -R HipTensorNetContractionRegression \
+            2>&1 | tee "${ARTIFACT_DIR}/perf-smoke.log"
+          END_TIME="$(date +%s)"
+          DURATION="$((END_TIME - START_TIME))"
+          echo "hiptensornet_contraction_seconds=${DURATION}" | tee "${ARTIFACT_DIR}/perf-smoke-metrics.txt"
+
+      - name: Perf smoke profile (rocprof optional)
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          if command -v rocprof >/dev/null 2>&1; then
+            set -o pipefail
+            rocprof --hip-trace --stats -o "${ARTIFACT_DIR}/rocprof-hiptensornet.csv" \
+              ctest --test-dir build-rocm-nightly --output-on-failure -R HipTensorNetContractionRegression \
+              2>&1 | tee "${ARTIFACT_DIR}/rocprof-run.log"
+          else
+            echo "rocprof not available on runner" | tee "${ARTIFACT_DIR}/rocprof-run.log"
+          fi
+
+      - name: Capture GPU telemetry snapshot (amdsmi/rocm-smi)
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          if command -v amdsmi >/dev/null 2>&1; then
+            set -o pipefail
+            amdsmi --showtemp --showpower --showuse \
+              2>&1 | tee "${ARTIFACT_DIR}/amdsmi-snapshot.log"
+          elif command -v rocm-smi >/dev/null 2>&1; then
+            set -o pipefail
+            rocm-smi 2>&1 | tee "${ARTIFACT_DIR}/amdsmi-snapshot.log"
+          else
+            echo "amdsmi/rocm-smi not available on runner" | tee "${ARTIFACT_DIR}/amdsmi-snapshot.log"
+          fi
+
+      - name: Write summary
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          mkdir -p "${ARTIFACT_DIR}"
+          {
+            echo "# ROCm Nightly Multi-GPU / Perf Smoke"
+            echo
+            echo "- Result: ${{ job.status }}"
+            echo "- Runner labels: self-hosted,linux,x64,rocm,rocm-multigpu"
+            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } | tee "${ARTIFACT_DIR}/summary-rocm-nightly.md" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload nightly artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocm-nightly-${{ github.run_id }}
+          path: ci-artifacts/rocm-nightly
+          if-no-files-found: warn
+          retention-days: 14

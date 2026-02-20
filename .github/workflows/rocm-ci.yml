@@ -1,0 +1,213 @@
+name: ROCm CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rocm-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast-checks:
+    name: Fast Checks (CPU)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: rocQuantum-main
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+
+      - name: Run fast non-GPU tests
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/fast-checks
+        run: |
+          mkdir -p "${ARTIFACT_DIR}"
+          set -o pipefail
+          python -m pytest -q \
+            tests/test_p0_fixes.py \
+            tests/test_p1_compiler.py \
+            tests/test_p2_packaging.py \
+            tests/test_cpp_expectation.py \
+            --junitxml "${ARTIFACT_DIR}/junit-fast-checks.xml" \
+            2>&1 | tee "${ARTIFACT_DIR}/pytest-fast-checks.log"
+
+      - name: Write summary
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/fast-checks
+        run: |
+          mkdir -p "${ARTIFACT_DIR}"
+          {
+            echo "# Fast Checks (CPU)"
+            echo
+            echo "- Result: ${{ job.status }}"
+            echo "- Python: $(python --version)"
+            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } | tee "${ARTIFACT_DIR}/summary-fast-checks.md" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload fast-check artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-checks-${{ github.run_id }}
+          path: ci-artifacts/fast-checks
+          if-no-files-found: warn
+          retention-days: 14
+
+  rocm-runtime-self-hosted:
+    name: ROCm Runtime (Self-hosted GPU)
+    needs: fast-checks
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - rocm
+      - rocm-gpu
+      - gfx90a
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: rocQuantum-main
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Capture runner environment
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          mkdir -p "${ARTIFACT_DIR}"
+          {
+            echo "timestamp_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "runner_name=${RUNNER_NAME}"
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            uname -a
+            cmake --version || true
+            ninja --version || true
+            python3 --version || true
+            hipcc --version || true
+            rocminfo || true
+            rocm-smi || true
+            ls -l /dev/kfd || true
+          } | tee "${ARTIFACT_DIR}/runner-env.log"
+
+      - name: Async contract gate
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -o pipefail
+          bash scripts/check_async_contract.sh 2>&1 | tee "${ARTIFACT_DIR}/async-contract.log"
+
+      - name: Configure
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -o pipefail
+          HIPCC_PATH="$(command -v hipcc)"
+          cmake -S . -B build-rocm-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DROCQUANTUM_BUILD_BINDINGS=OFF \
+            -DCMAKE_HIP_COMPILER="${HIPCC_PATH}" \
+            2>&1 | tee "${ARTIFACT_DIR}/configure.log"
+
+      - name: Build
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -o pipefail
+          cmake --build build-rocm-ci --parallel 2>&1 | tee "${ARTIFACT_DIR}/build.log"
+
+      - name: Run ROCm runtime tests (1 GPU smoke)
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+          TEST_REGEX: HipTensorNetContractionRegression|RocTensorUtilTest|SlicingLogicTest|PermutationKernelTest
+        run: |
+          if [ ! -e /dev/kfd ]; then
+            echo "ROCm runtime device /dev/kfd is missing on self-hosted runner." | tee "${ARTIFACT_DIR}/ctest-runtime.log"
+            exit 1
+          fi
+          set -o pipefail
+          if ctest --help | grep -q -- "--output-junit"; then
+            ctest --test-dir build-rocm-ci --output-on-failure \
+              --output-junit "${ARTIFACT_DIR}/ctest-runtime.junit.xml" \
+              -R "${TEST_REGEX}" \
+              2>&1 | tee "${ARTIFACT_DIR}/ctest-runtime.log"
+          else
+            ctest --test-dir build-rocm-ci --output-on-failure -R "${TEST_REGEX}" \
+              2>&1 | tee "${ARTIFACT_DIR}/ctest-runtime.log"
+          fi
+
+      - name: Run distributed MultiGPUTests when >= 2 GPUs
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -euo pipefail
+          GPU_COUNT=0
+          if command -v rocm-smi >/dev/null 2>&1; then
+            GPU_COUNT=$(rocm-smi -i 2>/dev/null | grep -E '^GPU\[[0-9]+\]' | wc -l | tr -d ' ')
+          fi
+          if [ "${GPU_COUNT}" -ge 2 ]; then
+            echo "Detected ${GPU_COUNT} GPUs; running MultiGPUTests." | tee "${ARTIFACT_DIR}/ctest-multigpu.log"
+            if ctest --help | grep -q -- "--output-junit"; then
+              ctest --test-dir build-rocm-ci --output-on-failure \
+                --output-junit "${ARTIFACT_DIR}/ctest-multigpu.junit.xml" \
+                -R "MultiGPUTests" \
+                2>&1 | tee -a "${ARTIFACT_DIR}/ctest-multigpu.log"
+            else
+              ctest --test-dir build-rocm-ci --output-on-failure -R "MultiGPUTests" \
+                2>&1 | tee -a "${ARTIFACT_DIR}/ctest-multigpu.log"
+            fi
+          else
+            echo "Detected ${GPU_COUNT} GPU(s); skipping MultiGPUTests (need >=2)." | tee "${ARTIFACT_DIR}/ctest-multigpu.log"
+          fi
+
+      - name: Write summary
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          mkdir -p "${ARTIFACT_DIR}"
+          {
+            echo "# ROCm Runtime (Self-hosted GPU)"
+            echo
+            echo "- Result: ${{ job.status }}"
+            echo "- Runner labels: self-hosted,linux,x64,rocm,rocm-gpu,gfx90a"
+            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } | tee "${ARTIFACT_DIR}/summary-rocm-runtime.md" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload runtime artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocm-runtime-${{ github.run_id }}
+          path: ci-artifacts/rocm-runtime
+          if-no-files-found: warn
+          retention-days: 14
