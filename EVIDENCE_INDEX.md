@@ -60,13 +60,13 @@
 - `docs/validation/agent6_local_env.log:5`-`9`, `19`-`20`: local Python launcher missing and unittest invocation blocked.
 
 ## ROCm Handoff Integration Phase (This Session)
-- `PR_PLAN.md:1`-`80`: integration branch strategy, commit plan, merge plan, risks, and CI gates.
+- `PR_PLAN.md:1`-`88`: integration branch strategy, commit plan, merge plan, risks, and CI gates.
 - `ROCM_CI_SETUP.md:73`-`162`: runner hardware profile, setup checklist, labels, permissions, and artifact policy.
-- `.github/workflows/rocm-ci.yml:79`-`219`: self-hosted runtime workflow with artifact capture, `/dev/kfd` gate, and conditional `MultiGPUTests`.
-- `.github/workflows/rocm-nightly.yml:74`-`157`: nightly multi-GPU + perf smoke, optional `rocprof`, telemetry snapshots.
+- `.github/workflows/rocm-ci.yml:79`-`213`: self-hosted runtime workflow with artifact capture, `/dev/kfd` gate, and conditional `MultiGPUTests`.
+- `.github/workflows/rocm-nightly.yml:74`-`155`: nightly multi-GPU + perf smoke, optional `rocprof`, telemetry snapshots.
 - `docker/rocm/Dockerfile:1`-`26`: reproducible ROCm container lane (`6.2.2` / `7.2.0`) with pinned Python tooling.
 - `VALIDATION_MATRIX.md:1`-`14`: final area-by-area local vs ROCm CI validation matrix.
-- `VALIDATION_RESULTS.md:1`-`49`: dated runner summary, pass/fail counts, blocker excerpts, and triage notes.
+- `VALIDATION_RESULTS.md:1`-`59`: dated runner summary, pass/fail counts, blocker excerpts, and triage notes.
 - `agent1_integration.md:1`-`68`: upstream drift analysis and pack consistency checks.
 - `agent2_dev_environment.md:1`-`49`: reproducible toolchain plan and support-policy linkage.
 - `agent3_rocm_ci.md:1`-`46`: CI workflow implementation details and security defaults.
@@ -74,3 +74,4 @@
 - `agent5_tensornet_validation_perf.md:1`-`70`: tensornet optimizer/dtype/perf validation findings.
 - `agent6_e2e_compiler_python_consolidation.md:1`-`61`: compiler/python E2E coverage and consolidation updates.
 - `docs/validation/agent6_local_env.log:1`-`21`: local environment execution blocker evidence.
+- `docs/validation/ci_poll_2026-02-21.log:1`-`17`: branch push status, run poll (`total_count=0`), and PR API permission blocker.

@@ -26,6 +26,10 @@
   - `.github/workflows/rocm-ci.yml`
   - `.github/workflows/rocm-nightly.yml`
   - `.github/workflows/rocm-linux-build.yml`
+- Branch push completed:
+  - `integration/rocm-validation-handoff`
+  - PR creation URL: https://github.com/HanGuWon/rocQuantum-main/pull/new/integration/rocm-validation-handoff
+- Workflow run poll for branch returned no runs yet (`total_count=0`) because push triggers target `main/master` and PR has not been opened.
 - Known public run reference (pre-handoff, used for triage context):
   - https://github.com/HanGuWon/rocQuantum-main/actions/runs/22094202085
   - job: https://github.com/HanGuWon/rocQuantum-main/actions/runs/22094202085/job/63846856733
@@ -44,6 +48,10 @@
   - Excerpt: `Runner labels: self-hosted,linux,x64,rocm,rocm-gpu,gfx90a`
 - `.github/workflows/rocm-nightly.yml:117`
   - Excerpt: `Runner labels: self-hosted,linux,x64,rocm,rocm-multigpu`
+- `docs/validation/ci_poll_2026-02-21.log:12`
+  - Excerpt: `Result: total_count=0`
+- `docs/validation/ci_poll_2026-02-21.log:17`
+  - Excerpt: `Error: Resource not accessible by personal access token`
 
 ## Triage Notes
 1. Compile/runtime E2E remains blocked by intentional stub in `compile_and_execute`; this is product code, not CI infra.
