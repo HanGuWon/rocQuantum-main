@@ -1,0 +1,18 @@
+﻿# CI Poll Log
+Timestamp: 2026-02-21T03:15:00+09:00
+
+## Branch push
+- Branch: integration/rocm-validation-handoff
+- Remote: origin
+- Result: pushed successfully
+- PR URL hint from remote:
+  https://github.com/HanGuWon/rocQuantum-main/pull/new/integration/rocm-validation-handoff
+
+## GitHub Actions runs query
+- Endpoint: /repos/HanGuWon/rocQuantum-main/actions/runs?branch=integration%2Frocm-validation-handoff
+- Result: total_count=0
+
+## PR creation API attempt
+- Endpoint: /repos/HanGuWon/rocQuantum-main/pulls
+- Result: HTTP 403
+- Error: Resource not accessible by personal access token

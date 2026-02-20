@@ -46,6 +46,7 @@ jobs:
         run: |
           python -m unittest tests.test_p0_fixes -v
           python -m unittest tests.test_p1_compiler -v
+          python -m unittest tests.test_e2e_compiler_python_flows -v
           python -m unittest tests.test_p2_packaging -v
           python -m unittest tests.test_cirq_integration -v
           python -m unittest tests.test_pennylane_integration -v

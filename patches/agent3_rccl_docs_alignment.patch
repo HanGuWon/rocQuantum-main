@@ -1,0 +1,33 @@
+# Agent 3 Patch (Explicit Change List)
+
+Format: explicit file-edit plan with implementation snippets (not auto-applied in this session).
+
+## Files
+- `rocQuantum-main/rocquantum/src/hipStateVec/DistributedComm.h` (new)
+- `rocQuantum-main/rocquantum/src/hipStateVec/DistributedComm.cpp` (new)
+- `rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp`
+- `rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md`
+- `docs/updates/multi_gpu.md`
+
+## Edits
+1. Introduce comm abstraction with explicit backend enum (`host_fallback`, `rccl`).
+2. Route swap/remap communication through comm abstraction entrypoint.
+3. Keep host remap as default correctness path; annotate as slow/debug fallback.
+4. Rewrite multi-GPU guide to eliminate contradictory claims and provide capability matrix.
+
+## Snippet: comm backend selection
+```cpp
+enum class CommBackend { HostFallback, Rccl };
+CommBackend select_backend_from_env();
+```
+
+## Snippet: swap path routing
+```cpp
+if (handle->distributedMode && !local_local) {
+  auto backend = distributed::select_backend();
+  if (backend == distributed::CommBackend::HostFallback) {
+    return distributed_swap_bits_host_remap(handle, q1, q2);
+  }
+  return distributed::swap_bits_rccl(handle, q1, q2);
+}
+```
