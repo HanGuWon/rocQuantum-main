@@ -1,0 +1,39 @@
+﻿diff --git a/.github/workflows/rocm-nightly.yml b/.github/workflows/rocm-nightly.yml
+index 3d9af7b..f6a1c8e 100644
+--- a/.github/workflows/rocm-nightly.yml
++++ b/.github/workflows/rocm-nightly.yml
+@@ -103,6 +103,34 @@ jobs:
+           DURATION="$((END_TIME - START_TIME))"
+           echo "hiptensornet_contraction_seconds=${DURATION}" | tee "${ARTIFACT_DIR}/perf-smoke-metrics.txt"
+ 
++      - name: Perf smoke profile (rocprof optional)
++        env:
++          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
++        run: |
++          if command -v rocprof >/dev/null 2>&1; then
++            set -o pipefail
++            rocprof --hip-trace --stats -o "${ARTIFACT_DIR}/rocprof-hiptensornet.csv" \
++              ctest --test-dir build-rocm-nightly --output-on-failure -R HipTensorNetContractionRegression \
++              2>&1 | tee "${ARTIFACT_DIR}/rocprof-run.log"
++          else
++            echo "rocprof not available on runner" | tee "${ARTIFACT_DIR}/rocprof-run.log"
++          fi
++
++      - name: Capture GPU telemetry snapshot (amdsmi/rocm-smi)
++        env:
++          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
++        run: |
++          if command -v amdsmi >/dev/null 2>&1; then
++            set -o pipefail
++            amdsmi --showtemp --showpower --showuse \
++              2>&1 | tee "${ARTIFACT_DIR}/amdsmi-snapshot.log"
++          elif command -v rocm-smi >/dev/null 2>&1; then
++            set -o pipefail
++            rocm-smi 2>&1 | tee "${ARTIFACT_DIR}/amdsmi-snapshot.log"
++          else
++            echo "amdsmi/rocm-smi not available on runner" | tee "${ARTIFACT_DIR}/amdsmi-snapshot.log"
++          fi
++
+       - name: Write summary
+         if: always()
+         env:
