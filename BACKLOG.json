@@ -23,7 +23,7 @@
                       "notes":  "Container compile lane exists but runtime is currently skippable without /dev/kfd.",
                       "status":  "Needs ROCm CI",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "pending-local-commit",
+                      "commit_link":  "1ae04e5",
                       "evidence_link":  ".github/workflows/rocm-ci.yml:79",
                       "verification_path":  "Run \u0027.github/workflows/rocm-ci.yml\u0027 job \u0027rocm-runtime-self-hosted\u0027 on a labeled gfx90a runner and attach artifacts."
                   },
@@ -48,7 +48,7 @@
                       "notes":  "Current workflow can skip runtime silently on generic runners.",
                       "status":  "Needs ROCm CI",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "pending-local-commit",
+                      "commit_link":  "1ae04e5",
                       "evidence_link":  ".github/workflows/rocm-ci.yml:101",
                       "verification_path":  "Run \u0027.github/workflows/rocm-ci.yml\u0027 and verify probe logs plus /dev/kfd fail-fast behavior."
                   },
@@ -75,7 +75,7 @@
                       "notes":  "Current defaults and CI lanes do not encode architecture policy.",
                       "status":  "Verified",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "pending-local-commit",
+                      "commit_link":  "0ad3137",
                       "evidence_link":  "docs/updates/support_policy.md:7",
                       "verification_path":  "Policy file is present; confirm CI/docs references remain current in PR review."
                   },

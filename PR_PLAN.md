@@ -54,6 +54,13 @@
    - `agent1_integration.md`
    - `PR_PLAN.md`
 
+## Local Integration Commits (Completed)
+1. `1ae04e5` `ci(rocm): add self-hosted runtime and nightly workflows`
+2. `0ad3137` `docs(rocm): add runner setup and reproducible environment`
+3. `719c212` `test(e2e): add compiler/python flow suite and CI hook`
+4. `d87d568` `docs(validation): add runtime and E2E validation artifacts`
+5. `e81f7ce` `docs(handoff): finalize plan, backlog, and evidence index`
+
 ## Merge/PR Plan
 - Preferred: one PR from `integration/rocm-validation-handoff` -> `main`.
 - Optional split if reviewers request:
