@@ -60,6 +60,7 @@
 3. `719c212` `test(e2e): add compiler/python flow suite and CI hook`
 4. `d87d568` `docs(validation): add runtime and E2E validation artifacts`
 5. `e81f7ce` `docs(handoff): finalize plan, backlog, and evidence index`
+6. `2a01aba` `docs(handoff): link backlog items to integration commits`
 
 ## Merge/PR Plan
 - Preferred: one PR from `integration/rocm-validation-handoff` -> `main`.
