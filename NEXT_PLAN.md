@@ -179,3 +179,25 @@ Baseline: `dbfd6816d4307b2f869487d0bf36f1c2ad324b3a`
   - Verify with CMake build matrix + dtype smoke tests on ROCm runners.
 - Unknown: parser robustness of `compile_and_execute` against MLIR evolution.
   - Verify with parser contract tests fed by emitted MLIR fixtures.
+
+## Agent 6 E2E Status Snapshot (2026-02-21)
+
+| Area | Scope | Status | Evidence | Verification path |
+|---|---|---|---|---|
+| Compiler flow mapping | `emit_qir -> compile_and_execute -> backend result` source path traced | Verified | `rocQuantum-main/rocq/kernel.py:167`, `rocQuantum-main/rocqCompiler/MLIRCompiler.cpp:48`, `rocQuantum-main/rocqCompiler/MLIRCompiler.cpp:83`, `rocQuantum-main/rocqCompiler/HipStateVecBackend.cpp:226` | Runtime still needs ROCm GPU CI execution to confirm backend statevector parity. |
+| Python public API top flows | `rocq.execute` local simulation flow and `rocquantum.core.set_target` provider flow traced | Verified | `rocQuantum-main/rocq/kernel.py:174`, `rocQuantum-main/rocquantum/core.py:34`, `rocQuantum-main/rocquantum/circuit.py:68` | Validate provider-backed jobs with credentials in backend-specific CI/secret lanes. |
+| Minimal E2E tests | Added 5-path suite (H, Bell, 3-qubit chain, compile_and_execute diagnostic/runtime, rocq execute Bell) | Verified | `rocQuantum-main/tests/test_e2e_compiler_python_flows.py:43`, `rocQuantum-main/tests/test_e2e_compiler_python_flows.py:88`, `rocQuantum-main/tests/test_e2e_compiler_python_flows.py:93`, `rocQuantum-main/tests/test_e2e_compiler_python_flows.py:99`, `rocQuantum-main/tests/test_e2e_compiler_python_flows.py:139` | Execute in CI Python lane and ROCm runtime lane. |
+| CI inclusion | Added Agent 6 E2E test to Python unit-test job | Verified | `.github/workflows/rocm-linux-build.yml:49` | Observe workflow result for `python-tests` job in next PR run. |
+| Local execution attempt | Direct local test execution blocked because Python launcher missing | Blocked | `docs/validation/agent6_local_env.log:5`, `docs/validation/agent6_local_env.log:6`, `docs/validation/agent6_local_env.log:9` | Install Python launcher or run in CI. |
+| ROCm runtime execution | GPU runtime validation path exists but requires `/dev/kfd` on ROCm host | Needs ROCm CI | `.github/workflows/rocm-linux-build.yml:107`, `.github/workflows/rocm-linux-build.yml:111`, `docs/updates/support_policy.md:17` | Run `.github/workflows/rocm-linux-build.yml` job `build` on self-hosted ROCm `gfx90a`. |
+
+## Handoff Status Snapshot (All Areas, 2026-02-21)
+
+| Area | Status | Evidence | Notes |
+|---|---|---|---|
+| Agent 1 integration re-analysis | Verified | `agent1_integration.md:1`, `PR_PLAN.md:1` | Upstream equals baseline; no patch-conflict drift detected. |
+| Agent 2 reproducible toolchain | Verified | `ROCM_CI_SETUP.md:3`, `docker/rocm/Dockerfile:1`, `agent2_dev_environment.md:1` | Reproducible container and commands added. |
+| Agent 3 ROCm CI workflows | Verified | `.github/workflows/rocm-ci.yml:1`, `.github/workflows/rocm-nightly.yml:1`, `agent3_rocm_ci.md:1` | Fast checks + self-hosted runtime + nightly lanes defined. |
+| Agent 4 statevec/RCCL runtime | Needs ROCm CI | `agent4_runtime_statevec_rccl.md:1`, `VALIDATION_MATRIX.md:4` | Local execution blocked by missing ROCm toolchain/runtime. |
+| Agent 5 hipTensorNet/perf | Needs ROCm CI | `agent5_tensornet_validation_perf.md:1`, `VALIDATION_MATRIX.md:8` | Optimizer/dtype gaps identified; CI hooks added for perf telemetry. |
+| Agent 6 compiler/python E2E + consolidation | Blocked | `rocQuantum-main/rocqCompiler/MLIRCompiler.cpp:83`, `agent6_e2e_compiler_python_consolidation.md:1` | `compile_and_execute` remains not implemented; tests added and wired. |

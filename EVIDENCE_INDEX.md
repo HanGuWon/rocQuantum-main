@@ -44,3 +44,33 @@
 - `rocQuantum-main/rocquantum/backends/alice_bob.py:1`-`10`: placeholder backend (`pass`).
 - `rocQuantum-main/tests/test_iqm_backend.py:1`, `rocQuantum-main/tests/test_alice_bob_backend.py:1`: TODO-only tests.
 - `rocQuantum-main/rocq/backends.py:199`-`204`: mock fallback active when HIP backend missing.
+
+## Agent 6 E2E Compiler + Python Consolidation
+- `rocQuantum-main/rocq/kernel.py:167`-`172`: Python `qir()` path emits MLIR then calls `MLIRCompiler.emit_qir()`.
+- `rocQuantum-main/rocqCompiler/MLIRCompiler.cpp:48`-`79`: `emit_qir()` lowering path to LLVM IR/QIR text.
+- `rocQuantum-main/rocqCompiler/MLIRCompiler.cpp:83`-`89`: `compile_and_execute()` still hard-throws not-implemented diagnostic.
+- `rocQuantum-main/rocqCompiler/HipStateVecBackend.cpp:226`-`233`: backend result path returns statevector.
+- `rocQuantum-main/rocquantum/core.py:34`-`50`: Python provider flow via `set_target()` backend import/auth.
+- `rocQuantum-main/rocquantum/circuit.py:68`-`95`: Python circuit flow to OpenQASM via `to_qasm()`.
+- `rocQuantum-main/tests/test_e2e_compiler_python_flows.py:43`-`145`: Agent 6 minimal E2E suite (3 circuits + compile/runtime diagnostic + Python API bell flow).
+- `.github/workflows/rocm-linux-build.yml:49`: Python CI lane now includes `tests.test_e2e_compiler_python_flows`.
+- `.github/workflows/rocm-linux-build.yml:61`-`64`: ROCm container matrix (`6.2.2`, `7.2.0`).
+- `.github/workflows/rocm-linux-build.yml:107`-`111`: runtime gate depends on `/dev/kfd`; runs `HipTensorNetContractionRegression`.
+- `docs/updates/support_policy.md:7`, `docs/updates/support_policy.md:9`, `docs/updates/support_policy.md:17`: policy target for ROCm baseline and `gfx90a` runtime lane.
+- `docs/validation/agent6_local_env.log:5`-`9`, `19`-`20`: local Python launcher missing and unittest invocation blocked.
+
+## ROCm Handoff Integration Phase (This Session)
+- `PR_PLAN.md:1`-`80`: integration branch strategy, commit plan, merge plan, risks, and CI gates.
+- `ROCM_CI_SETUP.md:73`-`162`: runner hardware profile, setup checklist, labels, permissions, and artifact policy.
+- `.github/workflows/rocm-ci.yml:79`-`219`: self-hosted runtime workflow with artifact capture, `/dev/kfd` gate, and conditional `MultiGPUTests`.
+- `.github/workflows/rocm-nightly.yml:74`-`157`: nightly multi-GPU + perf smoke, optional `rocprof`, telemetry snapshots.
+- `docker/rocm/Dockerfile:1`-`26`: reproducible ROCm container lane (`6.2.2` / `7.2.0`) with pinned Python tooling.
+- `VALIDATION_MATRIX.md:1`-`14`: final area-by-area local vs ROCm CI validation matrix.
+- `VALIDATION_RESULTS.md:1`-`49`: dated runner summary, pass/fail counts, blocker excerpts, and triage notes.
+- `agent1_integration.md:1`-`68`: upstream drift analysis and pack consistency checks.
+- `agent2_dev_environment.md:1`-`49`: reproducible toolchain plan and support-policy linkage.
+- `agent3_rocm_ci.md:1`-`46`: CI workflow implementation details and security defaults.
+- `agent4_runtime_statevec_rccl.md:1`-`57`: distributed statevec/RCCL runtime coverage and blockers.
+- `agent5_tensornet_validation_perf.md:1`-`70`: tensornet optimizer/dtype/perf validation findings.
+- `agent6_e2e_compiler_python_consolidation.md:1`-`61`: compiler/python E2E coverage and consolidation updates.
+- `docs/validation/agent6_local_env.log:1`-`21`: local environment execution blocker evidence.
