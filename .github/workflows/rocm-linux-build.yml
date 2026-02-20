@@ -6,6 +6,10 @@ on:
       - main
       - master
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   python-tests:
@@ -34,8 +38,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install numpy scipy
+          pip install numpy scipy tomli
 
       - name: Installability Smoke Test
         run: |
@@ -61,8 +64,8 @@ jobs:
           - rocm_image: rocm/dev-ubuntu-22.04:6.2.2
             rocm_label: "6.2.2"
             experimental: false
-          - rocm_image: rocm/dev-ubuntu-22.04:7.2.0
-            rocm_label: "7.2.0"
+          - rocm_image: rocm/dev-ubuntu-22.04:7.2
+            rocm_label: "7.2"
             experimental: true
     continue-on-error: ${{ matrix.experimental }}
     runs-on: ubuntu-22.04

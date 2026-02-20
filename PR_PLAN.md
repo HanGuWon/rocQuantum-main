@@ -73,7 +73,7 @@
 - `ROCm CI / Fast Checks (CPU)` must pass.
 - `ROCm CI / ROCm Runtime (Self-hosted GPU)` must pass on labeled `gfx90a` runner.
 - `ROCm Linux Build / Build ROCm 6.2.2` must pass.
-- `ROCm Linux Build / Build ROCm 7.2.0` should pass (currently experimental lane in workflow).
+- `ROCm Linux Build / Build ROCm 7.2` should pass (currently experimental lane in workflow).
 
 ## Risks
 1. ROCm runtime outcomes remain unverified in this local Windows session.

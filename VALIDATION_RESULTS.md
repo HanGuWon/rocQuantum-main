@@ -6,8 +6,8 @@
   - ROCm CI target runners:
     - `.github/workflows/rocm-ci.yml` self-hosted labels `self-hosted,linux,x64,rocm,rocm-gpu,gfx90a`.
     - `.github/workflows/rocm-nightly.yml` self-hosted labels `self-hosted,linux,x64,rocm,rocm-multigpu`.
-    - `.github/workflows/rocm-linux-build.yml` container lanes `6.2.2` and `7.2.0`.
-  - ROCm policy target: minimum `6.2.2`, latest stable lane `7.2.0`, primary arch `gfx90a`.
+    - `.github/workflows/rocm-linux-build.yml` container lanes `6.2.2` and `7.2`.
+  - ROCm policy target: minimum `6.2.2`, latest stable lane `7.2.0` (CI container tag `7.2`), primary arch `gfx90a`.
 - Summary: pass/fail/blocked
   - Local validated (source/doc/workflow inspection): 8
   - Local execution blocked (missing runtime/toolchain on this host): 7

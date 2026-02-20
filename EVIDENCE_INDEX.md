@@ -1,7 +1,7 @@
 # Evidence Index (baseline `dbfd6816d4307b2f869487d0bf36f1c2ad324b3a`)
 
 ## CI / Build / Validation
-- `.github/workflows/rocm-linux-build.yml:54`-`69`: ROCm compile uses container matrix (`6.2.2`, `7.2.0`).
+- `.github/workflows/rocm-linux-build.yml:54`-`69`: ROCm compile uses container matrix (`6.2.2`, `7.2`).
 - `.github/workflows/rocm-linux-build.yml:106`-`110`: runtime tests are skipped when `/dev/kfd` is absent.
 - `.github/workflows/rocm-linux-build.yml:11`-`52`: CPU Python test lane exists.
 - `rocQuantum-main/build_rocq.bat:13`-`14`: default GPU arch target is `gfx906`.
@@ -54,7 +54,7 @@
 - `rocQuantum-main/rocquantum/circuit.py:68`-`95`: Python circuit flow to OpenQASM via `to_qasm()`.
 - `rocQuantum-main/tests/test_e2e_compiler_python_flows.py:43`-`145`: Agent 6 minimal E2E suite (3 circuits + compile/runtime diagnostic + Python API bell flow).
 - `.github/workflows/rocm-linux-build.yml:49`: Python CI lane now includes `tests.test_e2e_compiler_python_flows`.
-- `.github/workflows/rocm-linux-build.yml:61`-`64`: ROCm container matrix (`6.2.2`, `7.2.0`).
+- `.github/workflows/rocm-linux-build.yml:61`-`64`: ROCm container matrix (`6.2.2`, `7.2`).
 - `.github/workflows/rocm-linux-build.yml:107`-`111`: runtime gate depends on `/dev/kfd`; runs `HipTensorNetContractionRegression`.
 - `docs/updates/support_policy.md:7`, `docs/updates/support_policy.md:9`, `docs/updates/support_policy.md:17`: policy target for ROCm baseline and `gfx90a` runtime lane.
 - `docs/validation/agent6_local_env.log:5`-`9`, `19`-`20`: local Python launcher missing and unittest invocation blocked.
@@ -64,7 +64,7 @@
 - `ROCM_CI_SETUP.md:73`-`162`: runner hardware profile, setup checklist, labels, permissions, and artifact policy.
 - `.github/workflows/rocm-ci.yml:79`-`213`: self-hosted runtime workflow with artifact capture, `/dev/kfd` gate, and conditional `MultiGPUTests`.
 - `.github/workflows/rocm-nightly.yml:74`-`155`: nightly multi-GPU + perf smoke, optional `rocprof`, telemetry snapshots.
-- `docker/rocm/Dockerfile:1`-`26`: reproducible ROCm container lane (`6.2.2` / `7.2.0`) with pinned Python tooling.
+- `docker/rocm/Dockerfile:1`-`26`: reproducible ROCm container lane (`6.2.2` / `7.2`) with pinned Python tooling.
 - `VALIDATION_MATRIX.md:1`-`14`: final area-by-area local vs ROCm CI validation matrix.
 - `VALIDATION_RESULTS.md:1`-`59`: dated runner summary, pass/fail counts, blocker excerpts, and triage notes.
 - `agent1_integration.md:1`-`68`: upstream drift analysis and pack consistency checks.

@@ -4,15 +4,15 @@
 | Lane | ROCm Toolchain | AMD GPU Targets | Scope |
 |---|---|---|---|
 | Primary | `rocm/dev-ubuntu-22.04:6.2.2` | `gfx90a` | Minimum supported ROCm lane and release gate baseline. |
-| Latest | `rocm/dev-ubuntu-22.04:7.2.0` | `gfx90a` | Forward-compatibility lane. |
-| Optional Legacy | `rocm/dev-ubuntu-22.04:{6.2.2,7.2.0}` | `gfx906;gfx908` | Best-effort compatibility lane (non-blocking by default). |
+| Latest | `rocm/dev-ubuntu-22.04:7.2` | `gfx90a` | Forward-compatibility lane. |
+| Optional Legacy | `rocm/dev-ubuntu-22.04:{6.2.2,7.2}` | `gfx906;gfx908` | Best-effort compatibility lane (non-blocking by default). |
 
 ## Reproducible Container Environment
 Use `docker/rocm/Dockerfile` to build deterministic ROCm toolchain images:
 
 ```bash
 docker build --build-arg ROCM_VERSION=6.2.2 -t rocq-dev:rocm-6.2.2 -f docker/rocm/Dockerfile .
-docker build --build-arg ROCM_VERSION=7.2.0 -t rocq-dev:rocm-7.2.0 -f docker/rocm/Dockerfile .
+docker build --build-arg ROCM_VERSION=7.2 -t rocq-dev:rocm-7.2 -f docker/rocm/Dockerfile .
 ```
 
 ROCm runtime shell (GPU-enabled host):
@@ -92,7 +92,7 @@ Required profiles for this repo's workflows:
 
 ## ROCm Installation + Validation Checklist
 
-Install ROCm from the official AMD package channel for your chosen lane (`6.2.2` or `7.2.0`), then validate:
+Install ROCm from the official AMD package channel for your chosen lane (`6.2.2` or `7.2`), then validate:
 
 ```bash
 hipcc --version

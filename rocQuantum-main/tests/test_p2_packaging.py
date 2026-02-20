@@ -11,6 +11,11 @@ import sys
 import unittest
 import warnings
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
+
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
@@ -89,7 +94,6 @@ class TestPyprojectExists(unittest.TestCase):
         self.assertTrue(os.path.isfile(path))
 
     def test_pyproject_has_name(self):
-        import tomllib
         path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
         with open(path, "rb") as f:
             data = tomllib.load(f)
