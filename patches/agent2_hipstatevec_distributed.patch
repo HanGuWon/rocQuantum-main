@@ -1,0 +1,32 @@
+# Agent 2 Patch (Explicit Change List)
+
+Format: explicit file-edit plan with implementation snippets (not auto-applied in this session).
+
+## Files
+- `rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp`
+- `rocQuantum-main/rocquantum/src/hipStateVec/CMakeLists.txt`
+- `rocQuantum-main/rocquantum/src/hipStateVec/test_hipStateVec_distributed_nonlocal.cpp` (new)
+
+## Edits
+1. Add distributed non-local localization helper via swap orchestration.
+2. Apply helper in distributed 1Q/2Q gate paths before returning `NOT_IMPLEMENTED`.
+3. Replace distributed `rocsvSample` `NOT_IMPLEMENTED` path with host-gather correctness fallback.
+4. Replace distributed expectation `NOT_IMPLEMENTED` paths with host-gather correctness fallback.
+5. Add 2-rank non-local correctness test target.
+
+## Snippet: sampling fallback idea
+```cpp
+if (uses_distributed_state(handle, d_state)) {
+  std::vector<rocComplex> host_state;
+  ROCQ_RETURN_IF_ERROR(gather_distributed_state_to_host(handle, &host_state));
+  // Build outcome probabilities on host and sample using handle->rng.
+  return sample_host_state(host_state, measuredQubits, numShots, h_results, handle->rng);
+}
+```
+
+## Snippet: CMake test target
+```cmake
+add_executable(test_hipStateVec_distributed_nonlocal test_hipStateVec_distributed_nonlocal.cpp)
+target_link_libraries(test_hipStateVec_distributed_nonlocal PRIVATE hipStateVec HIP::hip_runtime)
+add_test(NAME MultiGPUDistributedNonLocal COMMAND test_hipStateVec_distributed_nonlocal)
+```

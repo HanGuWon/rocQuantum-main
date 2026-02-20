@@ -1,0 +1,29 @@
+# Agent 6 Patch (Explicit Change List)
+
+Format: explicit file-edit plan with implementation snippets (not auto-applied in this session).
+
+## Files
+- `rocQuantum-main/rocquantum/core.py`
+- `rocQuantum-main/tests/test_backend_catalog_policy.py` (new)
+- `docs/updates/python_api_policy.md`
+
+## Edits
+1. Replace flat backend map with metadata registry (`import`, `status`).
+2. Add `list_backends(include_experimental=False)` capability API.
+3. Block skeleton backends by default in `set_target()`.
+4. Add explicit opt-in path (`allow_experimental=True` or env override).
+5. Add policy unit tests.
+
+## Snippet: registry model
+```python
+_BACKEND_REGISTRY = {
+  "ionq": {"import": "...IonQBackend", "status": "implemented"},
+  "iqm": {"import": "...IQMBackend", "status": "skeleton"},
+}
+```
+
+## Snippet: policy gate
+```python
+if meta["status"] == "skeleton" and not allow_experimental:
+    raise RuntimeError("backend is skeleton and disabled by default")
+```

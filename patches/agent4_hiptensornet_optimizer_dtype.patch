@@ -1,0 +1,32 @@
+# Agent 4 Patch (Explicit Change List)
+
+Format: explicit file-edit plan with implementation snippets (not auto-applied in this session).
+
+## Files
+- `rocQuantum-main/rocquantum/src/hipTensorNet/CMakeLists.txt`
+- `rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp`
+- `rocQuantum-main/rocquantum/src/Pathfinder.cpp`
+- `rocQuantum-main/python/rocq/bindings.cpp`
+- `rocQuantum-main/rocquantum/src/hipTensorNet/test_hipTensorNet_dtype_smoke.cpp` (new)
+
+## Edits
+1. Add build options: `ROCQUANTUM_TN_ENABLE_KAHYPAR`, `ROCQUANTUM_TN_ENABLE_METIS`.
+2. Include `Pathfinder.cpp` in tensornet build and enable guarded pathfinder dispatch.
+3. Implement fallback behavior: unavailable algorithm -> warning + greedy.
+4. Add phase-1 dtype expansion path (C64 stable, C128 lane when available).
+5. Expose `pathfinder_algorithm` in Python optimizer config.
+6. Add dtype smoke test.
+
+## Snippet: algorithm fallback
+```cpp
+if (config->pathfinder_algorithm != ROCTN_PATHFINDER_ALGO_GREEDY && !algo_available(config)) {
+  log_warn("requested pathfinder unavailable, falling back to greedy");
+  config->pathfinder_algorithm = ROCTN_PATHFINDER_ALGO_GREEDY;
+}
+```
+
+## Snippet: CMake options
+```cmake
+option(ROCQUANTUM_TN_ENABLE_KAHYPAR "Enable KaHyPar-backed pathfinding" OFF)
+option(ROCQUANTUM_TN_ENABLE_METIS "Enable METIS-backed pathfinding" OFF)
+```

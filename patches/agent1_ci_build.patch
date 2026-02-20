@@ -1,0 +1,27 @@
+# Agent 1 Patch (Explicit Change List)
+
+Format: explicit file-edit plan with patch-ready snippets (not auto-applied in this session).
+
+## Files
+- `.github/workflows/rocm-linux-build.yml`
+- `.github/workflows/rocm-runtime-selfhosted.yml` (new)
+- `.github/workflows/rocm-nightly-multigpu.yml` (new)
+- `rocQuantum-main/scripts/probe_rocm_env.sh` (new)
+- `docs/updates/support_policy.md` (new)
+
+## Edits
+1. Rename `build` job to `rocm-compile` and keep it compile-focused.
+2. Add blocking `rocm-runtime-selfhosted.yml` job on labels `[self-hosted, Linux, X64, rocm, gfx90a]`.
+3. Add non-blocking nightly multi-GPU workflow for distributed/perf smoke.
+4. Add `probe_rocm_env.sh` to fail fast when ROCm prerequisites are missing.
+5. Add support policy doc with min ROCm 6.2.2, primary gfx90a, legacy gfx906/gfx908.
+
+## Snippet: probe script
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+for tool in hipcc rocminfo rocm-smi; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "missing $tool"; exit 2; }
+done
+[[ -e /dev/kfd ]] || { echo "missing /dev/kfd"; exit 2; }
+```

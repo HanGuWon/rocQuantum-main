@@ -1,0 +1,35 @@
+# Agent 5 Patch (Explicit Change List)
+
+Format: explicit file-edit plan with implementation snippets (not auto-applied in this session).
+
+## Files
+- `rocQuantum-main/rocqCompiler/MLIRCompiler.cpp`
+- `rocQuantum-main/bindings.cpp`
+- `rocQuantum-main/tests/test_p1_compiler.py`
+- `docs/updates/compiler_runtime.md`
+
+## Edits
+1. Replace `compile_and_execute` throw-only stub with execution MVP.
+2. Parse MLIR quantum ops and replay on selected backend.
+3. Preserve/forward `args` from Python binding to compiler.
+4. Update source-level tests to assert execution-path symbols exist.
+5. Document runtime dependencies and known limits.
+
+## Snippet: compile_and_execute MVP
+```cpp
+backend->initialize(num_qubits);
+for (auto& op : parse_quantum_ops(mlir_string)) {
+  if (op.is_param) backend->apply_parametrized_gate(op.name, op.angle, op.targets);
+  else backend->apply_gate(op.name, op.targets);
+}
+auto state = backend->get_state_vector();
+backend->destroy();
+return state;
+```
+
+## Snippet: binding arg forwarding
+```cpp
+std::map<std::string, bool> parsed;
+for (auto item : args) parsed[py::cast<std::string>(item.first)] = py::cast<bool>(item.second);
+return self.compile_and_execute(mlir, parsed);
+```
