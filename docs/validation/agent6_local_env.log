@@ -1,0 +1,21 @@
+﻿# Agent 6 Local Validation Log
+Timestamp: 2026-02-21T02:57:02.9701059+09:00
+WorkingDir: C:\Users\한구원\Desktop\rocQuantum-main
+
+## where.exe python
+INFO: Could not find files for the given pattern(s).
+
+## where.exe py
+INFO: Could not find files for the given pattern(s).
+
+## cmake --version
+cmake version 3.27.7
+
+CMake suite maintained and supported by Kitware (kitware.com/cmake).
+
+## git rev-parse --short HEAD
+895b5da
+
+## python -m unittest tests.test_e2e_compiler_python_flows -v
+'python' is not recognized as an internal or external command,
+operable program or batch file.
