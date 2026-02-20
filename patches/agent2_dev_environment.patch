@@ -1,0 +1,13 @@
+# Agent 2 Patch (Explicit Change List)
+
+## Files
+- `docker/rocm/Dockerfile` (new)
+- `ROCM_CI_SETUP.md` (new)
+- `docs/updates/support_policy.md` (update)
+- `agent2_dev_environment.md` (new)
+
+## Edits
+1. Added reproducible ROCm Docker environment based on pinned ROCm lanes (`6.2.2`, `7.2.0`) with explicit build dependencies.
+2. Added ROCm environment/toolchain setup doc with primary `gfx90a` and optional legacy `gfx906/gfx908` lane commands.
+3. Added minimum configure commands and full build/test command sequence aligned with current ROCm CI workflow.
+4. Updated support policy baseline to reference the reproducible setup artifacts.

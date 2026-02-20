@@ -8,6 +8,7 @@ This policy is for `rocQuantum-main` GPU validation and release gating.
 - Recommended latest lane: **7.2.x**
 - Primary architecture lane: **gfx90a**
 - Legacy lane (best effort, reduced SLA): **gfx906**, **gfx908**
+- Reproducible environment source: `ROCM_CI_SETUP.md` + `docker/rocm/Dockerfile`
 
 ## CI Expectations
 - PR gate must pass:
