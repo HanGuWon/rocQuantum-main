@@ -103,21 +103,24 @@ class TestSumOperatorImmutability(unittest.TestCase):
 # 3. Expectation Value — No Placeholder, No Kernel Execution
 # ===================================================================
 class TestExpectationValue(unittest.TestCase):
-    def test_raises_not_implemented(self):
-        from rocq.operator import get_expectation_value, PauliOperator
-        op = PauliOperator("Z0")
-        with self.assertRaises(NotImplementedError):
-            get_expectation_value(None, op, backend="state_vector")
+    def test_signature_remains_stable(self):
+        from rocq.operator import get_expectation_value
 
-    def test_does_not_execute_kernel(self):
-        """Ensure no kernel execution happens before the error."""
-        from rocq.operator import get_expectation_value, PauliOperator
-        from rocq.kernel import execute as real_execute
+        sig = inspect.signature(get_expectation_value)
+        self.assertIn("kernel", sig.parameters)
+        self.assertIn("operator", sig.parameters)
+        self.assertIn("backend", sig.parameters)
+
+    def test_delegates_to_kernel_observe(self):
+        from rocq.operator import PauliOperator, get_expectation_value
+
         op = PauliOperator("Z0")
-        with mock.patch("rocq.operator.execute") as mock_exec:
-            with self.assertRaises(NotImplementedError):
-                get_expectation_value(None, op, backend="state_vector")
-            mock_exec.assert_not_called()
+        sentinel = object()
+        with mock.patch("rocq.kernel.observe", return_value=sentinel) as patched_observe:
+            result = get_expectation_value(None, op, backend="state_vector", tag="contract")
+
+        self.assertIs(result, sentinel)
+        patched_observe.assert_called_once_with(None, op, backend="state_vector", tag="contract")
 
 
 # ===================================================================

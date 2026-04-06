@@ -15,7 +15,8 @@ add_library(rocquantum::densitymat ALIAS rocq_hip_density_mat)
 
 target_include_directories(rocq_hip_density_mat
     PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
 )

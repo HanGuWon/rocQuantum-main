@@ -2,6 +2,15 @@
 
 Audit date: 2026-04-05
 
+Runtime update note (2026-04-06):
+
+- Canonical `rocq.execute()`, `rocq.sample()`, and `rocq.observe()` now route through a unified backend contract.
+- `rocq.operator.get_expectation_value()` now delegates to `rocq.observe()`.
+- Native state-vector sampling and Pauli expectation paths are wired into the canonical `rocq` surface.
+- Packaging has moved to a CMake-first `scikit-build-core` path.
+
+The detailed findings below still describe the original audit snapshot; use them together with the runtime update above.
+
 ## Scope
 
 - Authoritative project root: `c:\Users\한구원\Desktop\rocQuantum-main\rocQuantum-main`

@@ -20,9 +20,11 @@ class TestCanonicalImports(unittest.TestCase):
     """Core symbols must be importable from canonical rocq path."""
 
     def test_import_rocq_kernel(self):
-        from rocq.kernel import QuantumKernel, execute
+        from rocq.kernel import QuantumKernel, execute, observe, sample
         self.assertIsNotNone(QuantumKernel)
         self.assertIsNotNone(execute)
+        self.assertIsNotNone(observe)
+        self.assertIsNotNone(sample)
 
     def test_import_rocq_operator(self):
         from rocq.operator import PauliOperator, SumOperator, get_expectation_value
@@ -31,6 +33,15 @@ class TestCanonicalImports(unittest.TestCase):
     def test_import_rocq_gates(self):
         from rocq.gates import h, x, y, z, cnot, rx, ry, rz
         self.assertIsNotNone(h)
+
+
+class TestFutureCanonicalRuntimeSurface(unittest.TestCase):
+    """Forward-looking contract checks for the new canonical runtime API."""
+
+    def test_observe_and_sample_exports(self):
+        import rocq
+        self.assertTrue(callable(rocq.observe))
+        self.assertTrue(callable(rocq.sample))
 
 
 class TestLegacyShim(unittest.TestCase):
@@ -94,6 +105,13 @@ class TestPyprojectExists(unittest.TestCase):
         with open(path, "rb") as f:
             data = tomllib.load(f)
         self.assertEqual(data["project"]["name"], "rocquantum")
+
+    def test_pyproject_uses_scikit_build_core(self):
+        import tomllib
+        path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        self.assertEqual(data["build-system"]["build-backend"], "scikit_build_core.build")
 
 
 if __name__ == "__main__":

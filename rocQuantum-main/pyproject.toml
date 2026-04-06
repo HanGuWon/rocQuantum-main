@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel", "pybind11>=2.10"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=0.11.0", "pybind11>=2.10", "cmake>=3.18", "ninja>=1.11"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "rocquantum"
@@ -32,11 +32,9 @@ all = ["rocquantum[backends,pennylane,dev]"]
 [project.scripts]
 rocq = "rocq_cli:main"
 
-[tool.setuptools]
-py-modules = ["rocq_cli"]
+[tool.scikit-build.cmake]
+minimum-version = "3.18"
 
-[tool.setuptools.packages.find]
-where = ["."]
-namespaces = true
-include = ["rocq*", "rocquantum*"]
-exclude = ["tests*", "build*", "examples*"]
+[tool.scikit-build.wheel.packages]
+rocq = "rocq"
+rocquantum = "rocquantum"

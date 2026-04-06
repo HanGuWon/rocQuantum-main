@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "hipDensityMat.hpp"
+#include "../hipDensityMat/hipDensityMat_internal.hpp"
 
 namespace py = pybind11;
 
@@ -94,7 +95,23 @@ PYBIND11_MODULE(rocq_hip, m) {
         }, py::arg("target_qubit"), py::arg("probability"), "Apply a bit-flip noise channel.")
         .def("apply_depolarizing_channel", [](hipDensityMatState* state, int target_qubit, double probability) {
             HIPDENSITYMAT_CHECK(hipDensityMatApplyDepolarizingChannel(state, target_qubit, probability));
-        }, py::arg("target_qubit"), py::arg("probability"), "Apply a depolarizing noise channel.");
+        }, py::arg("target_qubit"), py::arg("probability"), "Apply a depolarizing noise channel.")
+        .def("get_density_matrix", [](hipDensityMatState* state) {
+            if (state == nullptr) {
+                throw std::invalid_argument("DensityMatrixState is null.");
+            }
+
+            auto* internal_state = static_cast<hipDensityMatState*>(state);
+            const int64_t dim = 1LL << internal_state->num_qubits_;
+            py::array_t<std::complex<float>> host_density({dim, dim});
+            HIP_CHECK(hipMemcpy(
+                host_density.mutable_data(),
+                internal_state->device_data_,
+                static_cast<size_t>(internal_state->num_elements_) * sizeof(hipComplex),
+                hipMemcpyDeviceToHost
+            ));
+            return host_density;
+        }, "Copy the full density matrix back to host memory.");
 
     py::enum_<hipDensityMatPauli_t>(m, "Pauli")
         .value("X", HIPDENSITYMAT_PAULI_X)
