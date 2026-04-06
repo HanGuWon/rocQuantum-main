@@ -6,7 +6,7 @@ add_executable(test_hipDensityMat test_hipDensityMat.cpp)
 
 # Link against hipDensityMat library, GTest, and HIP runtime
 target_link_libraries(test_hipDensityMat PRIVATE
-    rocquantum_hipDensityMat
+    rocq_hip_density_mat
     GTest::gtest_main
     ${HIP_LIBRARIES}
 )

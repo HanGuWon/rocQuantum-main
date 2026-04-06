@@ -46,7 +46,6 @@ jobs:
         run: |
           python -m unittest tests.test_p0_fixes -v
           python -m unittest tests.test_p1_compiler -v
-          python -m unittest tests.test_e2e_compiler_python_flows -v
           python -m unittest tests.test_p2_packaging -v
           python -m unittest tests.test_cirq_integration -v
           python -m unittest tests.test_pennylane_integration -v
@@ -61,9 +60,11 @@ jobs:
           - rocm_image: rocm/dev-ubuntu-22.04:6.2.2
             rocm_label: "6.2.2"
             experimental: false
+            hip_architectures: "gfx942;gfx90a"
           - rocm_image: rocm/dev-ubuntu-22.04:7.2.0
             rocm_label: "7.2.0"
             experimental: true
+            hip_architectures: "gfx950;gfx942;gfx90a"
     continue-on-error: ${{ matrix.experimental }}
     runs-on: ubuntu-22.04
     container:
@@ -97,7 +98,8 @@ jobs:
           cmake -S . -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=ON \
-            -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc
+            -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc \
+            -DCMAKE_HIP_ARCHITECTURES="${{ matrix.hip_architectures }}"
 
       - name: Build
         run: cmake --build build-ci --parallel

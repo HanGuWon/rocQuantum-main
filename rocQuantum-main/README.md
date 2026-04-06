@@ -1,113 +1,113 @@
-# rocQuantum Version 1.0
+# rocQuantum
 
-A hardware-agnostic quantum computing framework, inspired by the architecture of NVIDIA's CUDA-Q, designed to provide a unified interface for executing quantum circuits across a wide range of third-party quantum processing units (QPUs).
+`rocQuantum` is an experimental ROCm-first quantum computing repository centered on native HIP simulator components:
 
-## Description
+- `hipStateVec`
+- `hipTensorNet`
+- `hipDensityMat`
 
-The core goal of rocQuantum is to offer a seamless user experience where a quantum circuit can be defined once and then executed on different hardware backends—from remote cloud platforms to local simulators—with minimal changes to the code. This is achieved through a robust backend abstraction layer that supports multiple integration models:
+The repo also contains partially implemented compiler, Python, provider, and framework-integration surfaces inspired by CUDA-Q, cuQuantum, and CUDA-QX. It does not yet provide end-to-end parity with those NVIDIA stacks.
 
-*   **Type A (Remote API):** For API-based services (e.g., IonQ, Pasqal), rocQuantum manages the HTTP client, authentication, and job lifecycle internally.
-*   **Type B (Local SDK):** For providers that require a local SDK (e.g., Quantum Brilliance's Qristal), rocQuantum interfaces directly with the provider's tools for synchronous execution.
-*   **Type C (Cloud Intermediary):** For platforms accessed via a cloud provider's SDK (e.g., Rigetti on AWS Braket), rocQuantum handles the interaction with the intermediary service.
+## Current Reality
 
-## Installation
+Implemented today:
 
-1.  Clone the repository:
-    ```bash
-    git clone <repository-url>
-    cd rocQuantum-1
-    ```
+- Native HIP state-vector simulation for core named gates, sampling, measurement, and several expectation-value primitives
+- Native tensor-network contraction core
+- Native density-matrix core with a limited noise model set
+- Direct simulator execution through the active local runtime path
 
-2.  Install the required Python packages:
-    ```bash
-    pip install requests boto3
-    ```
-    *(Note: Specific provider SDKs like `qiskit` or `cirq` should be installed as needed).*
+Only partial today:
 
-## Build Hygiene
+- MLIR/QIR compiler flow
+- Generic matrix and controlled-unitary coverage
+- Multi-GPU / distributed execution
+- High-level expectation-value APIs
+- Packaging and install/export
+- PennyLane, Cirq, and Qiskit adapter maturity
 
-Use out-of-tree build directories and do not commit generated files:
+Not implemented today:
+
+- End-to-end compiler-driven `compile_and_execute` parity with CUDA-Q
+- Release-grade distributed multi-GPU support
+- CUDA-QX-style higher-level libraries with robust QEC/solver coverage
+
+## Audit Documents
+
+This repo now includes an audit-first truth set in the inner repo root:
+
+- `CURRENT_STATE_AUDIT.md`
+- `FEATURE_TRUTH_MATRIX.md`
+- `ROCM_INTEGRATION_AUDIT.md`
+- `TOP_GAPS_AND_PRIORITIES.md`
+- `FINAL_GAP_REPORT.md`
+- `IMPLEMENT_NOW_PLAN.md`
+
+Use those files as the authoritative capability summary for the current codebase.
+
+## Repo Layout
+
+- `rocquantum/src/hipStateVec`: native state-vector kernels and distributed scaffolding
+- `rocquantum/src/hipTensorNet`: tensor-network contraction core
+- `rocquantum/src/hipDensityMat`: density-matrix and limited noise support
+- `rocquantum/src/simulator.cpp`: public C++ simulator wrapper
+- `rocqCompiler/`: partial MLIR/QIR pipeline
+- `rocq/`: top-level Python surface with direct execution and mock fallbacks
+- `python/rocq/`: separate legacy-style Python surface with `_rocq_hip_backend`
+- `integrations/`: PennyLane, Cirq, and Qiskit adapters
+
+## Support Policy For This Audit Pass
+
+- Primary release target: Linux x86_64
+- Latest stable ROCm target at audit time: `7.2.0`
+- Recommended Tier 1 GPU targets: `gfx950`, `gfx942`, `gfx90a`
+- Recommended future minimum release-grade GPU target: `gfx90a`
+- Recommended future minimum ROCm target: `6.4.0`
+- Current non-experimental CI baseline: ROCm `6.2.2`
+- Windows helper scripts are kept for development convenience but are not treated as release-grade support
+
+## Native Component Snapshot
+
+| Component | Current State |
+| --- | --- |
+| `hipStateVec` | Real and useful, but not fully surfaced through every public API |
+| `hipTensorNet` | Real contraction core, narrower than a full cuTensorNet analogue |
+| `hipDensityMat` | Real but limited |
+| `rocqCompiler` | Partial codegen path, no real compile-and-execute loop |
+| Top-level `rocq` | Working direct runtime path with some mock fallbacks |
+| `python/rocq` | Separate partial runtime/compiler surface with host-side fallbacks |
+
+## Important Limitations
+
+- `rocqCompiler::MLIRCompiler::compile_and_execute()` is a stub and currently raises.
+- `multi_gpu=True` should be treated as experimental partial support, not full distributed execution.
+- The canonical top-level `rocq` operator expectation API is not wired to native backend expectations.
+- `python/rocq/api.py::Circuit.expval()` is still a host-side NumPy fallback after statevector readback.
+- PennyLane and Cirq adapters use host-side sampling paths.
+- Several provider backends remain skeletons or thin clients.
+
+## Build
+
+Use an out-of-tree build directory:
 
 ```bash
-cmake -S . -B build-ci -G Ninja
+cmake -S . -B build-ci -G Ninja \
+  -DBUILD_TESTING=ON \
+  -DROCQUANTUM_BUILD_BINDINGS=ON \
+  -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc
 cmake --build build-ci --parallel
 ```
 
-Build outputs such as `build/`, `build-hip/`, `build-codex/`, and `build-ci/` are local artifacts and should stay untracked.
-
-## Configuration
-
-To access third-party backends, you must configure your credentials using environment variables.
-
-*   **For IonQ:**
-    ```bash
-    export IONQ_API_KEY="YOUR_IONQ_API_KEY"
-    ```
-
-*   **For Quantinuum:**
-    ```bash
-    export CUDAQ_QUANTINUUM_CREDENTIALS="/path/to/credentials.json"
-    ```
-    The JSON file must contain an `access_token` key.
-
-    > **Note:** The `USERNAME,PASSWORD` inline format shown in earlier documentation
-    > is recognized but not yet functional (token exchange is not implemented).
-    > Use a JSON file with a pre-obtained access token instead.
-
-*   **For Rigetti (via AWS Braket):**
-    The Rigetti backend uses the `boto3` library, which automatically finds AWS credentials. Configure them using standard AWS methods, such as:
-    *   Environment Variables:
-        ```bash
-        export AWS_ACCESS_KEY_ID="YOUR_AWS_ACCESS_KEY"
-        export AWS_SECRET_ACCESS_KEY="YOUR_AWS_SECRET_KEY"
-        export AWS_SESSION_TOKEN="YOUR_SESSION_TOKEN" # (Optional)
-        ```
-    *   Shared Credentials File (`~/.aws/credentials`)
-
-    You must also specify the S3 output location for Braket task results:
-    ```bash
-    export ROCQ_RIGETTI_S3_OUTPUT="s3://your-bucket/braket-results"
-    ```
-
-*   **For Pasqal & Infleqtion:**
-    Set `PASQAL_API_KEY` and `SUPERSTAQ_API_KEY` respectively.
-
-## CLI Usage
-
-A simple Command-Line Interface is provided for quick demonstrations. It runs a standard Bell State circuit on the specified backend.
-
-**Example:**
+For a release-grade Linux ROCm build, set explicit GPU targets:
 
 ```bash
-python rocq_cli.py run --backend ionq --shots 100
+-DCMAKE_HIP_ARCHITECTURES="gfx950;gfx942;gfx90a"
 ```
 
-This command will:
-1.  Check for the `IONQ_API_KEY`.
-2.  Target the IonQ simulator.
-3.  Submit a Bell State circuit for 100 shots.
-4.  Poll for and print the final measurement results.
+## Comparison Baselines
 
-## Supported Backends
+- CUDA-Q: `https://nvidia.github.io/cuda-quantum/latest/`
+- cuQuantum: `https://docs.nvidia.com/cuda/cuquantum/latest/`
+- CUDA-QX: `https://github.com/NVIDIA/cudaqx`
 
-The framework is designed for extensibility. The following backends are currently integrated:
-
-| Provider           | Backend Name | Status      | Type              |
-| ------------------ | ------------ | ----------- | ----------------- |
-| **IonQ**           | `ionq`       | Implemented | A (Remote API)    |
-| **Quantinuum**     | `quantinuum` | Implemented | A (Remote API)    |
-| **Pasqal**         | `pasqal`     | Implemented | A (Remote API)    |
-| **Infleqtion**     | `infleqtion` | Implemented | A (Remote API)    |
-| **Quantum Brilliance** | `qristal`    | Implemented | B (Local SDK)     |
-| **Rigetti**        | `rigetti`    | Implemented | C (Cloud Intermediary)|
-| **Alice & Bob**    | `alice_bob`  | Skeleton    | -                 |
-| **IQM**            | `iqm`        | Skeleton    | -                 |
-| **ORCA Computing** | `orca`       | Skeleton    | -                 |
-| **Quantum Machines**| `qm`         | Skeleton    | -                 |
-| **QuEra**          | `quera`      | Skeleton    | -                 |
-| **SEEQC**          | `seeqc`      | Skeleton    | -                 |
-| **Xanadu**         | `xanadu`     | Skeleton    | -                 |
-
-## Full Example
-
-The script in `examples/run_bell_state.py` demonstrates the power of the framework by defining a single circuit and running it on three different backend types: IonQ (API), Qristal (local SDK), and Rigetti (cloud intermediary).
+This repo is currently closest to a ROCm-native simulator project with partial higher-level surfaces, not to a finished CUDA-Q/CUDA-QX equivalent.

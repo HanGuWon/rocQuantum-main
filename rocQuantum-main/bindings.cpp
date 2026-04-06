@@ -19,12 +19,15 @@ PYBIND11_MODULE(rocquantum_bind, m) {
             auto backend = rocq::create_backend(backend_name);
             return std::make_unique<rocq::MLIRCompiler>(num_qubits, std::move(backend));
         }))
-        .def("compile_and_execute", 
-             [](rocq::MLIRCompiler &self, const std::string &mlir, py::dict args) {
-                 // ... (implementation from previous step)
+        .def("compile_and_execute",
+             [](rocq::MLIRCompiler &self, const std::string &mlir, py::dict _args) {
                  return self.compile_and_execute(mlir, {});
-        })
-        // Bind the new emit_qir method
+             },
+             py::arg("mlir"),
+             py::arg("args") = py::dict(),
+             "Stub API. The current compiler path can emit QIR but does not execute "
+             "MLIR/QIR end to end. This method currently raises at runtime; use "
+             "emit_qir() or the direct simulator APIs instead.")
         .def("emit_qir", &rocq::MLIRCompiler::emit_qir,
              "Compiles the MLIR string down to QIR (LLVM IR).");
 

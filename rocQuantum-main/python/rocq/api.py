@@ -54,13 +54,15 @@ class Circuit:
             if self.is_multi_gpu:
                 if num_qubits == 0 and self.simulator.handle.get_num_gpus() > 1:
                      raise ValueError("Cannot create a 0-qubit distributed state across multiple GPUs. Use single GPU mode or at least log2(num_gpus) qubits.")
-                backend.allocate_distributed_state(self._sim_handle, self.num_qubits)
-                backend.initialize_distributed_state(self._sim_handle)
+                try:
+                    backend.allocate_distributed_state(self._sim_handle, self.num_qubits)
+                    backend.initialize_distributed_state(self._sim_handle)
+                except RuntimeError as e:
+                    self._reraise_runtime_error("Distributed circuit initialization", e)
             else:
                 self._d_state_buffer = backend.allocate_state_internal(self._sim_handle, self.num_qubits)
                 status = backend.initialize_state(self._sim_handle, self._d_state_buffer, self.num_qubits)
-                if status != backend.rocqStatus.SUCCESS:
-                    raise RuntimeError(f"Failed to initialize state: {status}")
+                self._raise_for_status("State initialization", status)
 
             self.simulator._active_circuits +=1
         except RuntimeError as e:
@@ -72,19 +74,48 @@ class Circuit:
              if self.simulator._active_circuits > 0 :
                 self.simulator._active_circuits -=1
 
+    def _raise_for_status(self, operation: str, status):
+        if status == backend.rocqStatus.SUCCESS:
+            return
+
+        if status == backend.rocqStatus.NOT_IMPLEMENTED:
+            message = f"{operation} is not implemented by the current backend path."
+            if self.is_multi_gpu:
+                message += (
+                    " multi_gpu=True is experimental and currently limited to distributed "
+                    "state allocation, some local-domain gates, and limited measurement paths."
+                )
+            raise NotImplementedError(message)
+
+        raise RuntimeError(f"{operation} failed with backend status {status}.")
+
+    def _reraise_runtime_error(self, operation: str, error: RuntimeError):
+        message = str(error)
+        if "failed: 5" in message:
+            detail = f"{operation} is not implemented by the current backend path."
+            if self.is_multi_gpu:
+                detail += (
+                    " multi_gpu=True is experimental and currently limited to distributed "
+                    "state allocation, some local-domain gates, and limited measurement paths."
+                )
+            raise NotImplementedError(detail) from error
+
+        raise RuntimeError(f"{operation} failed: {message}") from error
+
     def flush(self):
-        """Processes the gate queue, applying fusion."""
+        """Processes queued gates without fusion integration.
+
+        The native GateFusion engine exists in C++, but this Python execution path
+        still replays queued gates one by one.
+        """
         if not self._is_dirty or not self._gate_queue:
             return
 
-        # This is a placeholder for a more sophisticated fusion engine.
-        # For now, we just execute the queue without fusion.
         print(f"Flushing {len(self._gate_queue)} gates...")
         for op in self._gate_queue:
             d_state_arg = self._get_d_state_for_backend()
             status = getattr(backend, f"apply_{op.name.lower()}")(self._sim_handle, d_state_arg, self.num_qubits, *op.controls, *op.targets, *op.params)
-            if status != backend.rocqStatus.SUCCESS:
-                raise RuntimeError(f"Apply {op.name} failed: {status}")
+            self._raise_for_status(f"Gate {op.name}", status)
 
         self._gate_queue.clear()
         self._is_dirty = False
@@ -211,8 +242,7 @@ class Circuit:
             d_matrix,
             dim,
         )
-        if status != backend.rocqStatus.SUCCESS:
-            raise RuntimeError(f"apply_matrix failed: {status}")
+        self._raise_for_status("apply_matrix", status)
 
     def apply_controlled_unitary(self, control_qubits: list[int], target_qubits: list[int], matrix: np.ndarray):
         self.flush()
@@ -244,8 +274,7 @@ class Circuit:
             target_qubits,
             d_matrix,
         )
-        if status != backend.rocqStatus.SUCCESS:
-            raise RuntimeError(f"apply_controlled_matrix failed: {status}")
+        self._raise_for_status("apply_controlled_matrix", status)
 
     def measure(self, qubit_to_measure: int) -> tuple[int, float]:
         self.flush()
@@ -257,7 +286,7 @@ class Circuit:
             )
             return outcome, probability
         except RuntimeError as e:
-            raise RuntimeError(f"Measure failed: {e}")
+            self._reraise_runtime_error("measure", e)
 
     def sample(self, measured_qubits: list[int], num_shots: int) -> np.ndarray:
         self.flush()
@@ -275,7 +304,7 @@ class Circuit:
             )
             return results
         except RuntimeError as e:
-            raise RuntimeError(f"Sample failed: {e}")
+            self._reraise_runtime_error("sample", e)
 
     def get_statevector(self) -> np.ndarray:
         """
@@ -296,7 +325,8 @@ class Circuit:
 
     def expval(self, pauli_operator: 'PauliOperator') -> float:
         """
-        Calculates the expectation value of a Pauli operator with respect to the circuit's final state.
+        Calculates a Pauli expectation value by reading the statevector back to the
+        host and evaluating the observable in NumPy.
         """
         if not isinstance(pauli_operator, PauliOperator):
             raise TypeError("Input must be a PauliOperator object.")
@@ -456,13 +486,15 @@ class QuantumProgram:
             raise RuntimeError("Cannot update params: Kernel function not stored in QuantumProgram.")
 
         if self.circuit_ref.is_multi_gpu:
-             backend.initialize_distributed_state(self.circuit_ref._sim_handle)
+             try:
+                 backend.initialize_distributed_state(self.circuit_ref._sim_handle)
+             except RuntimeError as e:
+                 self.circuit_ref._reraise_runtime_error("Distributed parameter update initialization", e)
         else:
             status = backend.initialize_state(self.circuit_ref._sim_handle,
                                               self.circuit_ref._get_d_state_for_backend(),
                                               self.circuit_ref.num_qubits)
-            if status != backend.rocqStatus.SUCCESS:
-                raise RuntimeError(f"Failed to re-initialize state for param update: {status}")
+            self.circuit_ref._raise_for_status("State re-initialization for parameter update", status)
 
         kernel_args_for_py_call = [self.circuit_ref]
         if self._static_args:
