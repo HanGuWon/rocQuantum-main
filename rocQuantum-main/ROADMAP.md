@@ -1,36 +1,50 @@
-# Future Roadmap for rocQuantum-1
+# rocQuantum Roadmap
 
-This document outlines the strategic vision for the future development of the rocQuantum-1 simulator. The goals are organized into short-term, mid-term, and long-term milestones.
+This roadmap starts from audited truth, not from legacy aspirational claims.
 
-## Short-Term Goals (Next 3-6 Months)
+## P0: Credibility Recovery
 
-*   ### Repository Hygiene
-    *   **Out-of-tree Builds:** Keep all generated artifacts in local build folders (`build-ci/`, `build/`, `build-hip/`, etc.) and out of Git history.
-    *   **Packaging Readiness:** Maintain clean source trees to simplify CMake exports and downstream integration.
+Focus: remove false positives and make the current support boundary explicit.
 
-*   ### Expand Gate Set
-    *   **Multi-Controlled Gates:** Implement efficient HIP kernels for multi-controlled gates like the Toffoli (CCX) and Fredkin (CSWAP) gates.
-    *   **Controlled Rotation Gates:** Add support for controlled rotation gates (CRX, CRY, CRZ), which are crucial for many quantum algorithms.
+- Keep compiler/runtime parity clearly gated until a real execution bridge exists
+- Make `multi_gpu=True` explicitly experimental partial support
+- Align expectation-value APIs and docs with actual native vs host-side behavior
+- Normalize the Linux-first ROCm compatibility statement
+- Clean up README, roadmap, guides, and placeholder tests so they match the code
 
-*   ### Performance Optimization
-    *   **Gate Fusion:** Investigate and implement techniques for fusing sequential gates into a single, larger unitary. This will reduce kernel launch overhead and improve memory access patterns, leading to significant speedups for shallow circuits.
-    *   **Memory Optimization:** Analyze and optimize GPU memory usage, particularly for intermediate data structures.
+## P1: Connect Existing Native Capability
 
-## Mid-Term Goals (6-12 Months)
+Focus: improve the product story without large speculative rewrites.
 
-*   ### Advanced Measurement Capabilities
-    *   **Custom Measurement Operators:** Allow users to define and measure arbitrary Hamiltonians and operators beyond the simple Pauli basis.
-    *   **Mid-Circuit Measurements:** Implement the ability to perform measurements in the middle of a circuit execution and conditionally apply subsequent gates based on the outcomes.
+- Unify or clearly separate the two Python surfaces, `rocq` and `python/rocq`
+- Expose native expectation helpers through the canonical public API
+- Wire `GateFusion.cpp` into the active execution path
+- Repair packaging/install/export so one build/install path is defensible
+- Expand ROCm CI beyond the current tensor-network regression
 
-*   ### Noise Modeling
-    *   **Basic Noise Channels:** Introduce support for common device noise models, such as depolarizing noise, bit-flip, and phase-flip channels. This will enable more realistic simulations of NISQ-era hardware.
+## P2: Broader ROCm Platform Scope
 
-## Long-Term Goals (1-2 Years and Beyond)
+Focus: only after P0 and P1 are stable.
 
-*   ### Multi-GPU Support
-    *   **State Vector Parallelism:** Scale the simulator to utilize multiple GPUs on a single node. This will involve distributing the state vector across GPUs and managing inter-GPU communication (e.g., using `hipMemcpyPeerAsync`).
-    *   **Cluster-Level Scaling:** Investigate the potential for scaling simulations across multiple nodes in a cluster using technologies like MPI.
+- Complete a real compiler-driven runtime path
+- Expand distributed multi-GPU beyond the current partial single-node scaffolding
+- Add higher-level solver, QEC, and hybrid-library support that can credibly compete with CUDA-QX-style libraries
+- Broaden ecosystem integrations after the base runtime contract is stable
 
-*   ### Official PyPI Packaging
-    *   **Automated Builds:** Create a robust CI/CD pipeline to build and test the C++/HIP code for various ROCm versions.
-    *   **Easy Installation:** Package the simulator and Python bindings into an official package on PyPI. This will allow users to install it easily via `pip install rocquantum`, abstracting away the complexities of the build process.
+## Already Implemented At The Native Backend Level
+
+These are no longer roadmap items and should not be listed as future work:
+
+- Controlled rotations: `CRX`, `CRY`, `CRZ`
+- Backend-native `MCX` support used for `CCX`
+- Backend-native `CSWAP`
+- Basic density-matrix noise channels
+- Native single-Pauli and Pauli-string expectation helpers in `hipStateVec`
+
+## Still Missing Or Partial
+
+- End-to-end compiler-driven execution
+- Release-grade distributed multi-GPU
+- Canonical high-level native expectation API
+- Release-grade packaging and install/export
+- Robust higher-level solver and QEC libraries

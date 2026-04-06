@@ -89,13 +89,17 @@ def get_expectation_value(kernel: QuantumKernel, operator: QuantumOperator, back
     """Computes the expectation value of an operator.
 
     .. note::
-        This function is not yet connected to a backend implementation.
-        Use the hipStateVec C++ API directly for expectation values.
+        This top-level API is intentionally gated for now.
+        Native expectation helpers exist in `hipStateVec` and in the legacy
+        `python/rocq` bindings, but this canonical `rocq.operator` surface is
+        not yet wired to them.
 
     Raises:
-        NotImplementedError: Always, until a backend integration is available.
+        NotImplementedError: Always, until this public API is connected to a
+        native backend implementation.
     """
     raise NotImplementedError(
-        "Expectation value computation is not yet connected to a backend. "
-        "Use the hipStateVec C++ API directly for expectation values."
+        "rocq.operator.get_expectation_value() is not wired to a native backend "
+        "yet. Native expectation helpers currently live in hipStateVec and the "
+        "legacy python/rocq bindings, not in this canonical rocq API."
     )
