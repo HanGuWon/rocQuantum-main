@@ -1,33 +1,63 @@
-# rocQuantum-1 Framework Main Entry Point
-# This file makes the `rocq` directory a Python package and exposes the public API.
+"""Canonical rocQuantum Python API."""
 
-"""
-rocQuantum-1 (rocq)
-
-A high-performance quantum computing simulation framework for AMD GPUs.
-"""
-
-# Public API Imports
 from .noise import NoiseModel
-from .kernel import kernel, execute
-from .operator import QuantumOperator, PauliOperator, HermitianOperator, get_expectation_value
+from .kernel import QuantumKernel, execute, kernel, observe, sample
+from .operator import (
+    HermitianOperator,
+    PauliOperator,
+    QuantumOperator,
+    SumOperator,
+    get_expectation_value,
+)
 from .qvec import qvec
 from .gates import (
-    h,
-    x,
-    y,
-    z,
-    s,
-    sdg,
-    t,
-    rx,
-    ry,
-    rz,
     cnot,
-    cx,
-    cz,
-    swap,
     crx,
     cry,
     crz,
+    cx,
+    cz,
+    h,
+    rx,
+    ry,
+    rz,
+    s,
+    sdg,
+    swap,
+    t,
+    x,
+    y,
+    z,
 )
+
+__all__ = [
+    "NoiseModel",
+    "QuantumKernel",
+    "QuantumOperator",
+    "PauliOperator",
+    "HermitianOperator",
+    "SumOperator",
+    "kernel",
+    "execute",
+    "sample",
+    "observe",
+    "get_expectation_value",
+    "qvec",
+    "h",
+    "x",
+    "y",
+    "z",
+    "s",
+    "sdg",
+    "t",
+    "rx",
+    "ry",
+    "rz",
+    "cnot",
+    "cx",
+    "cz",
+    "swap",
+    "crx",
+    "cry",
+    "crz",
+]

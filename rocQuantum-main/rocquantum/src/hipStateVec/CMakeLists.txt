@@ -24,7 +24,10 @@ set_source_files_properties(${HIPSTATEVEC_SRC} PROPERTIES HIP_SOURCE_TYPE "kerne
 
 target_include_directories(hipStateVec
     PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_link_libraries(hipStateVec

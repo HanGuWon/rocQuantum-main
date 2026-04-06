@@ -22,7 +22,7 @@ Only partial today:
 - MLIR/QIR compiler flow
 - Generic matrix and controlled-unitary coverage
 - Multi-GPU / distributed execution
-- High-level expectation-value APIs
+- Observable breadth and density-matrix expectation coverage
 - Packaging and install/export
 - PennyLane, Cirq, and Qiskit adapter maturity
 
@@ -52,7 +52,7 @@ Use those files as the authoritative capability summary for the current codebase
 - `rocquantum/src/hipDensityMat`: density-matrix and limited noise support
 - `rocquantum/src/simulator.cpp`: public C++ simulator wrapper
 - `rocqCompiler/`: partial MLIR/QIR pipeline
-- `rocq/`: top-level Python surface with direct execution and mock fallbacks
+- `rocq/`: top-level Python surface with direct native execution plus `observe()` / `sample()`
 - `python/rocq/`: separate legacy-style Python surface with `_rocq_hip_backend`
 - `integrations/`: PennyLane, Cirq, and Qiskit adapters
 
@@ -74,14 +74,13 @@ Use those files as the authoritative capability summary for the current codebase
 | `hipTensorNet` | Real contraction core, narrower than a full cuTensorNet analogue |
 | `hipDensityMat` | Real but limited |
 | `rocqCompiler` | Partial codegen path, no real compile-and-execute loop |
-| Top-level `rocq` | Working direct runtime path with some mock fallbacks |
-| `python/rocq` | Separate partial runtime/compiler surface with host-side fallbacks |
+| Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring |
+| `python/rocq` | Separate legacy compatibility surface with remaining host-side fallbacks |
 
 ## Important Limitations
 
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is a stub and currently raises.
 - `multi_gpu=True` should be treated as experimental partial support, not full distributed execution.
-- The canonical top-level `rocq` operator expectation API is not wired to native backend expectations.
 - `python/rocq/api.py::Circuit.expval()` is still a host-side NumPy fallback after statevector readback.
 - PennyLane and Cirq adapters use host-side sampling paths.
 - Several provider backends remain skeletons or thin clients.

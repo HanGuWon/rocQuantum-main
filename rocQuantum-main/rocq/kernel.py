@@ -62,7 +62,13 @@ class QuantumKernel:
         self.num_qubits = ctx._next_qubit_index
         return ctx
 
-    # Supported gate -> (MLIR op name, arity)
+    def _prepare_backend(self, backend: str, *args, **kwargs):
+        ctx = self.build(*args, **kwargs)
+        if ctx._next_qubit_index == 0:
+            raise ValueError("Kernel did not allocate any qubits.")
+        backend_impl = get_backend(backend, ctx._next_qubit_index)
+        return ctx, backend_impl
+
     _GATE_TO_MLIR = {
         "h": ("quantum.h", 1),
         "x": ("quantum.x", 1),
@@ -78,11 +84,7 @@ class QuantumKernel:
     }
 
     def mlir(self, *args, **kwargs) -> str:
-        """Emit minimal textual MLIR for supported core gates.
-
-        Supported: H, X, Y, Z, CNOT, RX, RY, RZ.
-        Unsupported gates raise ``NotImplementedError`` with the gate name.
-        """
+        """Emit minimal textual MLIR for supported core gates."""
         ctx = self.build(*args, **kwargs)
         n = ctx._next_qubit_index
         body_lines = []
@@ -171,29 +173,44 @@ class QuantumKernel:
         compiler = rocquantum_bind.MLIRCompiler(self.num_qubits, "hip_statevec")
         return compiler.emit_qir(mlir_code)
 
-    def execute(self, backend: str = "state_vector", noise_model=None, *args, **kwargs):
-        ctx = self.build(*args, **kwargs)
-        if ctx._next_qubit_index == 0:
-            raise ValueError("Kernel did not allocate any qubits.")
-        backend_impl = get_backend(backend, ctx._next_qubit_index)
-
-        for op in ctx.ops:
-            backend_impl.apply_gate(op.name, op.targets, op.params)
-            if noise_model is not None:
-                for channel in noise_model.get_channels():
-                    if channel["op"] and channel["op"] != op.name.lower():
-                        continue
-                    targets = channel["qubits"] if channel["qubits"] else op.targets
-                    backend_impl.apply_noise(channel["type"], targets, channel["prob"])
-
+    def execute(self, *args, backend: str = "state_vector", noise_model=None, **kwargs):
+        ctx, backend_impl = self._prepare_backend(backend, *args, **kwargs)
+        backend_impl.run_ops(ctx.ops, noise_model=noise_model)
         return backend_impl.get_state()
+
+    def sample(self, shots: int, *args, backend: str = "state_vector", qubits=None, noise_model=None, **kwargs):
+        if shots <= 0:
+            raise ValueError("shots must be positive.")
+        ctx, backend_impl = self._prepare_backend(backend, *args, **kwargs)
+        backend_impl.run_ops(ctx.ops, noise_model=noise_model)
+        sample_qubits = list(range(ctx._next_qubit_index)) if qubits is None else [int(q) for q in qubits]
+        return backend_impl.sample(int(shots), qubits=sample_qubits)
+
+    def observe(self, operator, *args, backend: str = "state_vector", noise_model=None, **kwargs):
+        if operator is None:
+            raise TypeError("observe() requires a quantum operator.")
+        ctx, backend_impl = self._prepare_backend(backend, *args, **kwargs)
+        backend_impl.run_ops(ctx.ops, noise_model=noise_model)
+        return backend_impl.expectation(operator)
 
 
 def kernel(func):
     return QuantumKernel(func)
 
 
-def execute(kernel_obj: QuantumKernel, backend: str = "state_vector", noise_model=None, *args, **kwargs):
+def execute(kernel_obj: QuantumKernel, *args, backend: str = "state_vector", noise_model=None, **kwargs):
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("execute() expects a QuantumKernel instance.")
-    return kernel_obj.execute(backend=backend, noise_model=noise_model, *args, **kwargs)
+    return kernel_obj.execute(*args, backend=backend, noise_model=noise_model, **kwargs)
+
+
+def sample(kernel_obj: QuantumKernel, shots: int, *args, backend: str = "state_vector", qubits=None, noise_model=None, **kwargs):
+    if not isinstance(kernel_obj, QuantumKernel):
+        raise TypeError("sample() expects a QuantumKernel instance.")
+    return kernel_obj.sample(shots, *args, backend=backend, qubits=qubits, noise_model=noise_model, **kwargs)
+
+
+def observe(kernel_obj: QuantumKernel, operator, *args, backend: str = "state_vector", noise_model=None, **kwargs):
+    if not isinstance(kernel_obj, QuantumKernel):
+        raise TypeError("observe() expects a QuantumKernel instance.")
+    return kernel_obj.observe(operator, *args, backend=backend, noise_model=noise_model, **kwargs)

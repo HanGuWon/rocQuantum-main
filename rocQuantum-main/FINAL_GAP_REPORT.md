@@ -2,6 +2,14 @@
 
 Audit date: 2026-04-05
 
+Runtime update note (2026-04-06):
+
+- Canonical `rocq` now exposes `execute()`, `sample()`, and `observe()` on a unified backend contract.
+- Native state-vector Pauli expectation helpers are now reachable through `rocq.observe()` and `rocq.operator.get_expectation_value()`.
+- Packaging has moved to a CMake-first `scikit-build-core` path and root CMake now builds `_rocq_hip_backend`, `rocq_hip`, and `rocquantum_bind`.
+
+Compiler/runtime execution parity, distributed execution maturity, and higher-level CUDA-QX-style libraries remain outstanding.
+
 ## Executive Summary
 
 `rocQuantum-main` has real ROCm-native simulator value today, especially in `hipStateVec`, `hipTensorNet`, and `hipDensityMat`. What it does not yet have is a coherent product story that matches CUDA-Q, cuQuantum, or CUDA-QX.
