@@ -104,6 +104,27 @@ public:
     size_t nbytes() const { return size_bytes_; }
 };
 
+size_t infer_batch_size_from_state_buffer(const DeviceBuffer& d_state_buffer,
+                                          unsigned numQubits,
+                                          const std::string& operation_name) {
+    if (numQubits >= sizeof(size_t) * 8) {
+        throw std::runtime_error("num_qubits is too large for " + operation_name + ".");
+    }
+    size_t elements_per_state = size_t{1} << numQubits;
+    if (elements_per_state > std::numeric_limits<size_t>::max() / sizeof(rocComplex)) {
+        throw std::runtime_error("state size is too large for " + operation_name + ".");
+    }
+    size_t bytes_per_state = elements_per_state * sizeof(rocComplex);
+    if (d_state_buffer.nbytes() % bytes_per_state != 0) {
+        throw std::runtime_error("d_state buffer size is incompatible with num_qubits.");
+    }
+    size_t batch_size = d_state_buffer.nbytes() / bytes_per_state;
+    if (batch_size == 0) {
+        throw std::runtime_error("d_state buffer does not contain any batch states.");
+    }
+    return batch_size;
+}
+
 
 // Wrapper for rocsvHandle_t to ensure proper creation and destruction
 class RocsvHandleWrapper {
@@ -200,10 +221,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
 
     m.def("initialize_state", 
         [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits) {
-            // Basic check, Python side should ensure numQubits matches buffer allocation
-            if (d_state_buffer.nbytes() != ( (1ULL << numQubits) * sizeof(rocComplex) ) ) {
-                 throw std::runtime_error("DeviceBuffer size mismatch in initialize_state");
-            }
+            infer_batch_size_from_state_buffer(d_state_buffer, numQubits, "initialize_state");
             return rocsvInitializeState(handle_wrapper.get(), d_state_buffer.get_ptr<rocComplex>(), numQubits);
         }, py::arg("handle"), py::arg("d_state_buffer"), py::arg("num_qubits"));
 
@@ -417,6 +435,55 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("pauli_string"), py::arg("target_qubits"),
            "Calculates expectation value for a generic Pauli string (e.g., \"IXYZ\"). Non-destructive.");
 
+    m.def("get_expectation_pauli_string_batch",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::string& pauliString, const std::vector<unsigned>& targetQubits_vec) {
+            if (pauliString.length() != targetQubits_vec.size()) {
+                throw std::runtime_error("Pauli string length must match the number of target qubits.");
+            }
+            size_t batch_size = infer_batch_size_from_state_buffer(
+                d_state_buffer,
+                numQubits,
+                "get_expectation_pauli_string_batch");
+
+            py::array_t<double> result(batch_size);
+            auto mutable_result = result.mutable_unchecked<1>();
+            if (targetQubits_vec.empty()) {
+                for (size_t idx = 0; idx < batch_size; ++idx) {
+                    mutable_result(static_cast<py::ssize_t>(idx)) = 1.0;
+                }
+                return result;
+            }
+
+            std::string normalized;
+            normalized.reserve(pauliString.size());
+            for (char pauli : pauliString) {
+                const char upper = static_cast<char>(std::toupper(static_cast<unsigned char>(pauli)));
+                if (upper != 'I' && upper != 'X' && upper != 'Y' && upper != 'Z') {
+                    throw std::runtime_error("Pauli string may only contain I, X, Y, or Z.");
+                }
+                normalized.push_back(upper);
+            }
+
+            std::vector<double> raw_results(batch_size, 0.0);
+            rocqStatus_t status = rocsvGetExpectationPauliStringBatch(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                normalized.c_str(),
+                targetQubits_vec.data(),
+                static_cast<unsigned>(targetQubits_vec.size()),
+                raw_results.data());
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetExpectationPauliStringBatch failed: " + std::to_string(status));
+            }
+            for (size_t idx = 0; idx < batch_size; ++idx) {
+                mutable_result(static_cast<py::ssize_t>(idx)) = raw_results[idx];
+            }
+            return result;
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("pauli_string"), py::arg("target_qubits"),
+           "Calculates Pauli-string expectation values for each local batch state.");
+
     m.def("get_expectation_matrix",
         [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
            const std::vector<unsigned>& targetQubits_vec,
@@ -502,21 +569,10 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                 throw std::runtime_error("Failed to copy batch expectation matrix to device");
             }
 
-            if (numQubits >= sizeof(size_t) * 8) {
-                throw std::runtime_error("num_qubits is too large for get_expectation_matrix_batch.");
-            }
-            size_t elements_per_state = size_t{1} << numQubits;
-            if (elements_per_state > std::numeric_limits<size_t>::max() / sizeof(rocComplex)) {
-                throw std::runtime_error("state size is too large for get_expectation_matrix_batch.");
-            }
-            size_t bytes_per_state = elements_per_state * sizeof(rocComplex);
-            if (d_state_buffer.nbytes() % bytes_per_state != 0) {
-                throw std::runtime_error("d_state buffer size is incompatible with num_qubits.");
-            }
-            size_t batch_size = d_state_buffer.nbytes() / bytes_per_state;
-            if (batch_size == 0) {
-                throw std::runtime_error("d_state buffer does not contain any batch states.");
-            }
+            size_t batch_size = infer_batch_size_from_state_buffer(
+                d_state_buffer,
+                numQubits,
+                "get_expectation_matrix_batch");
             std::vector<rocComplex> raw_results(batch_size);
             rocqStatus_t status = rocsvGetExpectationMatrixBatch(
                 handle_wrapper.get(),
