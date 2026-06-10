@@ -602,12 +602,12 @@ def test_qiskit_backend_dispatches_general_mcx_natively(monkeypatch):
     assert sim.matrices == []
 
 
-def test_qiskit_backend_decomposes_open_control_x_and_h_natively(monkeypatch):
+def test_qiskit_backend_decomposes_open_control_x_y_z_and_h_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
 
     from qiskit import QuantumCircuit
-    from qiskit.circuit.library import HGate, XGate
+    from qiskit.circuit.library import HGate, XGate, YGate, ZGate
     from qiskit_rocquantum_provider import RocQuantumProvider
 
     backend = RocQuantumProvider().get_backend("rocq_simulator")
@@ -615,6 +615,9 @@ def test_qiskit_backend_decomposes_open_control_x_and_h_natively(monkeypatch):
     circuit.append(XGate().control(2, ctrl_state="01"), [0, 1, 2])
     circuit.append(HGate().control(1, ctrl_state="0"), [0, 1])
     circuit.append(XGate().control(3, ctrl_state="101"), [0, 1, 2, 3])
+    circuit.append(YGate().control(1, ctrl_state="0"), [0, 1])
+    circuit.append(ZGate().control(1, ctrl_state="0"), [0, 1])
+    circuit.append(ZGate().control(2, ctrl_state="01"), [0, 1, 2])
 
     backend.run(circuit, sampling=False).result()
 
@@ -630,6 +633,19 @@ def test_qiskit_backend_decomposes_open_control_x_and_h_natively(monkeypatch):
         ("X", (0,), ()),
         ("X", (1,), ()),
         ("MCX", (0, 1, 2, 3), ()),
+        ("X", (1,), ()),
+        ("X", (0,), ()),
+        ("SDG", (1,), ()),
+        ("CNOT", (0, 1), ()),
+        ("S", (1,), ()),
+        ("X", (0,), ()),
+        ("X", (0,), ()),
+        ("CZ", (0, 1), ()),
+        ("X", (0,), ()),
+        ("X", (1,), ()),
+        ("H", (2,), ()),
+        ("MCX", (0, 1, 2), ()),
+        ("H", (2,), ()),
         ("X", (1,), ()),
     ]
     assert sim.matrices == []

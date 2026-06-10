@@ -405,9 +405,11 @@ class RocQuantumBackend(BackendV2):
         base_name = getattr(base_gate, "name", None)
         if num_controls < 1 or len(q_indices) != num_controls + 1:
             return False
-        if base_name not in {"x", "h"}:
+        if base_name not in {"x", "h", "y", "z"}:
             return False
-        if base_name == "h" and num_controls != 1:
+        if base_name in {"h", "y"} and num_controls != 1:
+            return False
+        if base_name == "z" and num_controls not in {1, 2}:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
@@ -430,8 +432,14 @@ class RocQuantumBackend(BackendV2):
                     self._runtime.apply_operation("cx", [controls[0], target])
                 else:
                     self._runtime.apply_operation("mcx", controls + [target])
-            else:
+            elif base_name == "h":
                 self._apply_ch_gate([controls[0], target])
+            elif base_name == "y":
+                self._apply_cy_gate([controls[0], target])
+            elif len(controls) == 1:
+                self._runtime.apply_operation("cz", [controls[0], target])
+            else:
+                self._apply_ccz_gate([controls[0], controls[1], target])
             for control in reversed(flipped):
                 self._runtime.apply_operation("x", [control])
             flipped.clear()
