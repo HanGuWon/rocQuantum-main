@@ -256,6 +256,49 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
                      "apply CRZ");
         return;
     }
+    if (normalized == "MCX" || normalized == "CCX" || normalized == "TOFFOLI") {
+        if (targets.size() < 2) {
+            throw std::invalid_argument("MCX requires at least one control qubit and one target qubit.");
+        }
+        if ((normalized == "CCX" || normalized == "TOFFOLI") && targets.size() != 3) {
+            throw std::invalid_argument("CCX/Toffoli requires exactly two controls and one target qubit.");
+        }
+
+        const unsigned target = targets.back();
+        std::vector<unsigned> controls(targets.begin(), targets.end() - 1);
+        std::unordered_set<unsigned> unique_controls;
+        for (unsigned control : controls) {
+            if (control == target) {
+                throw std::invalid_argument("MCX control qubits must differ from the target qubit.");
+            }
+            if (!unique_controls.insert(control).second) {
+                throw std::invalid_argument("MCX control qubits must be unique.");
+            }
+        }
+
+        check_status(
+            rocsvApplyMultiControlledX(sim_handle_,
+                                       device_state_vector_,
+                                       num_qubits_,
+                                       controls.data(),
+                                       static_cast<unsigned>(controls.size()),
+                                       target),
+            "apply MCX");
+        return;
+    }
+    if (normalized == "CSWAP" || normalized == "FREDKIN") {
+        if (targets.size() != 3) {
+            throw std::invalid_argument("CSWAP requires control and two target qubits.");
+        }
+        check_status(rocsvApplyCSWAP(sim_handle_,
+                                     device_state_vector_,
+                                     num_qubits_,
+                                     targets[0],
+                                     targets[1],
+                                     targets[2]),
+                     "apply CSWAP");
+        return;
+    }
 
     throw std::runtime_error("Gate '" + gate_name + "' is not supported.");
 }

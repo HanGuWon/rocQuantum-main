@@ -43,6 +43,12 @@ _QISKIT_SAMPLER = os.path.join(
     "qiskit_rocquantum_provider",
     "sampler.py",
 )
+_QUANTUM_SIMULATOR_CPP = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "simulator.cpp",
+)
 
 
 class TestFrameworkIntegrationContract(unittest.TestCase):
@@ -53,6 +59,18 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"CRX\": \"CRX\"", source)
         self.assertIn("\"CRY\": \"CRY\"", source)
         self.assertIn("\"CRZ\": \"CRZ\"", source)
+        self.assertIn("\"CCX\": \"MCX\"", source)
+        self.assertIn("\"TOFFOLI\": \"MCX\"", source)
+        self.assertIn("\"CSWAP\": \"CSWAP\"", source)
+
+    def test_public_simulator_dispatches_native_multi_control_gates(self):
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("normalized == \"MCX\"", source)
+        self.assertIn("normalized == \"CSWAP\"", source)
+        self.assertIn("rocsvApplyMultiControlledX", source)
+        self.assertIn("rocsvApplyCSWAP", source)
 
     def test_pennylane_sampling_prefers_native_measure(self):
         with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:

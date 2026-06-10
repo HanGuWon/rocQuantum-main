@@ -390,7 +390,7 @@ def test_qiskit_target_supports_transpile_and_matrix_fallback_gates(monkeypatch)
     assert len(_FakeQuantumSimulator.instances[-1].matrices) == 4
 
 
-def test_qiskit_matrix_fallback_covers_controlled_and_multi_qubit_gates(monkeypatch):
+def test_qiskit_native_multi_control_and_matrix_fallback_gates(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
 
@@ -429,7 +429,12 @@ def test_qiskit_matrix_fallback_covers_controlled_and_multi_qubit_gates(monkeypa
 
     backend.run(circuit, shots=1, statevector=False).result()
 
-    assert len(_FakeQuantumSimulator.instances[-1].matrices) == 10
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("MCX", (0, 1, 2), ()),
+        ("CSWAP", (0, 1, 2), ()),
+    ]
+    assert len(sim.matrices) == 8
 
 
 def test_qiskit_backend_runs_direct_state_preparation(monkeypatch):
@@ -979,7 +984,7 @@ def test_pennylane_basis_state_prepares_with_native_x_gates(monkeypatch):
     ]
 
 
-def test_pennylane_common_gates_use_matrix_fallback_without_decomposition(monkeypatch):
+def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
     for name in list(sys.modules):
@@ -1004,7 +1009,7 @@ def test_pennylane_common_gates_use_matrix_fallback_without_decomposition(monkey
     circuit()
     sim = _FakeQuantumSimulator.instances[-1]
 
-    assert sim.ops == []
+    assert sim.ops == [("MCX", (0, 1, 2), ())]
     assert [targets for _, targets in sim.matrices] == [
         (0,),
         (0, 1),
@@ -1012,7 +1017,6 @@ def test_pennylane_common_gates_use_matrix_fallback_without_decomposition(monkey
         (0, 1),
         (0, 1),
         (0, 1),
-        (0, 1, 2),
     ]
     assert [matrix.shape for matrix, _ in sim.matrices] == [
         (2, 2),
@@ -1021,7 +1025,6 @@ def test_pennylane_common_gates_use_matrix_fallback_without_decomposition(monkey
         (4, 4),
         (4, 4),
         (4, 4),
-        (8, 8),
     ]
 
 
@@ -1058,7 +1061,7 @@ def test_pennylane_matrix_fallback_converts_wire_order_for_rocquantum(monkeypatc
     np.testing.assert_allclose(matrix, expected_local_little_endian)
 
 
-def test_pennylane_extended_gates_use_matrix_fallback(monkeypatch):
+def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
     for name in list(sys.modules):
@@ -1078,6 +1081,8 @@ def test_pennylane_extended_gates_use_matrix_fallback(monkeypatch):
         qml.CPhaseShift01(0.2, wires=[0, 1])
         qml.CPhaseShift10(0.3, wires=[0, 1])
         qml.MultiControlledX(wires=[0, 1, 2])
+        qml.Toffoli(wires=[0, 1, 2])
+        qml.CSWAP(wires=[0, 1, 2])
         qml.MultiRZ(0.4, wires=[0, 1, 2])
         qml.PSWAP(0.5, wires=[0, 1])
         qml.ISWAP(wires=[0, 1])
@@ -1093,7 +1098,10 @@ def test_pennylane_extended_gates_use_matrix_fallback(monkeypatch):
     circuit()
     sim = _FakeQuantumSimulator.instances[-1]
 
-    assert sim.ops == []
+    assert sim.ops == [
+        ("MCX", (0, 1, 2), ()),
+        ("CSWAP", (0, 1, 2), ()),
+    ]
     assert [targets for _, targets in sim.matrices] == [
         (0, 1),
         (0, 1),
