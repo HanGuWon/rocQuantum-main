@@ -400,6 +400,8 @@ def _supports_native_gate_decomposition(runtime):
 
 
 def _apply_global_phase(runtime, wire_index, phase):
+    if not getattr(runtime, "preserve_global_phase", True):
+        return
     factor = np.exp(1j * phase)
     matrix = np.array([[factor, 0.0], [0.0, factor]], dtype=np.complex128)
     runtime.apply_operation("QubitUnitary", [wire_index], matrix=matrix)
@@ -741,6 +743,7 @@ class RocQDevice(QubitDevice):
         self._state = None
         self._skip_diagonalizing_rotations = False
         self._diagonalizing_rotations_applied = False
+        self._preserve_global_phase = True
         self.reset()
 
     def reset(self):
@@ -753,8 +756,19 @@ class RocQDevice(QubitDevice):
                 "a PennyLane rocQuantum device."
             ) from exc
         self.sim = self._runtime.simulator
+        self._runtime.preserve_global_phase = self._preserve_global_phase
         self._state = None
         self._diagonalizing_rotations_applied = False
+
+    def _circuit_preserves_global_phase(self, circuit):
+        measurements = getattr(circuit, "measurements", ())
+        if not measurements:
+            return True
+
+        return any(
+            measurement.__class__.__name__ in {"StateMP", "AmplitudeMP"}
+            for measurement in measurements
+        )
 
     def _analytic_measurements_use_native_pauli(self, circuit):
         if self.shots is not None:
@@ -779,17 +793,24 @@ class RocQDevice(QubitDevice):
 
     def execute(self, circuit, **kwargs):
         skip_rotations = self._analytic_measurements_use_native_pauli(circuit)
+        preserve_global_phase = self._circuit_preserves_global_phase(circuit)
         previous = self._skip_diagonalizing_rotations
+        previous_global_phase = self._preserve_global_phase
         self._skip_diagonalizing_rotations = skip_rotations
+        self._preserve_global_phase = preserve_global_phase
         try:
             return super().execute(circuit, **kwargs)
         finally:
             self._skip_diagonalizing_rotations = previous
+            self._preserve_global_phase = previous_global_phase
+            if getattr(self, "_runtime", None) is not None:
+                self._runtime.preserve_global_phase = previous_global_phase
 
     def apply(self, operations: list[Operation], rotations=None, **kwargs):
         operation_applied = False
         rotation_ops = list(rotations or [])
         self._diagonalizing_rotations_applied = bool(rotation_ops)
+        self._runtime.preserve_global_phase = self._preserve_global_phase
         for op in list(operations) + rotation_ops:
             gate_name = op.name
             wire_indices = [self.wire_map[w] for w in op.wires]

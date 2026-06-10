@@ -37,6 +37,7 @@ Audit refresh note (2026-06-10):
 - PennyLane `qml.FermionicSWAP` now uses an exact native `H` / `RX` / `RZ` / `CNOT` plus global-phase decomposition instead of dense two-qubit matrix dispatch.
 - PennyLane `qml.OrbitalRotation` now uses exact native `FermionicSWAP` and `SingleExcitation` decompositions instead of dense four-qubit matrix dispatch.
 - PennyLane `qml.PhaseShift`, `qml.ControlledPhaseShift`, and open-control `qml.CPhaseShift00/01/10` now use exact global-phase plus native `RZ` / `CNOT` decompositions, avoiding dense controlled-phase matrix upload in QFT-style circuits.
+- PennyLane phase-style decompositions preserve global phase for `qml.state()` / amplitude-style outputs and skip those unobservable one-qubit global-phase matrices for expval/probs/sample/counts measurements.
 - PennyLane `qml.SparseHamiltonian` analytic expectation / variance now prefers `QuantumSimulator.sparse_hamiltonian_moments()`, a binding-level CSR moments method, and falls back to Python statevector CSR evaluation when the hook is unavailable; the current implementation is host-backed, so a validated ROCm sparse-observable GPU kernel is still missing.
 - Top-level CMake now delegates `_rocq_hip_backend` to `python/rocq/CMakeLists.txt`, so the legacy native Python backend path is part of the default bindings build instead of a parallel dormant CMake fragment.
 

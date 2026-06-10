@@ -1479,6 +1479,38 @@ def test_pennylane_rot_dispatches_native_rotation_sequence(monkeypatch):
     assert sim.matrices == []
 
 
+def test_pennylane_expval_skips_unobservable_global_phase_matrices(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.PhaseShift(0.1, wires=0)
+        qml.ControlledPhaseShift(0.2, wires=[0, 1])
+        return qml.expval(qml.PauliZ(0))
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("RZ", (0,), (0.1,)),
+        ("RZ", (0,), (0.1,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-0.1,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.1,)),
+    ]
+    assert sim.matrices == []
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_controlled_rotations_dispatch_natively(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

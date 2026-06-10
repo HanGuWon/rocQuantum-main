@@ -176,6 +176,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _supports_native_gate_decomposition", source)
         self.assertIn("def _apply_phase_shift", source)
         self.assertIn("def _apply_sx", source)
+        self.assertIn("preserve_global_phase", source)
+        self.assertIn("def _circuit_preserves_global_phase", source)
         self.assertIn("def _apply_controlled_phase_shift", source)
         self.assertIn("def _apply_controlled_phase_variant", source)
         self.assertIn("_apply_controlled_phase_shift(self._runtime, wire_indices, theta)", source)

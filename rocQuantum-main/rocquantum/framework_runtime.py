@@ -216,6 +216,7 @@ class RocQuantumRuntime:
 
     def __init__(self, simulator):
         self.simulator = simulator
+        self.preserve_global_phase = True
 
     @classmethod
     def from_bindings(cls, num_qubits: int, binding_module=None):
