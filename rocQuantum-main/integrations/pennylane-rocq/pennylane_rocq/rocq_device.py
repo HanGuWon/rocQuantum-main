@@ -550,6 +550,17 @@ def _apply_fermionic_swap(runtime, wire_indices, theta):
     _apply_global_phase(runtime, left, half_theta)
 
 
+def _apply_orbital_rotation(runtime, wire_indices, theta):
+    if len(wire_indices) != 4:
+        raise ValueError("OrbitalRotation requires exactly four wires.")
+
+    first, second, third, fourth = wire_indices
+    _apply_fermionic_swap(runtime, [second, third], np.pi)
+    _apply_single_excitation(runtime, [first, second], theta)
+    _apply_single_excitation(runtime, [third, fourth], theta)
+    _apply_fermionic_swap(runtime, [second, third], np.pi)
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -882,6 +893,20 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_phase_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_fermionic_swap(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "OrbitalRotation":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_phase_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_orbital_rotation(self._runtime, wire_indices, theta)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
