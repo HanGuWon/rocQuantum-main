@@ -801,9 +801,13 @@ class RocQDevice(QubitDevice):
         self._preserve_global_phase = True
         self.reset()
 
-    def reset(self):
+    def reset(self, batch_size=1):
         try:
-            self._runtime = RocQuantumRuntime.from_bindings(len(self.wires), binding_module=rocquantum_bind)
+            self._runtime = RocQuantumRuntime.from_bindings(
+                len(self.wires),
+                binding_module=rocquantum_bind,
+                batch_size=int(batch_size),
+            )
         except ImportError as exc:
             raise ImportError(
                 "The 'rocquantum_bind' module is not installed. "
@@ -876,6 +880,68 @@ class RocQDevice(QubitDevice):
             self._preserve_global_phase = previous_global_phase
             if getattr(self, "_runtime", None) is not None:
                 self._runtime.preserve_global_phase = previous_global_phase
+
+    def batch_execute(self, circuits, **kwargs):
+        circuits = list(circuits)
+        try:
+            result = self._try_execute_batched_parameter_circuits(circuits)
+            if result is not None:
+                return result
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            self.reset()
+        return super().batch_execute(circuits, **kwargs)
+
+    def _try_execute_batched_parameter_circuits(self, circuits):
+        if len(circuits) <= 1 or self.shots is not None:
+            return None
+
+        reference_ops = list(getattr(circuits[0], "operations", ()))
+        reference_measurements = list(getattr(circuits[0], "measurements", ()))
+        if len(reference_measurements) != 1 or reference_measurements[0].__class__.__name__ != "ExpectationMP":
+            return None
+
+        observable = getattr(reference_measurements[0], "obs", None)
+        reference_terms = _pauli_terms_from_observable(observable, self.wire_map)
+        if reference_terms is None:
+            return None
+        reference_signature = _combine_pauli_terms(reference_terms)
+
+        for circuit in circuits:
+            if len(getattr(circuit, "operations", ())) != len(reference_ops):
+                return None
+            measurements = list(getattr(circuit, "measurements", ()))
+            if len(measurements) != 1 or measurements[0].__class__.__name__ != "ExpectationMP":
+                return None
+            terms = _pauli_terms_from_observable(getattr(measurements[0], "obs", None), self.wire_map)
+            if terms is None or _combine_pauli_terms(terms) != reference_signature:
+                return None
+
+        self.reset(batch_size=len(circuits))
+        self._runtime.preserve_global_phase = False
+        for op_index, reference_op in enumerate(reference_ops):
+            gate_name = reference_op.name
+            wire_indices = [self.wire_map[w] for w in reference_op.wires]
+            ops = [list(getattr(circuit, "operations", ()))[op_index] for circuit in circuits]
+            if any(op.name != gate_name or [self.wire_map[w] for w in op.wires] != wire_indices for op in ops):
+                return None
+
+            params_by_op = [list(getattr(op, "parameters", [])) for op in ops]
+            if gate_name in {"RX", "RY", "RZ"} and all(len(params) == 1 for params in params_by_op):
+                self._runtime.apply_operation_batch(gate_name, wire_indices, [params[0] for params in params_by_op])
+                continue
+
+            if any(params != params_by_op[0] for params in params_by_op[1:]):
+                return None
+            if gate_name in PENNYLANE_TO_ROCQ_GATES and not params_by_op[0]:
+                self._runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)
+                continue
+            if gate_name in NATIVE_PARAMETRIC_OPS:
+                self._runtime.apply_operation(gate_name, wire_indices, params_by_op[0])
+                continue
+            return None
+
+        values = _evaluate_pauli_terms_batch(self._runtime, reference_signature)
+        return tuple(_real_measurement_result(value, "ExpectationMP") for value in values)
 
     def apply(self, operations: list[Operation], rotations=None, **kwargs):
         operation_applied = False

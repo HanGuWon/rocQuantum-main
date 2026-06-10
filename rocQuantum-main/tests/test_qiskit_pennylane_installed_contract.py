@@ -1497,6 +1497,28 @@ def test_pennylane_pauli_terms_combine_batched_expectations(monkeypatch):
     assert runtime.calls == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_uses_batched_parametric_gate(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    circuits = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.expval(qml.PauliZ(0))]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.expval(qml.PauliZ(0))]),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_paulix_expval_skips_diagonalizing_rotation(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
