@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <complex>                 // For std::complex
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -466,6 +467,80 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             return std::complex<double>(static_cast<double>(result.x), static_cast<double>(result.y));
         }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
            "Calculates <psi|M|psi> for a dense matrix acting on target qubits.");
+
+    m.def("get_expectation_matrix_batch",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::vector<unsigned>& targetQubits_vec,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> matrix) {
+            if (targetQubits_vec.empty()) {
+                throw std::runtime_error("target_qubits must not be empty for get_expectation_matrix_batch.");
+            }
+            if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                throw std::runtime_error("matrix must be a square 2D array for get_expectation_matrix_batch.");
+            }
+
+            const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
+            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
+                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+                throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
+            }
+
+            const rocComplex* matrix_row_major = matrix.data();
+            std::vector<rocComplex> matrix_col_major(matrix_dim * matrix_dim);
+            for (size_t row = 0; row < matrix_dim; ++row) {
+                for (size_t col = 0; col < matrix_dim; ++col) {
+                    matrix_col_major[row + col * matrix_dim] =
+                        matrix_row_major[row * matrix_dim + col];
+                }
+            }
+
+            DeviceBuffer matrix_device(matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(matrix_device.get_ptr<rocComplex>(),
+                          matrix_col_major.data(),
+                          matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy batch expectation matrix to device");
+            }
+
+            if (numQubits >= sizeof(size_t) * 8) {
+                throw std::runtime_error("num_qubits is too large for get_expectation_matrix_batch.");
+            }
+            size_t elements_per_state = size_t{1} << numQubits;
+            if (elements_per_state > std::numeric_limits<size_t>::max() / sizeof(rocComplex)) {
+                throw std::runtime_error("state size is too large for get_expectation_matrix_batch.");
+            }
+            size_t bytes_per_state = elements_per_state * sizeof(rocComplex);
+            if (d_state_buffer.nbytes() % bytes_per_state != 0) {
+                throw std::runtime_error("d_state buffer size is incompatible with num_qubits.");
+            }
+            size_t batch_size = d_state_buffer.nbytes() / bytes_per_state;
+            if (batch_size == 0) {
+                throw std::runtime_error("d_state buffer does not contain any batch states.");
+            }
+            std::vector<rocComplex> raw_results(batch_size);
+            rocqStatus_t status = rocsvGetExpectationMatrixBatch(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                targetQubits_vec.data(),
+                static_cast<unsigned>(targetQubits_vec.size()),
+                matrix_device.get_ptr<rocComplex>(),
+                matrix_dim,
+                raw_results.data());
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetExpectationMatrixBatch failed: " + std::to_string(status));
+            }
+
+            py::array_t<std::complex<double>> result(batch_size);
+            auto mutable_result = result.mutable_unchecked<1>();
+            for (size_t idx = 0; idx < batch_size; ++idx) {
+                mutable_result(static_cast<py::ssize_t>(idx)) =
+                    std::complex<double>(static_cast<double>(raw_results[idx].x),
+                                         static_cast<double>(raw_results[idx].y));
+            }
+            return result;
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
+           "Calculates <psi|M|psi> for each local batch state.");
 
     m.def("get_sparse_matrix_moments",
         [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,

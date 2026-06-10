@@ -275,6 +275,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             hipstatevec = f.read()
         with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
             bindings = f.read()
+        with open(_LOW_LEVEL_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            low_level_bindings = f.read()
         with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
             runtime = f.read()
 
@@ -312,6 +314,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn(".def(\"ExpectationMatrix\"", bindings)
         self.assertIn(".def(\"expectation_matrix_batch\"", bindings)
         self.assertIn(".def(\"ExpectationMatrixBatch\"", bindings)
+        self.assertIn("m.def(\"get_expectation_matrix_batch\"", low_level_bindings)
+        self.assertIn("rocsvGetExpectationMatrixBatch", low_level_bindings)
         self.assertIn(".def(\"expectation_pauli_string_batch\"", bindings)
         self.assertIn(".def(\"GetExpectationPauliStringBatch\"", bindings)
         self.assertIn(".def(\"sparse_hamiltonian_moments\"", bindings)
