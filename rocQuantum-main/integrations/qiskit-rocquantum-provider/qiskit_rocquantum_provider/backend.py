@@ -1,3 +1,4 @@
+import cmath
 import uuid
 
 from qiskit.providers import BackendV2, Options
@@ -145,8 +146,28 @@ class RocQuantumBackend(BackendV2):
         else:
             self._runtime.reset()
 
-    def _apply_circuit(self, circuit):
+    def _apply_global_phase(self, circuit):
+        if circuit.num_qubits == 0:
+            return
+
+        phase = float(getattr(circuit, "global_phase", 0.0))
+        if abs(phase) <= 1e-15:
+            return
+
+        phase_factor = cmath.exp(1j * phase)
+        self._runtime.apply_operation(
+            "unitary",
+            [0],
+            matrix=[
+                [phase_factor, 0.0],
+                [0.0, phase_factor],
+            ],
+        )
+
+    def _apply_circuit(self, circuit, *, include_global_phase: bool = False):
         self._ensure_simulator(circuit.num_qubits)
+        if include_global_phase:
+            self._apply_global_phase(circuit)
 
         measured_bits = {}  # Map classical bit index to qubit index
         measurement_started = False
@@ -186,7 +207,7 @@ class RocQuantumBackend(BackendV2):
 
     def estimate_expectation(self, circuit, observable):
         """Return a native Pauli expectation for a circuit and Qiskit observable."""
-        self._apply_circuit(circuit)
+        self._apply_circuit(circuit, include_global_phase=False)
         return estimate_pauli_observable(self._runtime, observable, circuit.num_qubits)
 
     def run(self, run_input, **options):
@@ -198,7 +219,11 @@ class RocQuantumBackend(BackendV2):
         results = []
 
         for circuit in run_input:
-            measured_bits = self._apply_circuit(circuit)
+            return_statevector = bool(
+                options.get("statevector", self.options.statevector)
+                or self._requests_statevector(circuit)
+            )
+            measured_bits = self._apply_circuit(circuit, include_global_phase=return_statevector)
 
             # Perform measurement on the required qubits.  rocsvSample packs
             # result bits in the order qubits are requested, so keep the
@@ -209,10 +234,6 @@ class RocQuantumBackend(BackendV2):
                 measured_items = [(idx, idx) for idx in range(circuit.num_qubits)]
             qubits_to_measure = [qubit for _, qubit in measured_items]
 
-            return_statevector = bool(
-                options.get("statevector", self.options.statevector)
-                or self._requests_statevector(circuit)
-            )
             statevector = self._runtime.statevector() if return_statevector else None
 
             return_sampling = bool(options.get("sampling", self.options.sampling))

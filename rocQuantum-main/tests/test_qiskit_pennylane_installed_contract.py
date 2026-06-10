@@ -221,6 +221,46 @@ def test_qiskit_backend_rejects_mid_circuit_measurement(monkeypatch):
         backend.run(circuit).result()
 
 
+def test_qiskit_backend_applies_global_phase_for_statevector(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1)
+    circuit.global_phase = math.pi / 3
+    circuit.h(0)
+
+    backend.run(circuit, sampling=False).result()
+
+    matrix, targets = _FakeQuantumSimulator.instances[-1].matrices[0]
+    phase = np.exp(1j * math.pi / 3)
+    np.testing.assert_allclose(matrix, np.array([[phase, 0.0], [0.0, phase]], dtype=np.complex128))
+    assert targets == (0,)
+    assert _FakeQuantumSimulator.instances[-1].ops == [("H", (0,), ())]
+
+
+def test_qiskit_backend_skips_global_phase_for_sampling_only(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1, 1)
+    circuit.global_phase = math.pi / 3
+    circuit.h(0)
+    circuit.measure(0, 0)
+
+    backend.run(circuit, statevector=False).result()
+
+    assert _FakeQuantumSimulator.instances[-1].matrices == []
+    assert _FakeQuantumSimulator.instances[-1].ops == [("H", (0,), ())]
+
+
 def test_qiskit_backend_dispatches_controlled_rotations_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
