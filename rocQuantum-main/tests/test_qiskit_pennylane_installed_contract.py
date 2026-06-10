@@ -377,6 +377,7 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
     circuit.sx(0)
     circuit.sxdg(1)
     circuit.p(0.2, 0)
+    circuit.tdg(0)
     circuit.cp(0.3, 0, 1)
     circuit.rxx(0.4, 0, 1)
     circuit.ryy(0.5, 0, 1)
@@ -384,7 +385,9 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
     circuit.u(0.7, 0.8, 0.9, 1)
 
     assert backend.target.num_qubits >= 2
-    assert {"sx", "p", "cp", "rxx", "ryy", "rzz", "u"}.issubset(set(backend.target.operation_names))
+    assert {"sx", "tdg", "p", "cp", "rxx", "ryy", "rzz", "u"}.issubset(
+        set(backend.target.operation_names)
+    )
 
     transpiled = transpile(circuit, backend)
     assert transpiled.num_qubits == 2
@@ -396,6 +399,7 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
         ("RX", (0,), (np.pi / 2,)),
         ("RX", (1,), (-np.pi / 2,)),
         ("RZ", (0,), (0.2,)),
+        ("RZ", (0,), (-np.pi / 4,)),
         ("RZ", (0,), (0.15,)),
         ("CNOT", (0, 1), ()),
         ("RZ", (1,), (-0.15,)),
@@ -431,6 +435,7 @@ def test_qiskit_phase_decomposition_preserves_statevector_global_phase(monkeypat
     backend = RocQuantumProvider().get_backend("rocq_simulator")
     circuit = QuantumCircuit(2)
     circuit.p(0.2, 0)
+    circuit.tdg(1)
     circuit.cp(0.3, 0, 1)
 
     backend.run(circuit, sampling=False, statevector=True).result()
@@ -438,6 +443,7 @@ def test_qiskit_phase_decomposition_preserves_statevector_global_phase(monkeypat
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.ops == [
         ("RZ", (0,), (0.2,)),
+        ("RZ", (1,), (-np.pi / 4,)),
         ("RZ", (0,), (0.15,)),
         ("CNOT", (0, 1), ()),
         ("RZ", (1,), (-0.15,)),
@@ -446,6 +452,7 @@ def test_qiskit_phase_decomposition_preserves_statevector_global_phase(monkeypat
     ]
     assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
         ((2, 2), (0,)),
+        ((2, 2), (1,)),
         ((2, 2), (0,)),
     ]
 

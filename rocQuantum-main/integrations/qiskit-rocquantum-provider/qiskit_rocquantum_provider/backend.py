@@ -41,6 +41,7 @@ from qiskit.circuit.library import (
     SwapGate,
     StatePreparation,
     TGate,
+    TdgGate,
     PhaseGate,
     UGate,
     UnitaryGate,
@@ -141,6 +142,7 @@ def _instruction_target(num_qubits):
     target.add_instruction(SXdgGate(), name="sxdg")
     target.add_instruction(SwapGate(), name="swap")
     target.add_instruction(TGate(), name="t")
+    target.add_instruction(TdgGate(), name="tdg")
     target.add_instruction(UGate(0.0, 0.0, 0.0), name="u")
     target.add_instruction(UnitaryGate([[1, 0], [0, 1]]), name="unitary")
     target.add_instruction(XGate(), name="x")
@@ -347,6 +349,15 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("cx", [control, target])
         self._runtime.apply_operation("x", [control])
 
+    def _apply_tdg_gate(self, q_indices, include_global_phase):
+        if len(q_indices) != 1:
+            raise ValueError("Qiskit tdg gate requires exactly one qubit.")
+
+        target = q_indices[0]
+        if include_global_phase:
+            self._apply_global_phase_value(-cmath.pi / 8, target=target)
+        self._runtime.apply_operation("rz", [target], [-cmath.pi / 4])
+
     def _apply_rccx_gate(self, q_indices):
         if len(q_indices) != 3:
             raise ValueError("Qiskit rccx gate requires exactly three qubits.")
@@ -458,6 +469,11 @@ class RocQuantumBackend(BackendV2):
                     self._apply_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
                 else:
                     self._apply_controlled_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
+                touched_qubits.update(q_indices)
+                continue
+
+            if op.name == "tdg" and self._supports_native_phase_decomposition(include_global_phase):
+                self._apply_tdg_gate(q_indices, include_global_phase=include_global_phase)
                 touched_qubits.update(q_indices)
                 continue
 
