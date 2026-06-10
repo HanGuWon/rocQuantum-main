@@ -75,6 +75,8 @@ class _FakeQuantumSimulator:
             return 0.5
         if pauli_string == "XZ" and tuple(targets) == (0, 1):
             return 0.25
+        if pauli_string == "XX" and tuple(targets) == (0, 1):
+            return 0.25
         return 0.0
 
     def ApplyGate(self, *args):
@@ -410,6 +412,28 @@ def test_qiskit_provider_estimates_sparse_pauli_observable_natively(monkeypatch)
     assert _FakeQuantumSimulator.instances[-1].expectations == [
         ("Z", (0,)),
         ("XZ", (0, 1)),
+    ]
+
+
+def test_qiskit_provider_estimates_sparse_observable_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import SparseObservable
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    circuit = QuantumCircuit(2)
+    observable = SparseObservable.from_list([
+        ("IZ", 1.2),
+        ("XX", -0.5),
+    ])
+
+    assert provider.estimate_expectation(circuit, observable) == pytest.approx(0.475)
+    assert _FakeQuantumSimulator.instances[-1].expectations == [
+        ("Z", (0,)),
+        ("XX", (0, 1)),
     ]
 
 

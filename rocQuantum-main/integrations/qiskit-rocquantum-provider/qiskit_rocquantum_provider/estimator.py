@@ -7,7 +7,19 @@ from qiskit.primitives.containers import DataBin, EstimatorPub, PrimitiveResult,
 from qiskit.primitives.primitive_job import PrimitiveJob
 
 
-def _observable_terms(observable):
+def _sparse_observable_terms(observable, num_qubits: int):
+    terms = []
+    for paulis, indices, coeff in observable.as_paulis().to_sparse_list():
+        label = ["I"] * int(num_qubits)
+        for pauli, qubit in zip(str(paulis).upper(), indices):
+            if int(qubit) >= int(num_qubits):
+                raise ValueError("Observable acts on more qubits than the circuit.")
+            label[int(num_qubits) - 1 - int(qubit)] = pauli
+        terms.append((complex(coeff), "".join(label)))
+    return terms
+
+
+def _observable_terms(observable, num_qubits: int | None = None):
     try:
         from qiskit.quantum_info import Pauli, SparsePauliOp
     except ImportError as exc:
@@ -32,8 +44,13 @@ def _observable_terms(observable):
     if isinstance(observable, list):
         return [(complex(coeff), str(label)) for label, coeff in observable]
 
+    if hasattr(observable, "as_paulis") and hasattr(observable, "to_sparse_list"):
+        if num_qubits is None:
+            raise ValueError("SparseObservable conversion requires the circuit qubit count.")
+        return _sparse_observable_terms(observable, int(num_qubits))
+
     if hasattr(observable, "to_sparse_pauli_op"):
-        return _observable_terms(observable.to_sparse_pauli_op())
+        return _observable_terms(observable.to_sparse_pauli_op(), num_qubits=num_qubits)
 
     raise TypeError(f"Unsupported Qiskit observable type: {type(observable)!r}")
 
@@ -58,7 +75,7 @@ def _label_to_runtime_term(label: str, num_qubits: int):
 
 def estimate_pauli_observable(runtime, observable, num_qubits: int) -> float:
     result = 0.0 + 0.0j
-    for coeff, label in _observable_terms(observable):
+    for coeff, label in _observable_terms(observable, num_qubits=int(num_qubits)):
         pauli_string, targets = _label_to_runtime_term(label, int(num_qubits))
         if not targets:
             result += coeff
