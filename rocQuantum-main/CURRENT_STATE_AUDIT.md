@@ -68,6 +68,8 @@ What is not real today:
 ### Density matrix and noise
 
 - `hipDensityMat` supports density-matrix allocation, reset, single-qubit gates, `CNOT`, controlled single-qubit gate application, and basic channels such as bit flip, phase flip, depolarizing, and amplitude damping.
+- `hipDensityMatApplyChannel` now accepts single-qubit Kraus channel descriptors, and the named channels share that helper path.
+- `hipDensityMatSample` plus canonical `rocq.backends.DensityMatrixBackend.sample()` provide density-matrix sampling through a host-side correctness path over diagonal probabilities.
 - Density-matrix expectation helpers exist for single-qubit X/Y/Z and Pauli-Z products.
 
 ### Tensor networks
@@ -121,8 +123,8 @@ What is not real today:
 - Mid-circuit measurement plus classical control flow is absent as a coherent supported feature.
 - Public `QuantumSimulator` expectation APIs are absent.
 - Public `QuantumSimulator` named APIs for `MCX`, `CSWAP`, and generic controlled unitary are absent.
-- Density-matrix generic channel application returns `HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED`.
-- Density-matrix sampling was not found.
+- Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
+- Density-matrix sampling is not yet a GPU-fast path; it copies probability information to host before drawing shots.
 - Stabilizer/tableau/Pauli-propagation backends were not found.
 - CUDA-QX-style higher-level solver/QEC libraries are not implemented beyond framework shells.
 
@@ -141,7 +143,7 @@ What is not real today:
 | Generic matrix/control matrix | Partial HIP path | Broader cases return `ROCQ_STATUS_NOT_IMPLEMENTED` by default; `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` enables explicit slow/debug host fallback |
 | Expectations | Native `hipStateVec` helpers exist; canonical `rocq.observe()` and legacy `Circuit.expval()` are wired for supported Pauli operators | Hermitian/broader operator coverage remains limited |
 | Tensor-network contraction | Native HIP/rocBLAS/rocSOLVER path | Pathfinder/slicing breadth not fully wired |
-| Density matrix | Native limited kernel set | Generic channels absent |
+| Density matrix | Native limited kernel set | Generic single-qubit Kraus channels and sampling use correctness-first paths; multi-qubit channels and GPU-fast density sampling remain absent |
 | Framework adapters | Use native simulator for some operations | PennyLane/Cirq sample on host with NumPy; many tests are mock-only |
 | Top-level `rocq` backend selection | Can hit native bindings | Falls back to mock state objects when compiled backend is missing |
 

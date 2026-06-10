@@ -102,11 +102,38 @@ class _MockDensityMatrixState:
     def apply_bit_flip_channel(self, target: int, prob: float):
         return None
 
+    def apply_phase_flip_channel(self, target: int, prob: float):
+        return None
+
+    def apply_amplitude_damping_channel(self, target: int, prob: float):
+        return None
+
+    def apply_channel(self, target: int, kraus_matrices: np.ndarray):
+        return None
+
     def compute_expectation(self, pauli, target: int):
         return 0.0
 
     def compute_z_product_expectation(self, targets: Sequence[int]):
         return 0.0
+
+    def sample(self, measured_qubits: Sequence[int], num_shots: int):
+        measured = [int(q) for q in measured_qubits]
+        if not measured:
+            raise ValueError("At least one qubit must be measured.")
+        probs = np.zeros(1 << len(measured), dtype=np.float64)
+        diagonal = np.real(np.diag(self._density))
+        for basis, prob in enumerate(diagonal):
+            outcome = 0
+            for bit, qubit in enumerate(measured):
+                if (basis >> qubit) & 1:
+                    outcome |= 1 << bit
+            probs[outcome] += max(float(prob), 0.0)
+        total = probs.sum()
+        if total <= 0.0:
+            raise RuntimeError("Density matrix has no positive diagonal probability mass.")
+        probs /= total
+        return np.random.choice(len(probs), size=int(num_shots), p=probs).astype(np.uint64)
 
     def get_density_matrix(self):
         return self._density.copy()
@@ -326,11 +353,23 @@ class _HipDensityMatrixState:
     def apply_bit_flip_channel(self, target: int, prob: float):
         return self._state.apply_bit_flip_channel(target, prob)
 
+    def apply_phase_flip_channel(self, target: int, prob: float):
+        return self._state.apply_phase_flip_channel(target, prob)
+
+    def apply_amplitude_damping_channel(self, target: int, prob: float):
+        return self._state.apply_amplitude_damping_channel(target, prob)
+
+    def apply_channel(self, target: int, kraus_matrices: np.ndarray):
+        return self._state.apply_channel(target, _coerce_complex64_matrix(kraus_matrices))
+
     def compute_expectation(self, pauli, target: int):
         return self._state.compute_expectation(pauli, target)
 
     def compute_z_product_expectation(self, targets: Sequence[int]):
         return self._state._compute_z_product_expectation(list(targets))
+
+    def sample(self, measured_qubits: Sequence[int], num_shots: int):
+        return self._state.sample(list(measured_qubits), int(num_shots))
 
     def get_density_matrix(self):
         return self._state.get_density_matrix()
@@ -563,6 +602,10 @@ class DensityMatrixBackend(_BaseBackend):
                 self._state.apply_depolarizing_channel(target, prob)
             elif channel_lower == "bit_flip":
                 self._state.apply_bit_flip_channel(target, prob)
+            elif channel_lower == "phase_flip":
+                self._state.apply_phase_flip_channel(target, prob)
+            elif channel_lower == "amplitude_damping":
+                self._state.apply_amplitude_damping_channel(target, prob)
             else:
                 raise ValueError(f"Noise channel '{channel_type}' is not supported by the DensityMatrixBackend.")
 
@@ -570,10 +613,11 @@ class DensityMatrixBackend(_BaseBackend):
         return self._state.get_density_matrix()
 
     def sample(self, shots: int, qubits: Optional[Sequence[int]] = None):
-        raise NotImplementedError(
-            "The density-matrix backend does not expose a native sampling path yet. "
-            "Use backend='state_vector' for sampling."
-        )
+        if shots <= 0:
+            raise ValueError("shots must be positive.")
+        measured_qubits = list(range(self.num_qubits)) if qubits is None else [int(q) for q in qubits]
+        raw_results = self._state.sample(measured_qubits, int(shots))
+        return _format_sample_counts(raw_results, len(measured_qubits))
 
     def expectation(self, operator):
         total = 0.0 + 0.0j

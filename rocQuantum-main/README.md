@@ -14,7 +14,7 @@ Implemented today:
 
 - Native HIP state-vector simulation for core named gates, sampling, measurement, and several expectation-value primitives
 - Native tensor-network contraction core
-- Native density-matrix core with a limited noise model set
+- Native density-matrix core with named noise channels, a generic single-qubit Kraus channel API, and density sampling correctness path
 - Direct simulator execution through the active local runtime path
 
 Only partial today:
@@ -22,7 +22,7 @@ Only partial today:
 - MLIR/QIR compiler flow
 - Generic matrix and controlled-unitary coverage
 - Multi-GPU / distributed execution
-- Observable breadth and density-matrix expectation coverage
+- Observable breadth and density-matrix GPU-fast sampling coverage
 - Packaging and install/export
 - PennyLane, Cirq, and Qiskit adapter maturity
 
@@ -73,7 +73,7 @@ Use those files as the authoritative capability summary for the current codebase
 | --- | --- |
 | `hipStateVec` | Real and useful, but not fully surfaced through every public API |
 | `hipTensorNet` | Real contraction core with explicit optimizer/dtype/slicing capabilities, narrower than a full cuTensorNet analogue |
-| `hipDensityMat` | Real but limited |
+| `hipDensityMat` | Real but limited; generic channels and sampling are correctness-first paths |
 | `rocqCompiler` | Partial codegen path, no real compile-and-execute loop |
 | Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring |
 | `python/rocq` | Separate legacy compatibility surface; Pauli expectations now use native helpers, while queue/fusion and other paths still need consolidation |
@@ -86,6 +86,7 @@ Use those files as the authoritative capability summary for the current codebase
 - RCCL-backed distributed expectation and sampling reductions are limited to local-domain qubits; set `ROCQ_DISTRIBUTED_COMM=rccl` or `ROCQ_REQUIRE_RCCL=1` to require RCCL on a ROCm runner.
 - Generic matrix/control-matrix cases outside HIP fast paths return `NOT_IMPLEMENTED` by default; set `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` only for explicit slow/debug host fallback.
 - TensorNet supports the build's compiled complex dtype (`C64` by default, `C128` in `ROCQ_PRECISION_DOUBLE` builds); METIS/KAHYPAR pathfinders and runtime slicing report unsupported unless compiled in.
+- `hipDensityMatApplyChannel` accepts single-qubit Kraus channels only, and density-matrix sampling currently copies diagonal probability information to host before drawing shots.
 - `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, but the legacy surface remains separate from canonical `rocq`.
 - PennyLane and Cirq adapters use host-side sampling paths.
 - Several provider backends remain skeletons or thin clients.

@@ -90,5 +90,14 @@ rocqStatus_t rocdmApplyChannel(rocdmHandle_t state, int target_qubit, const void
     return map_density_status(hipDensityMatApplyChannel(state, target_qubit, channel_params));
 }
 
+rocqStatus_t rocdmSample(rocdmHandle_t state,
+                         const int* measured_qubits,
+                         int num_measured_qubits,
+                         int num_shots,
+                         uint64_t* results_host) {
+    return map_density_status(
+        hipDensityMatSample(state, measured_qubits, num_measured_qubits, num_shots, results_host));
+}
+
 }  // extern "C"
 

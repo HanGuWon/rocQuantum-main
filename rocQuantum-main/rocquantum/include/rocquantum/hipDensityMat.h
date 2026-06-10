@@ -2,6 +2,7 @@
 #define ROCQUANTUM_HIP_DENSITY_MAT_H
 
 #include <hip/hip_runtime.h>
+#include <stdint.h>
 
 #include "rocquantum/hipStateVec.h"
 
@@ -12,6 +13,11 @@ typedef enum {
     ROCDM_PAULI_Y = 1,
     ROCDM_PAULI_Z = 2
 } rocdmPauli_t;
+
+typedef struct {
+    int num_kraus;
+    const hipComplex* kraus_matrices_host;
+} rocdmChannel_t;
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,6 +45,12 @@ rocqStatus_t rocdmComputePauliZProductExpectation(rocdmHandle_t state,
                                                   double* result_host);
 
 rocqStatus_t rocdmApplyChannel(rocdmHandle_t state, int target_qubit, const void* channel_params);
+
+rocqStatus_t rocdmSample(rocdmHandle_t state,
+                         const int* measured_qubits,
+                         int num_measured_qubits,
+                         int num_shots,
+                         uint64_t* results_host);
 
 #ifdef __cplusplus
 }

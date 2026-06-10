@@ -5,6 +5,7 @@
 #define HIPDENSITYMAT_HPP
 
 #include <hip/hip_runtime.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +26,17 @@ typedef enum {
     HIPDENSITYMAT_STATUS_EXECUTION_FAILED = 3,
     HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED = 4
 } hipDensityMatStatus_t;
+
+/**
+ * @brief Host-side description of a single-qubit Kraus channel.
+ *
+ * kraus_matrices_host points to num_kraus contiguous 2x2 row-major hipComplex
+ * matrices in host memory.
+ */
+typedef struct {
+    int num_kraus;
+    const hipComplex* kraus_matrices_host;
+} hipDensityMatChannel_t;
 
 /**
  * @brief Creates and initializes a density matrix state for a given number of qubits.
@@ -216,18 +228,34 @@ hipDensityMatStatus_t hipDensityMatApplyControlledGate(
 
 
 /**
- * @brief Applies a quantum channel to a target qubit. (Placeholder)
- *
- * This function will be the core entry point for simulating noisy operations.
- * Specific channel implementations (e.g., Bit Flip, Phase Flip, Depolarizing)
- * will be added in the future.
+ * @brief Applies a generic single-qubit Kraus channel to a target qubit.
  *
  * @param[in] state The state handle.
  * @param[in] target_qubit The index of the qubit to apply the channel to.
- * @param[in] channel_params Placeholder for channel-specific parameters (e.g., noise probability).
+ * @param[in] channel_params Pointer to a hipDensityMatChannel_t.
  * @return hipDensityMatStatus_t Status of the operation.
  */
 hipDensityMatStatus_t hipDensityMatApplyChannel(hipDensityMatState_t state, int target_qubit, const void* channel_params);
+
+/**
+ * @brief Samples computational-basis outcomes from the density-matrix diagonal.
+ *
+ * This correctness path copies the density matrix diagonal information to host
+ * memory before drawing samples.
+ *
+ * @param[in] state The state handle.
+ * @param[in] measured_qubits Array of qubits to sample.
+ * @param[in] num_measured_qubits Number of measured qubits.
+ * @param[in] num_shots Number of samples to draw.
+ * @param[out] results_host Host array of num_shots uint64_t outcomes.
+ * @return hipDensityMatStatus_t Status of the operation.
+ */
+hipDensityMatStatus_t hipDensityMatSample(
+    hipDensityMatState_t state,
+    const int* measured_qubits,
+    int num_measured_qubits,
+    int num_shots,
+    uint64_t* results_host);
 
 
 #ifdef __cplusplus

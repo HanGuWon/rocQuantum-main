@@ -89,7 +89,7 @@ Compared with the official cuQuantum baseline (`https://docs.nvidia.com/cuda/cuq
 
 - `hipStateVec` is the strongest analogue, but public API exposure, controlled-matrix breadth, and distributed completeness lag behind
 - `hipTensorNet` has a real core and now reports optimizer/dtype/slicing capabilities, but true METIS/KAHYPAR pathfinders and runtime sliced execution still lag behind cuTensorNet expectations
-- `hipDensityMat` exists, but generic channels, sampling, and broader observable coverage lag behind cuDensityMat expectations
+- `hipDensityMat` exists, and now has single-qubit Kraus channels plus host-side density sampling, but GPU-fast sampling, multi-qubit channels, and broader observable coverage lag behind cuDensityMat expectations
 
 For state-vector matrix application, unsupported cases now fail clearly unless `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` is set for explicit slow/debug fallback.
 
@@ -116,7 +116,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 5. Packaging/install/export does not describe one releasable artifact.
 6. Gate fusion exists and is wired for narrow canonical `rocq` spans; unsupported fusion queue entries fail instead of being silently dropped, but legacy `python/rocq` and broader patterns remain unfused.
 7. `hipTensorNet` breadth is overstated relative to what is built and tested.
-8. `hipDensityMat` is real but too narrow for broad noisy-simulation claims.
+8. `hipDensityMat` is real but still too narrow for broad noisy-simulation claims: generic single-qubit Kraus channels and host-side density sampling exist, while multi-qubit channels and GPU-fast shot workflows remain incomplete.
 9. Integrations are mostly thin adapters, not proof of a strong platform story.
 10. CUDA-QX-style libraries are still shells.
 

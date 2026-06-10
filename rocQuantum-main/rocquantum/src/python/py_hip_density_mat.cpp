@@ -3,6 +3,8 @@
 #include <pybind11/stl.h>
 #include <hip/hip_runtime.h>
 #include <hip/hip_complex.h>
+#include <complex>
+#include <cstdint>
 #include <vector>
 #include <stdexcept>
 
@@ -93,9 +95,52 @@ PYBIND11_MODULE(rocq_hip, m) {
         .def("apply_bit_flip_channel", [](hipDensityMatState* state, int target_qubit, double probability) {
             HIPDENSITYMAT_CHECK(hipDensityMatApplyBitFlipChannel(state, target_qubit, probability));
         }, py::arg("target_qubit"), py::arg("probability"), "Apply a bit-flip noise channel.")
+        .def("apply_phase_flip_channel", [](hipDensityMatState* state, int target_qubit, double probability) {
+            HIPDENSITYMAT_CHECK(hipDensityMatApplyPhaseFlipChannel(state, target_qubit, probability));
+        }, py::arg("target_qubit"), py::arg("probability"), "Apply a phase-flip noise channel.")
         .def("apply_depolarizing_channel", [](hipDensityMatState* state, int target_qubit, double probability) {
             HIPDENSITYMAT_CHECK(hipDensityMatApplyDepolarizingChannel(state, target_qubit, probability));
         }, py::arg("target_qubit"), py::arg("probability"), "Apply a depolarizing noise channel.")
+        .def("apply_amplitude_damping_channel", [](hipDensityMatState* state, int target_qubit, double gamma) {
+            HIPDENSITYMAT_CHECK(hipDensityMatApplyAmplitudeDampingChannel(state, target_qubit, gamma));
+        }, py::arg("target_qubit"), py::arg("gamma"), "Apply an amplitude damping noise channel.")
+        .def("apply_channel", [](hipDensityMatState* state, int target_qubit, py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> kraus_matrices) {
+            if (kraus_matrices.ndim() != 3 || kraus_matrices.shape(1) != 2 || kraus_matrices.shape(2) != 2) {
+                throw std::invalid_argument("Kraus matrices must have shape (num_kraus, 2, 2).");
+            }
+            const int num_kraus = static_cast<int>(kraus_matrices.shape(0));
+            if (num_kraus <= 0) {
+                throw std::invalid_argument("Kraus channel must include at least one 2x2 matrix.");
+            }
+
+            auto matrices = kraus_matrices.unchecked<3>();
+            std::vector<hipComplex> kraus_host(static_cast<size_t>(num_kraus) * 4);
+            for (int k = 0; k < num_kraus; ++k) {
+                for (int row = 0; row < 2; ++row) {
+                    for (int col = 0; col < 2; ++col) {
+                        const std::complex<float> value = matrices(k, row, col);
+                        kraus_host[static_cast<size_t>(k) * 4 + row * 2 + col] =
+                            make_hipFloatComplex(value.real(), value.imag());
+                    }
+                }
+            }
+
+            hipDensityMatChannel_t channel{num_kraus, kraus_host.data()};
+            HIPDENSITYMAT_CHECK(hipDensityMatApplyChannel(state, target_qubit, &channel));
+        }, py::arg("target_qubit"), py::arg("kraus_matrices"), "Apply a generic single-qubit Kraus channel.")
+        .def("sample", [](hipDensityMatState* state, std::vector<int> measured_qubits, int num_shots) {
+            if (num_shots < 0) {
+                throw std::invalid_argument("num_shots must be non-negative.");
+            }
+            py::array_t<uint64_t> results(static_cast<py::ssize_t>(num_shots));
+            HIPDENSITYMAT_CHECK(hipDensityMatSample(
+                state,
+                measured_qubits.data(),
+                static_cast<int>(measured_qubits.size()),
+                num_shots,
+                results.mutable_data()));
+            return results;
+        }, py::arg("measured_qubits"), py::arg("num_shots"), "Sample computational-basis outcomes.")
         .def("get_density_matrix", [](hipDensityMatState* state) {
             if (state == nullptr) {
                 throw std::invalid_argument("DensityMatrixState is null.");
