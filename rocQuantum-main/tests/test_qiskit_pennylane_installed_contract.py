@@ -323,6 +323,47 @@ def test_pennylane_parameter_shift_gradient_pipeline_runs(monkeypatch):
     assert qml.grad(circuit)(theta) == pytest.approx(0.0)
 
 
+def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane.exceptions import PennyLaneDeprecationWarning
+
+    with pytest.warns(PennyLaneDeprecationWarning):
+        sample_dev = qml.device("lightning.rocq", wires=2, shots=4)
+
+    @qml.qnode(sample_dev)
+    def sample_circuit():
+        qml.Hadamard(wires=0)
+        qml.CNOT(wires=[0, 1])
+        return qml.sample(wires=[0, 1])
+
+    samples = sample_circuit()
+    np.testing.assert_array_equal(
+        samples,
+        np.array([[0, 0], [1, 1], [0, 0], [1, 1]], dtype=int),
+    )
+    assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 4)]
+
+    with pytest.warns(PennyLaneDeprecationWarning):
+        counts_dev = qml.device("lightning.rocq", wires=2, shots=4)
+
+    @qml.qnode(counts_dev)
+    def counts_circuit():
+        qml.Hadamard(wires=0)
+        qml.CNOT(wires=[0, 1])
+        return qml.counts(wires=[0, 1])
+
+    counts = {str(key): int(value) for key, value in counts_circuit().items()}
+
+    assert counts == {"00": 2, "11": 2}
+    assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 4)]
+
+
 def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
