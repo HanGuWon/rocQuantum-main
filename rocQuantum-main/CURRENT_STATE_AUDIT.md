@@ -12,7 +12,7 @@ Runtime update note (2026-04-06):
 Audit refresh note (2026-06-10):
 
 - Official AMD production ROCm documentation now points to ROCm `7.2.4`, released 2026-05-29.
-- Previous rows that described canonical `rocq.operator.get_expectation_value()` as unimplemented are stale; the current gap is split API behavior, especially the legacy `python/rocq` host-side expectation fallback.
+- Previous rows that described canonical `rocq.operator.get_expectation_value()` as unimplemented are stale; the current gap is split API behavior between canonical `rocq` and legacy `python/rocq`.
 - GateFusion is wired opportunistically into canonical `rocq.backends.StateVectorBackend`, but the legacy `python/rocq` queue flush path still replays gates one by one.
 
 The detailed findings below still describe the original audit snapshot; use them together with the runtime update above.
@@ -39,7 +39,7 @@ What is not real today:
 - End-to-end compiler-driven execution parity with CUDA-Q is not present.
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is a hard stub.
 - Distributed multi-GPU is only partially implemented and was overclaimed in docs.
-- High-level expectation-value workflows are split across native helpers, legacy Python bindings, and host-side NumPy fallbacks.
+- High-level expectation-value workflows are split across canonical runtime APIs and legacy Python bindings.
 - Packaging, install/export, and CI do not describe one coherent release artifact.
 
 ## Code Surface Inventory
@@ -52,7 +52,7 @@ What is not real today:
 | `rocquantum/src/simulator.cpp` | Real public C++ simulator wrapper, but API surface is narrower than backend capability |
 | `rocqCompiler/*` | Partial MLIR/QIR codegen path; not integrated into a working execution loop |
 | `rocq/*` | Top-level Python surface with direct backend execution and mock fallbacks |
-| `python/rocq/*` | Separate legacy-ish Python surface with `_rocq_hip_backend` bindings and host-side fallbacks |
+| `python/rocq/*` | Separate legacy-ish Python surface with `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers, but broader runtime behavior remains split |
 | `integrations/*` | Thin framework adapters with mixed native and host-side behavior |
 | `rocquantum/backends/*` | Mixed remote-provider clients, local mocks, and skeleton placeholders |
 | `rocquantum/qec`, `rocquantum/solvers` | Framework shells, not production-ready CUDA-QX analogs |
@@ -103,7 +103,7 @@ What is not real today:
 
 - Native expectation helpers exist in `hipStateVec` and are bound in `python/rocq/bindings.cpp`.
 - The canonical top-level `rocq.operator.get_expectation_value()` delegates to `rocq.observe()` for supported Pauli operators.
-- `python/rocq/api.py::Circuit.expval()` computes host-side NumPy expectations after copying the statevector back to the host.
+- `python/rocq/api.py::Circuit.expval()` now uses native backend Pauli expectation helpers, matching `get_expval()` for supported Pauli terms.
 
 ### Packaging and CI
 
@@ -135,7 +135,7 @@ What is not real today:
 | --- | --- | --- |
 | State-vector gates | HIP kernels in `hipStateVec` | None for core named gates |
 | Generic matrix/control matrix | Partial HIP path | Host-side fallback in `hipStateVec.cpp` for broader cases |
-| Expectations | Native `hipStateVec` helpers exist and canonical `rocq.observe()` is wired for Pauli operators | `python/rocq` still has a NumPy statevector fallback path |
+| Expectations | Native `hipStateVec` helpers exist; canonical `rocq.observe()` and legacy `Circuit.expval()` are wired for supported Pauli operators | Hermitian/broader operator coverage remains limited |
 | Tensor-network contraction | Native HIP/rocBLAS/rocSOLVER path | Pathfinder/slicing breadth not fully wired |
 | Density matrix | Native limited kernel set | Generic channels absent |
 | Framework adapters | Use native simulator for some operations | PennyLane/Cirq sample on host with NumPy; many tests are mock-only |

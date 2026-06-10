@@ -6,7 +6,7 @@ Audit date: 2026-04-05
 
 1. `compile_and_execute()` is a stub while bindings and surrounding docs still made compiler/runtime parity easy to overread.
 2. Multi-GPU support is partial and ambiguous: real scaffolding exists, but many distributed paths still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
-3. Native expectation kernels exist in `hipStateVec`, and canonical `rocq.observe()` / `rocq.operator.get_expectation_value()` reach supported Pauli paths, but the user-facing API story is still split because legacy `python/rocq` keeps a host-side NumPy fallback.
+3. Native expectation kernels exist in `hipStateVec`, and canonical `rocq.observe()` / `rocq.operator.get_expectation_value()` plus legacy `python/rocq` Pauli expectation paths now reach native helpers, but the user-facing API story is still split across two Python surfaces.
 4. The repo contains two divergent Python stacks, `rocq` and `python/rocq`, without one canonical runtime/compiler story.
 5. Packaging and build surfaces do not describe one releasable product: `pyproject.toml`, `setup.py`, root CMake, and dormant `_rocq_hip_backend` CMake do not agree.
 6. Gate fusion exists in C++ and is used by the canonical `rocq` backend for narrow CNOT-adjacent spans, but legacy `python/rocq` and broader fusion patterns are still unfused.
@@ -52,7 +52,7 @@ Scope: broaden scope only after truth and core execution are stable.
 | --- | --- | --- |
 | Truth-fix compiler/runtime docs and bindings | Largest false positive versus CUDA-Q | `compile_and_execute` is visibly documented as stub everywhere it appears |
 | Truth-fix multi-GPU docs and Python errors | Largest ambiguity in advertised capability | `multi_gpu=True` unsupported paths raise explicit partial-support errors |
-| Truth-fix expectation-value story | VQE/hybrid workflows depend on it | High-level docs distinguish native expectation helpers from host-side fallback |
+| Truth-fix expectation-value story | VQE/hybrid workflows depend on it | High-level docs distinguish native Pauli expectation helpers from broader operator gaps |
 | Truth-fix packaging/install story | Users cannot infer one supported install path today | README and audit docs explain the active build path and current limitations |
 | Normalize ROCm support policy | Repo needs a current AMD-targeted compatibility statement | Linux-first, ROCm `7.2.4` target, `gfx950/gfx942/gfx90a` plan, and `gfx90a` minimum are documented |
 

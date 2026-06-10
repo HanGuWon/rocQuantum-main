@@ -76,13 +76,13 @@ Use those files as the authoritative capability summary for the current codebase
 | `hipDensityMat` | Real but limited |
 | `rocqCompiler` | Partial codegen path, no real compile-and-execute loop |
 | Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring |
-| `python/rocq` | Separate legacy compatibility surface with remaining host-side fallbacks |
+| `python/rocq` | Separate legacy compatibility surface; Pauli expectations now use native helpers, while queue/fusion and other paths still need consolidation |
 
 ## Important Limitations
 
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is a stub and currently raises.
 - `multi_gpu=True` should be treated as experimental partial support, not full distributed execution.
-- `python/rocq/api.py::Circuit.expval()` is still a host-side NumPy fallback after statevector readback.
+- `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, but the legacy surface remains separate from canonical `rocq`.
 - PennyLane and Cirq adapters use host-side sampling paths.
 - Several provider backends remain skeletons or thin clients.
 

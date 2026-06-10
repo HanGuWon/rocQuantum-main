@@ -50,6 +50,7 @@ jobs:
             tests/test_p1_compiler.py \
             tests/test_p2_packaging.py \
             tests/test_runtime_api_contract.py \
+            tests/test_legacy_python_api.py \
             tests/test_cpp_expectation.py \
             tests/test_cirq_integration.py \
             tests/test_pennylane_integration.py \

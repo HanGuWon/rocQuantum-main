@@ -18,3 +18,4 @@ If documented as stable, it must run end-to-end without skeleton behavior.
 - Keep stable defaults to implemented providers.
 - Mark incomplete provider stubs as `Experimental` or remove from default registry.
 - Add capability listing API so callers can introspect status before running jobs.
+- Treat top-level `rocq` as canonical. The separate `python/rocq` surface is legacy compatibility and must delegate to native helpers where available instead of introducing host-side fallbacks.

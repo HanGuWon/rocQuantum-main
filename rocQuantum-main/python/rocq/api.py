@@ -325,54 +325,13 @@ class Circuit:
 
     def expval(self, pauli_operator: 'PauliOperator') -> float:
         """
-        Calculates a Pauli expectation value by reading the statevector back to the
-        host and evaluating the observable in NumPy.
+        Calculates a Pauli expectation value through native backend helpers.
         """
         if not isinstance(pauli_operator, PauliOperator):
             raise TypeError("Input must be a PauliOperator object.")
 
-        psi = self.get_statevector()
-        total_exp_val = 0.0
-
-        for pauli_term, coeff in pauli_operator.terms:
-            if not pauli_term: # Identity term
-                total_exp_val += coeff
-                continue
-
-            p_psi = psi.copy()
-            for pauli_char, qubit_idx in pauli_term:
-                p_psi = self._apply_pauli_to_state_np(p_psi, pauli_char, qubit_idx)
-            
-            term_exp_val = np.vdot(psi, p_psi).real
-            total_exp_val += coeff * term_exp_val
-            
-        return total_exp_val
-
-    def _apply_pauli_to_state_np(self, psi: np.ndarray, pauli: str, target: int) -> np.ndarray:
-        """Helper to apply a single Pauli operator to a statevector in NumPy."""
-        num_qubits = self.num_qubits
-        psi_tensor = psi.reshape([2] * num_qubits)
-        
-        axes = list(range(num_qubits))
-        axes[0], axes[target] = axes[target], axes[0]
-        psi_tensor = np.transpose(psi_tensor, axes)
-
-        if pauli == 'X':
-            op_matrix = np.array([[0, 1], [1, 0]])
-        elif pauli == 'Y':
-            op_matrix = np.array([[0, -1j], [1j, 0]])
-        elif pauli == 'Z':
-            op_matrix = np.array([[1, 0], [0, -1]])
-        else:
-            op_matrix = np.identity(2)
-
-        psi_tensor = psi_tensor.reshape(2, -1)
-        psi_tensor = op_matrix @ psi_tensor
-        psi_tensor = psi_tensor.reshape([2] * num_qubits)
-
-        psi_tensor = np.transpose(psi_tensor, axes)
-        return psi_tensor.flatten()
-
+        self.flush()
+        return _evaluate_native_pauli_expectation(self, pauli_operator)
 
 class PauliOperator:
     def __init__(self, terms: dict[str, float] | str = None):
@@ -409,6 +368,8 @@ class PauliOperator:
             pauli_char = comp[0]
             if pauli_char not in "IXYZ":
                 raise ValueError(f"Invalid Pauli type '{pauli_char}' in '{comp}'. Must be I, X, Y, or Z.")
+            if pauli_char == 'I':
+                continue
 
             try:
                 qubit_idx = int(comp[1:])
@@ -450,6 +411,69 @@ class PauliOperator:
 
     def __rmul__(self, scalar: float):
         return self.__mul__(scalar)
+
+
+def _call_expectation_helper(circuit: Circuit, helper_name: str, *args):
+    try:
+        helper = getattr(backend, helper_name)
+    except AttributeError as exc:
+        raise NotImplementedError(
+            f"Backend function '{helper_name}' is not bound or implemented. "
+            "Native expectation evaluation requires the current _rocq_hip_backend bindings."
+        ) from exc
+
+    try:
+        return helper(
+            circuit._sim_handle,
+            circuit._get_d_state_for_backend(),
+            circuit.num_qubits,
+            *args,
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(f"Native expectation helper '{helper_name}' failed: {exc}") from exc
+
+
+def _evaluate_native_pauli_expectation(circuit: Circuit, hamiltonian: PauliOperator) -> float:
+    total_expval = 0.0
+
+    for pauli_ops_list, coeff in hamiltonian.terms:
+        if not pauli_ops_list:
+            total_expval += coeff
+            continue
+
+        if len(pauli_ops_list) == 1:
+            pauli_char, qubit_idx = pauli_ops_list[0]
+            helper_by_pauli = {
+                'X': 'get_expectation_value_x',
+                'Y': 'get_expectation_value_y',
+                'Z': 'get_expectation_value_z',
+            }
+            helper_name = helper_by_pauli.get(pauli_char)
+            if helper_name is None:
+                raise NotImplementedError(f"Expectation value for Pauli '{pauli_char}' is not supported.")
+            total_expval += coeff * _call_expectation_helper(circuit, helper_name, qubit_idx)
+            continue
+
+        if all(pauli_char == 'Z' for pauli_char, _ in pauli_ops_list):
+            targets = [qubit_idx for _, qubit_idx in pauli_ops_list]
+            total_expval += coeff * _call_expectation_helper(
+                circuit,
+                'get_expectation_value_pauli_product_z',
+                targets,
+            )
+            continue
+
+        qubits = sorted({qubit_idx for _, qubit_idx in pauli_ops_list})
+        pauli_by_qubit = {qubit_idx: pauli_char for pauli_char, qubit_idx in pauli_ops_list}
+        pauli_string = ''.join(pauli_by_qubit[qubit_idx] for qubit_idx in qubits)
+        total_expval += coeff * _call_expectation_helper(
+            circuit,
+            'get_expectation_pauli_string',
+            pauli_string,
+            qubits,
+        )
+
+    return total_expval
 
 
 import ast
@@ -613,122 +637,8 @@ def get_expval(program: QuantumProgram, hamiltonian: PauliOperator) -> float:
     if not isinstance(hamiltonian, PauliOperator):
         raise TypeError("Input hamiltonian must be a rocQ PauliOperator object.")
 
-    total_expval = 0.0
-
-    for pauli_ops_list, coeff in hamiltonian.terms:
-        if not pauli_ops_list:
-            total_expval += coeff
-            continue
-
-        term_expval = 1.0
-
-        if len(pauli_ops_list) == 1:
-            pauli_char, qubit_idx = pauli_ops_list[0]
-            if pauli_char == 'Z':
-                try:
-                    exp_val_z_contrib = backend.get_expectation_value_z(
-                        circuit._sim_handle,
-                        circuit._get_d_state_for_backend(),
-                        circuit.num_qubits,
-                        qubit_idx
-                    )
-                    term_expval = exp_val_z_contrib
-                except AttributeError:
-                     raise NotImplementedError(
-                        "Backend function 'get_expectation_value_z' is not yet bound or implemented. "
-                        "VQE get_expval requires this for 'Z' terms."
-                    )
-                except RuntimeError as e:
-                    raise RuntimeError(f"Error calculating <Z{qubit_idx}>: {e}")
-            elif pauli_char == 'X':
-                try:
-                    exp_val_x_contrib = backend.get_expectation_value_x(
-                        circuit._sim_handle,
-                        circuit._get_d_state_for_backend(),
-                        circuit.num_qubits,
-                        qubit_idx
-                    )
-                    term_expval = exp_val_x_contrib
-                except AttributeError:
-                    raise NotImplementedError(
-                        "Backend function 'get_expectation_value_x' is not yet bound or implemented. "
-                        "VQE get_expval requires this for 'X' terms."
-                    )
-                except RuntimeError as e:
-                    raise RuntimeError(f"Error calculating <X{qubit_idx}>: {e}")
-            elif pauli_char == 'Y':
-                try:
-                    exp_val_y_contrib = backend.get_expectation_value_y(
-                        circuit._sim_handle,
-                        circuit._get_d_state_for_backend(),
-                        circuit.num_qubits,
-                        qubit_idx
-                    )
-                    term_expval = exp_val_y_contrib
-                except AttributeError:
-                    raise NotImplementedError(
-                        "Backend function 'get_expectation_value_y' is not yet bound or implemented. "
-                        "VQE get_expval requires this for 'Y' terms."
-                    )
-                except RuntimeError as e:
-                    raise RuntimeError(f"Error calculating <Y{qubit_idx}>: {e}")
-            else:
-                raise NotImplementedError(f"Expectation value for Pauli '{pauli_char}' not supported in get_expval.")
-        elif not pauli_ops_list:
-             term_expval = 1.0
-        else:
-            is_all_z = True
-            target_z_qubits = []
-            for p_char, q_idx in pauli_ops_list:
-                if p_char != 'Z':
-                    is_all_z = False
-                    break
-                target_z_qubits.append(q_idx)
-
-            if is_all_z:
-                if not target_z_qubits:
-                    term_expval = 1.0
-                else:
-                    try:
-                        term_expval = backend.get_expectation_value_pauli_product_z(
-                            circuit._sim_handle,
-                            circuit._get_d_state_for_backend(),
-                            circuit.num_qubits,
-                            target_z_qubits
-                        )
-                    except AttributeError:
-                        raise NotImplementedError(
-                            "Backend function 'get_expectation_value_pauli_product_z' is not yet bound or implemented."
-                        )
-                    except RuntimeError as e:
-                        op_str = " ".join([f"Z{q}" for q in target_z_qubits])
-                        raise RuntimeError(f"Error calculating <{op_str}>: {e}")
-            else:
-                all_qubits = sorted(list(set([q_idx for _, q_idx in pauli_ops_list])))
-                pauli_map = {q_idx: p_char for p_char, q_idx in pauli_ops_list}
-                final_pauli_string = "".join([pauli_map.get(q, 'I') for q in all_qubits])
-                final_qubit_indices = all_qubits
-
-                try:
-                    term_expval = backend.get_expectation_pauli_string(
-                        circuit._sim_handle,
-                        circuit._get_d_state_for_backend(),
-                        circuit.num_qubits,
-                        final_pauli_string,
-                        final_qubit_indices
-                    )
-                except AttributeError:
-                     raise NotImplementedError(
-                        "Backend function 'get_expectation_pauli_string' is not yet bound or implemented. "
-                        "This is required for products of Paulis containing X or Y."
-                    )
-                except RuntimeError as e:
-                    op_str = " ".join([f"{p_char}{q_idx}" for p_char, q_idx in pauli_ops_list])
-                    raise RuntimeError(f"Error calculating <{op_str}> using generic backend: {e}")
-
-        total_expval += coeff * term_expval
-
-    return total_expval
+    circuit.flush()
+    return _evaluate_native_pauli_expectation(circuit, hamiltonian)
 
 # Represents a quantum kernel, holding its MLIR representation.
 class Kernel:

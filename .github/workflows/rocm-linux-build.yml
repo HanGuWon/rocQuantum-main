@@ -48,6 +48,7 @@ jobs:
           python -m unittest tests.test_p1_compiler -v
           python -m unittest tests.test_p2_packaging -v
           python -m unittest tests.test_runtime_api_contract -v
+          python -m unittest tests.test_legacy_python_api -v
           python -m unittest tests.test_cirq_integration -v
           python -m unittest tests.test_pennylane_integration -v
           python -m unittest tests.test_cpp_expectation -v
