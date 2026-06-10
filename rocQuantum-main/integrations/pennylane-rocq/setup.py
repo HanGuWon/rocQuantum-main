@@ -14,6 +14,7 @@ setup(
     entry_points={
         "pennylane.plugins": [
             "rocquantum.qpu = pennylane_rocq:RocQDevice",
+            "rocq.pennylane = pennylane_rocq:RocqDevice",
         ]
     },
 )

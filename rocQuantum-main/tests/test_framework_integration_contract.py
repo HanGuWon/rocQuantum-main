@@ -36,9 +36,9 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             source = f.read()
 
         self.assertIn("measure = getattr(self.sim, \"measure\", None)", source)
-        self.assertIn("raw_samples = measure(all_wires, int(self.shots))", source)
-        self.assertIn("_samples_to_binary_rows", source)
-        self.assertIn("np.random.multinomial", source, "legacy fallback should remain explicit")
+        self.assertIn("raw_samples = self._runtime.measure(all_wires, int(self.shots))", source)
+        self.assertIn("samples_to_binary_rows", source)
+        self.assertIn("sample_rows_from_statevector", source, "legacy fallback should remain explicit")
 
     def test_cirq_sampling_prefers_native_measure(self):
         with open(_CIRQ_ADAPTER, "r", encoding="utf-8") as f:
@@ -54,10 +54,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         with open(_QISKIT_BACKEND, "r", encoding="utf-8") as f:
             source = f.read()
 
-        self.assertIn("def _format_qiskit_memory", source)
-        self.assertIn("memory_width - 1 - classical_bit", source)
-        self.assertIn("raw_samples = self._simulator.measure(qubits_to_measure, shots)", source)
-        self.assertIn("formatted_counts = dict(Counter(memory))", source)
+        self.assertIn("qiskit_memory_from_samples", source)
+        self.assertIn("raw_samples = self._runtime.measure(qubits_to_measure, shots)", source)
+        self.assertIn("formatted_counts = counts_from_memory(memory)", source)
+        self.assertIn("return RocQuantumJob(self, job_id, result)", source)
         self.assertNotIn("{bin(k): v for k, v in counts.items()}", source)
 
 

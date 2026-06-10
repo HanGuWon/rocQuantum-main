@@ -1,40 +1,54 @@
 # pennylane_rocq/rocq_device.py
 import pennylane as qml
-from pennylane import QubitDevice
 from pennylane.operation import Operation
 import numpy as np
 
 try:
+    from pennylane import QubitDevice
+except ImportError:
+    from pennylane.devices import QubitDevice
+
+from rocquantum.framework_runtime import (
+    RocQuantumRuntime,
+    sample_rows_from_statevector,
+    samples_to_binary_rows,
+)
+
+try:
     import rocquantum_bind
 except ImportError:
-    # Raise a friendly error message if the binding is not installed.
-    raise ImportError(
-        "The 'rocquantum_bind' module is not installed. "
-        "Please build and install it from the rocQuantum-1 project."
-    )
+    rocquantum_bind = None
 
 # Mapping from PennyLane operation names to rocQuantum names
 PENNYLANE_TO_ROCQ_GATES = {
     "PauliX": "X", "PauliY": "Y", "PauliZ": "Z",
     "Hadamard": "H", "S": "S", "T": "T",
-    "CNOT": "CNOT", "CZ": "CZ",
+    "CNOT": "CNOT", "CZ": "CZ", "SWAP": "SWAP",
 }
 
-
-def _samples_to_binary_rows(raw_samples, num_wires):
-    return np.array(
-        [[(int(sample) >> bit) & 1 for bit in range(num_wires)] for sample in raw_samples],
-        dtype=int,
-    )
+PARAMETRIC_OR_MATRIX_OPS = {"RX", "RY", "RZ", "QubitUnitary"}
 
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
-    author = "Gemini"
+    author = "rocQuantum contributors"
     version = "0.1.0"
+    pennylane_requires = ">=0.30"
 
     operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | {"QubitUnitary", "RX", "RY", "RZ"}
     observables = {"PauliX", "PauliY", "PauliZ", "Identity", "Counts", "State"}
+
+    @classmethod
+    def capabilities(cls):
+        capabilities = dict(super().capabilities())
+        capabilities.update(
+            {
+                "returns_state": True,
+                "returns_probs": True,
+                "supports_finite_shots": True,
+            }
+        )
+        return capabilities
 
     def __init__(self, wires, shots=None, **kwargs):
         super().__init__(wires=wires, shots=shots)
@@ -43,23 +57,37 @@ class RocQDevice(QubitDevice):
         self.reset()
 
     def reset(self):
-        self.sim = rocquantum_bind.QSim(num_qubits=len(self.wires))
+        try:
+            self._runtime = RocQuantumRuntime.from_bindings(len(self.wires), binding_module=rocquantum_bind)
+        except ImportError as exc:
+            raise ImportError(
+                "The 'rocquantum_bind' module is not installed. "
+                "Build and install rocQuantum with ROCQUANTUM_BUILD_BINDINGS=ON before creating "
+                "a PennyLane rocQuantum device."
+            ) from exc
+        self.sim = self._runtime.simulator
         self._state = None
 
-    def apply(self, operations: list[Operation]):
-        for op in operations:
+    def apply(self, operations: list[Operation], rotations=None, **kwargs):
+        for op in list(operations) + list(rotations or []):
             gate_name = op.name
+            wire_indices = [self.wire_map[w] for w in op.wires]
             if gate_name in PENNYLANE_TO_ROCQ_GATES:
-                wire_indices = [self.wire_map[w] for w in op.wires]
-                self.sim.ApplyGate(PENNYLANE_TO_ROCQ_GATES[gate_name], *wire_indices)
-            elif gate_name in ("RX", "RY", "RZ", "QubitUnitary"):
+                self._runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)
+            elif gate_name in PARAMETRIC_OR_MATRIX_OPS:
                 matrix = qml.matrix(op)
-                target_idx = self.wire_map[op.wires[0]]
-                self.sim.ApplyGate(matrix.astype(np.complex128), target_idx)
+                self._runtime.apply_operation(
+                    gate_name,
+                    wire_indices,
+                    getattr(op, "parameters", []),
+                    matrix=matrix.astype(np.complex128),
+                )
             else:
                 raise NotImplementedError(f"Operation {gate_name} not supported.")
-        self.sim.Execute()
-        self._state = self.sim.GetStateVector()
+        execute = getattr(self.sim, "Execute", None)
+        if callable(execute):
+            execute()
+        self._state = self._runtime.statevector()
 
     @property
     def state(self):
@@ -72,21 +100,10 @@ class RocQDevice(QubitDevice):
         all_wires = list(range(len(self.wires)))
         measure = getattr(self.sim, "measure", None)
         if callable(measure):
-            raw_samples = measure(all_wires, int(self.shots))
-            return _samples_to_binary_rows(raw_samples, len(all_wires))
+            raw_samples = self._runtime.measure(all_wires, int(self.shots))
+            return samples_to_binary_rows(raw_samples, len(all_wires))
 
-        probs = self.analytic_probability(wires=self.wires)
-        num_states = len(probs)
-        samples_count = np.random.multinomial(self.shots, probs)
-        # Expand counts into individual shot outcomes
-        sample_indices = np.repeat(np.arange(num_states), samples_count)
-        num_wires = len(self.wires)
-        # Convert each outcome index to a binary array (one row per shot)
-        return np.array(
-            [[(idx >> (num_wires - 1 - w)) & 1 for w in range(num_wires)]
-             for idx in sample_indices],
-            dtype=int,
-        )
+        return sample_rows_from_statevector(self._state, int(self.shots))
 
     def analytic_probability(self, wires=None):
         if self._state is None: return None

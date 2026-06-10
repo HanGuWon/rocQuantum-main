@@ -9,13 +9,13 @@ This package provides a PennyLane device that uses the [rocQuantum-1](https://gi
 - **High-performance statevector simulation**: Leverages the rocQuantum C++ backend for fast and efficient calculations.
 - **Full PennyLane Integration**: Supports core PennyLane measurement types, including `qml.state()` and `qml.counts()`.
 - **Hardware-like Sampling**: Simulates measurement shots to provide realistic count dictionaries.
-- **Seamless Workflow**: Integrates with PennyLane's automatic differentiation and optimization capabilities.
+- **Plugin Aliases**: Registers both `rocquantum.qpu` and the historical `rocq.pennylane` alias.
 
 ## Installation
 
 ### Prerequisites
 
-Before installing this package, you must have the `rocQuantum-1` library and its Python binding (`rocquantum_bind`) already built and installed. Please follow the instructions in the `rocQuantum-1` project repository.
+Before installing this package, you must have the core `rocquantum` Python package importable and the native Python binding (`rocquantum_bind`) built and installed. Build rocQuantum with `ROCQUANTUM_BUILD_BINDINGS=ON` on a ROCm host.
 
 ### Installation Steps
 
@@ -26,6 +26,12 @@ pip install .
 ```
 
 PennyLane will automatically discover the `rocquantum.qpu` device upon successful installation.
+
+## Compatibility Notes
+
+- Verified in adapter tests against PennyLane `0.45.0`.
+- The package can be imported before `rocquantum_bind` is present; device creation raises a clear binding-install error.
+- The current device is a legacy `QubitDevice` adapter behind PennyLane's compatibility facade. It exposes `qml.state()`, native sampling through `QuantumSimulator.measure()`, and statevector sampling fallback for older bindings.
 
 ## Usage Example
 

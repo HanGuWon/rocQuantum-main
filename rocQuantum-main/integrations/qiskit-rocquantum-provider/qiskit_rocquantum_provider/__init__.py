@@ -2,4 +2,8 @@
 """
 Qiskit provider for the rocQuantum high-performance simulator backend.
 """
+from .backend import RocQuantumBackend
+from .job import RocQuantumJob
 from .provider import RocQuantumProvider
+
+__all__ = ["RocQuantumBackend", "RocQuantumJob", "RocQuantumProvider"]
