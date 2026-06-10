@@ -403,6 +403,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("measurement_names = [measurement.__class__.__name__", source)
         self.assertIn("reference_signatures = []", source)
         self.assertIn("batched_values = [", source)
+        self.assertIn("\"ExpectationMP\", \"VarianceMP\"", source)
+        self.assertIn("_pauli_square_terms(signature)", source)
         self.assertIn("self._runtime.apply_operation_batch", source)
         self.assertIn("\"PhaseShift\", \"ControlledPhaseShift\", \"IsingXX\", \"IsingYY\", \"IsingZZ\"", source)
         self.assertIn("self._runtime.probabilities_batch", source)

@@ -987,7 +987,7 @@ class RocQDevice(QubitDevice):
                 return None
             if measurement_names[0] == "CountsMP" and getattr(reference_measurements[0], "all_outcomes", False):
                 return None
-        elif all(name == "ExpectationMP" for name in measurement_names):
+        elif all(name in {"ExpectationMP", "VarianceMP"} for name in measurement_names):
             pass
         elif len(reference_measurements) == 1 and measurement_names[0] == "ProbabilityMP":
             pass
@@ -996,7 +996,7 @@ class RocQDevice(QubitDevice):
 
         reference_signatures = []
         reference_probability_wires = None
-        if measurement_names[0] == "ExpectationMP":
+        if measurement_names[0] in {"ExpectationMP", "VarianceMP"}:
             for measurement in reference_measurements:
                 observable = getattr(measurement, "obs", None)
                 reference_terms = _pauli_terms_from_observable(observable, self.wire_map)
@@ -1015,7 +1015,7 @@ class RocQDevice(QubitDevice):
             current_names = [measurement.__class__.__name__ for measurement in measurements]
             if current_names != measurement_names:
                 return None
-            if measurement_names[0] == "ExpectationMP":
+            if measurement_names[0] in {"ExpectationMP", "VarianceMP"}:
                 for measurement, reference_signature in zip(measurements, reference_signatures):
                     terms = _pauli_terms_from_observable(getattr(measurement, "obs", None), self.wire_map)
                     if terms is None or _combine_pauli_terms(terms) != reference_signature:
@@ -1067,17 +1067,24 @@ class RocQDevice(QubitDevice):
                 continue
             return None
 
-        if measurement_names[0] == "ExpectationMP":
-            batched_values = [
-                _evaluate_pauli_terms_batch(self._runtime, signature)
-                for signature in reference_signatures
-            ]
+        if measurement_names[0] in {"ExpectationMP", "VarianceMP"}:
+            batched_values = []
+            for measurement_name, signature in zip(measurement_names, reference_signatures):
+                means = _evaluate_pauli_terms_batch(self._runtime, signature)
+                if measurement_name == "VarianceMP":
+                    second_moments = _evaluate_pauli_terms_batch(self._runtime, _pauli_square_terms(signature))
+                    batched_values.append(second_moments - means * means)
+                else:
+                    batched_values.append(means)
             if len(batched_values) == 1:
-                return tuple(_real_measurement_result(value, "ExpectationMP") for value in batched_values[0])
+                return tuple(
+                    _real_measurement_result(value, measurement_names[0])
+                    for value in batched_values[0]
+                )
             return [
                 tuple(
-                    np.asarray(_real_measurement_result(values[batch_index], "ExpectationMP"))
-                    for values in batched_values
+                    np.asarray(_real_measurement_result(values[batch_index], measurement_name))
+                    for values, measurement_name in zip(batched_values, measurement_names)
                 )
                 for batch_index in range(len(circuits))
             ]

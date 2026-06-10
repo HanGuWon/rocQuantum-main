@@ -1737,6 +1737,38 @@ def test_pennylane_batch_execute_uses_batched_multiple_expvals(monkeypatch):
     assert sim.batch_expectations == [("Z", (0,)), ("X", (0,))]
 
 
+def test_pennylane_batch_execute_uses_batched_variance(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.RY(0.1, wires=0)],
+            [qml.expval(qml.PauliZ(0)), qml.var(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [qml.RY(0.2, wires=0)],
+            [qml.expval(qml.PauliZ(0)), qml.var(qml.PauliZ(0))],
+        ),
+    ]
+
+    results = dev.batch_execute(circuits)
+
+    assert len(results) == 2
+    for result in results:
+        np.testing.assert_allclose(result, (0.5, 0.75))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,)), ("Z", (0,))]
+
+
 def test_pennylane_batch_execute_uses_batched_controlled_parametric_gate(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
