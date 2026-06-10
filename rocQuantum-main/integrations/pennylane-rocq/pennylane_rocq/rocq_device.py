@@ -233,7 +233,7 @@ class RocQDevice(QubitDevice):
 
     operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | NATIVE_PARAMETRIC_OPS | MATRIX_OPS | {"BasisState", "Rot"}
     observables = {
-        "PauliX", "PauliY", "PauliZ", "Identity",
+        "PauliX", "PauliY", "PauliZ", "Hadamard", "Identity",
         "Hermitian", "Projector",
         "Counts", "State",
         "Prod", "Tensor", "SProd", "Sum", "LinearCombination", "Hamiltonian",
@@ -271,7 +271,7 @@ class RocQDevice(QubitDevice):
 
     def apply(self, operations: list[Operation], rotations=None, **kwargs):
         operation_applied = False
-        for op in list(operations):
+        for op in list(operations) + list(rotations or []):
             gate_name = op.name
             wire_indices = [self.wire_map[w] for w in op.wires]
             if gate_name == "BasisState":

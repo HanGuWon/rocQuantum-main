@@ -775,6 +775,28 @@ def test_pennylane_non_pauli_observables_use_statevector_fallback(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].expectations == []
 
 
+def test_pennylane_hadamard_observable_dispatches_diagonalizing_rotation(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def circuit():
+        return qml.expval(qml.Hadamard(0))
+
+    assert circuit() == pytest.approx(1.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("RY", (0,), (-math.pi / 4,))]
+    assert sim.expectations == []
+    assert sim.statevector_reads == 1
+
+
 def test_pennylane_rot_dispatches_native_rotation_sequence(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

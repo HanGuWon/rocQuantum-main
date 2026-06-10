@@ -77,6 +77,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("if not wires_to_trace: return all_probs", source)
         self.assertIn("def expval", source)
         self.assertIn("def var", source)
+        self.assertIn("\"Hadamard\"", source)
+        self.assertIn("list(operations) + list(rotations or [])", source)
         self.assertIn("_pauli_square_terms", source)
         self.assertIn("expectation_pauli_string", source)
 
