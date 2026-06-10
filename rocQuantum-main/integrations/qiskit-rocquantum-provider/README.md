@@ -34,7 +34,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 
 - Verified in adapter tests against Qiskit `2.4.1`.
 - The provider uses `BackendV2`, exposes `max_circuits`, and imports result model classes from both old and new Qiskit locations.
-- Qiskit primitive support is provided through `BackendSamplerV2` and `BackendEstimatorV2` wrappers over `rocq_simulator`.
+- Qiskit primitive support is provided through `BackendSamplerV2` and `BackendEstimatorV2` wrappers over `rocq_simulator`; adapter tests exercise both wrapper construction and simple `run()` calls.
 - Direct Pauli expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, and `(label, coeff)` term lists.
 - Aer-style `save_statevector` marker instructions are treated as no-op result annotations; `QuantumCircuit.save_statevector()` is not part of base Qiskit `2.4.1`.
 - `rocquantum_bind` is loaded when a circuit is executed, so importing the provider remains possible before the native extension is present.

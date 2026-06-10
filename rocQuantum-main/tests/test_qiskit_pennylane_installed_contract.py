@@ -49,6 +49,8 @@ class _FakeQuantumSimulator:
     def measure(self, qubits, shots):
         self.measurements.append((tuple(qubits), int(shots)))
         self._measured = True
+        if self._num_qubits == 1 and len(qubits) == 1:
+            return [0 for _ in range(int(shots))]
         high = (1 << len(qubits)) - 1
         return [0 if shot % 2 == 0 else high for shot in range(int(shots))]
 
@@ -167,6 +169,35 @@ def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
 
     assert isinstance(provider.get_sampler(), BackendSamplerV2)
     assert isinstance(provider.get_estimator(), BackendEstimatorV2)
+
+
+def test_qiskit_provider_primitives_run_with_backend(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+
+    sampler_circuit = QuantumCircuit(1, 1)
+    sampler_circuit.h(0)
+    sampler_circuit.measure(0, 0)
+    sampler_pub = provider.get_sampler().run([sampler_circuit], shots=4).result()[0]
+
+    assert sampler_pub.data.c.num_shots == 4
+    assert sampler_pub.data.c.get_counts() == {"0": 4}
+
+    estimator_circuit = QuantumCircuit(1)
+    observable = SparsePauliOp.from_list([("Z", 1.0)])
+    estimator_pub = provider.get_estimator().run(
+        [(estimator_circuit, observable)],
+        precision=0.1,
+    ).result()[0]
+
+    assert float(estimator_pub.data.evs) == pytest.approx(1.0)
+    assert float(estimator_pub.data.stds) == pytest.approx(0.0)
 
 
 def test_qiskit_provider_estimates_sparse_pauli_observable_natively(monkeypatch):
