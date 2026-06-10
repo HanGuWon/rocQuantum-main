@@ -1,0 +1,70 @@
+"""Source contracts for RCCL-backed distributed reduction paths."""
+
+from __future__ import annotations
+
+import os
+import unittest
+
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_STATEVEC_SOURCE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "hipStateVec.cpp",
+)
+_STATEVEC_CMAKE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "CMakeLists.txt",
+)
+
+
+class TestRcclDistributedContract(unittest.TestCase):
+    def test_cmake_exposes_rccl_compile_define(self):
+        with open(_STATEVEC_CMAKE, "r", encoding="utf-8") as f:
+            cmake = f.read()
+
+        self.assertIn("find_package(rccl QUIET)", cmake)
+        self.assertIn("ROCQ_HAVE_RCCL=1", cmake)
+        self.assertIn("rccl::rccl", cmake)
+        self.assertIn("benchmark_hipStateVec_distributed_reductions", cmake)
+
+    def test_rccl_lifecycle_is_explicit(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("#ifdef ROCQ_HAVE_RCCL", source)
+        self.assertIn("distributedComms", source)
+        self.assertIn("distributedRcclReady", source)
+        self.assertIn("ncclCommInitAll", source)
+        self.assertIn("ncclCommDestroy", source)
+        self.assertIn("ROCQ_DISTRIBUTED_COMM", source)
+        self.assertIn("ROCQ_REQUIRE_RCCL", source)
+        self.assertIn("ROCQ_DISABLE_RCCL", source)
+
+    def test_expectation_and_sampling_use_rccl_allreduce(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("rccl_allreduce_double_sum_inplace", source)
+        self.assertIn("ncclGroupStart", source)
+        self.assertIn("ncclAllReduce", source)
+        self.assertIn("ncclGroupEnd", source)
+        self.assertIn("distributed_expectation_rccl", source)
+        self.assertIn("distributed_expectation_host_fallback", source)
+        self.assertIn("distributed_expectation_with_fallback", source)
+        self.assertIn("distributed_sample_rccl", source)
+        self.assertIn("distributed_sample_host_fallback", source)
+        self.assertIn("distributed_sample_with_fallback", source)
+        self.assertGreaterEqual(source.count("return distributed_expectation_with_fallback"), 5)
+        self.assertIn("return distributed_sample_with_fallback", source)
+        self.assertIn("distributed_all_qubits_local(handle, targets)", source)
+        self.assertIn("distributed_all_qubits_local(handle, measured)", source)
+
+
+if __name__ == "__main__":
+    unittest.main()

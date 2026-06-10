@@ -5,7 +5,7 @@ Audit date: 2026-04-05
 ## Top 10 Gaps
 
 1. `compile_and_execute()` is a stub while bindings and surrounding docs still made compiler/runtime parity easy to overread.
-2. Multi-GPU support is partial and ambiguous: real scaffolding exists, non-local single/control/CNOT/CZ/generic matrix paths now have explicit slow/debug host fallback, but many distributed paths still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
+2. Multi-GPU support is partial and ambiguous: real scaffolding exists, non-local single/control/CNOT/CZ/generic matrix paths now have explicit slow/debug host fallback, and local-domain expectation/sampling reductions have an optional RCCL fast path, but many distributed paths still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
 3. Native expectation kernels exist in `hipStateVec`, and canonical `rocq.observe()` / `rocq.operator.get_expectation_value()` plus legacy `python/rocq` Pauli expectation paths now reach native helpers, but the user-facing API story is still split across two Python surfaces.
 4. The repo contains two divergent Python stacks, `rocq` and `python/rocq`, without one canonical runtime/compiler story.
 5. Packaging and build surfaces do not describe one releasable product: `pyproject.toml`, `setup.py`, root CMake, and dormant `_rocq_hip_backend` CMake do not agree.
@@ -82,7 +82,8 @@ rg -n "compile_and_execute|multi_gpu|expval|GateFusion|rocquantum_bind|_rocq_hip
 cmake -S . -B build-ci -G Ninja -DBUILD_TESTING=ON -DROCQUANTUM_BUILD_BINDINGS=ON -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc
 cmake --build build-ci --parallel
 ctest --test-dir build-ci --output-on-failure
-python -m unittest tests.test_p0_fixes tests.test_p1_compiler tests.test_p2_packaging tests.test_cpp_expectation
+python -m unittest tests.test_p0_fixes tests.test_p1_compiler tests.test_p2_packaging tests.test_statevec_fastpath_contract tests.test_rccl_distributed_contract tests.test_cpp_expectation
+./build-ci/rocquantum/src/hipStateVec/benchmark_hipStateVec_distributed_reductions --output distributed-reductions.json
 ```
 
-The last four commands require a Linux ROCm environment that is not available in this shell.
+The CMake, CTest, and benchmark commands require a Linux ROCm environment that is not available in this shell.

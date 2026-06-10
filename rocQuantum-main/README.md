@@ -83,6 +83,7 @@ Use those files as the authoritative capability summary for the current codebase
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is a stub and currently raises.
 - `multi_gpu=True` should be treated as experimental partial support, not full distributed execution.
 - Distributed non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix correctness fallback is explicit slow/debug mode: set `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
+- RCCL-backed distributed expectation and sampling reductions are limited to local-domain qubits; set `ROCQ_DISTRIBUTED_COMM=rccl` or `ROCQ_REQUIRE_RCCL=1` to require RCCL on a ROCm runner.
 - Generic matrix/control-matrix cases outside HIP fast paths return `NOT_IMPLEMENTED` by default; set `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` only for explicit slow/debug host fallback.
 - `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, but the legacy surface remains separate from canonical `rocq`.
 - PennyLane and Cirq adapters use host-side sampling paths.
@@ -98,6 +99,13 @@ cmake -S . -B build-ci -G Ninja \
   -DROCQUANTUM_BUILD_BINDINGS=ON \
   -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc
 cmake --build build-ci --parallel
+```
+
+On a ROCm multi-GPU runner, the distributed reduction benchmark can emit a JSON artifact:
+
+```bash
+./build-ci/rocquantum/src/hipStateVec/benchmark_hipStateVec_distributed_reductions \
+  --output distributed-reductions.json
 ```
 
 For a release-grade Linux ROCm build, set explicit GPU targets:

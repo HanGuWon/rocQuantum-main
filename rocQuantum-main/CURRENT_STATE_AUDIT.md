@@ -99,6 +99,7 @@ What is not real today:
 - Distributed handles, allocation, distributed metadata, and some local-domain distributed operations exist.
 - Many distributed operations still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
 - Non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix operations can use an explicit correctness-first host fallback with `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
+- When RCCL is found at build time, local-domain distributed Pauli expectation and sampling probability reductions can use RCCL `AllReduce(sum)` instead of gathering the full state to host.
 - `MULTI_GPU_GUIDE.md` overclaimed implemented RCCL behavior relative to the actual code path.
 
 ### High-level expectations

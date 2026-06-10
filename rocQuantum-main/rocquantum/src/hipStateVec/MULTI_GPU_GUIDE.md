@@ -16,13 +16,15 @@ This document describes the current implementation status, not the eventual desi
 - `rocsvInitializeDistributedState`
 - Partial local-domain distributed gate support in `hipStateVec.cpp`
 - Partial local-domain distributed measurement support
-- Optional RCCL discovery and linkage in `rocquantum/src/hipStateVec/CMakeLists.txt`
+- Optional RCCL discovery, linkage, communicator initialization, and communicator teardown
+- RCCL `AllReduce(sum)` fast paths for local-domain distributed expectation reductions and sampling probability reductions
+- `benchmark_hipStateVec_distributed_reductions`, a ROCm-only A/B benchmark for RCCL reduction mode versus explicit host fallback mode
 
 ## What Is Not Ready To Claim
 
 - Arbitrary distributed gate application across slice-domain qubits
-- A complete distributed sampling story
-- A complete distributed expectation-value story
+- A complete distributed sampling story for measured qubits that include slice-domain bits
+- A complete distributed expectation-value story for observables that include slice-domain X/Y/global terms
 - Multi-node execution
 - A stable public Python API contract for general distributed execution
 
@@ -30,6 +32,9 @@ This document describes the current implementation status, not the eventual desi
 
 - Treat `multi_gpu=True` as experimental partial support.
 - Unsupported operations should be expected to raise `ROCQ_STATUS_NOT_IMPLEMENTED` or a higher-level `NotImplementedError`.
+- Set `ROCQ_DISTRIBUTED_COMM=rccl` or `ROCQ_REQUIRE_RCCL=1` when a ROCm runner should fail fast if RCCL cannot initialize.
+- Set `ROCQ_DISABLE_RCCL=1` or `ROCQ_DISTRIBUTED_COMM=host` to force non-RCCL behavior for A/B testing.
+- Run `benchmark_hipStateVec_distributed_reductions --output distributed-reductions.json` on a ROCm multi-GPU runner to capture expectation/sampling reduction timings.
 - If you need reliable runtime behavior today, use the single-GPU path.
 
 ## Design Direction

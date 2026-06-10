@@ -57,6 +57,7 @@ Current truth:
 - Latest production ROCm verified from official AMD docs during this refresh: `7.2.4`
 - Newest AMD GPU target verified during this audit: `MI355X` / `gfx950`
 - Distributed non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix correctness fallback exists only as explicit slow/debug mode via `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
+- RCCL is now wired for local-domain distributed expectation and sampling probability reductions when `ROCQ_HAVE_RCCL` is available, but this is still not general distributed execution.
 
 Recommended compatibility plan:
 
