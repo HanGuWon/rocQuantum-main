@@ -235,6 +235,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"Hadamard\"", source)
         self.assertIn("\"SparseHamiltonian\"", source)
         self.assertIn("observable.name == \"Hadamard\"", source)
+        self.assertIn("def _projector_terms_from_observable", source)
+        self.assertIn("observable.name != \"Projector\"", source)
         self.assertIn("_native_sparse_hamiltonian_moments", source)
         self.assertIn("runtime.sparse_hamiltonian_moments", source)
         self.assertIn("_sparse_hamiltonian_moments", source)

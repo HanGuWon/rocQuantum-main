@@ -1333,7 +1333,7 @@ def test_pennylane_paulix_expval_skips_diagonalizing_rotation(monkeypatch):
     assert sim.statevector_reads == 0
 
 
-def test_pennylane_non_pauli_observables_use_statevector_fallback(monkeypatch):
+def test_pennylane_hermitian_observable_uses_statevector_fallback(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
     for name in list(sys.modules):
@@ -1348,13 +1348,59 @@ def test_pennylane_non_pauli_observables_use_statevector_fallback(monkeypatch):
     def hermitian_circuit():
         return qml.expval(qml.Hermitian(np.eye(2), wires=0))
 
+    assert hermitian_circuit() == pytest.approx(1.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == []
+    assert sim.statevector_reads == 1
+
+
+def test_pennylane_projector_expval_uses_native_z_projector_terms(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
     @qml.qnode(dev)
     def projector_circuit():
-        return qml.expval(qml.Projector([0], wires=0))
+        return qml.expval(qml.Projector([1, 0], wires=[0, 1]))
 
-    assert hermitian_circuit() == pytest.approx(1.0)
-    assert projector_circuit() == pytest.approx(1.0)
-    assert _FakeQuantumSimulator.instances[-1].expectations == []
+    assert projector_circuit() == pytest.approx(0.125)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [
+        ("Z", (1,)),
+        ("Z", (0,)),
+        ("ZZ", (0, 1)),
+    ]
+    assert sim.statevector_reads == 0
+
+
+def test_pennylane_projector_var_uses_native_z_projector_terms(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def projector_var_circuit():
+        return qml.var(qml.Projector([0], wires=0))
+
+    assert projector_var_circuit() == pytest.approx(0.1875)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [
+        ("Z", (0,)),
+        ("Z", (0,)),
+    ]
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_sparse_hamiltonian_uses_sparse_statevector_fallback(monkeypatch):

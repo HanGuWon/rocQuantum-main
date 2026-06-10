@@ -97,6 +97,29 @@ def _pauli_string_from_observable(observable, wire_map):
     return "".join(paulis), targets
 
 
+def _projector_terms_from_observable(observable, wire_map):
+    if observable.name != "Projector" or not getattr(observable, "parameters", None):
+        return None
+
+    bits = np.asarray(observable.parameters[0], dtype=int).reshape(-1)
+    wires = list(observable.wires)
+    if len(bits) != len(wires):
+        return None
+    if not np.all((bits == 0) | (bits == 1)):
+        return None
+
+    terms = [(1.0 + 0.0j, "", [])]
+    for bit, wire in zip(bits, wires):
+        target = wire_map[wire]
+        sign = 1.0 if int(bit) == 0 else -1.0
+        expanded_terms = []
+        for coeff, pauli_string, targets in terms:
+            expanded_terms.append((0.5 * coeff, pauli_string, list(targets)))
+            expanded_terms.append((0.5 * sign * coeff, pauli_string + "Z", list(targets) + [target]))
+        terms = expanded_terms
+    return terms
+
+
 def _pauli_terms_from_observable(observable, wire_map):
     if observable.name == "Hadamard":
         if len(observable.wires) != 1:
@@ -104,6 +127,10 @@ def _pauli_terms_from_observable(observable, wire_map):
         target = wire_map[observable.wires[0]]
         coeff = 1.0 / np.sqrt(2.0)
         return [(coeff, "X", [target]), (coeff, "Z", [target])]
+
+    projector_terms = _projector_terms_from_observable(observable, wire_map)
+    if projector_terms is not None:
+        return projector_terms
 
     term = _pauli_string_from_observable(observable, wire_map)
     if term is not None:
