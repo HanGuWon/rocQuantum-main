@@ -62,6 +62,8 @@ class _FakeQuantumSimulator:
         self.expectations.append((pauli_string, tuple(targets)))
         if pauli_string == "Z" and tuple(targets) == (0,):
             return 0.5
+        if pauli_string == "XZ" and tuple(targets) == (0, 1):
+            return 0.25
         return 0.0
 
     def ApplyGate(self, *args):
@@ -216,6 +218,33 @@ def test_pennylane_parameter_shift_gradient_pipeline_runs(monkeypatch):
     theta = pnp.array(0.123, requires_grad=True)
 
     assert qml.grad(circuit)(theta) == pytest.approx(0.0)
+
+
+def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    hamiltonian = qml.Hamiltonian(
+        [1.2, -0.5, 0.25],
+        [qml.PauliZ(0), qml.PauliX(0) @ qml.PauliZ(1), qml.Identity(0)],
+    )
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.Hadamard(wires=0)
+        return qml.expval(hamiltonian)
+
+    assert circuit() == pytest.approx(0.725)
+    assert _FakeQuantumSimulator.instances[-1].expectations == [
+        ("Z", (0,)),
+        ("XZ", (0, 1)),
+    ]
 
 
 def test_root_package_declares_framework_entry_points():

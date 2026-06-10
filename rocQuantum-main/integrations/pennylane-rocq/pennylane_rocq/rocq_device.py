@@ -44,13 +44,13 @@ def _pauli_string_from_observable(observable, wire_map):
             return None
         return PENNYLANE_PAULI_TO_CHAR[observable.name], [wire_map[observable.wires[0]]]
 
-    if observable.name != "Prod":
+    if observable.name not in {"Prod", "Tensor"}:
         return None
 
     paulis = []
     targets = []
     seen_targets = set()
-    for operand in getattr(observable, "operands", ()):
+    for operand in getattr(observable, "operands", None) or getattr(observable, "obs", ()):
         term = _pauli_string_from_observable(operand, wire_map)
         if term is None:
             return None
@@ -63,6 +63,43 @@ def _pauli_string_from_observable(observable, wire_map):
             targets.append(target)
     return "".join(paulis), targets
 
+
+def _pauli_terms_from_observable(observable, wire_map):
+    term = _pauli_string_from_observable(observable, wire_map)
+    if term is not None:
+        pauli_string, targets = term
+        return [(1.0, pauli_string, targets)]
+
+    if observable.name == "SProd":
+        base_terms = _pauli_terms_from_observable(observable.base, wire_map)
+        if base_terms is None:
+            return None
+        return [(observable.scalar * coeff, pauli_string, targets)
+                for coeff, pauli_string, targets in base_terms]
+
+    if observable.name == "Sum":
+        terms = []
+        for operand in getattr(observable, "operands", ()):
+            operand_terms = _pauli_terms_from_observable(operand, wire_map)
+            if operand_terms is None:
+                return None
+            terms.extend(operand_terms)
+        return terms
+
+    if observable.name in {"LinearCombination", "Hamiltonian"} and callable(getattr(observable, "terms", None)):
+        coeffs, observables = observable.terms()
+        terms = []
+        for coeff, sub_observable in zip(coeffs, observables):
+            sub_terms = _pauli_terms_from_observable(sub_observable, wire_map)
+            if sub_terms is None:
+                return None
+            terms.extend((coeff * sub_coeff, pauli_string, targets)
+                         for sub_coeff, pauli_string, targets in sub_terms)
+        return terms
+
+    return None
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -71,7 +108,11 @@ class RocQDevice(QubitDevice):
     pennylane_requires = ">=0.30"
 
     operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | {"QubitUnitary", "RX", "RY", "RZ", "Rot"}
-    observables = {"PauliX", "PauliY", "PauliZ", "Identity", "Counts", "State"}
+    observables = {
+        "PauliX", "PauliY", "PauliZ", "Identity",
+        "Counts", "State",
+        "Prod", "Tensor", "SProd", "Sum", "LinearCombination", "Hamiltonian",
+    }
 
     @classmethod
     def capabilities(cls):
@@ -104,7 +145,7 @@ class RocQDevice(QubitDevice):
         self._state = None
 
     def apply(self, operations: list[Operation], rotations=None, **kwargs):
-        for op in list(operations) + list(rotations or []):
+        for op in list(operations):
             gate_name = op.name
             wire_indices = [self.wire_map[w] for w in op.wires]
             if gate_name in PENNYLANE_TO_ROCQ_GATES:
@@ -137,7 +178,6 @@ class RocQDevice(QubitDevice):
                 self._runtime.apply_operation(
                     gate_name,
                     wire_indices,
-                    getattr(op, "parameters", []),
                     matrix=matrix.astype(np.complex128),
                 )
             else:
@@ -167,14 +207,17 @@ class RocQDevice(QubitDevice):
         if self.shots is not None or shot_range is not None or bin_size is not None:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
-        term = _pauli_string_from_observable(observable, self.wire_map)
-        if term is None:
+        terms = _pauli_terms_from_observable(observable, self.wire_map)
+        if terms is None:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
-        pauli_string, targets = term
-        if not targets:
-            return 1.0
-        return self._runtime.expectation_pauli_string(pauli_string, targets)
+        result = 0.0 + 0.0j
+        for coeff, pauli_string, targets in terms:
+            if not targets:
+                result += coeff
+            else:
+                result += coeff * self._runtime.expectation_pauli_string(pauli_string, targets)
+        return float(np.real_if_close(result).real)
 
     def analytic_probability(self, wires=None):
         if self._state is None: return None
