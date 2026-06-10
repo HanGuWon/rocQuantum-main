@@ -122,6 +122,31 @@ def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     assert isinstance(provider.get_estimator(), BackendEstimatorV2)
 
 
+def test_qiskit_provider_estimates_sparse_pauli_observable_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+
+    observable = SparsePauliOp.from_list([
+        ("IZ", 1.2),
+        ("ZX", -0.5),
+        ("II", 0.25),
+    ])
+
+    assert provider.estimate_expectation(circuit, observable) == pytest.approx(0.725)
+    assert _FakeQuantumSimulator.instances[-1].expectations == [
+        ("Z", (0,)),
+        ("XZ", (0, 1)),
+    ]
+
+
 def test_pennylane_plugin_aliases_load_with_real_pennylane(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

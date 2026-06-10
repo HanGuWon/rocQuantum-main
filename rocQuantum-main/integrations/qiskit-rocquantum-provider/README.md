@@ -12,6 +12,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Automatic Discovery**: Once installed, Qiskit can automatically discover and list this provider's backends.
 - **Modern Job Contract**: `backend.run()` returns a synchronous Qiskit `Job` object whose `result()` method returns the `Result`.
 - **Primitive Factories**: `RocQuantumProvider.get_sampler()` and `get_estimator()` return Qiskit `BackendSamplerV2` / `BackendEstimatorV2` instances backed by the rocQuantum backend.
+- **Native Pauli Expectations**: `RocQuantumProvider.estimate_expectation()` evaluates Qiskit `SparsePauliOp`/`Pauli` observables through the rocQuantum Pauli-string expectation path.
 
 ## Installation
 
@@ -34,6 +35,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 - Verified in adapter tests against Qiskit `2.4.1`.
 - The provider uses `BackendV2`, exposes `max_circuits`, and imports result model classes from both old and new Qiskit locations.
 - Qiskit primitive support is provided through `BackendSamplerV2` and `BackendEstimatorV2` wrappers over `rocq_simulator`.
+- Direct Pauli expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, and `(label, coeff)` term lists.
 - `rocquantum_bind` is loaded when a circuit is executed, so importing the provider remains possible before the native extension is present.
 
 ## Usage Example
@@ -43,6 +45,7 @@ The following example demonstrates how to use the `RocQuantumBackend` to get bot
 ```python
 import numpy as np
 from qiskit import QuantumCircuit
+from qiskit.quantum_info import SparsePauliOp
 from qiskit_rocquantum_provider import RocQuantumProvider
 
 # 1. Instantiate the provider and get the backend
@@ -85,6 +88,13 @@ print(counts)
 
 sampler = provider.get_sampler()
 estimator = provider.get_estimator()
+
+qc_expectation = QuantumCircuit(3)
+qc_expectation.h(0)
+qc_expectation.cx(0, 1)
+qc_expectation.cx(0, 2)
+observable = SparsePauliOp.from_list([("ZZI", 1.0), ("IXX", -0.25)])
+expectation = provider.estimate_expectation(qc_expectation, observable)
 
 
 # Expected output:

@@ -46,3 +46,7 @@ class RocQuantumProvider(_ProviderBase):
         from qiskit.primitives import BackendEstimatorV2
 
         return BackendEstimatorV2(backend=self.get_backend(name), options=options or None)
+
+    def estimate_expectation(self, circuit, observable, name="rocq_simulator"):
+        """Evaluate a Pauli observable through the native rocQuantum simulator."""
+        return self.get_backend(name).estimate_expectation(circuit, observable)

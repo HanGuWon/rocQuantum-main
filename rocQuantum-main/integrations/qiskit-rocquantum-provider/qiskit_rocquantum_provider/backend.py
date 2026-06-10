@@ -33,6 +33,7 @@ from rocquantum.framework_runtime import (
     qiskit_memory_from_samples,
 )
 
+from .estimator import estimate_pauli_observable
 from .job import RocQuantumJob
 
 
@@ -93,6 +94,38 @@ class RocQuantumBackend(BackendV2):
         else:
             self._runtime.reset()
 
+    def _apply_circuit(self, circuit):
+        self._ensure_simulator(circuit.num_qubits)
+
+        measured_bits = {}  # Map classical bit index to qubit index
+        for instruction in circuit.data:
+            op = instruction.operation
+            if op.name in {"barrier", "delay"}:
+                continue
+
+            q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
+
+            if op.name == 'measure':
+                # Store which classical bit this measurement corresponds to
+                c_index = circuit.find_bit(instruction.clbits[0]).index
+                measured_bits[c_index] = q_indices[0]
+                continue
+
+            matrix = op.to_matrix() if op.name in {"unitary"} else None
+            self._runtime.apply_operation(
+                op.name,
+                q_indices,
+                normalize_params(op.params),
+                matrix=matrix,
+            )
+
+        return measured_bits
+
+    def estimate_expectation(self, circuit, observable):
+        """Return a native Pauli expectation for a circuit and Qiskit observable."""
+        self._apply_circuit(circuit)
+        return estimate_pauli_observable(self._runtime, observable, circuit.num_qubits)
+
     def run(self, run_input, **options):
         if not isinstance(run_input, list):
             run_input = [run_input]
@@ -102,30 +135,7 @@ class RocQuantumBackend(BackendV2):
         results = []
 
         for circuit in run_input:
-            self._ensure_simulator(circuit.num_qubits)
-
-            # Simplified translation loop
-            measured_bits = {}  # Map classical bit index to qubit index
-            for instruction in circuit.data:
-                op = instruction.operation
-                if op.name in {"barrier", "delay"}:
-                    continue
-
-                q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
-
-                if op.name == 'measure':
-                    # Store which classical bit this measurement corresponds to
-                    c_index = circuit.find_bit(instruction.clbits[0]).index
-                    measured_bits[c_index] = q_indices[0]
-                    continue
-
-                matrix = op.to_matrix() if op.name in {"unitary"} else None
-                self._runtime.apply_operation(
-                    op.name,
-                    q_indices,
-                    normalize_params(op.params),
-                    matrix=matrix,
-                )
+            measured_bits = self._apply_circuit(circuit)
 
             # Perform measurement on the required qubits.  rocsvSample packs
             # result bits in the order qubits are requested, so keep the
