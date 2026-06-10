@@ -699,6 +699,30 @@ def test_pennylane_controlled_rotations_dispatch_natively(monkeypatch):
     assert sim.matrices == []
 
 
+def test_pennylane_basis_state_prepares_with_native_x_gates(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.BasisState(np.array([1, 0, 1]), wires=[0, 1, 2])
+        return qml.state()
+
+    circuit()
+
+    assert _FakeQuantumSimulator.instances[-1].ops == [
+        ("X", (0,), ()),
+        ("X", (2,), ()),
+    ]
+
+
 def test_pennylane_common_gates_use_matrix_fallback_without_decomposition(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

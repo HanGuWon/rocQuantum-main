@@ -213,6 +213,17 @@ def _shot_count(shots):
     return int(shots)
 
 
+def _basis_state_bits(op, num_wires):
+    if not getattr(op, "parameters", None):
+        raise ValueError("BasisState requires a computational basis vector.")
+    bits = np.asarray(op.parameters[0], dtype=int).reshape(-1)
+    if len(bits) != int(num_wires):
+        raise ValueError("BasisState length must match the number of target wires.")
+    if not np.all((bits == 0) | (bits == 1)):
+        raise ValueError("BasisState entries must be 0 or 1.")
+    return bits
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -220,7 +231,7 @@ class RocQDevice(QubitDevice):
     version = "0.1.0"
     pennylane_requires = ">=0.30"
 
-    operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | NATIVE_PARAMETRIC_OPS | MATRIX_OPS | {"Rot"}
+    operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | NATIVE_PARAMETRIC_OPS | MATRIX_OPS | {"BasisState", "Rot"}
     observables = {
         "PauliX", "PauliY", "PauliZ", "Identity",
         "Hermitian", "Projector",
@@ -259,11 +270,21 @@ class RocQDevice(QubitDevice):
         self._state = None
 
     def apply(self, operations: list[Operation], rotations=None, **kwargs):
+        operation_applied = False
         for op in list(operations):
             gate_name = op.name
             wire_indices = [self.wire_map[w] for w in op.wires]
-            if gate_name in PENNYLANE_TO_ROCQ_GATES:
+            if gate_name == "BasisState":
+                if operation_applied:
+                    raise ValueError("BasisState is only supported as an initial state preparation.")
+                bits = _basis_state_bits(op, len(wire_indices))
+                for bit, wire_index in zip(bits, wire_indices):
+                    if int(bit):
+                        self._runtime.apply_operation("X", [wire_index])
+                operation_applied = True
+            elif gate_name in PENNYLANE_TO_ROCQ_GATES:
                 self._runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)
+                operation_applied = True
             elif gate_name in NATIVE_PARAMETRIC_OPS:
                 try:
                     self._runtime.apply_operation(gate_name, wire_indices, getattr(op, "parameters", []))
@@ -274,6 +295,7 @@ class RocQDevice(QubitDevice):
                         wire_indices,
                         matrix=matrix,
                     )
+                operation_applied = True
             elif gate_name == "Rot":
                 try:
                     phi, theta, omega = getattr(op, "parameters", [])
@@ -287,6 +309,7 @@ class RocQDevice(QubitDevice):
                         wire_indices,
                         matrix=matrix,
                     )
+                operation_applied = True
             elif gate_name in MATRIX_OPS:
                 matrix = matrix_to_little_endian_wires(qml.matrix(op))
                 self._runtime.apply_operation(
@@ -294,6 +317,7 @@ class RocQDevice(QubitDevice):
                     wire_indices,
                     matrix=matrix,
                 )
+                operation_applied = True
             else:
                 raise NotImplementedError(f"Operation {gate_name} not supported.")
         execute = getattr(self.sim, "Execute", None)
