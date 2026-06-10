@@ -189,6 +189,7 @@ class RocQDevice(QubitDevice):
     operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | NATIVE_PARAMETRIC_OPS | MATRIX_OPS | {"Rot"}
     observables = {
         "PauliX", "PauliY", "PauliZ", "Identity",
+        "Hermitian", "Projector",
         "Counts", "State",
         "Prod", "Tensor", "SProd", "Sum", "LinearCombination", "Hamiltonian",
     }

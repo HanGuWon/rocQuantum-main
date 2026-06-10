@@ -460,6 +460,30 @@ def test_pennylane_var_uses_native_pauli_expectation(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
 
 
+def test_pennylane_non_pauli_observables_use_statevector_fallback(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def hermitian_circuit():
+        return qml.expval(qml.Hermitian(np.eye(2), wires=0))
+
+    @qml.qnode(dev)
+    def projector_circuit():
+        return qml.expval(qml.Projector([0], wires=0))
+
+    assert hermitian_circuit() == pytest.approx(1.0)
+    assert projector_circuit() == pytest.approx(1.0)
+    assert _FakeQuantumSimulator.instances[-1].expectations == []
+
+
 def test_pennylane_rot_dispatches_native_rotation_sequence(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
