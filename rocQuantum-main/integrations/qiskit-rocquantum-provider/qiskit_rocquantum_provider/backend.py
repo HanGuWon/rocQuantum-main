@@ -406,15 +406,15 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("rz", [target], [-quarter_pi])
         self._runtime.apply_operation("h", [target])
 
-    def _apply_controlled_base_gate(self, op, q_indices):
+    def _apply_controlled_base_gate(self, op, q_indices, *, include_global_phase):
         num_controls = int(getattr(op, "num_ctrl_qubits", 0))
         base_gate = getattr(op, "base_gate", None)
         base_name = getattr(base_gate, "name", None)
         if num_controls < 1 or len(q_indices) != num_controls + 1:
             return False
-        if base_name not in {"x", "h", "y", "z"}:
+        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "p"}:
             return False
-        if base_name in {"h", "y"} and num_controls != 1:
+        if base_name in {"h", "y", "rx", "ry", "rz", "p"} and num_controls != 1:
             return False
         if base_name == "z" and num_controls not in {1, 2}:
             return False
@@ -443,6 +443,16 @@ class RocQuantumBackend(BackendV2):
                 self._apply_ch_gate([controls[0], target])
             elif base_name == "y":
                 self._apply_cy_gate([controls[0], target])
+            elif base_name in {"rx", "ry", "rz"}:
+                (theta,) = normalize_params(op.params)
+                self._runtime.apply_operation(f"c{base_name}", [controls[0], target], [theta])
+            elif base_name == "p":
+                (theta,) = normalize_params(op.params)
+                self._apply_controlled_phase_gate(
+                    [controls[0], target],
+                    theta,
+                    include_global_phase=include_global_phase,
+                )
             elif len(controls) == 1:
                 self._runtime.apply_operation("cz", [controls[0], target])
             else:
@@ -593,7 +603,11 @@ class RocQuantumBackend(BackendV2):
 
             if self._supports_native_parametric_decomposition():
                 try:
-                    if self._apply_controlled_base_gate(op, q_indices):
+                    if self._apply_controlled_base_gate(
+                        op,
+                        q_indices,
+                        include_global_phase=include_global_phase,
+                    ):
                         touched_qubits.update(q_indices)
                         continue
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):

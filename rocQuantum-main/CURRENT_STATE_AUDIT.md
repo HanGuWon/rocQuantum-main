@@ -22,7 +22,7 @@ Audit refresh note (2026-06-10):
 - Qiskit `ecr` and PennyLane `qml.ECR` now use exact native decompositions instead of dense two-qubit matrix dispatch; PennyLane preserves the `SX` global phase with a one-qubit global-phase matrix.
 - Qiskit `iswap` and PennyLane `qml.ISWAP` / `qml.PSWAP` / `qml.SISWAP` / `qml.SQISW` now use exact native swap/phase decompositions instead of dense two-qubit matrix dispatch.
 - Qiskit `rccx` / `rcccx` now use exact native relative-phase `H` / `RZ` / `CNOT` decompositions instead of dense three- and four-qubit matrix dispatch.
-- Direct Qiskit open-control controlled-X/Y/Z and single-control controlled-H operations now use exact `X`-flip plus native `CX` / `MCX` / `CY` / `CZ` / `CCZ` / `CH` decomposition instead of dense matrix dispatch.
+- Direct Qiskit open-control controlled-X/Y/Z, controlled rotations/phase, and single-control controlled-H operations now use exact `X`-flip plus native `CX` / `MCX` / `CY` / `CZ` / `CCZ` / `CRX` / `CRY` / `CRZ` / phase `RZ` / `CX` / `CH` decomposition instead of dense matrix dispatch.
 - Qiskit `sx` / `sxdg` / `tdg` / `u` now use exact native single-qubit rotation decompositions, including global phase only for statevector-producing runs.
 - Qiskit `p` / `cp` now use exact native `rz` / `cx` decompositions, including global phase only for statevector-producing runs and skipping it on sampling / estimator paths.
 - Qiskit `rxx` / `ryy` / `rzz` and PennyLane `qml.IsingXX` / `qml.IsingYY` / `qml.IsingXY` / `qml.IsingZZ` now use exact native CNOT/rotation decompositions instead of dense two-qubit matrix dispatch.

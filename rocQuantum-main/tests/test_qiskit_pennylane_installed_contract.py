@@ -667,6 +667,72 @@ def test_qiskit_backend_decomposes_open_control_x_y_z_and_h_natively(monkeypatch
     assert sim.matrices == []
 
 
+def test_qiskit_backend_decomposes_open_control_parametric_gates_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import PhaseGate, RXGate, RYGate, RZGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2)
+    circuit.append(RXGate(0.2).control(1, ctrl_state="0"), [0, 1])
+    circuit.append(RYGate(0.3).control(1, ctrl_state="0"), [0, 1])
+    circuit.append(RZGate(0.4).control(1, ctrl_state="0"), [0, 1])
+    circuit.append(PhaseGate(0.5).control(1, ctrl_state="0"), [0, 1])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("X", (0,), ()),
+        ("CRX", (0, 1), (0.2,)),
+        ("X", (0,), ()),
+        ("X", (0,), ()),
+        ("CRY", (0, 1), (0.3,)),
+        ("X", (0,), ()),
+        ("X", (0,), ()),
+        ("CRZ", (0, 1), (0.4,)),
+        ("X", (0,), ()),
+        ("X", (0,), ()),
+        ("RZ", (0,), (0.25,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-0.25,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.25,)),
+        ("X", (0,), ()),
+    ]
+    assert sim.matrices == []
+
+
+def test_qiskit_open_control_phase_preserves_statevector_global_phase(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import PhaseGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2)
+    circuit.append(PhaseGate(0.5).control(1, ctrl_state="0"), [0, 1])
+
+    backend.run(circuit, sampling=False, statevector=True).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("X", (0,), ()),
+        ("RZ", (0,), (0.25,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-0.25,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.25,)),
+        ("X", (0,), ()),
+    ]
+    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [((2, 2), (0,))]
+
+
 def test_qiskit_backend_runs_direct_state_preparation(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
