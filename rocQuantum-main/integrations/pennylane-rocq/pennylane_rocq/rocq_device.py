@@ -234,6 +234,16 @@ def _evaluate_pauli_terms(runtime, terms):
     return result
 
 
+def _evaluate_pauli_terms_batch(runtime, terms):
+    result = np.zeros(runtime.batch_size(), dtype=np.complex128)
+    for coeff, pauli_string, targets in _combine_pauli_terms(terms):
+        if not targets:
+            result += coeff
+        else:
+            result += coeff * runtime.expectation_pauli_string_batch(pauli_string, targets)
+    return result
+
+
 def _real_measurement_result(value, measurement_name):
     real_value = np.real_if_close(value)
     if np.iscomplexobj(real_value):

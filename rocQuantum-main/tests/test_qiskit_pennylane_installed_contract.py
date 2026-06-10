@@ -1176,6 +1176,36 @@ def test_qiskit_native_estimator_binds_parameter_values(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].ops == [("RY", (0,), (0.2,))]
 
 
+def test_qiskit_pauli_estimator_combines_batched_expectations(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider.estimator import estimate_pauli_observable_batch
+
+    class BatchRuntime:
+        def __init__(self):
+            self.calls = []
+
+        def batch_size(self):
+            return 2
+
+        def expectation_pauli_string_batch(self, pauli_string, targets):
+            self.calls.append((pauli_string, tuple(targets)))
+            if pauli_string == "Z" and tuple(targets) == (0,):
+                return np.array([0.25, -0.5], dtype=float)
+            raise AssertionError((pauli_string, targets))
+
+    runtime = BatchRuntime()
+    observable = SparsePauliOp.from_list([("Z", 2.0), ("I", 1.0)])
+
+    np.testing.assert_allclose(
+        estimate_pauli_observable_batch(runtime, observable, 1),
+        np.array([1.5, 0.0], dtype=float),
+    )
+    assert runtime.calls == [("Z", (0,))]
+
+
 def test_qiskit_native_estimator_reuses_bound_circuit_for_observable_batch(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -1402,6 +1432,44 @@ def test_pennylane_var_uses_native_pauli_expectation(monkeypatch):
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.expectations == [("Z", (0,))]
     assert sim.statevector_reads == 0
+
+
+def test_pennylane_pauli_terms_combine_batched_expectations(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    from pennylane_rocq.rocq_device import _evaluate_pauli_terms_batch
+
+    class BatchRuntime:
+        def __init__(self):
+            self.calls = []
+
+        def batch_size(self):
+            return 2
+
+        def expectation_pauli_string_batch(self, pauli_string, targets):
+            self.calls.append((pauli_string, tuple(targets)))
+            if pauli_string == "Z" and tuple(targets) == (0,):
+                return np.array([0.25, -0.5], dtype=float)
+            raise AssertionError((pauli_string, targets))
+
+    runtime = BatchRuntime()
+
+    np.testing.assert_allclose(
+        _evaluate_pauli_terms_batch(
+            runtime,
+            [
+                (1.0, "Z", [0]),
+                (0.5, "Z", [0]),
+                (2.0, "", []),
+            ],
+        ),
+        np.array([2.375, 1.25], dtype=np.complex128),
+    )
+    assert runtime.calls == [("Z", (0,))]
 
 
 def test_pennylane_paulix_expval_skips_diagonalizing_rotation(monkeypatch):

@@ -353,6 +353,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _apply_unitary", source)
         self.assertIn("_pauli_square_terms", source)
         self.assertIn("expectation_pauli_string", source)
+        self.assertIn("_evaluate_pauli_terms_batch", source)
+        self.assertIn("expectation_pauli_string_batch", source)
 
     def test_cirq_sampling_prefers_native_measure(self):
         with open(_CIRQ_ADAPTER, "r", encoding="utf-8") as f:
@@ -418,6 +420,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("indices_by_parameter", source)
         self.assertIn("self._backend._apply_circuit", source)
         self.assertIn("estimate_pauli_observable", source)
+        self.assertIn("estimate_pauli_observable_batch", source)
+        self.assertIn("expectation_pauli_string_batch", source)
         self.assertIn("shots\": 0", source)
 
     def test_qiskit_sampler_uses_native_sampling(self):

@@ -149,6 +149,21 @@ def _estimate_combined_observable_terms(runtime, terms, num_qubits: int) -> floa
     return float(real_result)
 
 
+def _estimate_combined_observable_terms_batch(runtime, terms, num_qubits: int) -> np.ndarray:
+    result = np.zeros(runtime.batch_size(), dtype=np.complex128)
+    for coeff, label in terms:
+        pauli_string, targets = _label_to_runtime_term(label, int(num_qubits))
+        if not targets:
+            result += coeff
+        else:
+            result += coeff * runtime.expectation_pauli_string_batch(pauli_string, targets)
+
+    real_result = np.real_if_close(result)
+    if np.iscomplexobj(real_result):
+        raise ValueError("Observable expectation has a non-negligible imaginary component.")
+    return np.asarray(real_result, dtype=float)
+
+
 def _estimate_observable_plan(runtime, plan, num_qubits: int) -> float:
     kind, payload = plan
     if kind == "pauli":
@@ -171,6 +186,14 @@ def estimate_observable(runtime, observable, num_qubits: int) -> float:
 
 def estimate_pauli_observable(runtime, observable, num_qubits: int) -> float:
     return _estimate_combined_observable_terms(
+        runtime,
+        _observable_signature(observable, int(num_qubits)),
+        int(num_qubits),
+    )
+
+
+def estimate_pauli_observable_batch(runtime, observable, num_qubits: int) -> np.ndarray:
+    return _estimate_combined_observable_terms_batch(
         runtime,
         _observable_signature(observable, int(num_qubits)),
         int(num_qubits),
