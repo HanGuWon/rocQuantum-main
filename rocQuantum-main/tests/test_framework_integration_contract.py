@@ -488,6 +488,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("SamplerPub.coerce", source)
         self.assertIn("self._backend._apply_circuit", source)
         self.assertIn("self._backend._runtime.measure", source)
+        self.assertIn("def _try_run_pub_batched_parameters", source)
+        self.assertIn("self._backend._apply_circuit_batch", source)
+        self.assertIn("self._backend._runtime.probabilities_batch", source)
+        self.assertIn("\"batched_parameters\": True", source)
         self.assertIn("BitArray.from_bool_array", source)
 
 

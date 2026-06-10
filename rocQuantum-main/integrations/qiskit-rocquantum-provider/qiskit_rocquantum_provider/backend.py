@@ -857,11 +857,13 @@ class RocQuantumBackend(BackendV2):
 
         self._ensure_simulator(num_qubits, batch_size=len(circuits))
 
+        measured_bits = {}
+        measurement_started = False
         for position, reference_instruction in enumerate(circuits[0].data):
             reference_op = reference_instruction.operation
             if reference_op.name in {"barrier", "delay", "save_statevector"}:
                 continue
-            if reference_op.name in {"initialize", "reset", "measure", "state_preparation"}:
+            if reference_op.name in {"initialize", "reset", "state_preparation"}:
                 raise NotImplementedError(f"Batched Qiskit execution does not support {reference_op.name!r}.")
             if reference_op.name in CONTROL_FLOW_OPS or getattr(reference_op, "blocks", None) is not None:
                 raise NotImplementedError("Batched Qiskit execution does not support control-flow operations.")
@@ -869,6 +871,30 @@ class RocQuantumBackend(BackendV2):
                 raise NotImplementedError("Batched Qiskit execution does not support conditioned operations.")
 
             q_indices = [circuits[0].find_bit(q).index for q in reference_instruction.qubits]
+            if measurement_started and reference_op.name != "measure":
+                raise NotImplementedError("Batched Qiskit execution only supports terminal measurements.")
+
+            if reference_op.name == "measure":
+                measurement_started = True
+                if len(q_indices) != 1 or len(reference_instruction.clbits) != 1:
+                    raise NotImplementedError("Batched Qiskit execution supports one-qubit measure instructions.")
+                c_index = circuits[0].find_bit(reference_instruction.clbits[0]).index
+                for circuit in circuits[1:]:
+                    instruction = circuit.data[position]
+                    current_op = instruction.operation
+                    current_q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
+                    current_c_index = circuit.find_bit(instruction.clbits[0]).index if instruction.clbits else None
+                    if (
+                        current_op.name != "measure"
+                        or current_q_indices != q_indices
+                        or current_c_index != c_index
+                    ):
+                        raise NotImplementedError("Batched Qiskit execution requires identical measurement layout.")
+                    if _instruction_condition(instruction) is not None:
+                        raise NotImplementedError("Batched Qiskit execution does not support conditioned operations.")
+                measured_bits[c_index] = q_indices[0]
+                continue
+
             ops = []
             params_by_circuit = []
             for circuit in circuits:
@@ -895,7 +921,8 @@ class RocQuantumBackend(BackendV2):
             first_params = params_by_circuit[0]
             if any(params != first_params for params in params_by_circuit[1:]):
                 raise NotImplementedError(
-                    f"Batched Qiskit execution only supports varying RX/RY/RZ parameters, got {reference_op.name!r}."
+                    "Batched Qiskit execution only supports varying RX/RY/RZ and CRX/CRY/CRZ "
+                    f"parameters, got {reference_op.name!r}."
                 )
 
             matrix = _operation_matrix(reference_op)
@@ -903,7 +930,7 @@ class RocQuantumBackend(BackendV2):
                 first_params = []
             self._runtime.apply_operation(reference_op.name, q_indices, first_params, matrix=matrix)
 
-        return True
+        return measured_bits
 
     @staticmethod
     def _requests_statevector(circuit):

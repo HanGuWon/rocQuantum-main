@@ -47,6 +47,26 @@ def _samples_for_register(raw_samples, items, width):
     return np.asarray(rows, dtype=bool)
 
 
+def _samples_from_probabilities(probabilities, shots):
+    probabilities = np.asarray(probabilities, dtype=float).reshape(-1)
+    if probabilities.size == 0:
+        raise ValueError("Sampler probabilities cannot be empty.")
+    if np.any(probabilities < -1.0e-12):
+        raise ValueError("Sampler probabilities must be non-negative.")
+    probabilities = np.clip(probabilities, 0.0, None)
+    total = float(np.sum(probabilities))
+    if total <= 0.0:
+        raise ValueError("Sampler probabilities sum to zero.")
+    probabilities = probabilities / total
+    shots = int(shots)
+    if shots <= 0:
+        return np.asarray([], dtype=np.int64)
+    cumulative = np.cumsum(probabilities)
+    cumulative[-1] = 1.0
+    quantiles = (np.arange(shots, dtype=float) + 0.5) / shots
+    return np.searchsorted(cumulative, quantiles, side="right").astype(np.int64)
+
+
 class RocQuantumSampler(BaseSamplerV2):
     """Native Qiskit SamplerV2 backed by rocQuantum sampling."""
 
@@ -65,6 +85,10 @@ class RocQuantumSampler(BaseSamplerV2):
         return PrimitiveResult([self._run_pub(pub) for pub in pubs], metadata={"version": 2})
 
     def _run_pub(self, pub):
+        batched_result = self._try_run_pub_batched_parameters(pub)
+        if batched_result is not None:
+            return batched_result
+
         bound_circuits = np.asarray(pub.parameter_values.bind_all(pub.circuit), dtype=object)
         data = {}
 
@@ -97,5 +121,53 @@ class RocQuantumSampler(BaseSamplerV2):
                 "shots": int(pub.shots),
                 "circuit_metadata": getattr(pub.circuit, "metadata", None) or {},
                 "native": True,
+            },
+        )
+
+    def _try_run_pub_batched_parameters(self, pub):
+        if not pub.shape:
+            return None
+
+        bound_circuits = np.asarray(pub.parameter_values.bind_all(pub.circuit), dtype=object)
+        parameter_indices = list(np.ndindex(pub.shape))
+        if len(parameter_indices) <= 1:
+            return None
+
+        circuits = [bound_circuits[index] for index in parameter_indices]
+        try:
+            measured_bits = self._backend._apply_circuit_batch(circuits)
+            sample_qubits, registers = _measurement_plan(circuits[0], measured_bits)
+            probabilities = self._backend._runtime.probabilities_batch(sample_qubits)
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            return None
+
+        probabilities = np.asarray(probabilities, dtype=float)
+        if probabilities.shape[0] != len(parameter_indices):
+            return None
+
+        data = {}
+        for batch_index, _ in enumerate(parameter_indices):
+            raw_samples = _samples_from_probabilities(probabilities[batch_index], int(pub.shots))
+            for register_name, items, width in registers:
+                register_samples = _samples_for_register(raw_samples, items, width)
+                if register_name in data:
+                    data[register_name].append(register_samples)
+                else:
+                    data[register_name] = [register_samples]
+
+        shaped_data = {}
+        for register_name, arrays in data.items():
+            sample_rows = np.asarray(arrays, dtype=bool).reshape(
+                pub.shape + (int(pub.shots), arrays[0].shape[-1])
+            )
+            shaped_data[register_name] = BitArray.from_bool_array(sample_rows, order="little")
+
+        return SamplerPubResult(
+            DataBin(**shaped_data, shape=pub.shape),
+            metadata={
+                "shots": int(pub.shots),
+                "circuit_metadata": getattr(pub.circuit, "metadata", None) or {},
+                "native": True,
+                "batched_parameters": True,
             },
         )

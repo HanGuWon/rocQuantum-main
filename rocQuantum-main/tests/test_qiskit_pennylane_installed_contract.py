@@ -1177,8 +1177,49 @@ def test_qiskit_native_sampler_binds_parameter_values(monkeypatch):
 
     assert result.data.c.shape == (2,)
     assert result.data.c.num_shots == 3
-    assert [result.data.c[idx].get_counts() for idx in range(2)] == [{"0": 3}, {"0": 3}]
-    assert _FakeQuantumSimulator.instances[-1].ops == [("RY", (0,), (0.2,))]
+    assert [result.data.c[idx].get_counts() for idx in range(2)] == [
+        {"0": 1, "1": 2},
+        {"0": 1, "1": 2},
+    ]
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == []
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.measurements == []
+    assert sim.probability_requests == [(0,)]
+
+
+def test_qiskit_native_sampler_batches_controlled_parameter_values(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(2, 1)
+    circuit.crx(theta, 0, 1)
+    circuit.measure(1, 0)
+
+    result = RocQuantumProvider().get_sampler().run(
+        [(circuit, [0.1, 0.2])],
+        shots=3,
+    ).result()[0]
+
+    assert result.data.c.shape == (2,)
+    assert [result.data.c[idx].get_counts() for idx in range(2)] == [
+        {"0": 1, "1": 2},
+        {"0": 1, "1": 2},
+    ]
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == []
+    assert sim.batch_ops == [("CRX", (0, 1), (0.1, 0.2))]
+    assert sim.measurements == []
+    assert sim.probability_requests == [(1,)]
 
 
 def test_qiskit_native_estimator_binds_parameter_values(monkeypatch):
