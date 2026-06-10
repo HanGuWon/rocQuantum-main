@@ -73,6 +73,8 @@ class _FakeQuantumSimulator:
         self.expectations.append((pauli_string, tuple(targets)))
         if pauli_string == "Z" and tuple(targets) == (0,):
             return 0.5
+        if pauli_string == "X" and tuple(targets) == (0,):
+            return 0.5
         if pauli_string == "XZ" and tuple(targets) == (0, 1):
             return 0.25
         if pauli_string == "XX" and tuple(targets) == (0, 1):
@@ -751,6 +753,28 @@ def test_pennylane_var_uses_native_pauli_expectation(monkeypatch):
     assert sim.statevector_reads == 0
 
 
+def test_pennylane_paulix_expval_skips_diagonalizing_rotation(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def circuit():
+        return qml.expval(qml.PauliX(0))
+
+    assert circuit() == pytest.approx(0.5)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == []
+    assert sim.expectations == [("X", (0,))]
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_non_pauli_observables_use_statevector_fallback(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -775,7 +799,7 @@ def test_pennylane_non_pauli_observables_use_statevector_fallback(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].expectations == []
 
 
-def test_pennylane_hadamard_observable_dispatches_diagonalizing_rotation(monkeypatch):
+def test_pennylane_hadamard_observable_uses_native_pauli_terms(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
     for name in list(sys.modules):
@@ -790,11 +814,11 @@ def test_pennylane_hadamard_observable_dispatches_diagonalizing_rotation(monkeyp
     def circuit():
         return qml.expval(qml.Hadamard(0))
 
-    assert circuit() == pytest.approx(1.0)
+    assert circuit() == pytest.approx(1 / math.sqrt(2))
     sim = _FakeQuantumSimulator.instances[-1]
-    assert sim.ops == [("RY", (0,), (-math.pi / 4,))]
-    assert sim.expectations == []
-    assert sim.statevector_reads == 1
+    assert sim.ops == []
+    assert sim.expectations == [("X", (0,)), ("Z", (0,))]
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_rot_dispatches_native_rotation_sequence(monkeypatch):

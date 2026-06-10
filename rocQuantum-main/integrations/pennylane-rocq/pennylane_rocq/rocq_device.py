@@ -97,6 +97,13 @@ def _pauli_string_from_observable(observable, wire_map):
 
 
 def _pauli_terms_from_observable(observable, wire_map):
+    if observable.name == "Hadamard":
+        if len(observable.wires) != 1:
+            return None
+        target = wire_map[observable.wires[0]]
+        coeff = 1.0 / np.sqrt(2.0)
+        return [(coeff, "X", [target]), (coeff, "Z", [target])]
+
     term = _pauli_string_from_observable(observable, wire_map)
     if term is not None:
         pauli_string, targets = term
@@ -255,6 +262,7 @@ class RocQDevice(QubitDevice):
         super().__init__(wires=wires, shots=shots)
         self.sim = None
         self._state = None
+        self._skip_diagonalizing_rotations = False
         self.reset()
 
     def reset(self):
@@ -268,6 +276,36 @@ class RocQDevice(QubitDevice):
             ) from exc
         self.sim = self._runtime.simulator
         self._state = None
+
+    def _analytic_measurements_use_native_pauli(self, circuit):
+        if self.shots is not None:
+            return False
+
+        measurements = getattr(circuit, "measurements", ())
+        if not measurements:
+            return False
+
+        for measurement in measurements:
+            if measurement.__class__.__name__ not in {"ExpectationMP", "VarianceMP"}:
+                return False
+            observable = getattr(measurement, "obs", None)
+            if observable is None or _pauli_terms_from_observable(observable, self.wire_map) is None:
+                return False
+        return True
+
+    def _get_diagonalizing_gates(self, circuit):
+        if self._skip_diagonalizing_rotations:
+            return []
+        return super()._get_diagonalizing_gates(circuit)
+
+    def execute(self, circuit, **kwargs):
+        skip_rotations = self._analytic_measurements_use_native_pauli(circuit)
+        previous = self._skip_diagonalizing_rotations
+        self._skip_diagonalizing_rotations = skip_rotations
+        try:
+            return super().execute(circuit, **kwargs)
+        finally:
+            self._skip_diagonalizing_rotations = previous
 
     def apply(self, operations: list[Operation], rotations=None, **kwargs):
         operation_applied = False
