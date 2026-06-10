@@ -28,6 +28,7 @@ class _FakeQuantumSimulator:
         self.matrices = []
         self.measurements = []
         self.expectations = []
+        self.statevector_reads = 0
         _FakeQuantumSimulator.instances.append(self)
 
     def reset(self):
@@ -35,6 +36,7 @@ class _FakeQuantumSimulator:
         self.matrices.clear()
         self.measurements.clear()
         self.expectations.clear()
+        self.statevector_reads = 0
         self._measured = False
 
     def num_qubits(self):
@@ -55,6 +57,7 @@ class _FakeQuantumSimulator:
         return [0 if shot % 2 == 0 else high for shot in range(int(shots))]
 
     def get_statevector(self):
+        self.statevector_reads += 1
         state = np.zeros(1 << self._num_qubits, dtype=np.complex128)
         if self._measured:
             state[0] = 1.0
@@ -156,6 +159,26 @@ def test_qiskit_backend_ignores_save_statevector_marker(monkeypatch):
     backend.run(circuit, shots=1).result().get_statevector()
 
     assert _FakeQuantumSimulator.instances[-1].ops == [("H", (0,), ())]
+
+
+def test_qiskit_backend_can_skip_statevector_readback_for_sampling(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2, 2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    circuit.measure([0, 1], [0, 1])
+
+    result = backend.run(circuit, shots=6, statevector=False).result()
+
+    assert result.get_counts() == {"00": 3, "11": 3}
+    assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 6)]
+    assert _FakeQuantumSimulator.instances[-1].statevector_reads == 0
 
 
 def test_qiskit_backend_dispatches_controlled_rotations_natively(monkeypatch):

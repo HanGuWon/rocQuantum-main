@@ -106,7 +106,7 @@ class RocQuantumBackend(BackendV2):
 
     @classmethod
     def _default_options(cls):
-        return Options(shots=1024, memory=True)
+        return Options(shots=1024, memory=True, statevector=True)
 
     @property
     def target(self):
@@ -151,6 +151,10 @@ class RocQuantumBackend(BackendV2):
 
         return measured_bits
 
+    @staticmethod
+    def _requests_statevector(circuit):
+        return any(instruction.operation.name == "save_statevector" for instruction in circuit.data)
+
     def estimate_expectation(self, circuit, observable):
         """Return a native Pauli expectation for a circuit and Qiskit observable."""
         self._apply_circuit(circuit)
@@ -176,16 +180,25 @@ class RocQuantumBackend(BackendV2):
                 measured_items = [(idx, idx) for idx in range(circuit.num_qubits)]
             qubits_to_measure = [qubit for _, qubit in measured_items]
 
-            statevector = self._runtime.statevector()
+            return_statevector = bool(
+                options.get("statevector", self.options.statevector)
+                or self._requests_statevector(circuit)
+            )
+            statevector = self._runtime.statevector() if return_statevector else None
             raw_samples = self._runtime.measure(qubits_to_measure, shots)
             memory_width = getattr(circuit, "num_clbits", 0) or len(measured_items)
             memory = qiskit_memory_from_samples(raw_samples, measured_items, memory_width)
             formatted_counts = counts_from_memory(memory)
 
+            data = {
+                "counts": formatted_counts,
+                "memory": memory if options.get("memory", self.options.memory) else None,
+            }
+            if return_statevector:
+                data["statevector"] = statevector
+
             exp_data = ExperimentResultData(
-                counts=formatted_counts,
-                memory=memory if options.get("memory", self.options.memory) else None,
-                statevector=statevector,
+                **data,
             )
 
             exp_result = ExperimentResult(
