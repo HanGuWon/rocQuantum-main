@@ -435,6 +435,25 @@ def _apply_pswap(runtime, wire_indices, phi):
     runtime.apply_operation("CNOT", [left, right])
 
 
+def _apply_siswap(runtime, wire_indices):
+    if len(wire_indices) != 2:
+        raise ValueError("SISWAP requires exactly two wires.")
+
+    left, right = wire_indices
+    _apply_sx(runtime, [left])
+    runtime.apply_operation("RZ", [left], [np.pi / 2])
+    runtime.apply_operation("CNOT", [left, right])
+    _apply_sx(runtime, [left])
+    runtime.apply_operation("RZ", [left], [7 * np.pi / 4])
+    _apply_sx(runtime, [left])
+    runtime.apply_operation("RZ", [left], [np.pi / 2])
+    _apply_sx(runtime, [right])
+    runtime.apply_operation("RZ", [right], [7 * np.pi / 4])
+    runtime.apply_operation("CNOT", [left, right])
+    _apply_sx(runtime, [left])
+    _apply_sx(runtime, [right])
+
+
 def _apply_ecr(runtime, wire_indices):
     if len(wire_indices) != 2:
         raise ValueError("ECR requires exactly two wires.")
@@ -698,6 +717,19 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_phase_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_pswap(self._runtime, wire_indices, phi)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name in {"SISWAP", "SQISW"}:
+                try:
+                    if not _supports_native_phase_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_siswap(self._runtime, wire_indices)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
