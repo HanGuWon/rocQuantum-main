@@ -1788,7 +1788,7 @@ def test_pennylane_multicontrolledx_all_one_controls_dispatches_natively(monkeyp
     assert sim.matrices == []
 
 
-def test_pennylane_multicontrolledx_nondefault_controls_stays_matrix_fallback(monkeypatch):
+def test_pennylane_multicontrolledx_nondefault_controls_decomposes_natively(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
     for name in list(sys.modules):
@@ -1807,8 +1807,12 @@ def test_pennylane_multicontrolledx_nondefault_controls_stays_matrix_fallback(mo
     circuit()
     sim = _FakeQuantumSimulator.instances[-1]
 
-    assert sim.ops == []
-    assert [targets for _, targets in sim.matrices] == [(0, 1, 2)]
+    assert sim.ops == [
+        ("X", (1,), ()),
+        ("MCX", (0, 1, 2), ()),
+        ("X", (1,), ()),
+    ]
+    assert sim.matrices == []
 
 
 def test_pennylane_parameter_shift_gradient_pipeline_runs(monkeypatch):

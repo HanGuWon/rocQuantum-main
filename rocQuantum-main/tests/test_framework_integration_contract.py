@@ -86,6 +86,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"BasisState\", \"StatePrep\", \"Rot\"", source)
         self.assertIn("StatePrep is only supported as an initial state preparation", source)
         self.assertIn("_native_mcx_wire_indices", source)
+        self.assertIn("def _apply_mcx_with_control_values", source)
         self.assertIn("control_values", source)
         self.assertIn("_apply_native_or_matrix(self._runtime, \"MCX\"", source)
         self.assertIn("def _apply_multirz", source)

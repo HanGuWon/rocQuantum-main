@@ -256,10 +256,40 @@ def _native_mcx_wire_indices(op, wire_map):
         return None
     if len(control_values) != len(control_wires):
         return None
-    if not all(_control_value_is_one(value) for value in control_values):
-        return None
 
     return [wire_map[wire] for wire in control_wires + target_wires]
+
+
+def _mcx_control_values(op):
+    control_values = getattr(op, "control_values", None)
+    if control_values is None:
+        control_values = getattr(op, "hyperparameters", {}).get("control_values")
+    return list(control_values or ())
+
+
+def _apply_mcx_with_control_values(runtime, wire_indices, control_values):
+    if len(wire_indices) < 2:
+        raise ValueError("MultiControlledX requires at least one control wire and one target wire.")
+    if len(control_values) != len(wire_indices) - 1:
+        raise ValueError("MultiControlledX control_values length does not match control wires.")
+
+    open_controls = [
+        wire_index
+        for wire_index, value in zip(wire_indices[:-1], control_values)
+        if not _control_value_is_one(value)
+    ]
+    flipped = []
+    try:
+        for wire_index in open_controls:
+            runtime.apply_operation("X", [wire_index])
+            flipped.append(wire_index)
+        runtime.apply_operation("MCX", wire_indices)
+        for wire_index in reversed(flipped):
+            runtime.apply_operation("X", [wire_index])
+        flipped.clear()
+    finally:
+        for wire_index in reversed(flipped):
+            runtime.apply_operation("X", [wire_index])
 
 
 def _apply_native_or_matrix(runtime, native_name, wire_indices, op):
@@ -726,7 +756,21 @@ class RocQDevice(QubitDevice):
                         matrix=matrix,
                     )
                 else:
-                    _apply_native_or_matrix(self._runtime, "MCX", native_wire_indices, op)
+                    try:
+                        if not _supports_native_gate_decomposition(self._runtime):
+                            raise NotImplementedError
+                        _apply_mcx_with_control_values(
+                            self._runtime,
+                            native_wire_indices,
+                            _mcx_control_values(op),
+                        )
+                    except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                        matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                        self._runtime.apply_operation(
+                            gate_name,
+                            wire_indices,
+                            matrix=matrix,
+                        )
                 operation_applied = True
             elif gate_name == "MultiRZ":
                 try:
