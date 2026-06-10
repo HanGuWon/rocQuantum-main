@@ -377,10 +377,12 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
     circuit.sx(0)
     circuit.p(0.2, 0)
     circuit.cp(0.3, 0, 1)
-    circuit.rzz(0.4, 0, 1)
+    circuit.rxx(0.4, 0, 1)
+    circuit.ryy(0.5, 0, 1)
+    circuit.rzz(0.6, 0, 1)
 
     assert backend.target.num_qubits >= 2
-    assert {"sx", "p", "cp", "rzz", "u"}.issubset(set(backend.target.operation_names))
+    assert {"sx", "p", "cp", "rxx", "ryy", "rzz", "u"}.issubset(set(backend.target.operation_names))
 
     transpiled = transpile(circuit, backend)
     assert transpiled.num_qubits == 2
@@ -396,7 +398,17 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
         ("CNOT", (0, 1), ()),
         ("RZ", (1,), (0.15,)),
         ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.4,)),
+        ("RX", (0,), (0.4,)),
+        ("CNOT", (0, 1), ()),
+        ("RX", (0,), (np.pi / 2,)),
+        ("RX", (1,), (np.pi / 2,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.5,)),
+        ("CNOT", (0, 1), ()),
+        ("RX", (0,), (-np.pi / 2,)),
+        ("RX", (1,), (-np.pi / 2,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.6,)),
         ("CNOT", (0, 1), ()),
     ]
     assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
@@ -1157,6 +1169,16 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
         ("CNOT", (0, 1), ()),
         ("RZ", (1,), (0.1,)),
         ("CNOT", (0, 1), ()),
+        ("RX", (0,), (0.3,)),
+        ("CNOT", (0, 1), ()),
+        ("RX", (0,), (np.pi / 2,)),
+        ("RX", (1,), (np.pi / 2,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.4,)),
+        ("CNOT", (0, 1), ()),
+        ("RX", (0,), (-np.pi / 2,)),
+        ("RX", (1,), (-np.pi / 2,)),
+        ("CNOT", (0, 1), ()),
         ("RZ", (1,), (0.5,)),
         ("CNOT", (0, 1), ()),
         ("MCX", (0, 1, 2), ()),
@@ -1165,14 +1187,10 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
         (0,),
         (0,),
         (0, 1),
-        (0, 1),
-        (0, 1),
     ]
     assert [matrix.shape for matrix, _ in sim.matrices] == [
         (2, 2),
         (2, 2),
-        (4, 4),
-        (4, 4),
         (4, 4),
     ]
 
@@ -1356,6 +1374,41 @@ def test_pennylane_isingzz_dispatches_native_cnot_chain(monkeypatch):
         ("CNOT", (0, 1), ()),
         ("RZ", (1,), (0.7,)),
         ("CNOT", (0, 1), ()),
+    ]
+    assert sim.matrices == []
+
+
+def test_pennylane_isingxx_isingyy_dispatch_native_sequences(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.IsingXX(0.2, wires=[0, 1])
+        qml.IsingYY(0.3, wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("CNOT", (0, 1), ()),
+        ("RX", (0,), (0.2,)),
+        ("CNOT", (0, 1), ()),
+        ("RX", (0,), (np.pi / 2,)),
+        ("RX", (1,), (np.pi / 2,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.3,)),
+        ("CNOT", (0, 1), ()),
+        ("RX", (0,), (-np.pi / 2,)),
+        ("RX", (1,), (-np.pi / 2,)),
     ]
     assert sim.matrices == []
 

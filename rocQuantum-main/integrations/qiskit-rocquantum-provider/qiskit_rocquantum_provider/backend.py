@@ -66,7 +66,7 @@ from .job import RocQuantumJob
 MATRIX_FALLBACK_OPS = {
     "ccx", "ccz", "ch", "crx", "cry", "crz", "cswap", "cy",
     "dcx", "ecr", "iswap",
-    "rccx", "rcccx", "rxx", "ryy",
+    "rccx", "rcccx",
     "state_preparation", "sx", "sxdg", "u", "unitary",
 }
 MAX_AUTOMATIC_MATRIX_FALLBACK_QUBITS = 4
@@ -252,6 +252,25 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("rz", [target], [theta])
         self._runtime.apply_operation("cx", [control, target])
 
+    def _apply_rxx_gate(self, q_indices, theta):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit rxx gate requires exactly two qubits.")
+
+        control, target = q_indices
+        self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation("rx", [control], [theta])
+        self._runtime.apply_operation("cx", [control, target])
+
+    def _apply_ryy_gate(self, q_indices, theta):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit ryy gate requires exactly two qubits.")
+
+        for qubit in q_indices:
+            self._runtime.apply_operation("rx", [qubit], [cmath.pi / 2])
+        self._apply_rzz_gate(q_indices, theta)
+        for qubit in q_indices:
+            self._runtime.apply_operation("rx", [qubit], [-cmath.pi / 2])
+
     def _apply_circuit(self, circuit, *, include_global_phase: bool = False):
         self._ensure_simulator(circuit.num_qubits)
         if include_global_phase:
@@ -325,9 +344,14 @@ class RocQuantumBackend(BackendV2):
                 touched_qubits.update(q_indices)
                 continue
 
-            if op.name == "rzz" and self._supports_native_parametric_decomposition():
+            if op.name in {"rxx", "ryy", "rzz"} and self._supports_native_parametric_decomposition():
                 (theta,) = normalize_params(op.params)
-                self._apply_rzz_gate(q_indices, theta)
+                if op.name == "rxx":
+                    self._apply_rxx_gate(q_indices, theta)
+                elif op.name == "ryy":
+                    self._apply_ryy_gate(q_indices, theta)
+                else:
+                    self._apply_rzz_gate(q_indices, theta)
                 touched_qubits.update(q_indices)
                 continue
 

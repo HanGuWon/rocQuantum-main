@@ -12,8 +12,8 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Native Controlled Rotations**: Exposes Qiskit `crx`, `cry`, and `crz` target operations and dispatches them to rocQuantum native gates when the binding supports them.
 - **Native Multi-control Gates**: Dispatches Qiskit `ccx`, `mcx`, and `cswap` through rocQuantum native `MCX` / `CSWAP` gate aliases when the binding supports them, while preserving matrix fallback where Qiskit exposes a dense matrix.
 - **Native Phase Decomposition**: Dispatches Qiskit `p` and `cp` through exact global-phase plus native `rz` / `cx` decompositions, skipping physically irrelevant global phase work on sampling-only and estimator paths.
-- **Native ZZ Rotation Decomposition**: Dispatches Qiskit `rzz` through an exact `cx-rz-cx` sequence instead of a dense two-qubit matrix.
-- **Matrix Fallback Gates**: Exposes common Qiskit matrix gates including `sx`, `sxdg`, `rxx`, `ryy`, and `u` through rocQuantum matrix application.
+- **Native Pauli Rotation Decomposition**: Dispatches Qiskit `rxx`, `ryy`, and `rzz` through exact native `rx` / `rz` / `cx` sequences instead of dense two-qubit matrices.
+- **Matrix Fallback Gates**: Exposes common Qiskit matrix gates including `sx`, `sxdg`, and `u` through rocQuantum matrix application.
 - **Direct Unitary Fallbacks**: For direct `backend.run()` execution, small Qiskit unitary instructions outside the advertised target can fall back through `to_matrix()` / `Operator` when Qiskit can produce a dense matrix.
 - **State Preparation Boundary**: Runs direct `QuantumCircuit.prepare_state()` through a `StatePreparation` matrix fallback and supports initial `initialize()` on untouched qubits; later `initialize()` is rejected because it requires non-unitary reset support.
 - **Automatic Discovery**: Once installed, Qiskit can automatically discover and list this provider's backends.
@@ -45,7 +45,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 - The Qiskit target declares a finite compiler capacity (`max_target_qubits`, default `64`) so `transpile(circuit, backend)` can compile local simulator circuits.
 - The target includes `crx`, `cry`, and `crz`; older bindings can still fall back through matrix application when available.
 - `ccx`, general all-one-control `mcx`, and `cswap` are routed to native multi-control public simulator gates when available. Other relative-phase controlled gates such as `rccx` / `rcccx` remain matrix fallbacks.
-- Common one- and two-qubit matrix gates (`sx`, `sxdg`, `rxx`, `ryy`, `u`) are target-visible and execute through `apply_matrix()`. Qiskit `p`, `cp`, and `rzz` are target-visible but prefer exact native decomposition; statevector-producing `p` / `cp` runs include the required global phase, while sampling-only and estimator runs omit it because it cannot affect observed results.
+- Common one- and two-qubit matrix gates (`sx`, `sxdg`, `u`) are target-visible and execute through `apply_matrix()`. Qiskit `p`, `cp`, `rxx`, `ryy`, and `rzz` are target-visible but prefer exact native decomposition; statevector-producing `p` / `cp` runs include the required global phase, while sampling-only and estimator runs omit it because it cannot affect observed results.
 - Direct execution can also matrix-dispatch non-target unitary instructions with up to four qubits when Qiskit can provide a dense matrix, including open-control variants such as `ccx_o1` / `ch_o0`. Larger or non-unitary instructions remain unsupported unless added explicitly.
 - Direct `unitary` and `state_preparation` operations execute through `apply_matrix()` without attempting to normalize matrix/vector parameters as scalar gate angles.
 - `reset` is target-visible and accepted only before the target qubit has been operated on, where it is a no-op from the all-zero initial state. Mid-circuit `reset` and later `initialize()` are rejected with explicit diagnostics.

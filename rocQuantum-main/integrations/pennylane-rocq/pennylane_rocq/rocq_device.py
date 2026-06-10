@@ -347,6 +347,27 @@ def _apply_controlled_phase_variant(runtime, wire_indices, theta, control_state)
         runtime.apply_operation("X", [wire_index])
 
 
+def _apply_isingxx(runtime, wire_indices, theta):
+    if len(wire_indices) != 2:
+        raise ValueError("IsingXX requires exactly two wires.")
+
+    control, target = wire_indices
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation("RX", [control], [theta])
+    runtime.apply_operation("CNOT", [control, target])
+
+
+def _apply_isingyy(runtime, wire_indices, theta):
+    if len(wire_indices) != 2:
+        raise ValueError("IsingYY requires exactly two wires.")
+
+    for wire_index in wire_indices:
+        runtime.apply_operation("RX", [wire_index], [np.pi / 2])
+    _apply_multirz(runtime, wire_indices, theta)
+    for wire_index in wire_indices:
+        runtime.apply_operation("RX", [wire_index], [-np.pi / 2])
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -516,6 +537,34 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_parametric_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_multirz(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "IsingXX":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_parametric_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_isingxx(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "IsingYY":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_parametric_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_isingyy(self._runtime, wire_indices, theta)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
