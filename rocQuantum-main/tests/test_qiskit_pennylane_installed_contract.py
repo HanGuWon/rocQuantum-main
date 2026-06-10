@@ -521,6 +521,9 @@ def test_qiskit_native_multi_control_and_matrix_fallback_gates(monkeypatch):
 
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.ops == [
+        ("RY", (1,), (np.pi / 4,)),
+        ("CNOT", (0, 1), ()),
+        ("RY", (1,), (-np.pi / 4,)),
         ("SDG", (1,), ()),
         ("CNOT", (0, 1), ()),
         ("S", (1,), ()),
@@ -529,10 +532,10 @@ def test_qiskit_native_multi_control_and_matrix_fallback_gates(monkeypatch):
         ("MCX", (0, 1, 2), ()),
         ("H", (2,), ()),
         ("CSWAP", (0, 1, 2), ()),
+        ("CNOT", (0, 1), ()),
+        ("CNOT", (1, 0), ()),
     ]
     assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
-        ((4, 4), (0, 1)),
-        ((4, 4), (0, 1)),
         ((4, 4), (0, 1)),
         ((4, 4), (0, 1)),
         ((8, 8), (0, 1, 2)),
@@ -1314,6 +1317,9 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
     sim = _FakeQuantumSimulator.instances[-1]
 
     assert sim.ops == [
+        ("RY", (1,), (np.pi / 4,)),
+        ("CNOT", (0, 1), ()),
+        ("RY", (1,), (-np.pi / 4,)),
         ("SDG", (1,), ()),
         ("CNOT", (0, 1), ()),
         ("S", (1,), ()),
@@ -1353,7 +1359,6 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         ("CNOT", (0, 2), ()),
     ]
     assert [targets for _, targets in sim.matrices] == [
-        (0, 1),
         (0,),
         (0,),
         (0,),

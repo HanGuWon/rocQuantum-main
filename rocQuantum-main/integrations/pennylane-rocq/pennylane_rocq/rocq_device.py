@@ -392,6 +392,16 @@ def _apply_ccz(runtime, wire_indices):
     runtime.apply_operation("H", [target])
 
 
+def _apply_ch(runtime, wire_indices):
+    if len(wire_indices) != 2:
+        raise ValueError("CH requires exactly two wires.")
+
+    control, target = wire_indices
+    runtime.apply_operation("RY", [target], [np.pi / 4])
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation("RY", [target], [-np.pi / 4])
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -602,6 +612,19 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_gate_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_cy(self._runtime, wire_indices)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "CH":
+                try:
+                    if not _supports_native_gate_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_ch(self._runtime, wire_indices)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
