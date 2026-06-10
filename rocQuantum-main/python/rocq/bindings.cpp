@@ -1,4 +1,5 @@
 #include <pybind11/pybind11.h>
+#include <pybind11/complex.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
 #include "rocquantum/hipStateVec.h"
@@ -9,6 +10,7 @@
 #include <complex>                 // For std::complex
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace py = pybind11;
 
@@ -413,6 +415,57 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             return result;
         }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("pauli_string"), py::arg("target_qubits"),
            "Calculates expectation value for a generic Pauli string (e.g., \"IXYZ\"). Non-destructive.");
+
+    m.def("get_expectation_matrix",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::vector<unsigned>& targetQubits_vec,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> matrix) {
+            if (targetQubits_vec.empty()) {
+                throw std::runtime_error("target_qubits must not be empty for get_expectation_matrix.");
+            }
+            if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                throw std::runtime_error("matrix must be a square 2D array for get_expectation_matrix.");
+            }
+
+            const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
+            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
+                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+                throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
+            }
+
+            const rocComplex* matrix_row_major = matrix.data();
+            std::vector<rocComplex> matrix_col_major(matrix_dim * matrix_dim);
+            for (size_t row = 0; row < matrix_dim; ++row) {
+                for (size_t col = 0; col < matrix_dim; ++col) {
+                    matrix_col_major[row + col * matrix_dim] =
+                        matrix_row_major[row * matrix_dim + col];
+                }
+            }
+
+            DeviceBuffer matrix_device(matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(matrix_device.get_ptr<rocComplex>(),
+                          matrix_col_major.data(),
+                          matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy expectation matrix to device");
+            }
+
+            rocComplex result{};
+            rocqStatus_t status = rocsvGetExpectationMatrix(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                targetQubits_vec.data(),
+                static_cast<unsigned>(targetQubits_vec.size()),
+                matrix_device.get_ptr<rocComplex>(),
+                matrix_dim,
+                &result);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetExpectationMatrix failed: " + std::to_string(status));
+            }
+            return std::complex<double>(static_cast<double>(result.x), static_cast<double>(result.y));
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
+           "Calculates <psi|M|psi> for a dense matrix acting on target qubits.");
 
     m.def("sample",
         [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,

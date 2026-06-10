@@ -64,6 +64,7 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
         source = self._read("rocquantum", "src", "hipStateVec", "hipStateVec.cpp")
         simulator_header = self._read("include", "rocquantum", "QuantumSimulator.h")
         bindings = self._read("bindings.cpp")
+        legacy_bindings = self._read("python", "rocq", "bindings.cpp")
 
         self.assertIn("rocsvProbabilities", header)
         self.assertRegex(source, r"rocqStatus_t\s+rocsvProbabilities\s*\(")
@@ -76,6 +77,8 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
         self.assertIn("expectation_matrix", simulator_header)
         self.assertIn(".def(\"probabilities\"", bindings)
         self.assertIn(".def(\"expectation_matrix\"", bindings)
+        self.assertIn("get_expectation_matrix", legacy_bindings)
+        self.assertIn("rocsvGetExpectationMatrix", legacy_bindings)
 
 
 if __name__ == "__main__":

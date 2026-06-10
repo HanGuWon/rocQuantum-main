@@ -7,13 +7,15 @@ import sys
 import unittest
 from unittest import mock
 
+import numpy as np
+
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 import rocq
 from rocq.kernel import kernel
-from rocq.operator import PauliOperator, get_expectation_value
+from rocq.operator import HermitianOperator, PauliOperator, get_expectation_value
 
 
 class _FakeBackend:
@@ -102,6 +104,41 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(result, 1.25)
         self.assertIs(fake_backend.operator, operator)
         self.assertEqual([op.name.lower() for op in fake_backend.ops], ["h"])
+
+    def test_mock_statevector_backend_evaluates_hermitian_operator(self):
+        from rocq.backends import StateVectorBackend
+
+        with mock.patch("rocq.backends.hip_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                backend = StateVectorBackend(1)
+
+        operator = HermitianOperator(np.diag([1.0, -1.0]), targets=[0])
+
+        self.assertEqual(backend.expectation(operator), 1.0)
+
+    def test_hip_statevector_backend_prefers_native_hermitian_expectation(self):
+        from rocq.backends import _HipStateVectorState
+
+        calls = []
+
+        class _FakeHipBackend:
+            def get_expectation_matrix(self, handle, d_state, num_qubits, targets, matrix):
+                calls.append((handle, d_state, num_qubits, list(targets), matrix.dtype))
+                return 0.5 + 0.0j
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+        operator = HermitianOperator(np.diag([1.0, -1.0]), coefficient=2.0, targets=[0])
+
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
+            result = state.expectation(operator)
+
+        self.assertEqual(result, 1.0)
+        self.assertEqual(calls[0][2], 1)
+        self.assertEqual(calls[0][3], [0])
+        self.assertEqual(calls[0][4], np.dtype("complex64"))
 
 
 if __name__ == "__main__":

@@ -136,7 +136,7 @@ What is not real today:
 ### High-level expectations
 
 - Native expectation helpers exist in `hipStateVec` and are bound in `python/rocq/bindings.cpp`.
-- The canonical top-level `rocq.operator.get_expectation_value()` delegates to `rocq.observe()` for supported Pauli operators.
+- The canonical top-level `rocq.operator.get_expectation_value()` delegates to `rocq.observe()` for supported Pauli operators and `HermitianOperator` dense matrices; the state-vector backend prefers the low-level `get_expectation_matrix` / `rocsvGetExpectationMatrix` hook when available.
 - `python/rocq/api.py::Circuit.expval()` now uses native backend Pauli expectation helpers, matching `get_expval()` for supported Pauli terms.
 
 ### Packaging and CI
@@ -149,7 +149,7 @@ What is not real today:
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` rejects unsupported ops with diagnostics outside the MVP subset.
 - Compiler-driven execution parity with CUDA-Q is absent.
 - Mid-circuit measurement plus classical control flow is absent as a coherent supported feature.
-- Public `QuantumSimulator` now exposes Pauli expectation helpers through `expectation_value()` and `expectation_pauli_string()`, with root pybind coverage for framework adapters.
+- Public `QuantumSimulator` now exposes Pauli, dense-matrix, and sparse-CSR expectation helpers through `expectation_value()`, `expectation_pauli_string()`, `expectation_matrix()`, and `sparse_hamiltonian_moments()`, with root pybind coverage for framework adapters.
 - Public `QuantumSimulator` named APIs now route `MCX` and `CSWAP`; `apply_controlled_matrix()` exposes a generic controlled-unitary surface, but breadth and native ROCm E2E validation remain partial.
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling is not yet a GPU-fast path; it copies probability information to host before drawing shots.
@@ -169,7 +169,7 @@ What is not real today:
 | --- | --- | --- |
 | State-vector gates | HIP kernels in `hipStateVec`; canonical `rocq` and legacy `python/rocq` can use GateFusion for supported CNOT-adjacent spans | None for core named gates; broader fusion patterns remain unfused |
 | Generic matrix/control matrix | Partial HIP path | Broader cases return `ROCQ_STATUS_NOT_IMPLEMENTED` by default; `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` enables explicit slow/debug host fallback |
-| Expectations | Native `hipStateVec` helpers exist; canonical `rocq.observe()` and legacy `Circuit.expval()` are wired for supported Pauli operators; PennyLane `qml.Hermitian` can use dense matrix expectation for supported target sizes | Broader arbitrary operator coverage remains limited |
+| Expectations | Native `hipStateVec` helpers exist; canonical `rocq.observe()` and legacy `Circuit.expval()` are wired for supported Pauli operators; canonical `HermitianOperator` and PennyLane `qml.Hermitian` can use dense matrix expectation for supported target sizes | Broader arbitrary operator coverage, large dense matrices, and distributed dense/sparse expectations remain limited |
 | Tensor-network contraction | Native HIP/rocBLAS/rocSOLVER path | Pathfinder/slicing breadth not fully wired |
 | Density matrix | Native limited kernel set | Generic single-qubit Kraus channels and sampling use correctness-first paths; multi-qubit channels and GPU-fast density sampling remain absent |
 | Framework adapters | Use native simulator for core operations; PennyLane/Cirq/Qiskit sampling paths now prefer `QuantumSimulator.measure()`; PennyLane analytic `qml.probs()` can use `QuantumSimulator.probabilities()` / `rocsvProbabilities` without statevector readback; PennyLane `qml.Hermitian` can use `QuantumSimulator.expectation_matrix()` for expval/var; PennyLane `qml.SparseHamiltonian` can use `rocsvGetSparseMatrixMoments` through `QuantumSimulator.sparse_hamiltonian_moments()` without statevector readback; Qiskit runtime reset sampling uses shot-by-shot `QuantumSimulator.reset_qubit()` trajectories; Qiskit estimator batches reuse prepared circuits for multiple observables and cache canonical duplicate observables; Qiskit/PennyLane multi-control defaults reach native `MCX` / `CSWAP`; PennyLane analytic Pauli/Hadamard/Projector/Hamiltonian expectations and Qiskit estimator expectations use native Pauli-string helpers without mandatory statevector readback | PennyLane/Cirq keep host sampling fallback for legacy bindings; PennyLane probability vectors, Hermitian observables, and SparseHamiltonian fall back to statevector readback for unsupported native targets; distributed/batched sparse moments remain unsupported; Qiskit runtime reset is sampling-only and rejects statevector/estimator output; broad dynamic/classical-control coverage remains partial; many tests are mock/source-contract only |

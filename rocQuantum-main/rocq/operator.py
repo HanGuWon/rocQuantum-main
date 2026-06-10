@@ -54,9 +54,10 @@ class PauliOperator(QuantumOperator):
 class HermitianOperator(QuantumOperator):
     """Represents an operator defined by a Hermitian matrix."""
 
-    def __init__(self, matrix, coefficient: Number = 1.0):
+    def __init__(self, matrix, coefficient: Number = 1.0, targets=None):
         super().__init__(coefficient)
         self.matrix = matrix
+        self.targets = None if targets is None else [int(target) for target in targets]
 
     def to_string(self) -> str:
         return f"{self.coefficient} * Hermitian(matrix)"
@@ -130,8 +131,8 @@ def iter_pauli_terms(operator: QuantumOperator) -> List[Tuple[complex, List[Tupl
 
     if isinstance(operator, HermitianOperator):
         raise NotImplementedError(
-            "HermitianOperator expectation values are not wired to a native backend yet. "
-            "Use PauliOperator or SumOperator for the current ROCm-native observe path."
+            "HermitianOperator cannot be expanded by iter_pauli_terms(). "
+            "Use rocq.observe() or get_expectation_value() to evaluate matrix observables."
         )
 
     raise TypeError(f"Unsupported quantum operator type: {type(operator)!r}")

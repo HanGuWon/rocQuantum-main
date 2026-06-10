@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .operator import iter_pauli_terms
+from .operator import HermitianOperator, SumOperator, iter_pauli_terms
 
 try:
     import _rocq_hip_backend as hip_backend
@@ -52,6 +52,64 @@ def _finalize_expectation(value: complex):
     return value.real if abs(value.imag) < 1e-12 else value
 
 
+def _normalize_matrix_targets(matrix, targets, num_qubits: int):
+    matrix_array = np.asarray(matrix, dtype=np.complex128)
+    if matrix_array.ndim != 2 or matrix_array.shape[0] != matrix_array.shape[1]:
+        raise ValueError("HermitianOperator matrix must be square.")
+
+    matrix_dim = int(matrix_array.shape[0])
+    if matrix_dim <= 0 or matrix_dim & (matrix_dim - 1):
+        raise ValueError("HermitianOperator matrix dimension must be a power of two.")
+
+    target_count = int(math.log2(matrix_dim))
+    if targets is None:
+        if target_count != int(num_qubits):
+            raise ValueError(
+                "HermitianOperator targets must be provided when the matrix does not span all qubits."
+            )
+        normalized_targets = list(range(int(num_qubits)))
+    else:
+        normalized_targets = [int(target) for target in targets]
+        if len(normalized_targets) != target_count:
+            raise ValueError("HermitianOperator target count must match matrix dimension.")
+        if len(set(normalized_targets)) != len(normalized_targets):
+            raise ValueError("HermitianOperator targets must be unique.")
+        if any(target < 0 or target >= int(num_qubits) for target in normalized_targets):
+            raise ValueError("HermitianOperator target is out of range for the backend.")
+
+    return matrix_array, normalized_targets
+
+
+def _statevector_expectation_matrix(statevector, matrix, targets: Sequence[int], num_qubits: int):
+    state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    expected_state_dim = 1 << int(num_qubits)
+    if state.size != expected_state_dim:
+        raise ValueError("Statevector dimension does not match backend qubit count.")
+
+    target_count = len(targets)
+    matrix_dim = 1 << target_count
+    total = 0.0 + 0.0j
+    for row_index in range(expected_state_dim):
+        row_target = 0
+        base_index = row_index
+        for bit, qubit in enumerate(targets):
+            mask = 1 << int(qubit)
+            if row_index & mask:
+                row_target |= 1 << bit
+            base_index &= ~mask
+
+        accum = 0.0 + 0.0j
+        for col_target in range(matrix_dim):
+            col_index = base_index
+            for bit, qubit in enumerate(targets):
+                if (col_target >> bit) & 1:
+                    col_index |= 1 << int(qubit)
+            accum += matrix[row_target, col_target] * state[col_index]
+        total += np.conj(state[row_index]) * accum
+
+    return total
+
+
 class _MockStateVectorState:
     def __init__(self, n_qubits: int):
         self._num_qubits = n_qubits
@@ -74,6 +132,17 @@ class _MockStateVectorState:
         return np.zeros(num_shots, dtype=np.uint64)
 
     def expectation(self, operator):
+        if isinstance(operator, SumOperator):
+            total = 0.0 + 0.0j
+            for term in operator.terms:
+                total += operator.coefficient * self.expectation(term)
+            return _finalize_expectation(total)
+
+        if isinstance(operator, HermitianOperator):
+            matrix, targets = _normalize_matrix_targets(operator.matrix, operator.targets, self._num_qubits)
+            value = _statevector_expectation_matrix(self._state, matrix, targets, self._num_qubits)
+            return _finalize_expectation(operator.coefficient * value)
+
         total = 0.0 + 0.0j
         for coefficient, paulis in iter_pauli_terms(operator):
             if not paulis:
@@ -285,7 +354,31 @@ class _HipStateVectorState:
             int(num_shots),
         )
 
+    def _expectation_matrix(self, operator: HermitianOperator):
+        matrix, targets = _normalize_matrix_targets(operator.matrix, operator.targets, self._num_qubits)
+        native = getattr(hip_backend, "get_expectation_matrix", None)
+        if native is not None:
+            value = native(
+                self._handle,
+                self._d_state,
+                self._num_qubits,
+                targets,
+                _coerce_complex64_matrix(matrix),
+            )
+        else:
+            value = _statevector_expectation_matrix(self.get_state_vector(), matrix, targets, self._num_qubits)
+        return _finalize_expectation(operator.coefficient * value)
+
     def expectation(self, operator):
+        if isinstance(operator, SumOperator):
+            total = 0.0 + 0.0j
+            for term in operator.terms:
+                total += operator.coefficient * self.expectation(term)
+            return _finalize_expectation(total)
+
+        if isinstance(operator, HermitianOperator):
+            return self._expectation_matrix(operator)
+
         total = 0.0 + 0.0j
         for coefficient, paulis in iter_pauli_terms(operator):
             if not paulis:
