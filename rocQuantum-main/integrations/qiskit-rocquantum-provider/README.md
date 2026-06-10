@@ -26,7 +26,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Automatic Discovery**: Once installed, Qiskit can automatically discover and list this provider's backends.
 - **Modern Job Contract**: `backend.run()` returns a synchronous Qiskit `Job` object whose `result()` method returns the `Result`.
 - **Primitive Factories**: `RocQuantumProvider.get_sampler()` and `get_estimator()` return native rocQuantum `SamplerV2` / `EstimatorV2` implementations that avoid generic backend wrapper overhead on the default path.
-- **Native Pauli Expectations**: `RocQuantumProvider.estimate_expectation()` evaluates Qiskit `SparsePauliOp`/`Pauli` observables through the rocQuantum Pauli-string expectation path.
+- **Native Expectations**: `RocQuantumProvider.estimate_expectation()` evaluates Qiskit `SparsePauliOp`/`Pauli` observables through the rocQuantum Pauli-string expectation path and full-circuit dense `Operator` observables through the native dense-matrix expectation path.
 - **Estimator Observable Batching**: `RocQuantumEstimator` applies each bound circuit once per parameter point and caches canonical duplicate observables while evaluating broadcasted observables on that state, reducing redundant GPU kernel work for VQE-style observable batches.
 
 ## Installation
@@ -57,9 +57,9 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 - Direct `unitary` and partial `state_preparation` operations execute through `apply_matrix()` without attempting to normalize matrix/vector parameters as scalar gate angles; full-wire initial state preparation prefers native statevector upload.
 - `reset` is target-visible. Initial reset remains a no-op from the all-zero state; reset after prior operations runs through `QuantumSimulator.reset_qubit()` only on `backend.run(..., sampling=True)`, re-executing the circuit per shot so stochastic reset is not collapsed into one shared final state. Statevector output and estimator expectation for runtime-reset circuits are rejected explicitly.
 - Qiskit control-flow operations (`if_else`, `for_loop`, `while_loop`, `switch_case`, break/continue) and classically conditioned operations are rejected explicitly. Dynamic-circuit support still needs classical-control semantics beyond reset trajectories.
-- Qiskit sampler support defaults to `RocQuantumSampler`, a native `SamplerV2` over `QuantumSimulator.measure()`; estimator support defaults to `RocQuantumEstimator`, a native deterministic `EstimatorV2` over `QuantumSimulator.expectation_pauli_string()`. Pass `native=False` to `get_sampler()` / `get_estimator()` to request Qiskit's generic backend wrappers.
+- Qiskit sampler support defaults to `RocQuantumSampler`, a native `SamplerV2` over `QuantumSimulator.measure()`; estimator support defaults to `RocQuantumEstimator`, a native deterministic `EstimatorV2` over Qiskit-supported Pauli-style observables through `QuantumSimulator.expectation_pauli_string()`. Pass `native=False` to `get_sampler()` / `get_estimator()` to request Qiskit's generic backend wrappers.
 - `RocQuantumEstimator` groups broadcast entries by parameter index, so a pub with one bound circuit and many observables reuses the prepared simulator state instead of reapplying the circuit for each observable.
-- Direct Pauli expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, and `(label, coeff)` term lists.
+- Direct expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, `(label, coeff)` term lists, and full-circuit dense `qiskit.quantum_info.Operator` observables. Dense `Operator` observables must have dimension `2^num_qubits`.
 - `backend.run()` defaults to sampling without pre-measurement statevector readback, avoiding a full host transfer on larger GPU simulations. Pass `statevector=True` or include a `save_statevector` marker when state output is needed.
 - `backend.run(..., sampling=False)` skips measurement and counts formatting for statevector-only workloads.
 - Aer-style `save_statevector` marker instructions are treated as no-op result annotations; `QuantumCircuit.save_statevector()` is not part of base Qiskit `2.4.1`.

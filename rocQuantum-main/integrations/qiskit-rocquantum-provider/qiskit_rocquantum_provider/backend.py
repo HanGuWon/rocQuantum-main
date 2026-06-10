@@ -63,7 +63,7 @@ from rocquantum.framework_runtime import (
     statevector_to_little_endian_wires,
 )
 
-from .estimator import estimate_pauli_observable
+from .estimator import estimate_observable
 from .job import RocQuantumJob
 
 
@@ -843,14 +843,14 @@ class RocQuantumBackend(BackendV2):
         return any(instruction.operation.name == "save_statevector" for instruction in circuit.data)
 
     def estimate_expectation(self, circuit, observable):
-        """Return a native Pauli expectation for a circuit and Qiskit observable."""
+        """Return a native expectation for a circuit and Qiskit observable."""
         if self._has_runtime_reset(circuit):
             raise ValueError(
                 "RocQuantumBackend estimator does not support runtime reset yet. "
                 "Use backend.run(..., sampling=True) for shot-by-shot reset sampling."
             )
         self._apply_circuit(circuit, include_global_phase=False)
-        return estimate_pauli_observable(self._runtime, observable, circuit.num_qubits)
+        return estimate_observable(self._runtime, observable, circuit.num_qubits)
 
     def _run_runtime_reset_sampling(self, circuit, shots, memory_enabled):
         memory = []

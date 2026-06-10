@@ -1229,6 +1229,26 @@ def test_qiskit_native_estimator_reuses_duplicate_observable_batch_terms(monkeyp
     assert sim.expectations == [("Z", (0,)), ("X", (0,))]
 
 
+def test_qiskit_provider_estimates_dense_operator_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    circuit = QuantumCircuit(2)
+    observable = Operator(np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.complex128))
+
+    assert provider.estimate_expectation(circuit, observable) == pytest.approx(1.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.matrix_expectations[0][1] == (0, 1)
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+
+
 def test_qiskit_provider_estimates_sparse_pauli_observable_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

@@ -55,6 +55,25 @@ def _observable_terms(observable, num_qubits: int | None = None):
     raise TypeError(f"Unsupported Qiskit observable type: {type(observable)!r}")
 
 
+def _dense_operator_matrix(observable, num_qubits: int):
+    try:
+        from qiskit.quantum_info import Operator
+    except ImportError as exc:
+        raise ImportError("Qiskit quantum_info is required for native expectation estimation.") from exc
+
+    if not isinstance(observable, Operator):
+        return None
+
+    matrix = np.ascontiguousarray(np.asarray(observable.data, dtype=np.complex128))
+    expected_dim = 1 << int(num_qubits)
+    if matrix.shape != (expected_dim, expected_dim):
+        raise ValueError(
+            "Dense Qiskit Operator observables must act on all circuit qubits. "
+            "Use SparsePauliOp/Pauli for padded or partial observables."
+        )
+    return matrix
+
+
 def _label_to_runtime_term(label: str, num_qubits: int):
     if len(label) > num_qubits:
         raise ValueError("Observable acts on more qubits than the circuit.")
@@ -101,6 +120,20 @@ def _observable_signature(observable, num_qubits: int):
     )
 
 
+def _observable_plan(observable, num_qubits: int):
+    matrix = _dense_operator_matrix(observable, int(num_qubits))
+    if matrix is not None:
+        cache_key = (
+            "matrix",
+            matrix.shape,
+            tuple(complex(value) for value in matrix.reshape(-1)),
+        )
+        return cache_key, ("matrix", matrix)
+
+    signature = _observable_signature(observable, int(num_qubits))
+    return ("pauli", signature), ("pauli", signature)
+
+
 def _estimate_combined_observable_terms(runtime, terms, num_qubits: int) -> float:
     result = 0.0 + 0.0j
     for coeff, label in terms:
@@ -114,6 +147,26 @@ def _estimate_combined_observable_terms(runtime, terms, num_qubits: int) -> floa
     if np.iscomplexobj(real_result):
         raise ValueError("Observable expectation has a non-negligible imaginary component.")
     return float(real_result)
+
+
+def _estimate_observable_plan(runtime, plan, num_qubits: int) -> float:
+    kind, payload = plan
+    if kind == "pauli":
+        return _estimate_combined_observable_terms(runtime, payload, int(num_qubits))
+
+    if kind == "matrix":
+        result = runtime.expectation_matrix(payload, list(range(int(num_qubits))))
+        real_result = np.real_if_close(result)
+        if np.iscomplexobj(real_result):
+            raise ValueError("Observable expectation has a non-negligible imaginary component.")
+        return float(real_result)
+
+    raise TypeError(f"Unsupported observable plan kind: {kind!r}")
+
+
+def estimate_observable(runtime, observable, num_qubits: int) -> float:
+    _, plan = _observable_plan(observable, int(num_qubits))
+    return _estimate_observable_plan(runtime, plan, int(num_qubits))
 
 
 def estimate_pauli_observable(runtime, observable, num_qubits: int) -> float:
@@ -167,14 +220,14 @@ class RocQuantumEstimator(BaseEstimatorV2):
             for index in indices:
                 observable_index = _index_for_shape(index, pub.observables.shape)
                 observable = pub.observables[observable_index]
-                signature = _observable_signature(observable, int(circuit.num_qubits))
-                if signature not in observable_cache:
-                    observable_cache[signature] = _estimate_combined_observable_terms(
+                cache_key, plan = _observable_plan(observable, int(circuit.num_qubits))
+                if cache_key not in observable_cache:
+                    observable_cache[cache_key] = _estimate_observable_plan(
                         self._backend._runtime,
-                        signature,
+                        plan,
                         circuit.num_qubits,
                     )
-                evs[index] = observable_cache[signature]
+                evs[index] = observable_cache[cache_key]
 
         if pub.shape == ():
             evs = evs[()]
