@@ -2870,6 +2870,17 @@ def test_runtime_can_create_and_read_batched_bindings():
     updated[:, 3] = 1.0
     runtime.set_statevectors(updated)
     np.testing.assert_allclose(runtime.statevectors(), updated)
+    np.testing.assert_allclose(
+        runtime.probabilities_batch([0]),
+        np.array(
+            [
+                [0.0, 1.0],
+                [0.0, 1.0],
+                [0.0, 1.0],
+            ],
+            dtype=float,
+        ),
+    )
 
 
 def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):

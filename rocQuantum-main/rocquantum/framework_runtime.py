@@ -474,6 +474,39 @@ class RocQuantumRuntime:
 
         return probabilities_from_statevector(self.statevector(), normalized_qubits)
 
+    def probabilities_batch(self, qubits: Iterable[int] | None = None) -> np.ndarray:
+        normalized_qubits = None if qubits is None else normalize_targets(qubits)
+        native_qubits = [] if normalized_qubits is None else normalized_qubits
+
+        def _native_probabilities_unavailable(exc: Exception) -> bool:
+            message = str(exc)
+            return isinstance(exc, NotImplementedError) or "status 5" in message or "at most 20 target qubits" in message
+
+        native = getattr(self.simulator, "probabilities_batch", None)
+        if callable(native):
+            try:
+                probabilities = np.asarray(native(native_qubits), dtype=float)
+                return probabilities.reshape(self.batch_size(), -1)
+            except Exception as exc:
+                if not _native_probabilities_unavailable(exc):
+                    raise
+
+        legacy = getattr(self.simulator, "ProbabilitiesBatch", None)
+        if callable(legacy):
+            try:
+                probabilities = np.asarray(legacy(native_qubits), dtype=float)
+                return probabilities.reshape(self.batch_size(), -1)
+            except Exception as exc:
+                if not _native_probabilities_unavailable(exc):
+                    raise
+
+        if self.batch_size() == 1:
+            return self.probabilities(normalized_qubits).reshape(1, -1)
+
+        return np.vstack(
+            [probabilities_from_statevector(state, normalized_qubits) for state in self.statevectors()]
+        )
+
     def expectation_value(self, pauli: str, target: int) -> float:
         native = getattr(self.simulator, "expectation_value", None)
         if callable(native):

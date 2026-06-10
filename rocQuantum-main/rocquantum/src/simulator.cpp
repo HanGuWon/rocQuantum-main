@@ -496,6 +496,14 @@ std::vector<std::complex<double>> QuantumSimulator::get_statevectors() const {
 }
 
 std::vector<double> QuantumSimulator::probabilities(const std::vector<unsigned>& qubits) const {
+    if (batch_size_ != 1) {
+        throw std::invalid_argument("probabilities is only valid when batch_size is 1; use probabilities_batch.");
+    }
+    std::vector<double> out = probabilities_batch(qubits);
+    return out;
+}
+
+std::vector<double> QuantumSimulator::probabilities_batch(const std::vector<unsigned>& qubits) const {
     std::vector<unsigned> targets;
     if (qubits.empty()) {
         targets.reserve(num_qubits_);
@@ -518,14 +526,15 @@ std::vector<double> QuantumSimulator::probabilities(const std::vector<unsigned>&
         }
     }
 
-    std::vector<double> out(std::size_t{1} << targets.size(), 0.0);
-    check_status(rocsvProbabilities(sim_handle_,
-                                    device_state_vector_,
-                                    num_qubits_,
-                                    targets.data(),
-                                    static_cast<unsigned>(targets.size()),
-                                    out.data()),
-                 "probabilities");
+    const std::size_t num_outcomes = std::size_t{1} << targets.size();
+    std::vector<double> out(batch_size_ * num_outcomes, 0.0);
+    check_status(rocsvProbabilitiesBatch(sim_handle_,
+                                         device_state_vector_,
+                                         num_qubits_,
+                                         targets.data(),
+                                         static_cast<unsigned>(targets.size()),
+                                         out.data()),
+                 "batch probabilities");
     return out;
 }
 
@@ -825,6 +834,10 @@ std::vector<std::complex<double>> QuantumSimulator::GetStateVectors() const {
 
 std::vector<double> QuantumSimulator::Probabilities(const std::vector<unsigned>& qubits) const {
     return probabilities(qubits);
+}
+
+std::vector<double> QuantumSimulator::ProbabilitiesBatch(const std::vector<unsigned>& qubits) const {
+    return probabilities_batch(qubits);
 }
 
 double QuantumSimulator::GetExpectationValue(const std::string& pauli, int target_qubit) {

@@ -30,6 +30,7 @@ public:
     std::vector<std::complex<double>> get_statevector(std::size_t batch_index = 0) const;
     std::vector<std::complex<double>> get_statevectors() const;
     std::vector<double> probabilities(const std::vector<unsigned>& qubits) const;
+    std::vector<double> probabilities_batch(const std::vector<unsigned>& qubits) const;
     std::vector<long long> measure(const std::vector<unsigned>& qubits, int shots);
     double expectation_value(const std::string& pauli, unsigned target);
     double expectation_pauli_string(const std::string& pauli_string,
@@ -57,6 +58,7 @@ public:
     std::vector<std::complex<double>> GetStateVector() const;
     std::vector<std::complex<double>> GetStateVectors() const;
     std::vector<double> Probabilities(const std::vector<unsigned>& qubits) const;
+    std::vector<double> ProbabilitiesBatch(const std::vector<unsigned>& qubits) const;
     double GetExpectationValue(const std::string& pauli, int target_qubit);
     double GetExpectationPauliString(const std::string& pauli_string,
                                      const std::vector<unsigned>& targets);

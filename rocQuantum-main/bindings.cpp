@@ -156,6 +156,17 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("qubits"),
              "Return normalized computational-basis probabilities for selected qubits.")
+        .def("probabilities_batch",
+             [](const rocquantum::QuantumSimulator& self, const std::vector<unsigned>& qubits) {
+                 auto probabilities = self.probabilities_batch(qubits);
+                 const auto batch = static_cast<py::ssize_t>(self.batch_size());
+                 const auto width = static_cast<py::ssize_t>(probabilities.size() / self.batch_size());
+                 py::array_t<double> result({batch, width});
+                 std::memcpy(result.mutable_data(), probabilities.data(), probabilities.size() * sizeof(double));
+                 return result;
+             },
+             py::arg("qubits"),
+             "Return batch-major normalized computational-basis probabilities for selected qubits.")
         .def("measure", &rocquantum::QuantumSimulator::measure, py::arg("qubits"), py::arg("shots"))
         .def("expectation_value",
              &rocquantum::QuantumSimulator::expectation_value,
@@ -297,6 +308,16 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              [](const rocquantum::QuantumSimulator& self, const std::vector<unsigned>& qubits) {
                  auto probabilities = self.Probabilities(qubits);
                  py::array_t<double> result(probabilities.size());
+                 std::memcpy(result.mutable_data(), probabilities.data(), probabilities.size() * sizeof(double));
+                 return result;
+             },
+             py::arg("qubits"))
+        .def("ProbabilitiesBatch",
+             [](const rocquantum::QuantumSimulator& self, const std::vector<unsigned>& qubits) {
+                 auto probabilities = self.ProbabilitiesBatch(qubits);
+                 const auto batch = static_cast<py::ssize_t>(self.batch_size());
+                 const auto width = static_cast<py::ssize_t>(probabilities.size() / self.batch_size());
+                 py::array_t<double> result({batch, width});
                  std::memcpy(result.mutable_data(), probabilities.data(), probabilities.size() * sizeof(double));
                  return result;
              },
