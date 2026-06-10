@@ -973,27 +973,36 @@ class RocQDevice(QubitDevice):
 
         reference_ops = list(getattr(circuits[0], "operations", ()))
         reference_measurements = list(getattr(circuits[0], "measurements", ()))
-        if len(reference_measurements) != 1:
+        if not reference_measurements:
             return None
 
-        measurement_name = reference_measurements[0].__class__.__name__
+        measurement_names = [measurement.__class__.__name__ for measurement in reference_measurements]
         finite_shots = self.shots is not None
         if finite_shots:
-            if _has_partitioned_shots(self.shots) or measurement_name not in {"SampleMP", "CountsMP"}:
+            if (
+                len(reference_measurements) != 1
+                or _has_partitioned_shots(self.shots)
+                or measurement_names[0] not in {"SampleMP", "CountsMP"}
+            ):
                 return None
-            if measurement_name == "CountsMP" and getattr(reference_measurements[0], "all_outcomes", False):
+            if measurement_names[0] == "CountsMP" and getattr(reference_measurements[0], "all_outcomes", False):
                 return None
-        elif measurement_name not in {"ExpectationMP", "ProbabilityMP"}:
+        elif all(name == "ExpectationMP" for name in measurement_names):
+            pass
+        elif len(reference_measurements) == 1 and measurement_names[0] == "ProbabilityMP":
+            pass
+        else:
             return None
 
-        reference_signature = None
+        reference_signatures = []
         reference_probability_wires = None
-        if measurement_name == "ExpectationMP":
-            observable = getattr(reference_measurements[0], "obs", None)
-            reference_terms = _pauli_terms_from_observable(observable, self.wire_map)
-            if reference_terms is None:
-                return None
-            reference_signature = _combine_pauli_terms(reference_terms)
+        if measurement_names[0] == "ExpectationMP":
+            for measurement in reference_measurements:
+                observable = getattr(measurement, "obs", None)
+                reference_terms = _pauli_terms_from_observable(observable, self.wire_map)
+                if reference_terms is None:
+                    return None
+                reference_signatures.append(_combine_pauli_terms(reference_terms))
         else:
             reference_probability_wires = tuple(reference_measurements[0].wires)
 
@@ -1001,15 +1010,19 @@ class RocQDevice(QubitDevice):
             if len(getattr(circuit, "operations", ())) != len(reference_ops):
                 return None
             measurements = list(getattr(circuit, "measurements", ()))
-            if len(measurements) != 1 or measurements[0].__class__.__name__ != measurement_name:
+            if len(measurements) != len(reference_measurements):
                 return None
-            if measurement_name == "ExpectationMP":
-                terms = _pauli_terms_from_observable(getattr(measurements[0], "obs", None), self.wire_map)
-                if terms is None or _combine_pauli_terms(terms) != reference_signature:
-                    return None
+            current_names = [measurement.__class__.__name__ for measurement in measurements]
+            if current_names != measurement_names:
+                return None
+            if measurement_names[0] == "ExpectationMP":
+                for measurement, reference_signature in zip(measurements, reference_signatures):
+                    terms = _pauli_terms_from_observable(getattr(measurement, "obs", None), self.wire_map)
+                    if terms is None or _combine_pauli_terms(terms) != reference_signature:
+                        return None
             elif tuple(measurements[0].wires) != reference_probability_wires:
                 return None
-            if measurement_name == "CountsMP" and getattr(measurements[0], "all_outcomes", False):
+            if measurement_names[0] == "CountsMP" and getattr(measurements[0], "all_outcomes", False):
                 return None
 
         self.reset(batch_size=len(circuits))
@@ -1054,11 +1067,22 @@ class RocQDevice(QubitDevice):
                 continue
             return None
 
-        if measurement_name == "ExpectationMP":
-            values = _evaluate_pauli_terms_batch(self._runtime, reference_signature)
-            return tuple(_real_measurement_result(value, "ExpectationMP") for value in values)
+        if measurement_names[0] == "ExpectationMP":
+            batched_values = [
+                _evaluate_pauli_terms_batch(self._runtime, signature)
+                for signature in reference_signatures
+            ]
+            if len(batched_values) == 1:
+                return tuple(_real_measurement_result(value, "ExpectationMP") for value in batched_values[0])
+            return [
+                tuple(
+                    np.asarray(_real_measurement_result(values[batch_index], "ExpectationMP"))
+                    for values in batched_values
+                )
+                for batch_index in range(len(circuits))
+            ]
 
-        if measurement_name in {"SampleMP", "CountsMP"}:
+        if measurement_names[0] in {"SampleMP", "CountsMP"}:
             shots = _shot_count(self.shots)
             measure_targets = (
                 list(range(len(self.wires)))
@@ -1069,7 +1093,7 @@ class RocQDevice(QubitDevice):
             results = []
             for raw_samples in raw_samples_batch:
                 rows = samples_to_binary_rows(raw_samples, len(measure_targets))
-                if measurement_name == "SampleMP":
+                if measurement_names[0] == "SampleMP":
                     results.append(_sample_result_from_rows(rows))
                 else:
                     results.append(_counts_result_from_rows(rows))
