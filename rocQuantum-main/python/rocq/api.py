@@ -1,5 +1,10 @@
+import os
+
 import numpy as np
 from . import _rocq_hip_backend as backend # Assuming the compiled module is named this
+
+_DISABLE_FUSION_ENV_VAR = "ROCQ_DISABLE_GATE_FUSION"
+_FUSABLE_SINGLE_QUBIT_GATES = {"X", "Y", "Z", "H", "S", "T", "RX", "RY", "RZ"}
 
 class Simulator:
     """
@@ -49,6 +54,7 @@ class Circuit:
         self._d_state_buffer = None
         self._gate_queue = []
         self._is_dirty = False
+        self._fusion_engine = None
 
         try:
             if self.is_multi_gpu:
@@ -102,20 +108,108 @@ class Circuit:
 
         raise RuntimeError(f"{operation} failed: {message}") from error
 
-    def flush(self):
-        """Processes queued gates without fusion integration.
+    def _gate_fusion_disabled(self) -> bool:
+        return os.environ.get(_DISABLE_FUSION_ENV_VAR, "").strip().lower() in {"1", "true", "yes", "on"}
 
-        The native GateFusion engine exists in C++, but this Python execution path
-        still replays queued gates one by one.
-        """
+    def _get_fusion_engine(self):
+        if self.is_multi_gpu or self._gate_fusion_disabled() or not hasattr(backend, "GateFusion"):
+            return None
+        if getattr(self, "_fusion_engine", None) is None:
+            self._fusion_engine = backend.GateFusion(
+                self._sim_handle,
+                self._get_d_state_for_backend(),
+                self.num_qubits,
+            )
+        return self._fusion_engine
+
+    def _is_cnot_gate(self, op) -> bool:
+        return op.name.upper() == "CNOT" and len(op.controls) == 1 and len(op.targets) == 1
+
+    def _is_fusable_single_qubit_gate(self, op) -> bool:
+        return (
+            op.name.upper() in _FUSABLE_SINGLE_QUBIT_GATES
+            and len(op.controls) == 0
+            and len(op.targets) == 1
+        )
+
+    def _is_fusable_cnot_neighbor(self, op, cnot_op) -> bool:
+        if not self._is_fusable_single_qubit_gate(op) or not self._is_cnot_gate(cnot_op):
+            return False
+        return op.targets[0] in {cnot_op.controls[0], cnot_op.targets[0]}
+
+    def _fusion_span_from(self, index: int):
+        current = self._gate_queue[index]
+
+        if self._is_cnot_gate(current):
+            if (
+                index + 1 < len(self._gate_queue)
+                and self._is_fusable_cnot_neighbor(self._gate_queue[index + 1], current)
+            ):
+                return self._gate_queue[index:index + 2]
+            return []
+
+        if (
+            index + 1 < len(self._gate_queue)
+            and self._is_cnot_gate(self._gate_queue[index + 1])
+            and self._is_fusable_cnot_neighbor(current, self._gate_queue[index + 1])
+        ):
+            end = index + 2
+            if (
+                index + 2 < len(self._gate_queue)
+                and self._is_fusable_cnot_neighbor(self._gate_queue[index + 2], self._gate_queue[index + 1])
+            ):
+                end += 1
+            return self._gate_queue[index:end]
+
+        return []
+
+    def _to_fusion_gate(self, op):
+        gate = backend.GateOp()
+        gate.name = op.name.upper()
+        gate.targets = [int(target) for target in op.targets]
+        gate.controls = [int(control) for control in op.controls]
+        gate.params = [float(param) for param in op.params]
+        return gate
+
+    def _try_fuse_from(self, index: int) -> int:
+        fusion_engine = self._get_fusion_engine()
+        if fusion_engine is None:
+            return 0
+
+        span = self._fusion_span_from(index)
+        if not span:
+            return 0
+
+        status = fusion_engine.process_queue([self._to_fusion_gate(op) for op in span])
+        self._raise_for_status("GateFusion.process_queue", status)
+        return len(span)
+
+    def _apply_queued_gate(self, op):
+        d_state_arg = self._get_d_state_for_backend()
+        status = getattr(backend, f"apply_{op.name.lower()}")(
+            self._sim_handle,
+            d_state_arg,
+            self.num_qubits,
+            *op.controls,
+            *op.targets,
+            *op.params,
+        )
+        self._raise_for_status(f"Gate {op.name}", status)
+
+    def flush(self):
+        """Processes queued gates, fusing CNOT-adjacent spans when the native backend supports it."""
         if not self._is_dirty or not self._gate_queue:
             return
 
         print(f"Flushing {len(self._gate_queue)} gates...")
-        for op in self._gate_queue:
-            d_state_arg = self._get_d_state_for_backend()
-            status = getattr(backend, f"apply_{op.name.lower()}")(self._sim_handle, d_state_arg, self.num_qubits, *op.controls, *op.targets, *op.params)
-            self._raise_for_status(f"Gate {op.name}", status)
+        index = 0
+        while index < len(self._gate_queue):
+            fused_count = self._try_fuse_from(index)
+            if fused_count:
+                index += fused_count
+                continue
+            self._apply_queued_gate(self._gate_queue[index])
+            index += 1
 
         self._gate_queue.clear()
         self._is_dirty = False

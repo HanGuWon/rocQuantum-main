@@ -7,6 +7,7 @@ import os
 import sys
 import types
 import unittest
+from unittest import mock
 
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,7 +15,7 @@ _LEGACY_ROOT = os.path.join(_PROJECT_ROOT, "python", "rocq")
 _API_PATH = os.path.join(_LEGACY_ROOT, "api.py")
 
 
-def _fake_backend():
+def _fake_backend(with_fusion=True):
     backend = types.ModuleType("_rocq_hip_backend")
     backend.calls = []
 
@@ -38,6 +39,24 @@ def _fake_backend():
     backend.get_expectation_value_z = _record("z", 0.75)
     backend.get_expectation_value_pauli_product_z = _record("zz", -1.0)
     backend.get_expectation_pauli_string = _record("pauli", 0.125)
+
+    for gate_name in ("x", "y", "z", "h", "s", "t", "rx", "ry", "rz", "cnot", "cz", "swap", "crx", "cry", "crz", "mcx", "cswap"):
+        setattr(backend, f"apply_{gate_name}", _record(f"apply_{gate_name}", _Status.SUCCESS))
+
+    if with_fusion:
+        class _GateFusion:
+            def __init__(self, *args):
+                backend.calls.append(("fusion_init", args))
+
+            def process_queue(self, queue):
+                payload = tuple(
+                    (op.name, tuple(op.controls), tuple(op.targets), tuple(op.params))
+                    for op in queue
+                )
+                backend.calls.append(("fusion", payload))
+                return _Status.SUCCESS
+
+        backend.GateFusion = _GateFusion
 
     def _forbidden_statevector_readback(*args):
         raise AssertionError("legacy Circuit.expval must not read back the statevector")
@@ -75,7 +94,53 @@ def _make_circuit(module):
     circuit.batch_size = 1
     circuit._gate_queue = []
     circuit._is_dirty = False
+    circuit._fusion_engine = None
     return circuit
+
+
+class TestLegacyCircuitGateFusion(unittest.TestCase):
+    def test_flush_uses_native_gate_fusion_for_cnot_adjacent_span(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        circuit = _make_circuit(module)
+
+        circuit.h(0)
+        circuit.cx(0, 1)
+        circuit.rz(0.25, 1)
+        circuit.flush()
+
+        calls_by_name = [name for name, _ in backend.calls]
+        self.assertIn("fusion_init", calls_by_name)
+        self.assertIn("fusion", calls_by_name)
+        self.assertNotIn("apply_h", calls_by_name)
+        self.assertNotIn("apply_cnot", calls_by_name)
+        self.assertNotIn("apply_rz", calls_by_name)
+        fusion_payload = next(payload for name, payload in backend.calls if name == "fusion")
+        self.assertEqual(
+            fusion_payload,
+            (
+                ("H", (), (0,), ()),
+                ("CNOT", (0,), (1,), ()),
+                ("RZ", (), (1,), (0.25,)),
+            ),
+        )
+        self.assertFalse(circuit._is_dirty)
+        self.assertEqual(circuit._gate_queue, [])
+
+    def test_flush_replays_gates_when_fusion_is_disabled(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        circuit = _make_circuit(module)
+
+        circuit.h(0)
+        circuit.cx(0, 1)
+        with mock.patch.dict(os.environ, {"ROCQ_DISABLE_GATE_FUSION": "1"}):
+            circuit.flush()
+
+        calls_by_name = [name for name, _ in backend.calls]
+        self.assertNotIn("fusion_init", calls_by_name)
+        self.assertNotIn("fusion", calls_by_name)
+        self.assertEqual(calls_by_name, ["apply_h", "apply_cnot"])
 
 
 class TestLegacyCircuitExpectation(unittest.TestCase):

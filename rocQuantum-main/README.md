@@ -81,7 +81,7 @@ Use those files as the authoritative capability summary for the current codebase
 | `rocqCompiler` | Partial codegen path plus a narrow compile-and-execute MVP for qalloc/H/X/Y/Z/CNOT/RX/RY/RZ |
 | Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring |
 | Higher-level helpers | Experimental VQE objective/gradient, MaxCut-style QAOA helper, and 3-qubit repetition-code single-round helper |
-| `python/rocq` | Top-level CMake-built legacy compatibility surface; Pauli expectations now use native helpers, while queue/fusion and other paths still need consolidation |
+| `python/rocq` | Top-level CMake-built legacy compatibility surface; Pauli expectations and CNOT-adjacent GateFusion now use native helpers, while broader fusion and runtime unification still need consolidation |
 
 ## Important Limitations
 

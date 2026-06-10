@@ -55,6 +55,9 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("if (op.params.empty())", source)
         self.assertIn("processed[i-1] = true;", source)
         self.assertIn("processed[i+1] = true;", source)
+        self.assertIn("if (queue[i].name != \"CNOT\")", source)
+        self.assertIn("queue[i + 1].name == \"CNOT\"", source)
+        self.assertIn("get_gate_matrix_2x2(queue[i], single_matrix)", source)
 
     def test_distributed_host_fallback_is_explicit_mode(self):
         with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:

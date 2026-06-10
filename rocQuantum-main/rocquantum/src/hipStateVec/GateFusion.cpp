@@ -135,6 +135,22 @@ rocqStatus_t GateFusion::processQueue(const std::vector<GateOp>& queue) {
     for (size_t i = 0; i < queue.size(); ++i) {
         if (processed[i]) continue;
 
+        if (queue[i].name != "CNOT") {
+            if (i + 1 < queue.size() && queue[i + 1].name == "CNOT") {
+                const auto& next_cnot = queue[i + 1];
+                if (!next_cnot.controls.empty() && !next_cnot.targets.empty() && queue[i].targets.size() == 1) {
+                    const unsigned ctrl = next_cnot.controls[0];
+                    const unsigned targ = next_cnot.targets[0];
+                    c128 single_matrix[4];
+                    if ((queue[i].targets[0] == ctrl || queue[i].targets[0] == targ) &&
+                        get_gate_matrix_2x2(queue[i], single_matrix)) {
+                        continue;
+                    }
+                }
+            }
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+
         // --- CNOT Fusion Pattern ---
         if (queue[i].name == "CNOT") {
             const auto& cnot_op = queue[i];

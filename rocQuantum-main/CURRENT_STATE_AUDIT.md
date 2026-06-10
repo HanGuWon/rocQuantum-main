@@ -13,7 +13,7 @@ Audit refresh note (2026-06-10):
 
 - Official AMD production ROCm documentation now points to ROCm `7.2.4`, released 2026-05-29.
 - Previous rows that described canonical `rocq.operator.get_expectation_value()` as unimplemented are stale; the current gap is split API behavior between canonical `rocq` and legacy `python/rocq`.
-- GateFusion is wired opportunistically into canonical `rocq.backends.StateVectorBackend`, but the legacy `python/rocq` queue flush path still replays gates one by one.
+- GateFusion is wired opportunistically into canonical `rocq.backends.StateVectorBackend` and legacy `python/rocq.Circuit.flush()` for supported CNOT-adjacent spans; broader fusion patterns remain missing.
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is no longer a hard stub for the current MVP subset: qalloc, H/X/Y/Z, CNOT, RX/RY/RZ.
 - Qiskit and PennyLane adapters now avoid several avoidable full statevector readbacks: Qiskit `backend.run()` defaults to sampling without state output, Qiskit Estimator reuses a bound circuit across observable batches, PennyLane finite-shot measurements use native `measure()` where available, and PennyLane analytic Pauli/Hadamard/Hamiltonian expectations skip diagonalizing rotations and use native Pauli-string expectations.
 - Public simulator and framework paths now expose native `MCX` / `CSWAP` dispatch for Qiskit `ccx` / `mcx` / `cswap` and PennyLane `MultiControlledX` / `Toffoli` / `CSWAP`; non-default PennyLane `control_values` use exact `X`-flip plus native-`MCX` decomposition instead of dense matrix fallback.
@@ -161,7 +161,7 @@ What is not real today:
 
 | Area | Native | Fallback / mock / host-side |
 | --- | --- | --- |
-| State-vector gates | HIP kernels in `hipStateVec` | None for core named gates |
+| State-vector gates | HIP kernels in `hipStateVec`; canonical `rocq` and legacy `python/rocq` can use GateFusion for supported CNOT-adjacent spans | None for core named gates; broader fusion patterns remain unfused |
 | Generic matrix/control matrix | Partial HIP path | Broader cases return `ROCQ_STATUS_NOT_IMPLEMENTED` by default; `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` enables explicit slow/debug host fallback |
 | Expectations | Native `hipStateVec` helpers exist; canonical `rocq.observe()` and legacy `Circuit.expval()` are wired for supported Pauli operators | Hermitian/broader operator coverage remains limited |
 | Tensor-network contraction | Native HIP/rocBLAS/rocSOLVER path | Pathfinder/slicing breadth not fully wired |
