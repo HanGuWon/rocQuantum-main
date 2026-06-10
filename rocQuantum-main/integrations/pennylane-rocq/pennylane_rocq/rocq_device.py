@@ -239,6 +239,41 @@ def _basis_state_bits(op, num_wires):
     return bits
 
 
+def _control_value_is_one(value):
+    if isinstance(value, str):
+        return value in {"1", "True", "true"}
+    return bool(value)
+
+
+def _native_mcx_wire_indices(op, wire_map):
+    control_wires = list(getattr(op, "control_wires", ()))
+    target_wires = list(getattr(op, "target_wires", ()))
+    control_values = getattr(op, "control_values", None)
+    if control_values is None:
+        control_values = getattr(op, "hyperparameters", {}).get("control_values")
+
+    if len(target_wires) != 1 or not control_wires or control_values is None:
+        return None
+    if len(control_values) != len(control_wires):
+        return None
+    if not all(_control_value_is_one(value) for value in control_values):
+        return None
+
+    return [wire_map[wire] for wire in control_wires + target_wires]
+
+
+def _apply_native_or_matrix(runtime, native_name, wire_indices, op):
+    try:
+        runtime.apply_operation(native_name, wire_indices)
+    except (NotImplementedError, RuntimeError, TypeError, ValueError):
+        matrix = matrix_to_little_endian_wires(qml.matrix(op))
+        runtime.apply_operation(
+            "QubitUnitary",
+            wire_indices,
+            matrix=matrix,
+        )
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -359,6 +394,24 @@ class RocQDevice(QubitDevice):
                         wire_indices,
                         matrix=matrix,
                     )
+                operation_applied = True
+            elif gate_name == "Toffoli":
+                _apply_native_or_matrix(self._runtime, "MCX", wire_indices, op)
+                operation_applied = True
+            elif gate_name == "CSWAP":
+                _apply_native_or_matrix(self._runtime, "CSWAP", wire_indices, op)
+                operation_applied = True
+            elif gate_name == "MultiControlledX":
+                native_wire_indices = _native_mcx_wire_indices(op, self.wire_map)
+                if native_wire_indices is None:
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                else:
+                    _apply_native_or_matrix(self._runtime, "MCX", native_wire_indices, op)
                 operation_applied = True
             elif gate_name in MATRIX_OPS:
                 matrix = matrix_to_little_endian_wires(qml.matrix(op))

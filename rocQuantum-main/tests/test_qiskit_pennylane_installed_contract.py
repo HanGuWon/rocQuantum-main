@@ -1120,6 +1120,7 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
 
     assert sim.ops == [
         ("MCX", (0, 1, 2), ()),
+        ("MCX", (0, 1, 2), ()),
         ("CSWAP", (0, 1, 2), ()),
     ]
     assert [targets for _, targets in sim.matrices] == [
@@ -1130,7 +1131,6 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         (0, 1),
         (0, 1),
         (0, 1, 2),
-        (0, 1, 2),
         (0, 1),
         (0, 1),
         (0, 1),
@@ -1141,6 +1141,52 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         (0, 1, 2, 3),
         (0, 1),
     ]
+
+
+def test_pennylane_multicontrolledx_all_one_controls_dispatches_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=4)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.MultiControlledX(wires=[0, 1, 2, 3])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [("MCX", (0, 1, 2, 3), ())]
+    assert sim.matrices == []
+
+
+def test_pennylane_multicontrolledx_nondefault_controls_stays_matrix_fallback(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.MultiControlledX(wires=[0, 1, 2], control_values=[True, False])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == []
+    assert [targets for _, targets in sim.matrices] == [(0, 1, 2)]
 
 
 def test_pennylane_parameter_shift_gradient_pipeline_runs(monkeypatch):
