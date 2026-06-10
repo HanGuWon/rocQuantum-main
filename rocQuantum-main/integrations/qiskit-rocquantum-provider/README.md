@@ -7,7 +7,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 ## Features
 
 - **Fully Compliant `BackendV2` Interface**: A modern, robust, and maintainable provider implementation.
-- **Statevector Simulation**: Supports ideal statevector simulation via the `save_statevector()` instruction.
+- **Statevector Simulation**: Returns the pre-sampling statevector in the Qiskit `Result` data.
 - **Measurement Sampling**: Supports realistic measurement outcomes and provides a counts dictionary via `get_counts()`.
 - **Automatic Discovery**: Once installed, Qiskit can automatically discover and list this provider's backends.
 - **Modern Job Contract**: `backend.run()` returns a synchronous Qiskit `Job` object whose `result()` method returns the `Result`.
@@ -36,6 +36,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 - The provider uses `BackendV2`, exposes `max_circuits`, and imports result model classes from both old and new Qiskit locations.
 - Qiskit primitive support is provided through `BackendSamplerV2` and `BackendEstimatorV2` wrappers over `rocq_simulator`.
 - Direct Pauli expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, and `(label, coeff)` term lists.
+- Aer-style `save_statevector` marker instructions are treated as no-op result annotations; `QuantumCircuit.save_statevector()` is not part of base Qiskit `2.4.1`.
 - `rocquantum_bind` is loaded when a circuit is executed, so importing the provider remains possible before the native extension is present.
 
 ## Usage Example
@@ -58,7 +59,6 @@ qc_state = QuantumCircuit(3)
 qc_state.h(0)
 qc_state.cx(0, 1)
 qc_state.cx(0, 2)
-qc_state.save_statevector()
 
 print("Running statevector simulation...")
 job_state = backend.run(qc_state)

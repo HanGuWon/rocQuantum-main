@@ -23,6 +23,7 @@ class _FakeQuantumSimulator:
 
     def __init__(self, num_qubits):
         self._num_qubits = int(num_qubits)
+        self._measured = False
         self.ops = []
         self.matrices = []
         self.measurements = []
@@ -34,6 +35,7 @@ class _FakeQuantumSimulator:
         self.matrices.clear()
         self.measurements.clear()
         self.expectations.clear()
+        self._measured = False
 
     def num_qubits(self):
         return self._num_qubits
@@ -46,11 +48,15 @@ class _FakeQuantumSimulator:
 
     def measure(self, qubits, shots):
         self.measurements.append((tuple(qubits), int(shots)))
+        self._measured = True
         high = (1 << len(qubits)) - 1
         return [0 if shot % 2 == 0 else high for shot in range(int(shots))]
 
     def get_statevector(self):
         state = np.zeros(1 << self._num_qubits, dtype=np.complex128)
+        if self._measured:
+            state[0] = 1.0
+            return state
         if self._num_qubits == 2:
             state[0] = 1.0 / math.sqrt(2.0)
             state[3] = 1.0 / math.sqrt(2.0)
@@ -107,6 +113,47 @@ def test_qiskit_backend_returns_job_and_fixed_width_counts(monkeypatch):
     assert result.success
     assert result.get_counts() == {"00": 3, "11": 3}
     assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 6)]
+
+
+def test_qiskit_backend_returns_statevector_before_sampling(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    backend = provider.get_backend("rocq_simulator")
+
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+
+    state = backend.run(circuit, shots=4).result().get_statevector()
+    expected = np.array([1.0 / math.sqrt(2.0), 0.0, 0.0, 1.0 / math.sqrt(2.0)])
+
+    np.testing.assert_allclose(state, expected)
+    assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 4)]
+
+
+def test_qiskit_backend_ignores_save_statevector_marker(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Instruction
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    backend = provider.get_backend("rocq_simulator")
+
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+    circuit.append(Instruction("save_statevector", 0, 0, []), [], [])
+
+    backend.run(circuit, shots=1).result().get_statevector()
+
+    assert _FakeQuantumSimulator.instances[-1].ops == [("H", (0,), ())]
 
 
 def test_qiskit_provider_exposes_backend_primitives(monkeypatch):

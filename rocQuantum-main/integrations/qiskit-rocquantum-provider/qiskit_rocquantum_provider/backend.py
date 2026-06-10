@@ -100,7 +100,7 @@ class RocQuantumBackend(BackendV2):
         measured_bits = {}  # Map classical bit index to qubit index
         for instruction in circuit.data:
             op = instruction.operation
-            if op.name in {"barrier", "delay"}:
+            if op.name in {"barrier", "delay", "save_statevector"}:
                 continue
 
             q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
@@ -146,6 +146,7 @@ class RocQuantumBackend(BackendV2):
                 measured_items = [(idx, idx) for idx in range(circuit.num_qubits)]
             qubits_to_measure = [qubit for _, qubit in measured_items]
 
+            statevector = self._runtime.statevector()
             raw_samples = self._runtime.measure(qubits_to_measure, shots)
             memory_width = getattr(circuit, "num_clbits", 0) or len(measured_items)
             memory = qiskit_memory_from_samples(raw_samples, measured_items, memory_width)
@@ -154,7 +155,7 @@ class RocQuantumBackend(BackendV2):
             exp_data = ExperimentResultData(
                 counts=formatted_counts,
                 memory=memory if options.get("memory", self.options.memory) else None,
-                statevector=self._runtime.statevector(),
+                statevector=statevector,
             )
 
             exp_result = ExperimentResult(
