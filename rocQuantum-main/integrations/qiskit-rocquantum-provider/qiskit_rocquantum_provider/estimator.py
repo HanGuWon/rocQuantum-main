@@ -73,9 +73,22 @@ def _label_to_runtime_term(label: str, num_qubits: int):
     return "".join(paulis), targets
 
 
+def _combine_observable_terms(terms):
+    combined = {}
+    for coeff, label in terms:
+        normalized_label = str(label).upper()
+        combined[normalized_label] = combined.get(normalized_label, 0.0 + 0.0j) + complex(coeff)
+    return [
+        (coeff, label)
+        for label, coeff in combined.items()
+        if abs(coeff) > 1e-15
+    ]
+
+
 def estimate_pauli_observable(runtime, observable, num_qubits: int) -> float:
     result = 0.0 + 0.0j
-    for coeff, label in _observable_terms(observable, num_qubits=int(num_qubits)):
+    terms = _combine_observable_terms(_observable_terms(observable, num_qubits=int(num_qubits)))
+    for coeff, label in terms:
         pauli_string, targets = _label_to_runtime_term(label, int(num_qubits))
         if not targets:
             result += coeff
