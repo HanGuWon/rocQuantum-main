@@ -2,7 +2,7 @@
 
 include(CMakeFindDependencyMacro)
 
-find_dependency(HIP REQUIRED)
+find_dependency(hip CONFIG REQUIRED)
 find_dependency(hiprand REQUIRED)
 find_dependency(rocblas REQUIRED)
 find_dependency(rocsolver REQUIRED)

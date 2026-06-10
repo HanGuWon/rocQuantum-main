@@ -24,7 +24,7 @@ Only partial today:
 - Generic matrix and controlled-unitary coverage
 - Multi-GPU / distributed execution
 - Observable breadth and density-matrix GPU-fast sampling coverage
-- Packaging and install/export
+- Release wheel and native install-tree validation
 - PennyLane, Cirq, and Qiskit adapter maturity
 
 Not implemented today:
@@ -54,7 +54,7 @@ Use those files as the authoritative capability summary for the current codebase
 - `rocquantum/src/simulator.cpp`: public C++ simulator wrapper
 - `rocqCompiler/`: partial MLIR/QIR pipeline
 - `rocq/`: top-level Python surface with direct native execution plus `observe()` / `sample()`
-- `python/rocq/`: separate legacy-style Python surface with `_rocq_hip_backend`
+- `python/rocq/`: separate legacy-style Python surface whose `_rocq_hip_backend` extension is built from the top-level CMake graph
 - `integrations/`: PennyLane, Cirq, and Qiskit adapters
 
 ## Support Policy For This Audit Pass
@@ -81,7 +81,7 @@ Use those files as the authoritative capability summary for the current codebase
 | `rocqCompiler` | Partial codegen path plus a narrow compile-and-execute MVP for qalloc/H/X/Y/Z/CNOT/RX/RY/RZ |
 | Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring |
 | Higher-level helpers | Experimental VQE objective/gradient, MaxCut-style QAOA helper, and 3-qubit repetition-code single-round helper |
-| `python/rocq` | Separate legacy compatibility surface; Pauli expectations now use native helpers, while queue/fusion and other paths still need consolidation |
+| `python/rocq` | Top-level CMake-built legacy compatibility surface; Pauli expectations now use native helpers, while queue/fusion and other paths still need consolidation |
 
 ## Important Limitations
 

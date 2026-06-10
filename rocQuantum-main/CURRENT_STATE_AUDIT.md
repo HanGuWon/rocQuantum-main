@@ -35,6 +35,7 @@ Audit refresh note (2026-06-10):
 - PennyLane `qml.OrbitalRotation` now uses exact native `FermionicSWAP` and `SingleExcitation` decompositions instead of dense four-qubit matrix dispatch.
 - PennyLane `qml.PhaseShift`, `qml.ControlledPhaseShift`, and open-control `qml.CPhaseShift00/01/10` now use exact global-phase plus native `RZ` / `CNOT` decompositions, avoiding dense controlled-phase matrix upload in QFT-style circuits.
 - PennyLane `qml.SparseHamiltonian` analytic expectation / variance now prefers `QuantumSimulator.sparse_hamiltonian_moments()`, a binding-level CSR moments method, and falls back to Python statevector CSR evaluation when the hook is unavailable; the current implementation is host-backed, so a validated ROCm sparse-observable GPU kernel is still missing.
+- Top-level CMake now delegates `_rocq_hip_backend` to `python/rocq/CMakeLists.txt`, so the legacy native Python backend path is part of the default bindings build instead of a parallel dormant CMake fragment.
 
 The detailed findings below still describe the original audit snapshot; use them together with the runtime update above.
 
@@ -61,7 +62,7 @@ What is not real today:
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is only an MVP subset executor, not a CUDA-Q-style full compiler runtime.
 - Distributed multi-GPU is only partially implemented and was overclaimed in docs.
 - High-level expectation-value workflows are split across canonical runtime APIs and legacy Python bindings.
-- Packaging, install/export, and CI do not describe one coherent release artifact.
+- Packaging is CMake-first and now exports package config files, but the release artifact story remains split across canonical `rocq`, legacy `python/rocq`, framework plugins, and ROCm CI validation.
 
 ## Code Surface Inventory
 
@@ -73,7 +74,7 @@ What is not real today:
 | `rocquantum/src/simulator.cpp` | Real public C++ simulator wrapper; now exposes `MCX` / `CSWAP`, but generic controlled-unitary breadth remains narrower than backend capability |
 | `rocqCompiler/*` | Partial MLIR/QIR codegen path; not integrated into a working execution loop |
 | `rocq/*` | Top-level Python surface with direct backend execution and mock fallbacks |
-| `python/rocq/*` | Separate legacy-ish Python surface with `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers, but broader runtime behavior remains split |
+| `python/rocq/*` | Separate legacy-ish Python surface with top-level CMake-built `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers, but broader runtime behavior remains split |
 | `integrations/*` | Thin framework adapters with mixed native and host-side behavior |
 | `rocquantum/backends/*` | Mixed remote-provider clients, local mocks, and skeleton placeholders |
 | `rocquantum/qec`, `rocquantum/solvers` | Experimental VQE/QAOA/repetition-code helpers, not production-ready CUDA-QX analogs |
@@ -134,7 +135,7 @@ What is not real today:
 
 ### Packaging and CI
 
-- Native CMake build exists and now follows the ROCm HIP-language floor of CMake `3.21` plus official config-package targets such as `hip` / `hip::host`, `roc::rocblas`, and `roc::rocsolver`. Python packaging is still split between `pyproject.toml`, `setup.py`, `rocquantum_bind`, and `_rocq_hip_backend`.
+- Native CMake build exists and now follows the ROCm HIP-language floor of CMake `3.21` plus official config-package targets such as `hip` / `hip::host`, `roc::rocblas`, and `roc::rocsolver`. The install package config uses the same ROCm package naming, and the root build activates `python/rocq` for `_rocq_hip_backend`; Python packaging is still split between canonical and legacy surfaces.
 - CI covers Python import/package contracts, one GPU runtime regression, and a release benchmark artifact registry. The registry records statevec, distributed reduction, TensorNet, and DensityMat benchmark JSON when native ROCm binaries are available, or explicit skipped JSON when they are not.
 
 ## What Is Stubbed Or Absent

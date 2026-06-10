@@ -76,18 +76,7 @@ target_link_libraries(rocquantum
 add_library(rocquantum::core ALIAS rocquantum)
 
 if(ROCQUANTUM_BUILD_BINDINGS)
-    pybind11_add_module(_rocq_hip_backend python/rocq/bindings.cpp)
-    target_include_directories(_rocq_hip_backend PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${ROCQUANTUM_PUBLIC_INCLUDE_DIR}
-        ${ROCQUANTUM_COMPONENT_INCLUDE_DIR}
-    )
-    target_link_libraries(_rocq_hip_backend
-        PRIVATE
-            hipStateVec
-            rocqsim_tensornet
-            pybind11::module
-    )
+    add_subdirectory(python/rocq)
 
     pybind11_add_module(rocq_hip rocquantum/src/python/py_hip_density_mat.cpp)
     target_include_directories(rocq_hip PRIVATE
@@ -137,7 +126,7 @@ install(
 
 if(ROCQUANTUM_BUILD_BINDINGS)
     install(
-        TARGETS _rocq_hip_backend rocq_hip rocquantum_bind
+        TARGETS rocq_hip rocquantum_bind
         EXPORT ${ROCQUANTUM_EXPORT_SET_NAME}
         LIBRARY DESTINATION .
         RUNTIME DESTINATION .

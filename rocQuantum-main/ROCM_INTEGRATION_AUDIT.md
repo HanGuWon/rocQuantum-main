@@ -176,7 +176,7 @@ Separate current truth from forward policy:
 - Unify Python package identity, versioning, and binding name
 - Add explicit HIP architecture matrix to CI and build docs
 - Keep CMake at `3.21+` and use ROCm config-package targets (`hip::host`, `roc::rocblas`, `roc::rocsolver`, optional `rccl`)
-- Add complete install/export package config
+- Validate the install/export package config from an installed ROCm tree
 - Add runtime tests for statevector, density matrix, expectations, and multi-GPU smoke
 - Publish a single Linux-first support statement
 - Stop implying Windows release support until a real Windows ROCm path is validated

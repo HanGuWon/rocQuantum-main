@@ -9,6 +9,8 @@ import unittest
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT_CMAKE = os.path.join(PROJECT_ROOT, "CMakeLists.txt")
+PACKAGE_CONFIG_TEMPLATE = os.path.join(PROJECT_ROOT, "cmake", "rocQuantumConfig.cmake.in")
+PYTHON_ROCQ_CMAKE = os.path.join(PROJECT_ROOT, "python", "rocq", "CMakeLists.txt")
 PYPROJECT = os.path.join(PROJECT_ROOT, "pyproject.toml")
 README = os.path.join(PROJECT_ROOT, "README.md")
 ROCM_AUDIT = os.path.join(PROJECT_ROOT, "ROCM_INTEGRATION_AUDIT.md")
@@ -42,6 +44,25 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn('minimum-version = "3.21"', pyproject)
         self.assertNotIn("cmake>=3.18", pyproject)
         self.assertNotIn('minimum-version = "3.18"', pyproject)
+
+    def test_root_cmake_activates_legacy_python_backend_owner(self):
+        root_cmake = _read(ROOT_CMAKE)
+        python_cmake = _read(PYTHON_ROCQ_CMAKE)
+
+        self.assertIn("add_subdirectory(python/rocq)", root_cmake)
+        self.assertNotIn("pybind11_add_module(_rocq_hip_backend python/rocq/bindings.cpp", root_cmake)
+        self.assertIn("pybind11_add_module(_rocq_hip_backend bindings.cpp)", python_cmake)
+        self.assertIn("if(NOT TARGET hipStateVec)", python_cmake)
+        self.assertIn("if(NOT TARGET rocqsim_tensornet)", python_cmake)
+        self.assertIn("pybind11::module", python_cmake)
+        self.assertIn("TARGETS _rocq_hip_backend", python_cmake)
+        self.assertNotIn("TARGETS _rocq_hip_backend rocq_hip rocquantum_bind", root_cmake)
+
+    def test_package_config_uses_rocm_config_package_names(self):
+        package_config = _read(PACKAGE_CONFIG_TEMPLATE)
+
+        self.assertIn("find_dependency(hip CONFIG REQUIRED)", package_config)
+        self.assertNotIn("find_dependency(HIP REQUIRED)", package_config)
 
     def test_component_cmake_uses_official_rocm_imported_targets(self):
         combined = "\n".join(_read(path) for path in COMPONENT_CMAKES)
