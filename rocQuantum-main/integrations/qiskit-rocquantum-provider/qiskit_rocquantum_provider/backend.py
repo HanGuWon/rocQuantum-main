@@ -156,7 +156,7 @@ class RocQuantumBackend(BackendV2):
 
     @classmethod
     def _default_options(cls):
-        return Options(shots=1024, memory=True, statevector=True, sampling=True)
+        return Options(shots=1024, memory=True, statevector=False, sampling=True)
 
     @property
     def target(self):

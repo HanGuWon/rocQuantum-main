@@ -7,7 +7,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 ## Features
 
 - **Fully Compliant `BackendV2` Interface**: A modern, robust, and maintainable provider implementation.
-- **Statevector Simulation**: Returns the pre-sampling statevector in the Qiskit `Result` data.
+- **Statevector Simulation**: Returns the pre-sampling statevector in the Qiskit `Result` data when `statevector=True` or a `save_statevector` marker is requested.
 - **Measurement Sampling**: Supports realistic measurement outcomes and provides a counts dictionary via `get_counts()`.
 - **Native Controlled Rotations**: Exposes Qiskit `crx`, `cry`, and `crz` target operations and dispatches them to rocQuantum native gates when the binding supports them.
 - **Matrix Fallback Gates**: Exposes common Qiskit matrix gates including `sx`, `sxdg`, `p`, `cp`, `rxx`, `ryy`, `rzz`, and `u` through rocQuantum matrix application.
@@ -45,7 +45,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 - Qiskit control-flow operations (`if_else`, `for_loop`, `while_loop`, `switch_case`, break/continue) and classically conditioned operations are rejected explicitly. Dynamic-circuit support needs runtime-level non-unitary/classical-control semantics first.
 - Qiskit sampler support defaults to `RocQuantumSampler`, a native `SamplerV2` over `QuantumSimulator.measure()`; estimator support defaults to `RocQuantumEstimator`, a native deterministic `EstimatorV2` over `QuantumSimulator.expectation_pauli_string()`. Pass `native=False` to `get_sampler()` / `get_estimator()` to request Qiskit's generic backend wrappers.
 - Direct Pauli expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, and `(label, coeff)` term lists.
-- `backend.run(..., statevector=False)` skips the pre-measurement statevector readback for sampling-only workloads, avoiding a full host transfer on larger GPU simulations.
+- `backend.run()` defaults to sampling without pre-measurement statevector readback, avoiding a full host transfer on larger GPU simulations. Pass `statevector=True` or include a `save_statevector` marker when state output is needed.
 - `backend.run(..., sampling=False)` skips measurement and counts formatting for statevector-only workloads.
 - Aer-style `save_statevector` marker instructions are treated as no-op result annotations; `QuantumCircuit.save_statevector()` is not part of base Qiskit `2.4.1`.
 - `rocquantum_bind` is loaded when a circuit is executed, so importing the provider remains possible before the native extension is present.
@@ -77,7 +77,7 @@ qc_state.cx(0, 1)
 qc_state.cx(0, 2)
 
 print("Running statevector simulation...")
-job_state = backend.run(qc_state)
+job_state = backend.run(qc_state, statevector=True)
 result_state = job_state.result()
 final_state = result_state.get_statevector()
 

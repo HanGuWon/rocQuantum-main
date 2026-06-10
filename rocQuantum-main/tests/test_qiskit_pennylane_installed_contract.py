@@ -120,6 +120,7 @@ def test_qiskit_backend_returns_job_and_fixed_width_counts(monkeypatch):
     assert result.success
     assert result.get_counts() == {"00": 3, "11": 3}
     assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 6)]
+    assert _FakeQuantumSimulator.instances[-1].statevector_reads == 0
 
 
 def test_qiskit_backend_deduplicates_repeated_terminal_measurements(monkeypatch):
@@ -155,7 +156,7 @@ def test_qiskit_backend_returns_statevector_before_sampling(monkeypatch):
     circuit.h(0)
     circuit.cx(0, 1)
 
-    state = backend.run(circuit, shots=4).result().get_statevector()
+    state = backend.run(circuit, shots=4, statevector=True).result().get_statevector()
     expected = np.array([1.0 / math.sqrt(2.0), 0.0, 0.0, 1.0 / math.sqrt(2.0)])
 
     np.testing.assert_allclose(state, expected)
@@ -214,7 +215,7 @@ def test_qiskit_backend_can_skip_sampling_for_statevector_only(monkeypatch):
     circuit.h(0)
     circuit.cx(0, 1)
 
-    result = backend.run(circuit, sampling=False).result()
+    result = backend.run(circuit, sampling=False, statevector=True).result()
     state = result.get_statevector()
 
     expected = np.array([1.0 / math.sqrt(2.0), 0.0, 0.0, 1.0 / math.sqrt(2.0)])
@@ -254,7 +255,7 @@ def test_qiskit_backend_allows_initial_reset_as_noop(monkeypatch):
 
     assert "reset" in set(backend.target.operation_names)
 
-    backend.run(circuit, sampling=False).result()
+    backend.run(circuit, sampling=False, statevector=True).result()
 
     assert _FakeQuantumSimulator.instances[-1].ops == [("X", (0,), ())]
 
@@ -306,7 +307,7 @@ def test_qiskit_backend_applies_global_phase_for_statevector(monkeypatch):
     circuit.global_phase = math.pi / 3
     circuit.h(0)
 
-    backend.run(circuit, sampling=False).result()
+    backend.run(circuit, sampling=False, statevector=True).result()
 
     matrix, targets = _FakeQuantumSimulator.instances[-1].matrices[0]
     phase = np.exp(1j * math.pi / 3)

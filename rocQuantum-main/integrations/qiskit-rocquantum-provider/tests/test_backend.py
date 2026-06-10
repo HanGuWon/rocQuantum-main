@@ -109,7 +109,7 @@ class TestRocQuantumBackend(unittest.TestCase):
         qc = QuantumCircuit(2)
         qc.h(0)
         qc.cx(0, 1)
-        statevector = self.backend.run(qc).result().get_statevector()
+        statevector = self.backend.run(qc, statevector=True).result().get_statevector()
         expected = np.array([1/np.sqrt(2), 0, 0, 1/np.sqrt(2)])
         self.assertTrue(np.allclose(statevector, expected))
 
@@ -128,6 +128,6 @@ class TestRocQuantumBackend(unittest.TestCase):
         qc = QuantumCircuit(1)
         qc.h(0)
         qc.rz(angle, 0)
-        statevector = self.backend.run(qc).result().get_statevector()
+        statevector = self.backend.run(qc, statevector=True).result().get_statevector()
         expected = (1/np.sqrt(2)) * np.array([np.exp(-1j*angle/2), np.exp(1j*angle/2)])
         self.assertTrue(np.allclose(statevector, expected))
