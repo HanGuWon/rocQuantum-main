@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cmath>
 #include <complex>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -238,6 +239,22 @@ inline std::complex<double> to_std_complex(const rocComplex& value) {
 
 inline rocComplex from_std_complex(const std::complex<double>& value) {
     return make_complex(value.real(), value.imag());
+}
+
+inline bool env_flag_enabled(const char* name) {
+    const char* value = std::getenv(name);
+    if (!value) {
+        return false;
+    }
+    std::string normalized(value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on";
+}
+
+inline bool allow_host_matrix_fallback() {
+    return env_flag_enabled("ROCQ_ALLOW_HOST_MATRIX_FALLBACK");
 }
 
 inline rocqStatus_t default_device_malloc(void** ptr, size_t bytes) {
@@ -2806,6 +2823,10 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
         return status;
     }
 
+    if (!allow_host_matrix_fallback()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
     std::vector<rocComplex> matrix_host;
     status = copy_matrix_from_device(matrixDevice, matrix_elements, handle->streams[0], &matrix_host);
     if (status != ROCQ_STATUS_SUCCESS) {
@@ -3766,6 +3787,10 @@ rocqStatus_t rocsvApplyControlledMatrix(rocsvHandle_t handle,
                                                      matrix_host[1],
                                                      matrix_host[2],
                                                      matrix_host[3]);
+    }
+
+    if (!allow_host_matrix_fallback()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
     }
 
     std::vector<rocComplex> matrix_host;

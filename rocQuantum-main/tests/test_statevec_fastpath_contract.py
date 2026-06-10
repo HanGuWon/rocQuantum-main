@@ -1,0 +1,61 @@
+"""Source contracts for hipStateVec fast-path and fusion behavior."""
+
+from __future__ import annotations
+
+import os
+import re
+import unittest
+
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_STATEVEC_SOURCE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "hipStateVec.cpp",
+)
+_GATE_FUSION_SOURCE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "GateFusion.cpp",
+)
+
+
+class TestStateVecFastPathContract(unittest.TestCase):
+    def test_matrix_host_fallback_requires_explicit_opt_in(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("ROCQ_ALLOW_HOST_MATRIX_FALLBACK", source)
+        self.assertEqual(
+            source.count("if (!allow_host_matrix_fallback())"),
+            2,
+            "rocsvApplyMatrix and rocsvApplyControlledMatrix should both gate host fallback.",
+        )
+        self.assertEqual(source.count("return apply_matrix_host_impl"), 2)
+        self.assertRegex(
+            source,
+            re.compile(
+                r"if \(!allow_host_matrix_fallback\(\)\) \{\s*"
+                r"return ROCQ_STATUS_NOT_IMPLEMENTED;\s*"
+                r"\}\s*std::vector<rocComplex> matrix_host;",
+                re.MULTILINE,
+            ),
+        )
+
+    def test_gate_fusion_rejects_unsupported_queue_entries(self):
+        with open(_GATE_FUSION_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("return ROCQ_STATUS_NOT_IMPLEMENTED;", source)
+        self.assertNotIn("Fallback for non-fused gates", source)
+        self.assertIn("if (op.params.empty())", source)
+        self.assertIn("processed[i-1] = true;", source)
+        self.assertIn("processed[i+1] = true;", source)
+
+
+if __name__ == "__main__":
+    unittest.main()

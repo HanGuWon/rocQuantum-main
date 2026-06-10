@@ -90,8 +90,9 @@ What is not real today:
 
 ### Generic matrix and controlled-unitary support
 
-- Generic matrix application is partially native, but larger/general cases still fall back to host-side logic in `rocquantum/src/hipStateVec/hipStateVec.cpp`.
-- Generic controlled unitary support is also partial for the same reason.
+- Generic matrix application is partially native; larger/general host-side logic still exists in `rocquantum/src/hipStateVec/hipStateVec.cpp` but is no longer the default path.
+- Generic controlled unitary support is also partial and follows the same explicit-fallback policy.
+- As of the 2026-06-10 fast-path refresh, those host fallbacks are no longer a default performance path. Unsupported cases return `ROCQ_STATUS_NOT_IMPLEMENTED` unless `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` is set for explicit slow/debug fallback.
 
 ### Multi-GPU/distributed
 
@@ -134,7 +135,7 @@ What is not real today:
 | Area | Native | Fallback / mock / host-side |
 | --- | --- | --- |
 | State-vector gates | HIP kernels in `hipStateVec` | None for core named gates |
-| Generic matrix/control matrix | Partial HIP path | Host-side fallback in `hipStateVec.cpp` for broader cases |
+| Generic matrix/control matrix | Partial HIP path | Broader cases return `ROCQ_STATUS_NOT_IMPLEMENTED` by default; `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` enables explicit slow/debug host fallback |
 | Expectations | Native `hipStateVec` helpers exist; canonical `rocq.observe()` and legacy `Circuit.expval()` are wired for supported Pauli operators | Hermitian/broader operator coverage remains limited |
 | Tensor-network contraction | Native HIP/rocBLAS/rocSOLVER path | Pathfinder/slicing breadth not fully wired |
 | Density matrix | Native limited kernel set | Generic channels absent |

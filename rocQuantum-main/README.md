@@ -82,6 +82,7 @@ Use those files as the authoritative capability summary for the current codebase
 
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is a stub and currently raises.
 - `multi_gpu=True` should be treated as experimental partial support, not full distributed execution.
+- Generic matrix/control-matrix cases outside HIP fast paths return `NOT_IMPLEMENTED` by default; set `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` only for explicit slow/debug host fallback.
 - `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, but the legacy surface remains separate from canonical `rocq`.
 - PennyLane and Cirq adapters use host-side sampling paths.
 - Several provider backends remain skeletons or thin clients.

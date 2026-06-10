@@ -85,9 +85,11 @@ What it lacks is the integration layer that makes those pieces act like CUDA-Q r
 
 Compared with the official cuQuantum baseline (`https://docs.nvidia.com/cuda/cuquantum/latest/`), the repo is closest in scope but still incomplete:
 
-- `hipStateVec` is the strongest analogue, but public API exposure and distributed completeness lag behind
+- `hipStateVec` is the strongest analogue, but public API exposure, controlled-matrix breadth, and distributed completeness lag behind
 - `hipTensorNet` has a real core, but optimizer/slicing/dtype breadth and validation lag behind cuTensorNet expectations
 - `hipDensityMat` exists, but generic channels, sampling, and broader observable coverage lag behind cuDensityMat expectations
+
+For state-vector matrix application, unsupported cases now fail clearly unless `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` is set for explicit slow/debug fallback.
 
 The main difference is not just feature count; it is product completeness and test-backed breadth.
 
@@ -110,7 +112,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 3. Native expectations exist but the public API story is split and misleading.
 4. Two divergent Python stacks exist without one canonical answer.
 5. Packaging/install/export does not describe one releasable artifact.
-6. Gate fusion exists and is wired for narrow canonical `rocq` spans, but legacy `python/rocq` and broader patterns remain unfused.
+6. Gate fusion exists and is wired for narrow canonical `rocq` spans; unsupported fusion queue entries fail instead of being silently dropped, but legacy `python/rocq` and broader patterns remain unfused.
 7. `hipTensorNet` breadth is overstated relative to what is built and tested.
 8. `hipDensityMat` is real but too narrow for broad noisy-simulation claims.
 9. Integrations are mostly thin adapters, not proof of a strong platform story.

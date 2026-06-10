@@ -9,7 +9,7 @@ Audit date: 2026-04-05
 3. Native expectation kernels exist in `hipStateVec`, and canonical `rocq.observe()` / `rocq.operator.get_expectation_value()` plus legacy `python/rocq` Pauli expectation paths now reach native helpers, but the user-facing API story is still split across two Python surfaces.
 4. The repo contains two divergent Python stacks, `rocq` and `python/rocq`, without one canonical runtime/compiler story.
 5. Packaging and build surfaces do not describe one releasable product: `pyproject.toml`, `setup.py`, root CMake, and dormant `_rocq_hip_backend` CMake do not agree.
-6. Gate fusion exists in C++ and is used by the canonical `rocq` backend for narrow CNOT-adjacent spans, but legacy `python/rocq` and broader fusion patterns are still unfused.
+6. Gate fusion exists in C++ and is used by the canonical `rocq` backend for narrow CNOT-adjacent spans; unsupported fusion inputs now fail rather than being silently dropped, but legacy `python/rocq` and broader fusion patterns are still unfused.
 7. `hipTensorNet` has real core functionality, but optimizer, slicing, and dtype breadth are overstated relative to what is built and tested.
 8. `hipDensityMat` is real but narrow; generic channel application, density-matrix sampling, and richer observable support are still missing.
 9. Framework integrations are thin adapters with host-side sampling or mock-heavy tests, not strong native ROCm end-to-end proof.
