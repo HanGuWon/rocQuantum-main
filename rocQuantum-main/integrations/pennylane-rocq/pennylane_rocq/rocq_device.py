@@ -263,6 +263,7 @@ class RocQDevice(QubitDevice):
         self.sim = None
         self._state = None
         self._skip_diagonalizing_rotations = False
+        self._diagonalizing_rotations_applied = False
         self.reset()
 
     def reset(self):
@@ -276,6 +277,7 @@ class RocQDevice(QubitDevice):
             ) from exc
         self.sim = self._runtime.simulator
         self._state = None
+        self._diagonalizing_rotations_applied = False
 
     def _analytic_measurements_use_native_pauli(self, circuit):
         if self.shots is not None:
@@ -309,7 +311,9 @@ class RocQDevice(QubitDevice):
 
     def apply(self, operations: list[Operation], rotations=None, **kwargs):
         operation_applied = False
-        for op in list(operations) + list(rotations or []):
+        rotation_ops = list(rotations or [])
+        self._diagonalizing_rotations_applied = bool(rotation_ops)
+        for op in list(operations) + rotation_ops:
             gate_name = op.name
             wire_indices = [self.wire_map[w] for w in op.wires]
             if gate_name == "BasisState":
@@ -388,6 +392,8 @@ class RocQDevice(QubitDevice):
     def expval(self, observable, shot_range=None, bin_size=None):
         if self.shots is not None or shot_range is not None or bin_size is not None:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
+        if self._diagonalizing_rotations_applied:
+            return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
         terms = _pauli_terms_from_observable(observable, self.wire_map)
         if terms is None:
@@ -397,6 +403,8 @@ class RocQDevice(QubitDevice):
 
     def var(self, observable, shot_range=None, bin_size=None):
         if self.shots is not None or shot_range is not None or bin_size is not None:
+            return super().var(observable, shot_range=shot_range, bin_size=bin_size)
+        if self._diagonalizing_rotations_applied:
             return super().var(observable, shot_range=shot_range, bin_size=bin_size)
 
         terms = _pauli_terms_from_observable(observable, self.wire_map)

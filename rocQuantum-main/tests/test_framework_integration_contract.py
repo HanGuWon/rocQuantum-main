@@ -80,9 +80,11 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def execute", source)
         self.assertIn("_analytic_measurements_use_native_pauli", source)
         self.assertIn("_skip_diagonalizing_rotations", source)
+        self.assertIn("_diagonalizing_rotations_applied", source)
         self.assertIn("\"Hadamard\"", source)
         self.assertIn("observable.name == \"Hadamard\"", source)
-        self.assertIn("list(operations) + list(rotations or [])", source)
+        self.assertIn("rotation_ops = list(rotations or [])", source)
+        self.assertIn("list(operations) + rotation_ops", source)
         self.assertIn("_pauli_square_terms", source)
         self.assertIn("expectation_pauli_string", source)
 

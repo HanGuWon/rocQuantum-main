@@ -99,6 +99,12 @@ def _build_fake_pennylane_modules():
                 reduced = reduced.sum(axis=axis)
             return reduced.reshape(-1)
 
+        def expval(self, observable, shot_range=None, bin_size=None):
+            return 1.0
+
+        def var(self, observable, shot_range=None, bin_size=None):
+            return 0.0
+
     def _matrix(op):
         return np.asarray(op.matrix, dtype=np.complex128)
 
@@ -252,6 +258,17 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
 
         self.assertEqual(device.expval(obs), 0.25)
         self.assertEqual(_FakeQSim.instances[-1].expectations, [("ZX", (0, 1))])
+
+    def test_expval_falls_back_after_diagonalizing_rotations(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0], shots=None)
+
+        matrix = np.array([[0, 1], [1, 0]], dtype=np.complex128)
+        device.apply([], rotations=[_FakeOperation("QubitUnitary", [0], matrix=matrix)])
+        obs = _FakeObservable("PauliZ", wires=[0])
+
+        self.assertEqual(device.expval(obs), 1.0)
+        self.assertEqual(_FakeQSim.instances[-1].expectations, [])
 
     def test_var_uses_native_pauli_expectation_when_available(self):
         module = _load_device_module()
