@@ -94,6 +94,22 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("hipMemcpyHostToDevice", implementation)
         self.assertIn(".def(\"set_statevector\"", bindings)
 
+    def test_public_simulator_exposes_sparse_hamiltonian_moments(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+
+        self.assertIn("sparse_hamiltonian_moments", header)
+        self.assertIn("SparseHamiltonianMoments", header)
+        self.assertIn("QuantumSimulator::sparse_hamiltonian_moments", implementation)
+        self.assertIn("Sparse Hamiltonian CSR indptr", implementation)
+        self.assertIn("h_state", implementation)
+        self.assertIn(".def(\"sparse_hamiltonian_moments\"", bindings)
+        self.assertIn(".def(\"SparseHamiltonianMoments\"", bindings)
+
     def test_pennylane_sampling_prefers_native_measure(self):
         with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
             source = f.read()

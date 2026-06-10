@@ -4,6 +4,7 @@
 #include <pybind11/numpy.h>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 #include "rocqCompiler/MLIRCompiler.h"
 #include "rocqCompiler/QuantumBackend.h"
@@ -99,6 +100,40 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("pauli_string"),
              py::arg("targets"),
              "Return a non-destructive Pauli-string expectation value.")
+        .def("sparse_hamiltonian_moments",
+             [](const rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> data,
+                py::array_t<long long, py::array::c_style | py::array::forcecast> indices,
+                py::array_t<long long, py::array::c_style | py::array::forcecast> indptr,
+                const std::pair<std::size_t, std::size_t>& shape) {
+                 std::vector<std::complex<double>> host_data(static_cast<std::size_t>(data.size()));
+                 std::vector<std::size_t> host_indices(static_cast<std::size_t>(indices.size()));
+                 std::vector<std::size_t> host_indptr(static_cast<std::size_t>(indptr.size()));
+                 std::memcpy(host_data.data(), data.data(), host_data.size() * sizeof(std::complex<double>));
+                 for (std::size_t idx = 0; idx < host_indices.size(); ++idx) {
+                     if (indices.data()[idx] < 0) {
+                         throw std::invalid_argument("Sparse Hamiltonian CSR indices must be non-negative.");
+                     }
+                     host_indices[idx] = static_cast<std::size_t>(indices.data()[idx]);
+                 }
+                 for (std::size_t idx = 0; idx < host_indptr.size(); ++idx) {
+                     if (indptr.data()[idx] < 0) {
+                         throw std::invalid_argument("Sparse Hamiltonian CSR indptr must be non-negative.");
+                     }
+                     host_indptr[idx] = static_cast<std::size_t>(indptr.data()[idx]);
+                 }
+                 return self.sparse_hamiltonian_moments(
+                     host_data,
+                     host_indices,
+                     host_indptr,
+                     shape.first,
+                     shape.second);
+             },
+             py::arg("data"),
+             py::arg("indices"),
+             py::arg("indptr"),
+             py::arg("shape"),
+             "Return (<H>, <H^2>) from a CSR sparse Hamiltonian without densifying it.")
         .def("num_qubits", &rocquantum::QuantumSimulator::num_qubits)
         // Legacy-style bindings
         .def("ApplyGate",
@@ -142,7 +177,40 @@ PYBIND11_MODULE(rocquantum_bind, m) {
         .def("GetExpectationPauliString",
              &rocquantum::QuantumSimulator::GetExpectationPauliString,
              py::arg("pauli_string"),
-             py::arg("targets"));
+             py::arg("targets"))
+        .def("SparseHamiltonianMoments",
+             [](const rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> data,
+                py::array_t<long long, py::array::c_style | py::array::forcecast> indices,
+                py::array_t<long long, py::array::c_style | py::array::forcecast> indptr,
+                const std::pair<std::size_t, std::size_t>& shape) {
+                 std::vector<std::complex<double>> host_data(static_cast<std::size_t>(data.size()));
+                 std::vector<std::size_t> host_indices(static_cast<std::size_t>(indices.size()));
+                 std::vector<std::size_t> host_indptr(static_cast<std::size_t>(indptr.size()));
+                 std::memcpy(host_data.data(), data.data(), host_data.size() * sizeof(std::complex<double>));
+                 for (std::size_t idx = 0; idx < host_indices.size(); ++idx) {
+                     if (indices.data()[idx] < 0) {
+                         throw std::invalid_argument("Sparse Hamiltonian CSR indices must be non-negative.");
+                     }
+                     host_indices[idx] = static_cast<std::size_t>(indices.data()[idx]);
+                 }
+                 for (std::size_t idx = 0; idx < host_indptr.size(); ++idx) {
+                     if (indptr.data()[idx] < 0) {
+                         throw std::invalid_argument("Sparse Hamiltonian CSR indptr must be non-negative.");
+                     }
+                     host_indptr[idx] = static_cast<std::size_t>(indptr.data()[idx]);
+                 }
+                 return self.SparseHamiltonianMoments(
+                     host_data,
+                     host_indices,
+                     host_indptr,
+                     shape.first,
+                     shape.second);
+             },
+             py::arg("data"),
+             py::arg("indices"),
+             py::arg("indptr"),
+             py::arg("shape"));
 
     // Historical alias for integrations/tests still referencing QSim
     m.attr("QSim") = m.attr("QuantumSimulator");

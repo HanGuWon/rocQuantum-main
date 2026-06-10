@@ -3,6 +3,7 @@
 #include <complex>
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "rocquantum/hipStateVec.h"
@@ -26,6 +27,12 @@ public:
     double expectation_value(const std::string& pauli, unsigned target);
     double expectation_pauli_string(const std::string& pauli_string,
                                     const std::vector<unsigned>& targets);
+    std::pair<std::complex<double>, std::complex<double>> sparse_hamiltonian_moments(
+        const std::vector<std::complex<double>>& data,
+        const std::vector<std::size_t>& indices,
+        const std::vector<std::size_t>& indptr,
+        std::size_t rows,
+        std::size_t cols) const;
     unsigned num_qubits() const noexcept;
 
     // Legacy API retained for compatibility with previous QSim bindings.
@@ -37,6 +44,12 @@ public:
     double GetExpectationValue(const std::string& pauli, int target_qubit);
     double GetExpectationPauliString(const std::string& pauli_string,
                                      const std::vector<unsigned>& targets);
+    std::pair<std::complex<double>, std::complex<double>> SparseHamiltonianMoments(
+        const std::vector<std::complex<double>>& data,
+        const std::vector<std::size_t>& indices,
+        const std::vector<std::size_t>& indptr,
+        std::size_t rows,
+        std::size_t cols) const;
 
 private:
     void ensure_valid_qubit(unsigned qubit) const;

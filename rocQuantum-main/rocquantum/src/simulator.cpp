@@ -455,6 +455,54 @@ double QuantumSimulator::expectation_pauli_string(const std::string& pauli_strin
     return result;
 }
 
+std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::sparse_hamiltonian_moments(
+    const std::vector<std::complex<double>>& data,
+    const std::vector<std::size_t>& indices,
+    const std::vector<std::size_t>& indptr,
+    std::size_t rows,
+    std::size_t cols) const {
+    if (rows != state_vec_size_ || cols != state_vec_size_) {
+        throw std::invalid_argument("Sparse Hamiltonian shape must match the simulator state dimension.");
+    }
+    if (indptr.size() != rows + 1) {
+        throw std::invalid_argument("Sparse Hamiltonian CSR indptr length must equal rows + 1.");
+    }
+    if (data.size() != indices.size()) {
+        throw std::invalid_argument("Sparse Hamiltonian CSR data and indices lengths must match.");
+    }
+    if (indptr.empty() || indptr.front() != 0 || indptr.back() != data.size()) {
+        throw std::invalid_argument("Sparse Hamiltonian CSR indptr must start at 0 and end at nnz.");
+    }
+    for (std::size_t row = 0; row < rows; ++row) {
+        if (indptr[row] > indptr[row + 1]) {
+            throw std::invalid_argument("Sparse Hamiltonian CSR indptr must be monotonic.");
+        }
+    }
+    for (const std::size_t col : indices) {
+        if (col >= cols) {
+            throw std::invalid_argument("Sparse Hamiltonian CSR column index is out of bounds.");
+        }
+    }
+
+    const std::vector<std::complex<double>> state = get_statevector();
+    std::vector<std::complex<double>> h_state(rows, std::complex<double>{0.0, 0.0});
+    for (std::size_t row = 0; row < rows; ++row) {
+        std::complex<double> accum{0.0, 0.0};
+        for (std::size_t offset = indptr[row]; offset < indptr[row + 1]; ++offset) {
+            accum += data[offset] * state[indices[offset]];
+        }
+        h_state[row] = accum;
+    }
+
+    std::complex<double> mean{0.0, 0.0};
+    std::complex<double> second_moment{0.0, 0.0};
+    for (std::size_t row = 0; row < rows; ++row) {
+        mean += std::conj(state[row]) * h_state[row];
+        second_moment += std::conj(h_state[row]) * h_state[row];
+    }
+    return {mean, second_moment};
+}
+
 unsigned QuantumSimulator::num_qubits() const noexcept {
     return num_qubits_;
 }
@@ -491,6 +539,15 @@ double QuantumSimulator::GetExpectationValue(const std::string& pauli, int targe
 double QuantumSimulator::GetExpectationPauliString(const std::string& pauli_string,
                                                    const std::vector<unsigned>& targets) {
     return expectation_pauli_string(pauli_string, targets);
+}
+
+std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::SparseHamiltonianMoments(
+    const std::vector<std::complex<double>>& data,
+    const std::vector<std::size_t>& indices,
+    const std::vector<std::size_t>& indptr,
+    std::size_t rows,
+    std::size_t cols) const {
+    return sparse_hamiltonian_moments(data, indices, indptr, rows, cols);
 }
 
 void QuantumSimulator::ensure_valid_qubit(unsigned qubit) const {
