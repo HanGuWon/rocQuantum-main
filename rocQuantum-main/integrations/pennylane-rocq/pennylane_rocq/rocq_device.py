@@ -926,7 +926,9 @@ class RocQDevice(QubitDevice):
                 return None
 
             params_by_op = [list(getattr(op, "parameters", [])) for op in ops]
-            if gate_name in {"RX", "RY", "RZ"} and all(len(params) == 1 for params in params_by_op):
+            if gate_name in {"RX", "RY", "RZ", "CRX", "CRY", "CRZ"} and all(
+                len(params) == 1 for params in params_by_op
+            ):
                 self._runtime.apply_operation_batch(gate_name, wire_indices, [params[0] for params in params_by_op])
                 continue
 

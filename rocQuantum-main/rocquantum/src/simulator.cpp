@@ -332,12 +332,24 @@ void QuantumSimulator::apply_gate_batch(const std::string& gate_name,
                                         const std::vector<unsigned>& targets,
                                         const std::vector<double>& params_by_batch) {
     const std::string normalized = normalize_gate_name(gate_name);
-    if (targets.size() != 1) {
-        throw std::invalid_argument("Batched RX/RY/RZ gates require exactly 1 target qubit.");
-    }
-    ensure_valid_qubit(targets[0]);
     if (params_by_batch.size() != batch_size_) {
         throw std::invalid_argument("Batched gate parameter count must equal batch_size.");
+    }
+
+    if (normalized == "RX" || normalized == "RY" || normalized == "RZ") {
+        if (targets.size() != 1) {
+            throw std::invalid_argument("Batched RX/RY/RZ gates require exactly 1 target qubit.");
+        }
+        ensure_valid_qubit(targets[0]);
+    } else if (normalized == "CRX" || normalized == "CRY" || normalized == "CRZ") {
+        if (targets.size() != 2) {
+            throw std::invalid_argument("Batched CRX/CRY/CRZ gates require control and target qubits.");
+        }
+        ensure_valid_qubit(targets[0]);
+        ensure_valid_qubit(targets[1]);
+        if (targets[0] == targets[1]) {
+            throw std::invalid_argument("Batched controlled rotation control and target must differ.");
+        }
     }
 
     if (normalized == "RX") {
@@ -368,6 +380,39 @@ void QuantumSimulator::apply_gate_batch(const std::string& gate_name,
                                        params_by_batch.data(),
                                        params_by_batch.size()),
                      "apply batched RZ");
+        return;
+    }
+    if (normalized == "CRX") {
+        check_status(rocsvApplyCRXBatch(sim_handle_,
+                                        device_state_vector_,
+                                        num_qubits_,
+                                        targets[0],
+                                        targets[1],
+                                        params_by_batch.data(),
+                                        params_by_batch.size()),
+                     "apply batched CRX");
+        return;
+    }
+    if (normalized == "CRY") {
+        check_status(rocsvApplyCRYBatch(sim_handle_,
+                                        device_state_vector_,
+                                        num_qubits_,
+                                        targets[0],
+                                        targets[1],
+                                        params_by_batch.data(),
+                                        params_by_batch.size()),
+                     "apply batched CRY");
+        return;
+    }
+    if (normalized == "CRZ") {
+        check_status(rocsvApplyCRZBatch(sim_handle_,
+                                        device_state_vector_,
+                                        num_qubits_,
+                                        targets[0],
+                                        targets[1],
+                                        params_by_batch.data(),
+                                        params_by_batch.size()),
+                     "apply batched CRZ");
         return;
     }
 

@@ -368,6 +368,27 @@ rocqStatus_t rocsvApplyCRY(rocsvHandle_t handle, rocComplex* d_state, unsigned n
 rocqStatus_t rocsvApplyCRZ(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, double theta);
 
 /**
+ * @brief Applies one Controlled-RX rotation per local batch state.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyCRXBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one Controlled-RY rotation per local batch state.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyCRYBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one Controlled-RZ rotation per local batch state.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyCRZBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
  * @brief Applies a multi-controlled X (Toffoli, etc.) gate.
  */
 rocqStatus_t rocsvApplyMultiControlledX(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, const unsigned* controlQubits, unsigned numControlQubits, unsigned targetQubit);

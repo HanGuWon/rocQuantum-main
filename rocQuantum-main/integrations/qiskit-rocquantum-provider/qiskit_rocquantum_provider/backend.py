@@ -882,7 +882,9 @@ class RocQuantumBackend(BackendV2):
                 ops.append(op)
                 params_by_circuit.append(normalize_params(op.params))
 
-            if reference_op.name in {"rx", "ry", "rz"} and all(len(params) == 1 for params in params_by_circuit):
+            if reference_op.name in {"rx", "ry", "rz", "crx", "cry", "crz"} and all(
+                len(params) == 1 for params in params_by_circuit
+            ):
                 self._runtime.apply_operation_batch(
                     reference_op.name,
                     q_indices,
