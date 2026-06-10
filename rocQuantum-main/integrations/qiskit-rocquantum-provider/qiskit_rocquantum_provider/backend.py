@@ -11,6 +11,9 @@ from qiskit.circuit import Measure
 from qiskit.circuit.library import (
     CXGate,
     CZGate,
+    CRXGate,
+    CRYGate,
+    CRZGate,
     HGate,
     IGate,
     RXGate,
@@ -41,6 +44,9 @@ def _instruction_target():
     target = Target()
     target.add_instruction(CXGate(), name="cx")
     target.add_instruction(CZGate(), name="cz")
+    target.add_instruction(CRXGate(0.0), name="crx")
+    target.add_instruction(CRYGate(0.0), name="cry")
+    target.add_instruction(CRZGate(0.0), name="crz")
     target.add_instruction(HGate(), name="h")
     target.add_instruction(IGate(), name="id")
     target.add_instruction(RXGate(0.0), name="rx")
@@ -111,7 +117,7 @@ class RocQuantumBackend(BackendV2):
                 measured_bits[c_index] = q_indices[0]
                 continue
 
-            matrix = op.to_matrix() if op.name in {"unitary"} else None
+            matrix = op.to_matrix() if op.name in {"crx", "cry", "crz", "unitary"} else None
             self._runtime.apply_operation(
                 op.name,
                 q_indices,

@@ -9,6 +9,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Fully Compliant `BackendV2` Interface**: A modern, robust, and maintainable provider implementation.
 - **Statevector Simulation**: Returns the pre-sampling statevector in the Qiskit `Result` data.
 - **Measurement Sampling**: Supports realistic measurement outcomes and provides a counts dictionary via `get_counts()`.
+- **Native Controlled Rotations**: Exposes Qiskit `crx`, `cry`, and `crz` target operations and dispatches them to rocQuantum native gates when the binding supports them.
 - **Automatic Discovery**: Once installed, Qiskit can automatically discover and list this provider's backends.
 - **Modern Job Contract**: `backend.run()` returns a synchronous Qiskit `Job` object whose `result()` method returns the `Result`.
 - **Primitive Factories**: `RocQuantumProvider.get_sampler()` returns Qiskit `BackendSamplerV2`, while `get_estimator()` returns a native rocQuantum `EstimatorV2` that evaluates Pauli observables without shot sampling.
@@ -34,6 +35,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 
 - Verified in adapter tests against Qiskit `2.4.1`.
 - The provider uses `BackendV2`, exposes `max_circuits`, and imports result model classes from both old and new Qiskit locations.
+- The target includes `crx`, `cry`, and `crz`; older bindings can still fall back through matrix application when available.
 - Qiskit sampler support is provided through `BackendSamplerV2`; estimator support defaults to `RocQuantumEstimator`, a native deterministic `EstimatorV2` over `QuantumSimulator.expectation_pauli_string()`. Pass `native=False` to `get_estimator()` to request Qiskit's generic `BackendEstimatorV2` wrapper.
 - Direct Pauli expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, and `(label, coeff)` term lists.
 - Aer-style `save_statevector` marker instructions are treated as no-op result annotations; `QuantumCircuit.save_statevector()` is not part of base Qiskit `2.4.1`.

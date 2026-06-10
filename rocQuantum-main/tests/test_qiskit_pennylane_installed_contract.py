@@ -158,6 +158,30 @@ def test_qiskit_backend_ignores_save_statevector_marker(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].ops == [("H", (0,), ())]
 
 
+def test_qiskit_backend_dispatches_controlled_rotations_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2)
+    circuit.crx(0.1, 0, 1)
+    circuit.cry(0.2, 0, 1)
+    circuit.crz(0.3, 0, 1)
+
+    assert {"crx", "cry", "crz"}.issubset(set(backend.target.operation_names))
+
+    backend.run(circuit, shots=1).result()
+
+    assert _FakeQuantumSimulator.instances[-1].ops == [
+        ("CRX", (0, 1), (0.1,)),
+        ("CRY", (0, 1), (0.2,)),
+        ("CRZ", (0, 1), (0.3,)),
+    ]
+
+
 def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -343,6 +367,35 @@ def test_pennylane_rot_dispatches_native_rotation_sequence(monkeypatch):
         ("RZ", (0,), (0.1,)),
         ("RY", (0,), (0.2,)),
         ("RZ", (0,), (0.3,)),
+    ]
+    assert sim.matrices == []
+
+
+def test_pennylane_controlled_rotations_dispatch_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.CRX(0.1, wires=[0, 1])
+        qml.CRY(0.2, wires=[0, 1])
+        qml.CRZ(0.3, wires=[0, 1])
+        return qml.expval(qml.PauliZ(0))
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops[:3] == [
+        ("CRX", (0, 1), (0.1,)),
+        ("CRY", (0, 1), (0.2,)),
+        ("CRZ", (0, 1), (0.3,)),
     ]
     assert sim.matrices == []
 

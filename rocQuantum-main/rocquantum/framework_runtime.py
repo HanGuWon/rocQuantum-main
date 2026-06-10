@@ -10,6 +10,9 @@ GATE_ALIASES = {
     "CNOT": "CNOT",
     "CX": "CNOT",
     "CZ": "CZ",
+    "CRX": "CRX",
+    "CRY": "CRY",
+    "CRZ": "CRZ",
     "H": "H",
     "HADAMARD": "H",
     "I": "I",
@@ -215,7 +218,11 @@ class RocQuantumRuntime:
                 if matrix is None:
                     raise
 
-        if matrix is not None and normalized_name in {"RX", "RY", "RZ", "UNITARY", "QUBITUNITARY"}:
+        if matrix is not None and normalized_name in {
+            "RX", "RY", "RZ",
+            "CRX", "CRY", "CRZ",
+            "UNITARY", "QUBITUNITARY",
+        }:
             self.apply_matrix(matrix, normalized_targets)
             return
 

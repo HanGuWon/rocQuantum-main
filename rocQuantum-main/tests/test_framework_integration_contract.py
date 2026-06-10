@@ -7,6 +7,7 @@ import unittest
 
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_FRAMEWORK_RUNTIME = os.path.join(_PROJECT_ROOT, "rocquantum", "framework_runtime.py")
 _PENNYLANE_ADAPTER = os.path.join(
     _PROJECT_ROOT,
     "integrations",
@@ -38,11 +39,20 @@ _QISKIT_ESTIMATOR = os.path.join(
 
 
 class TestFrameworkIntegrationContract(unittest.TestCase):
+    def test_shared_runtime_exposes_controlled_rotation_aliases(self):
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("\"CRX\": \"CRX\"", source)
+        self.assertIn("\"CRY\": \"CRY\"", source)
+        self.assertIn("\"CRZ\": \"CRZ\"", source)
+
     def test_pennylane_sampling_prefers_native_measure(self):
         with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
             source = f.read()
 
         self.assertIn("measure = getattr(self.sim, \"measure\", None)", source)
+        self.assertIn("NATIVE_PARAMETRIC_OPS = {\"RX\", \"RY\", \"RZ\", \"CRX\", \"CRY\", \"CRZ\"}", source)
         self.assertIn("raw_samples = self._runtime.measure(all_wires, int(self.shots))", source)
         self.assertIn("samples_to_binary_rows", source)
         self.assertIn("sample_rows_from_statevector", source, "legacy fallback should remain explicit")
