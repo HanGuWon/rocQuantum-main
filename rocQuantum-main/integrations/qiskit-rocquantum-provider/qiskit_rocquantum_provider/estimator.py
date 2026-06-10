@@ -227,6 +227,10 @@ class RocQuantumEstimator(BaseEstimatorV2):
         return PrimitiveResult(results, metadata={"version": 2})
 
     def _run_pub(self, pub):
+        batched_result = self._try_run_pub_batched_parameters(pub)
+        if batched_result is not None:
+            return batched_result
+
         evs = np.empty(pub.shape, dtype=float)
         stds = np.zeros(pub.shape, dtype=float)
         bound_circuits = np.asarray(pub.parameter_values.bind_all(pub.circuit), dtype=object)
@@ -263,5 +267,48 @@ class RocQuantumEstimator(BaseEstimatorV2):
                 "shots": 0,
                 "circuit_metadata": getattr(pub.circuit, "metadata", None) or {},
                 "native": True,
+            },
+        )
+
+    def _try_run_pub_batched_parameters(self, pub):
+        parameter_shape = pub.parameter_values.shape
+        if not parameter_shape or pub.observables.shape != ():
+            return None
+
+        bound_circuits = np.asarray(pub.parameter_values.bind_all(pub.circuit), dtype=object)
+        parameter_indices = list(np.ndindex(parameter_shape))
+        if len(parameter_indices) <= 1:
+            return None
+
+        circuits = [bound_circuits[index] for index in parameter_indices]
+        observable = pub.observables[()]
+        _, plan = _observable_plan(observable, int(pub.circuit.num_qubits))
+        kind, payload = plan
+        if kind != "pauli":
+            return None
+
+        try:
+            self._backend._apply_circuit_batch(circuits, include_global_phase=False)
+            values = _estimate_combined_observable_terms_batch(
+                self._backend._runtime,
+                payload,
+                int(pub.circuit.num_qubits),
+            )
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            return None
+
+        evs = np.empty(pub.shape, dtype=float)
+        stds = np.zeros(pub.shape, dtype=float)
+        for value_index, parameter_index in enumerate(parameter_indices):
+            evs[parameter_index] = values[value_index]
+
+        return PubResult(
+            DataBin(evs=evs, stds=stds, shape=pub.shape),
+            metadata={
+                "target_precision": pub.precision,
+                "shots": 0,
+                "circuit_metadata": getattr(pub.circuit, "metadata", None) or {},
+                "native": True,
+                "batched_parameters": True,
             },
         )

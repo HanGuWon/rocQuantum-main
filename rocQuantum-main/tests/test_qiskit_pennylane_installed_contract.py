@@ -24,16 +24,19 @@ class _FakeQuantumSimulator:
     enable_probabilities = False
     enable_matrix_expectation = False
 
-    def __init__(self, num_qubits):
+    def __init__(self, num_qubits, batch_size=1):
         self._num_qubits = int(num_qubits)
+        self._batch_size = int(batch_size)
         self._measured = False
         self.ops = []
+        self.batch_ops = []
         self.matrices = []
         self.controlled_matrices = []
         self.statevectors = []
         self.measurements = []
         self.total_measurements = []
         self.expectations = []
+        self.batch_expectations = []
         self.matrix_expectations = []
         self.probability_requests = []
         self.sparse_moments = []
@@ -46,11 +49,13 @@ class _FakeQuantumSimulator:
 
     def reset(self):
         self.ops.clear()
+        self.batch_ops.clear()
         self.matrices.clear()
         self.controlled_matrices.clear()
         self.statevectors.clear()
         self.measurements.clear()
         self.expectations.clear()
+        self.batch_expectations.clear()
         self.matrix_expectations.clear()
         self.probability_requests.clear()
         self.sparse_moments.clear()
@@ -61,9 +66,16 @@ class _FakeQuantumSimulator:
     def num_qubits(self):
         return self._num_qubits
 
+    def batch_size(self):
+        return self._batch_size
+
     def apply_gate(self, name, targets, params=None):
         self.total_gate_applications += 1
         self.ops.append((name, tuple(targets), tuple(params or ())))
+
+    def apply_gate_batch(self, name, targets, params_by_batch):
+        self.total_gate_applications += int(self._batch_size)
+        self.batch_ops.append((name, tuple(targets), tuple(float(param) for param in params_by_batch)))
 
     def apply_matrix(self, matrix, targets):
         self.total_matrix_applications += 1
@@ -156,6 +168,14 @@ class _FakeQuantumSimulator:
         if pauli_string == "XX" and tuple(targets) == (0, 1):
             return 0.25
         return 0.0
+
+    def expectation_pauli_string_batch(self, pauli_string, targets):
+        self.batch_expectations.append((pauli_string, tuple(targets)))
+        if pauli_string == "Z" and tuple(targets) == (0,):
+            return np.full(self._batch_size, 0.5, dtype=float)
+        if pauli_string == "X" and tuple(targets) == (0,):
+            return np.full(self._batch_size, 0.5, dtype=float)
+        return np.zeros(self._batch_size, dtype=float)
 
     def sparse_hamiltonian_moments(self, data, indices, indptr, shape):
         if not self.enable_sparse_moments:
@@ -1173,7 +1193,12 @@ def test_qiskit_native_estimator_binds_parameter_values(monkeypatch):
 
     np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
     np.testing.assert_allclose(result.data.stds, np.array([0.0, 0.0]))
-    assert _FakeQuantumSimulator.instances[-1].ops == [("RY", (0,), (0.2,))]
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == []
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,))]
 
 
 def test_qiskit_pauli_estimator_combines_batched_expectations(monkeypatch):

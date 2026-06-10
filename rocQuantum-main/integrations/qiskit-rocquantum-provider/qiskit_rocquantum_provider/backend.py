@@ -228,10 +228,12 @@ class RocQuantumBackend(BackendV2):
     def max_circuits(self):
         return None
 
-    def _ensure_simulator(self, num_qubits):
+    def _ensure_simulator(self, num_qubits, batch_size=1):
         """Create or reset the simulator if the qubit count changes."""
-        if self._runtime is None or self._num_qubits != num_qubits:
-            self._runtime = RocQuantumRuntime.from_bindings(num_qubits)
+        batch_size = int(batch_size)
+        runtime_batch_size = 1 if self._runtime is None else self._runtime.batch_size()
+        if self._runtime is None or self._num_qubits != num_qubits or runtime_batch_size != batch_size:
+            self._runtime = RocQuantumRuntime.from_bindings(num_qubits, batch_size=batch_size)
             self._num_qubits = num_qubits
         else:
             self._runtime.reset()
@@ -837,6 +839,69 @@ class RocQuantumBackend(BackendV2):
             touched_qubits.update(q_indices)
 
         return measured_bits
+
+    def _apply_circuit_batch(self, circuits, *, include_global_phase: bool = False):
+        circuits = list(circuits)
+        if not circuits:
+            raise ValueError("_apply_circuit_batch requires at least one circuit.")
+        if include_global_phase:
+            raise NotImplementedError("Batched Qiskit estimator execution does not preserve global phase yet.")
+
+        num_qubits = int(circuits[0].num_qubits)
+        instruction_count = len(circuits[0].data)
+        for circuit in circuits:
+            if int(circuit.num_qubits) != num_qubits or len(circuit.data) != instruction_count:
+                raise NotImplementedError("Batched Qiskit execution requires identical circuit structure.")
+            if self._has_runtime_reset(circuit):
+                raise NotImplementedError("Batched Qiskit execution does not support runtime reset.")
+
+        self._ensure_simulator(num_qubits, batch_size=len(circuits))
+
+        for position, reference_instruction in enumerate(circuits[0].data):
+            reference_op = reference_instruction.operation
+            if reference_op.name in {"barrier", "delay", "save_statevector"}:
+                continue
+            if reference_op.name in {"initialize", "reset", "measure", "state_preparation"}:
+                raise NotImplementedError(f"Batched Qiskit execution does not support {reference_op.name!r}.")
+            if reference_op.name in CONTROL_FLOW_OPS or getattr(reference_op, "blocks", None) is not None:
+                raise NotImplementedError("Batched Qiskit execution does not support control-flow operations.")
+            if _instruction_condition(reference_instruction) is not None:
+                raise NotImplementedError("Batched Qiskit execution does not support conditioned operations.")
+
+            q_indices = [circuits[0].find_bit(q).index for q in reference_instruction.qubits]
+            ops = []
+            params_by_circuit = []
+            for circuit in circuits:
+                instruction = circuit.data[position]
+                op = instruction.operation
+                current_q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
+                if op.name != reference_op.name or current_q_indices != q_indices:
+                    raise NotImplementedError("Batched Qiskit execution requires identical operation layout.")
+                if _instruction_condition(instruction) is not None:
+                    raise NotImplementedError("Batched Qiskit execution does not support conditioned operations.")
+                ops.append(op)
+                params_by_circuit.append(normalize_params(op.params))
+
+            if reference_op.name in {"rx", "ry", "rz"} and all(len(params) == 1 for params in params_by_circuit):
+                self._runtime.apply_operation_batch(
+                    reference_op.name,
+                    q_indices,
+                    [params[0] for params in params_by_circuit],
+                )
+                continue
+
+            first_params = params_by_circuit[0]
+            if any(params != first_params for params in params_by_circuit[1:]):
+                raise NotImplementedError(
+                    f"Batched Qiskit execution only supports varying RX/RY/RZ parameters, got {reference_op.name!r}."
+                )
+
+            matrix = _operation_matrix(reference_op)
+            if matrix is not None and reference_op.name in {"state_preparation", "unitary"}:
+                first_params = []
+            self._runtime.apply_operation(reference_op.name, q_indices, first_params, matrix=matrix)
+
+        return True
 
     @staticmethod
     def _requests_statevector(circuit):
