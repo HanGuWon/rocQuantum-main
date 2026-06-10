@@ -1199,6 +1199,11 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         ("MCX", (0, 1, 2), ()),
         ("MCX", (0, 1, 2), ()),
         ("CSWAP", (0, 1, 2), ()),
+        ("CNOT", (0, 2), ()),
+        ("CNOT", (1, 2), ()),
+        ("RZ", (2,), (0.4,)),
+        ("CNOT", (1, 2), ()),
+        ("CNOT", (0, 2), ()),
     ]
     assert [targets for _, targets in sim.matrices] == [
         (0, 1),
@@ -1207,7 +1212,6 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         (0, 1),
         (0, 1),
         (0, 1),
-        (0, 1, 2),
         (0, 1),
         (0, 1),
         (0, 1),
@@ -1218,6 +1222,60 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         (0, 1, 2, 3),
         (0, 1),
     ]
+
+
+def test_pennylane_multirz_dispatches_native_cnot_chain(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.MultiRZ(0.7, wires=[0, 1, 2])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("CNOT", (0, 2), ()),
+        ("CNOT", (1, 2), ()),
+        ("RZ", (2,), (0.7,)),
+        ("CNOT", (1, 2), ()),
+        ("CNOT", (0, 2), ()),
+    ]
+    assert sim.matrices == []
+
+
+def test_pennylane_paulirot_uses_native_multirz_decomposition(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.PauliRot(0.2, "XYZ", wires=[0, 1, 2])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert ("RZ", (2,), (0.2,)) in sim.ops
+    assert ("CNOT", (0, 2), ()) in sim.ops
+    assert ("CNOT", (1, 2), ()) in sim.ops
+    assert sim.matrices == []
 
 
 def test_pennylane_multicontrolledx_all_one_controls_dispatches_natively(monkeypatch):

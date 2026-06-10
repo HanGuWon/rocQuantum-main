@@ -88,6 +88,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("_native_mcx_wire_indices", source)
         self.assertIn("control_values", source)
         self.assertIn("_apply_native_or_matrix(self._runtime, \"MCX\"", source)
+        self.assertIn("def _apply_multirz", source)
+        self.assertIn("_apply_multirz(self._runtime, wire_indices, theta)", source)
         self.assertIn("def _shot_count", source)
         self.assertIn("shots = _shot_count(self.shots)", source)
         self.assertIn("raw_samples = self._runtime.measure(all_wires, shots)", source)

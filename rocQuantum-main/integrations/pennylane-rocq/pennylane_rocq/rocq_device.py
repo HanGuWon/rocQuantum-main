@@ -274,6 +274,22 @@ def _apply_native_or_matrix(runtime, native_name, wire_indices, op):
         )
 
 
+def _apply_multirz(runtime, wire_indices, theta):
+    if not wire_indices:
+        raise ValueError("MultiRZ requires at least one wire.")
+    if len(wire_indices) == 1:
+        runtime.apply_operation("RZ", [wire_indices[0]], [theta])
+        return
+
+    target = wire_indices[-1]
+    controls = list(wire_indices[:-1])
+    for control in controls:
+        runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation("RZ", [target], [theta])
+    for control in reversed(controls):
+        runtime.apply_operation("CNOT", [control, target])
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -422,6 +438,18 @@ class RocQDevice(QubitDevice):
                     )
                 else:
                     _apply_native_or_matrix(self._runtime, "MCX", native_wire_indices, op)
+                operation_applied = True
+            elif gate_name == "MultiRZ":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    _apply_multirz(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
                 operation_applied = True
             elif gate_name in MATRIX_OPS:
                 matrix = matrix_to_little_endian_wires(qml.matrix(op))
