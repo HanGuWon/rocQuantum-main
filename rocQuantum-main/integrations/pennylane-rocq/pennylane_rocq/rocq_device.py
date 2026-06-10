@@ -27,7 +27,12 @@ PENNYLANE_TO_ROCQ_GATES = {
 }
 
 NATIVE_PARAMETRIC_OPS = {"RX", "RY", "RZ", "CRX", "CRY", "CRZ"}
-MATRIX_OPS = {"QubitUnitary"}
+MATRIX_OPS = {
+    "QubitUnitary",
+    "PhaseShift", "ControlledPhaseShift", "CRot",
+    "IsingXX", "IsingYY", "IsingZZ", "IsingXY",
+    "Toffoli", "CSWAP",
+}
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
     "PauliX": "X",
@@ -173,7 +178,7 @@ class RocQDevice(QubitDevice):
     version = "0.1.0"
     pennylane_requires = ">=0.30"
 
-    operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | NATIVE_PARAMETRIC_OPS | {"QubitUnitary", "Rot"}
+    operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | NATIVE_PARAMETRIC_OPS | MATRIX_OPS | {"Rot"}
     observables = {
         "PauliX", "PauliY", "PauliZ", "Identity",
         "Counts", "State",

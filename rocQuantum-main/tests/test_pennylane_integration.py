@@ -54,6 +54,9 @@ class _FakeQSim:
     def ApplyGate(self, gate, *indices):
         self.applied_gates.append((gate, tuple(indices)))
 
+    def apply_matrix(self, matrix, targets):
+        self.applied_gates.append((np.asarray(matrix, dtype=np.complex128), tuple(targets)))
+
     def Execute(self):
         self.executed = True
 
@@ -154,6 +157,24 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
         np.testing.assert_allclose(matrix_call, matrix)
         self.assertTrue(qsim.executed)
         self.assertEqual(len(device.state), 4)
+
+    def test_apply_dispatches_common_matrix_fallback_ops(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0, 1], shots=5)
+
+        matrix = np.eye(4, dtype=np.complex128)
+        operations = [
+            _FakeOperation("ControlledPhaseShift", [0, 1], matrix=matrix),
+            _FakeOperation("IsingXX", [0, 1], matrix=matrix),
+            _FakeOperation("CRot", [0, 1], matrix=matrix),
+        ]
+
+        device.apply(operations)
+        qsim = _FakeQSim.instances[-1]
+
+        self.assertEqual([indices for _, indices in qsim.applied_gates], [(0, 1)] * 3)
+        for applied_matrix, _ in qsim.applied_gates:
+            np.testing.assert_allclose(applied_matrix, matrix)
 
     def test_unsupported_operation_raises(self):
         module = _load_device_module()

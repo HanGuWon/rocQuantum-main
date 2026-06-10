@@ -53,6 +53,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
 
         self.assertIn("measure = getattr(self.sim, \"measure\", None)", source)
         self.assertIn("NATIVE_PARAMETRIC_OPS = {\"RX\", \"RY\", \"RZ\", \"CRX\", \"CRY\", \"CRZ\"}", source)
+        self.assertIn("\"ControlledPhaseShift\", \"CRot\"", source)
+        self.assertIn("\"IsingXX\", \"IsingYY\", \"IsingZZ\", \"IsingXY\"", source)
         self.assertIn("raw_samples = self._runtime.measure(all_wires, int(self.shots))", source)
         self.assertIn("samples_to_binary_rows", source)
         self.assertIn("sample_rows_from_statevector", source, "legacy fallback should remain explicit")

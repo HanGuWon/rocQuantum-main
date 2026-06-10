@@ -425,6 +425,52 @@ def test_pennylane_controlled_rotations_dispatch_natively(monkeypatch):
     assert sim.matrices == []
 
 
+def test_pennylane_common_gates_use_matrix_fallback_without_decomposition(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.PhaseShift(0.1, wires=0)
+        qml.ControlledPhaseShift(0.2, wires=[0, 1])
+        qml.IsingXX(0.3, wires=[0, 1])
+        qml.IsingYY(0.4, wires=[0, 1])
+        qml.IsingZZ(0.5, wires=[0, 1])
+        qml.CRot(0.6, 0.7, 0.8, wires=[0, 1])
+        qml.Toffoli(wires=[0, 1, 2])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == []
+    assert [targets for _, targets in sim.matrices] == [
+        (0,),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1, 2),
+    ]
+    assert [matrix.shape for matrix, _ in sim.matrices] == [
+        (2, 2),
+        (4, 4),
+        (4, 4),
+        (4, 4),
+        (4, 4),
+        (4, 4),
+        (8, 8),
+    ]
+
+
 def test_pennylane_parameter_shift_gradient_pipeline_runs(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
