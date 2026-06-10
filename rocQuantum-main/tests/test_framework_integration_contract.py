@@ -78,6 +78,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             source = f.read()
 
         self.assertIn("qiskit_memory_from_samples", source)
+        self.assertIn("MATRIX_FALLBACK_OPS", source)
+        self.assertIn("Target(num_qubits=int(num_qubits))", source)
         self.assertIn("raw_samples = self._runtime.measure(qubits_to_measure, shots)", source)
         self.assertIn("formatted_counts = counts_from_memory(memory)", source)
         self.assertIn("return RocQuantumJob(self, job_id, result)", source)

@@ -9,6 +9,7 @@ except ImportError:
     from qiskit.result.models import ExperimentResult, ExperimentResultData
 from qiskit.circuit import Measure
 from qiskit.circuit.library import (
+    CPhaseGate,
     CXGate,
     CZGate,
     CRXGate,
@@ -19,10 +20,17 @@ from qiskit.circuit.library import (
     RXGate,
     RYGate,
     RZGate,
+    RXXGate,
+    RYYGate,
+    RZZGate,
     SGate,
     SdgGate,
+    SXGate,
+    SXdgGate,
     SwapGate,
     TGate,
+    PhaseGate,
+    UGate,
     UnitaryGate,
     XGate,
     YGate,
@@ -40,8 +48,16 @@ from .estimator import estimate_pauli_observable
 from .job import RocQuantumJob
 
 
-def _instruction_target():
-    target = Target()
+MATRIX_FALLBACK_OPS = {
+    "cp", "crx", "cry", "crz",
+    "p", "rxx", "ryy", "rzz",
+    "sx", "sxdg", "u", "unitary",
+}
+
+
+def _instruction_target(num_qubits):
+    target = Target(num_qubits=int(num_qubits))
+    target.add_instruction(CPhaseGate(0.0), name="cp")
     target.add_instruction(CXGate(), name="cx")
     target.add_instruction(CZGate(), name="cz")
     target.add_instruction(CRXGate(0.0), name="crx")
@@ -49,13 +65,20 @@ def _instruction_target():
     target.add_instruction(CRZGate(0.0), name="crz")
     target.add_instruction(HGate(), name="h")
     target.add_instruction(IGate(), name="id")
+    target.add_instruction(PhaseGate(0.0), name="p")
     target.add_instruction(RXGate(0.0), name="rx")
     target.add_instruction(RYGate(0.0), name="ry")
     target.add_instruction(RZGate(0.0), name="rz")
+    target.add_instruction(RXXGate(0.0), name="rxx")
+    target.add_instruction(RYYGate(0.0), name="ryy")
+    target.add_instruction(RZZGate(0.0), name="rzz")
     target.add_instruction(SGate(), name="s")
     target.add_instruction(SdgGate(), name="sdg")
+    target.add_instruction(SXGate(), name="sx")
+    target.add_instruction(SXdgGate(), name="sxdg")
     target.add_instruction(SwapGate(), name="swap")
     target.add_instruction(TGate(), name="t")
+    target.add_instruction(UGate(0.0, 0.0, 0.0), name="u")
     target.add_instruction(UnitaryGate([[1, 0], [0, 1]]), name="unitary")
     target.add_instruction(XGate(), name="x")
     target.add_instruction(YGate(), name="y")
@@ -70,6 +93,7 @@ class RocQuantumBackend(BackendV2):
     A Qiskit backend that interfaces with the rocQuantum C++/HIP simulator.
     """
     def __init__(self, provider=None, **kwargs):
+        max_target_qubits = int(kwargs.pop("max_target_qubits", 64))
         super().__init__(provider=provider, name="rocq_simulator", **kwargs)
 
         # The simulator is instantiated once and maintained for the lifetime of the backend
@@ -78,7 +102,7 @@ class RocQuantumBackend(BackendV2):
         self._runtime = None
         self._num_qubits = 0
 
-        self._target = _instruction_target()
+        self._target = _instruction_target(max_target_qubits)
 
     @classmethod
     def _default_options(cls):
@@ -117,7 +141,7 @@ class RocQuantumBackend(BackendV2):
                 measured_bits[c_index] = q_indices[0]
                 continue
 
-            matrix = op.to_matrix() if op.name in {"crx", "cry", "crz", "unitary"} else None
+            matrix = op.to_matrix() if op.name in MATRIX_FALLBACK_OPS else None
             self._runtime.apply_operation(
                 op.name,
                 q_indices,

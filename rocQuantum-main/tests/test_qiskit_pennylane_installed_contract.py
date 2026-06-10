@@ -182,6 +182,31 @@ def test_qiskit_backend_dispatches_controlled_rotations_natively(monkeypatch):
     ]
 
 
+def test_qiskit_target_supports_transpile_and_matrix_fallback_gates(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit, transpile
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2)
+    circuit.sx(0)
+    circuit.p(0.2, 0)
+    circuit.cp(0.3, 0, 1)
+    circuit.rzz(0.4, 0, 1)
+
+    assert backend.target.num_qubits >= 2
+    assert {"sx", "p", "cp", "rzz", "u"}.issubset(set(backend.target.operation_names))
+
+    transpiled = transpile(circuit, backend)
+    assert transpiled.num_qubits == 2
+
+    backend.run(circuit, shots=1).result()
+
+    assert len(_FakeQuantumSimulator.instances[-1].matrices) == 4
+
+
 def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

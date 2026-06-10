@@ -218,11 +218,7 @@ class RocQuantumRuntime:
                 if matrix is None:
                     raise
 
-        if matrix is not None and normalized_name in {
-            "RX", "RY", "RZ",
-            "CRX", "CRY", "CRZ",
-            "UNITARY", "QUBITUNITARY",
-        }:
+        if matrix is not None:
             self.apply_matrix(matrix, normalized_targets)
             return
 
