@@ -665,6 +665,47 @@ std::vector<long long> QuantumSimulator::measure(const std::vector<unsigned>& qu
     return out;
 }
 
+std::vector<long long> QuantumSimulator::measure_batch(const std::vector<unsigned>& qubits, int shots) {
+    if (shots < 0) {
+        throw std::invalid_argument("shots must be non-negative.");
+    }
+    if (qubits.empty()) {
+        throw std::invalid_argument("measure_batch requires at least one target qubit.");
+    }
+
+    std::unordered_set<unsigned> unique_qubits;
+    for (unsigned q : qubits) {
+        ensure_valid_qubit(q);
+        if (!unique_qubits.insert(q).second) {
+            throw std::invalid_argument("measure_batch qubits must be unique.");
+        }
+    }
+
+    const std::size_t shot_count = static_cast<std::size_t>(shots);
+    std::vector<long long> out(batch_size_ * shot_count, 0);
+    if (shots == 0) {
+        return out;
+    }
+
+    std::vector<uint64_t> sampled(shot_count, 0);
+    for (std::size_t batch_index = 0; batch_index < batch_size_; ++batch_index) {
+        rocComplex* batch_state = device_state_vector_ + batch_index * state_vec_size_;
+        check_status(rocsvSample(sim_handle_,
+                                 batch_state,
+                                 num_qubits_,
+                                 qubits.data(),
+                                 static_cast<unsigned>(qubits.size()),
+                                 static_cast<unsigned>(shots),
+                                 sampled.data()),
+                     "batch sampling");
+        const std::size_t offset = batch_index * shot_count;
+        for (std::size_t shot = 0; shot < shot_count; ++shot) {
+            out[offset + shot] = static_cast<long long>(sampled[shot]);
+        }
+    }
+    return out;
+}
+
 double QuantumSimulator::expectation_value(const std::string& pauli, unsigned target) {
     return expectation_pauli_string(pauli, {target});
 }
@@ -945,6 +986,10 @@ std::vector<double> QuantumSimulator::Probabilities(const std::vector<unsigned>&
 
 std::vector<double> QuantumSimulator::ProbabilitiesBatch(const std::vector<unsigned>& qubits) const {
     return probabilities_batch(qubits);
+}
+
+std::vector<long long> QuantumSimulator::MeasureBatch(const std::vector<unsigned>& qubits, int shots) {
+    return measure_batch(qubits, shots);
 }
 
 double QuantumSimulator::GetExpectationValue(const std::string& pauli, int target_qubit) {

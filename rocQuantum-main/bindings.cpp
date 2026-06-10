@@ -179,6 +179,18 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("qubits"),
              "Return batch-major normalized computational-basis probabilities for selected qubits.")
         .def("measure", &rocquantum::QuantumSimulator::measure, py::arg("qubits"), py::arg("shots"))
+        .def("measure_batch",
+             [](rocquantum::QuantumSimulator& self, const std::vector<unsigned>& qubits, int shots) {
+                 auto samples = self.measure_batch(qubits, shots);
+                 const auto batch = static_cast<py::ssize_t>(self.batch_size());
+                 const auto width = static_cast<py::ssize_t>(shots);
+                 py::array_t<long long> result({batch, width});
+                 std::memcpy(result.mutable_data(), samples.data(), samples.size() * sizeof(long long));
+                 return result;
+             },
+             py::arg("qubits"),
+             py::arg("shots"),
+             "Return batch-major sampled computational-basis outcomes for selected qubits.")
         .def("expectation_value",
              &rocquantum::QuantumSimulator::expectation_value,
              py::arg("pauli"),
@@ -355,6 +367,17 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                  return result;
              },
              py::arg("qubits"))
+        .def("MeasureBatch",
+             [](rocquantum::QuantumSimulator& self, const std::vector<unsigned>& qubits, int shots) {
+                 auto samples = self.MeasureBatch(qubits, shots);
+                 const auto batch = static_cast<py::ssize_t>(self.batch_size());
+                 const auto width = static_cast<py::ssize_t>(shots);
+                 py::array_t<long long> result({batch, width});
+                 std::memcpy(result.mutable_data(), samples.data(), samples.size() * sizeof(long long));
+                 return result;
+             },
+             py::arg("qubits"),
+             py::arg("shots"))
         .def("GetExpectationValue",
              &rocquantum::QuantumSimulator::GetExpectationValue,
              py::arg("pauli"),

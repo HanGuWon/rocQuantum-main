@@ -1243,6 +1243,30 @@ def test_runtime_measure_batch_falls_back_to_batch_probabilities():
     assert sim.probability_requests == [(0,)]
 
 
+def test_runtime_measure_batch_prefers_native_binding():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _NativeBatchMeasureSimulator:
+        def __init__(self):
+            self.calls = []
+
+        def batch_size(self):
+            return 2
+
+        def measure_batch(self, qubits, shots):
+            self.calls.append((tuple(qubits), int(shots)))
+            return np.array([[0, 1, 0], [1, 0, 1]], dtype=np.int64)
+
+    sim = _NativeBatchMeasureSimulator()
+    runtime = RocQuantumRuntime(sim)
+
+    np.testing.assert_array_equal(
+        runtime.measure_batch([0], 3),
+        np.array([[0, 1, 0], [1, 0, 1]], dtype=np.int64),
+    )
+    assert sim.calls == [((0,), 3)]
+
+
 def test_qiskit_native_estimator_binds_parameter_values(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

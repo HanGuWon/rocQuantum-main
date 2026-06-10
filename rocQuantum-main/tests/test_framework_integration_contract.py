@@ -194,10 +194,16 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
 
         self.assertIn("std::vector<double> probabilities", header)
         self.assertIn("std::vector<double> probabilities_batch", header)
+        self.assertIn("std::vector<long long> measure_batch", header)
         self.assertIn("std::vector<double> Probabilities", header)
         self.assertIn("std::vector<double> ProbabilitiesBatch", header)
+        self.assertIn("std::vector<long long> MeasureBatch", header)
         self.assertIn("QuantumSimulator::probabilities", implementation)
         self.assertIn("QuantumSimulator::probabilities_batch", implementation)
+        self.assertIn("QuantumSimulator::measure_batch", implementation)
+        self.assertIn("device_state_vector_ + batch_index * state_vec_size_", implementation)
+        self.assertIn("rocsvSample(sim_handle_", implementation)
+        self.assertIn("QuantumSimulator::MeasureBatch", implementation)
         self.assertIn("rocsvProbabilities", implementation)
         self.assertIn("rocsvProbabilitiesBatch", implementation)
         self.assertIn("rocsvProbabilities", hip_header)
@@ -212,11 +218,14 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("return compute_distributed_sample_probabilities", hip_source)
         self.assertIn(".def(\"probabilities\"", bindings)
         self.assertIn(".def(\"probabilities_batch\"", bindings)
+        self.assertIn(".def(\"measure_batch\"", bindings)
         self.assertIn(".def(\"Probabilities\"", bindings)
         self.assertIn(".def(\"ProbabilitiesBatch\"", bindings)
+        self.assertIn(".def(\"MeasureBatch\"", bindings)
         self.assertIn("m.def(\"probabilities\"", low_level_bindings)
         self.assertIn("_native_probabilities_unavailable", runtime)
         self.assertIn("def probabilities_batch", runtime)
+        self.assertIn("def measure_batch", runtime)
 
     def test_public_simulator_exposes_controlled_matrix_application(self):
         with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
