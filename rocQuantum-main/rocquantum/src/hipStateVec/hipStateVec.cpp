@@ -2218,14 +2218,42 @@ inline rocqStatus_t distributed_expectation_with_fallback(rocsvInternalHandle* h
     return distributed_expectation_host_fallback(handle, numQubits, targets, fallback_pauli, result);
 }
 
-inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
-                                            unsigned numQubits,
-                                            const std::vector<unsigned>& measured,
-                                            unsigned numShots,
-                                            uint64_t* h_results) {
-    if (!handle || measured.empty() || !h_results) {
+inline rocqStatus_t free_distributed_probability_buffers(rocsvInternalHandle* handle,
+                                                         const std::vector<double*>& rank_probs) {
+    if (!handle) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
+
+    rocqStatus_t first_status = ROCQ_STATUS_SUCCESS;
+    const int ranks = handle->distributedGpuCount;
+    for (int rank = 0; rank < ranks && static_cast<size_t>(rank) < rank_probs.size(); ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        if (!rank_probs[idx]) {
+            continue;
+        }
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            if (first_status == ROCQ_STATUS_SUCCESS) {
+                first_status = ROCQ_STATUS_HIP_ERROR;
+            }
+            continue;
+        }
+        rocqStatus_t status = device_free(handle, rank_probs[idx]);
+        if (first_status == ROCQ_STATUS_SUCCESS && status != ROCQ_STATUS_SUCCESS) {
+            first_status = status;
+        }
+    }
+    return first_status;
+}
+
+inline rocqStatus_t accumulate_distributed_sample_probabilities_rccl(
+    rocsvInternalHandle* handle,
+    unsigned numQubits,
+    const std::vector<unsigned>& measured,
+    std::vector<double*>* rank_probs_out) {
+    if (!handle || measured.empty() || !rank_probs_out) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    rank_probs_out->clear();
     if (!distributed_rccl_ready(handle)) {
         return ROCQ_STATUS_NOT_IMPLEMENTED;
     }
@@ -2233,6 +2261,9 @@ inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
         return ROCQ_STATUS_INVALID_VALUE;
     }
     if (!distributed_all_qubits_local(handle, measured)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (measured.size() >= static_cast<size_t>(sizeof(size_t) * 8)) {
         return ROCQ_STATUS_NOT_IMPLEMENTED;
     }
 
@@ -2244,8 +2275,7 @@ inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
     const int blocks = compute_reduction_blocks(local_elements, threads_per_block);
 
     std::vector<unsigned*> rank_measured(rank_count, nullptr);
-    std::vector<double*> rank_probs(rank_count, nullptr);
-    uint64_t* d_results = nullptr;
+    rank_probs_out->assign(rank_count, nullptr);
 
     auto cleanup = [&]() {
         for (int rank = 0; rank < ranks; ++rank) {
@@ -2253,16 +2283,13 @@ inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
             if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
                 continue;
             }
-            if (rank_probs[idx]) {
-                (void)device_free(handle, rank_probs[idx]);
+            if ((*rank_probs_out)[idx]) {
+                (void)device_free(handle, (*rank_probs_out)[idx]);
+                (*rank_probs_out)[idx] = nullptr;
             }
             if (rank_measured[idx]) {
                 (void)device_free(handle, rank_measured[idx]);
-            }
-        }
-        if (d_results) {
-            if (hipSetDevice(handle->distributedDeviceIds[0]) == hipSuccess) {
-                (void)device_free(handle, d_results);
+                rank_measured[idx] = nullptr;
             }
         }
     };
@@ -2297,8 +2324,8 @@ inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
             cleanup();
             return status;
         }
-        rank_probs[idx] = static_cast<double*>(probs_void);
-        if (hipMemsetAsync(rank_probs[idx], 0, num_outcomes * sizeof(double), stream) != hipSuccess) {
+        (*rank_probs_out)[idx] = static_cast<double*>(probs_void);
+        if (hipMemsetAsync((*rank_probs_out)[idx], 0, num_outcomes * sizeof(double), stream) != hipSuccess) {
             cleanup();
             return ROCQ_STATUS_HIP_ERROR;
         }
@@ -2312,7 +2339,7 @@ inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
                            local_elements,
                            rank_measured[idx],
                            static_cast<unsigned>(measured.size()),
-                           rank_probs[idx]);
+                           (*rank_probs_out)[idx]);
         status = check_last_hip_error();
         if (status != ROCQ_STATUS_SUCCESS) {
             cleanup();
@@ -2320,7 +2347,7 @@ inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
         }
     }
 
-    rocqStatus_t status = rccl_allreduce_double_sum_inplace(handle, rank_probs, num_outcomes);
+    rocqStatus_t status = rccl_allreduce_double_sum_inplace(handle, *rank_probs_out, num_outcomes);
     if (status != ROCQ_STATUS_SUCCESS) {
         cleanup();
         return status;
@@ -2331,6 +2358,63 @@ inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
         cleanup();
         return status;
     }
+
+    rocqStatus_t first_free_status = ROCQ_STATUS_SUCCESS;
+    for (int rank = 0; rank < ranks; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            if (first_free_status == ROCQ_STATUS_SUCCESS) {
+                first_free_status = ROCQ_STATUS_HIP_ERROR;
+            }
+            continue;
+        }
+        if (rank_measured[idx]) {
+            rocqStatus_t free_status = device_free(handle, rank_measured[idx]);
+            rank_measured[idx] = nullptr;
+            if (first_free_status == ROCQ_STATUS_SUCCESS && free_status != ROCQ_STATUS_SUCCESS) {
+                first_free_status = free_status;
+            }
+        }
+    }
+    if (first_free_status != ROCQ_STATUS_SUCCESS) {
+        (void)free_distributed_probability_buffers(handle, *rank_probs_out);
+        rank_probs_out->assign(rank_count, nullptr);
+        return first_free_status;
+    }
+
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
+                                            unsigned numQubits,
+                                            const std::vector<unsigned>& measured,
+                                            unsigned numShots,
+                                            uint64_t* h_results) {
+    if (!handle || measured.empty() || !h_results) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (numShots == 0) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    std::vector<double*> rank_probs;
+    rocqStatus_t status = accumulate_distributed_sample_probabilities_rccl(
+        handle, numQubits, measured, &rank_probs);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    const size_t num_outcomes = size_t{1} << measured.size();
+    uint64_t* d_results = nullptr;
+
+    auto cleanup = [&]() {
+        (void)free_distributed_probability_buffers(handle, rank_probs);
+        if (d_results) {
+            if (hipSetDevice(handle->distributedDeviceIds[0]) == hipSuccess) {
+                (void)device_free(handle, d_results);
+            }
+        }
+    };
 
     if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
         cleanup();
@@ -2377,6 +2461,7 @@ inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
     d_results = static_cast<uint64_t*>(d_results_void);
 
     const unsigned long long seed = handle->rng();
+    constexpr int threads_per_block = 256;
     const int sample_blocks = compute_reduction_blocks(static_cast<size_t>(numShots), threads_per_block);
     hipLaunchKernelGGL(sample_from_cdf_kernel,
                        dim3(sample_blocks),
@@ -2604,6 +2689,41 @@ inline rocqStatus_t compute_local_sample_probabilities(rocsvInternalHandle* hand
     }
     if (measured_free_status != ROCQ_STATUS_SUCCESS) {
         return measured_free_status;
+    }
+    return normalize_host_probabilities(h_probabilities, num_outcomes);
+}
+
+inline rocqStatus_t compute_distributed_sample_probabilities(rocsvInternalHandle* handle,
+                                                             unsigned numQubits,
+                                                             const std::vector<unsigned>& measured,
+                                                             double* h_probabilities) {
+    if (!h_probabilities) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<double*> rank_probs;
+    rocqStatus_t status = accumulate_distributed_sample_probabilities_rccl(
+        handle, numQubits, measured, &rank_probs);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        (void)free_distributed_probability_buffers(handle, rank_probs);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    const size_t num_outcomes = size_t{1} << measured.size();
+    status = copy_device_to_host(h_probabilities,
+                                 rank_probs[0],
+                                 num_outcomes * sizeof(double),
+                                 handle->distributedStreams[0]);
+    rocqStatus_t free_status = free_distributed_probability_buffers(handle, rank_probs);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    if (free_status != ROCQ_STATUS_SUCCESS) {
+        return free_status;
     }
     return normalize_host_probabilities(h_probabilities, num_outcomes);
 }
@@ -4690,7 +4810,7 @@ rocqStatus_t rocsvProbabilities(rocsvHandle_t handle,
         return status;
     }
     if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        return compute_distributed_sample_probabilities(handle, numQubits, measured, h_probabilities);
     }
 
     rocComplex* state = resolve_state_pointer(handle, d_state);

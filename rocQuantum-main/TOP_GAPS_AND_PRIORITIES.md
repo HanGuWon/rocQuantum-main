@@ -5,7 +5,7 @@ Audit date: 2026-04-05
 ## Top 10 Gaps
 
 1. `compile_and_execute()` now has a narrow qalloc/H/X/Y/Z/CNOT/RX/RY/RZ execution MVP, but bindings and docs must keep it from reading as full compiler/runtime parity.
-2. Multi-GPU support is partial and ambiguous: real scaffolding exists, non-local single/control/CNOT/CZ/generic matrix paths now have explicit slow/debug host fallback, and local-domain expectation/sampling reductions have an optional RCCL fast path, but many distributed paths still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
+2. Multi-GPU support is partial and ambiguous: real scaffolding exists, non-local single/control/CNOT/CZ/generic matrix paths now have explicit slow/debug host fallback, and local-domain expectation/sampling/probability reductions have an optional RCCL fast path, but many distributed paths still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
 3. Native expectation kernels exist in `hipStateVec`, and canonical `rocq.observe()` / `rocq.operator.get_expectation_value()` plus legacy `python/rocq` Pauli expectation paths now reach native helpers, but the user-facing API story is still split across two Python surfaces.
 4. The repo contains two divergent Python stacks, `rocq` and `python/rocq`, without one canonical runtime/compiler story.
 5. Packaging and build surfaces are closer but still not one releasable product: root CMake now activates the `_rocq_hip_backend` owner in `python/rocq`, while `pyproject.toml`, compatibility `setup.py` files, and the canonical/legacy Python surfaces still need consolidation.

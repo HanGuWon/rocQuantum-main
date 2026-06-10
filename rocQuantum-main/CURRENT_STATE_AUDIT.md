@@ -16,7 +16,7 @@ Audit refresh note (2026-06-10):
 - GateFusion is wired opportunistically into canonical `rocq.backends.StateVectorBackend` and legacy `python/rocq.Circuit.flush()` for supported CNOT-adjacent spans; broader fusion patterns remain missing.
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is no longer a hard stub for the current MVP subset: qalloc, H/X/Y/Z, CNOT, RX/RY/RZ.
 - Qiskit and PennyLane adapters now avoid several avoidable full statevector readbacks: Qiskit `backend.run()` defaults to sampling without state output, Qiskit Estimator reuses a bound circuit across observable batches and caches canonical duplicate observables, PennyLane finite-shot measurements use native `measure()` where available, and PennyLane analytic Pauli/Hadamard/Projector/Hamiltonian expectations skip diagonalizing rotations and use native Pauli-string expectations where they can be represented as Pauli terms.
-- PennyLane analytic `qml.probs()` now reaches a shared `QuantumSimulator.probabilities()` runtime hook backed by `rocsvProbabilities` when native bindings are available, while keeping the cached statevector fallback for unsupported targets and legacy builds.
+- PennyLane analytic `qml.probs()` now reaches a shared `QuantumSimulator.probabilities()` runtime hook backed by `rocsvProbabilities` when native bindings are available, while keeping the cached statevector fallback for unsupported targets and legacy builds. Local-domain distributed probability requests can share the RCCL outcome-probability reduction used by distributed sampling.
 - Public simulator and framework paths now expose native `MCX` / `CSWAP` dispatch for Qiskit `ccx` / `mcx` / `cswap` and PennyLane `MultiControlledX` / `Toffoli` / `CSWAP`; non-default PennyLane `control_values` use exact `X`-flip plus native-`MCX` decomposition instead of dense matrix fallback.
 - `QuantumSimulator.set_statevector()` is exposed through the Python binding, and Qiskit/PennyLane full-wire initial state preparation now uses native statevector upload instead of state-preparation matrix fallback.
 - Qiskit `ch` / `cy` / `ccz` / `dcx` and PennyLane `qml.CH` / `qml.CY` / `qml.CCZ` now use exact native controlled-Pauli decompositions instead of dense matrix dispatch.
@@ -130,7 +130,7 @@ What is not real today:
 - Distributed handles, allocation, distributed metadata, and some local-domain distributed operations exist.
 - Many distributed operations still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
 - Non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix operations can use an explicit correctness-first host fallback with `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
-- When RCCL is found at build time, local-domain distributed Pauli expectation and sampling probability reductions can use RCCL `AllReduce(sum)` instead of gathering the full state to host.
+- When RCCL is found at build time, local-domain distributed Pauli expectation, sampling, and probability-vector reductions can use RCCL `AllReduce(sum)` instead of gathering the full state to host.
 - `MULTI_GPU_GUIDE.md` overclaimed implemented RCCL behavior relative to the actual code path.
 
 ### High-level expectations

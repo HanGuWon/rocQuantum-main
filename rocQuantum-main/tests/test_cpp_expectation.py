@@ -64,6 +64,8 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
         self.assertIn("rocsvProbabilities", header)
         self.assertRegex(source, r"rocqStatus_t\s+rocsvProbabilities\s*\(")
         self.assertIn("accumulate_local_sample_probabilities", source)
+        self.assertIn("accumulate_distributed_sample_probabilities_rccl", source)
+        self.assertIn("compute_distributed_sample_probabilities", source)
         self.assertIn("std::vector<double> probabilities", simulator_header)
         self.assertIn(".def(\"probabilities\"", bindings)
 
