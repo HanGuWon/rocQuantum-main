@@ -292,6 +292,25 @@ def _shot_count(shots):
     return int(shots)
 
 
+def _has_partitioned_shots(shots):
+    return bool(getattr(shots, "has_partitioned_shots", False))
+
+
+def _sample_result_from_rows(rows):
+    rows = np.asarray(rows, dtype=int)
+    if rows.ndim == 2 and rows.shape[1] == 1:
+        return rows[:, 0]
+    return rows
+
+
+def _counts_result_from_rows(rows):
+    counts = {}
+    for row in np.asarray(rows, dtype=int):
+        key = "".join(str(int(bit)) for bit in np.asarray(row).reshape(-1))
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def _basis_state_bits(op, num_wires):
     if not getattr(op, "parameters", None):
         raise ValueError("BasisState requires a computational basis vector.")
@@ -892,7 +911,7 @@ class RocQDevice(QubitDevice):
         return super().batch_execute(circuits, **kwargs)
 
     def _try_execute_batched_parameter_circuits(self, circuits):
-        if len(circuits) <= 1 or self.shots is not None:
+        if len(circuits) <= 1:
             return None
 
         reference_ops = list(getattr(circuits[0], "operations", ()))
@@ -901,7 +920,13 @@ class RocQDevice(QubitDevice):
             return None
 
         measurement_name = reference_measurements[0].__class__.__name__
-        if measurement_name not in {"ExpectationMP", "ProbabilityMP"}:
+        finite_shots = self.shots is not None
+        if finite_shots:
+            if _has_partitioned_shots(self.shots) or measurement_name not in {"SampleMP", "CountsMP"}:
+                return None
+            if measurement_name == "CountsMP" and getattr(reference_measurements[0], "all_outcomes", False):
+                return None
+        elif measurement_name not in {"ExpectationMP", "ProbabilityMP"}:
             return None
 
         reference_signature = None
@@ -926,6 +951,8 @@ class RocQDevice(QubitDevice):
                 if terms is None or _combine_pauli_terms(terms) != reference_signature:
                     return None
             elif tuple(measurements[0].wires) != reference_probability_wires:
+                return None
+            if measurement_name == "CountsMP" and getattr(measurements[0], "all_outcomes", False):
                 return None
 
         self.reset(batch_size=len(circuits))
@@ -957,6 +984,23 @@ class RocQDevice(QubitDevice):
         if measurement_name == "ExpectationMP":
             values = _evaluate_pauli_terms_batch(self._runtime, reference_signature)
             return tuple(_real_measurement_result(value, "ExpectationMP") for value in values)
+
+        if measurement_name in {"SampleMP", "CountsMP"}:
+            shots = _shot_count(self.shots)
+            measure_targets = (
+                list(range(len(self.wires)))
+                if not reference_probability_wires
+                else [self.wire_map[wire] for wire in reference_probability_wires]
+            )
+            raw_samples_batch = self._runtime.measure_batch(measure_targets, shots)
+            results = []
+            for raw_samples in raw_samples_batch:
+                rows = samples_to_binary_rows(raw_samples, len(measure_targets))
+                if measurement_name == "SampleMP":
+                    results.append(_sample_result_from_rows(rows))
+                else:
+                    results.append(_counts_result_from_rows(rows))
+            return results
 
         probability_targets = (
             None
