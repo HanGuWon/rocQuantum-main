@@ -27,6 +27,40 @@ PENNYLANE_TO_ROCQ_GATES = {
 }
 
 PARAMETRIC_OR_MATRIX_OPS = {"RX", "RY", "RZ", "QubitUnitary"}
+PENNYLANE_PAULI_TO_CHAR = {
+    "Identity": "I",
+    "PauliX": "X",
+    "PauliY": "Y",
+    "PauliZ": "Z",
+}
+
+
+def _pauli_string_from_observable(observable, wire_map):
+    if observable.name in PENNYLANE_PAULI_TO_CHAR:
+        if observable.name == "Identity":
+            return "", []
+        if len(observable.wires) != 1:
+            return None
+        return PENNYLANE_PAULI_TO_CHAR[observable.name], [wire_map[observable.wires[0]]]
+
+    if observable.name != "Prod":
+        return None
+
+    paulis = []
+    targets = []
+    seen_targets = set()
+    for operand in getattr(observable, "operands", ()):
+        term = _pauli_string_from_observable(operand, wire_map)
+        if term is None:
+            return None
+        operand_paulis, operand_targets = term
+        for pauli, target in zip(operand_paulis, operand_targets):
+            if target in seen_targets:
+                return None
+            seen_targets.add(target)
+            paulis.append(pauli)
+            targets.append(target)
+    return "".join(paulis), targets
 
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
@@ -104,6 +138,19 @@ class RocQDevice(QubitDevice):
             return samples_to_binary_rows(raw_samples, len(all_wires))
 
         return sample_rows_from_statevector(self._state, int(self.shots))
+
+    def expval(self, observable, shot_range=None, bin_size=None):
+        if self.shots is not None or shot_range is not None or bin_size is not None:
+            return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
+
+        term = _pauli_string_from_observable(observable, self.wire_map)
+        if term is None:
+            return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
+
+        pauli_string, targets = term
+        if not targets:
+            return 1.0
+        return self._runtime.expectation_pauli_string(pauli_string, targets)
 
     def analytic_probability(self, wires=None):
         if self._state is None: return None

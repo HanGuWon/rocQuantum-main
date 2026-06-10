@@ -80,6 +80,16 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                  return result;
              })
         .def("measure", &rocquantum::QuantumSimulator::measure, py::arg("qubits"), py::arg("shots"))
+        .def("expectation_value",
+             &rocquantum::QuantumSimulator::expectation_value,
+             py::arg("pauli"),
+             py::arg("target"),
+             "Return <P_target> for a single Pauli observable.")
+        .def("expectation_pauli_string",
+             &rocquantum::QuantumSimulator::expectation_pauli_string,
+             py::arg("pauli_string"),
+             py::arg("targets"),
+             "Return a non-destructive Pauli-string expectation value.")
         .def("num_qubits", &rocquantum::QuantumSimulator::num_qubits)
         // Legacy-style bindings
         .def("ApplyGate",
@@ -115,7 +125,15 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                  py::array_t<std::complex<double>> result(state.size());
                  std::memcpy(result.mutable_data(), state.data(), state.size() * sizeof(std::complex<double>));
                  return result;
-             });
+             })
+        .def("GetExpectationValue",
+             &rocquantum::QuantumSimulator::GetExpectationValue,
+             py::arg("pauli"),
+             py::arg("target_qubit"))
+        .def("GetExpectationPauliString",
+             &rocquantum::QuantumSimulator::GetExpectationPauliString,
+             py::arg("pauli_string"),
+             py::arg("targets"));
 
     // Historical alias for integrations/tests still referencing QSim
     m.attr("QSim") = m.attr("QuantumSimulator");

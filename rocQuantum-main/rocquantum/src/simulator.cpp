@@ -354,6 +354,47 @@ std::vector<long long> QuantumSimulator::measure(const std::vector<unsigned>& qu
     return out;
 }
 
+double QuantumSimulator::expectation_value(const std::string& pauli, unsigned target) {
+    return expectation_pauli_string(pauli, {target});
+}
+
+double QuantumSimulator::expectation_pauli_string(const std::string& pauli_string,
+                                                  const std::vector<unsigned>& targets) {
+    if (pauli_string.size() != targets.size()) {
+        throw std::invalid_argument("Pauli string length must match target qubit count.");
+    }
+    if (targets.empty()) {
+        return 1.0;
+    }
+
+    std::string normalized;
+    normalized.reserve(pauli_string.size());
+    std::unordered_set<unsigned> unique_qubits;
+    for (std::size_t idx = 0; idx < targets.size(); ++idx) {
+        ensure_valid_qubit(targets[idx]);
+        if (!unique_qubits.insert(targets[idx]).second) {
+            throw std::invalid_argument("Pauli expectation targets must be unique.");
+        }
+
+        const char pauli = static_cast<char>(std::toupper(static_cast<unsigned char>(pauli_string[idx])));
+        if (pauli != 'I' && pauli != 'X' && pauli != 'Y' && pauli != 'Z') {
+            throw std::invalid_argument("Pauli string may only contain I, X, Y, or Z.");
+        }
+        normalized.push_back(pauli);
+    }
+
+    double result = 0.0;
+    check_status(rocsvGetExpectationPauliString(sim_handle_,
+                                                device_state_vector_,
+                                                num_qubits_,
+                                                normalized.c_str(),
+                                                targets.data(),
+                                                static_cast<unsigned>(targets.size()),
+                                                &result),
+                 "Pauli-string expectation");
+    return result;
+}
+
 unsigned QuantumSimulator::num_qubits() const noexcept {
     return num_qubits_;
 }
@@ -378,6 +419,18 @@ void QuantumSimulator::Execute() {
 
 std::vector<std::complex<double>> QuantumSimulator::GetStateVector() const {
     return get_statevector();
+}
+
+double QuantumSimulator::GetExpectationValue(const std::string& pauli, int target_qubit) {
+    if (target_qubit < 0) {
+        throw std::out_of_range("Qubit index out of bounds for simulator instance.");
+    }
+    return expectation_value(pauli, static_cast<unsigned>(target_qubit));
+}
+
+double QuantumSimulator::GetExpectationPauliString(const std::string& pauli_string,
+                                                   const std::vector<unsigned>& targets) {
+    return expectation_pauli_string(pauli_string, targets);
 }
 
 void QuantumSimulator::ensure_valid_qubit(unsigned qubit) const {

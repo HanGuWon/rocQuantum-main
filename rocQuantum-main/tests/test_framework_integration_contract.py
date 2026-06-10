@@ -39,6 +39,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("raw_samples = self._runtime.measure(all_wires, int(self.shots))", source)
         self.assertIn("samples_to_binary_rows", source)
         self.assertIn("sample_rows_from_statevector", source, "legacy fallback should remain explicit")
+        self.assertIn("def expval", source)
+        self.assertIn("expectation_pauli_string", source)
 
     def test_cirq_sampling_prefers_native_measure(self):
         with open(_CIRQ_ADAPTER, "r", encoding="utf-8") as f:

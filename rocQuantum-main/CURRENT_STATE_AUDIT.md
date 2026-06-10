@@ -122,7 +122,7 @@ What is not real today:
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` rejects unsupported ops with diagnostics outside the MVP subset.
 - Compiler-driven execution parity with CUDA-Q is absent.
 - Mid-circuit measurement plus classical control flow is absent as a coherent supported feature.
-- Public `QuantumSimulator` expectation APIs are absent.
+- Public `QuantumSimulator` now exposes Pauli expectation helpers through `expectation_value()` and `expectation_pauli_string()`, with root pybind coverage for framework adapters.
 - Public `QuantumSimulator` named APIs for `MCX`, `CSWAP`, and generic controlled unitary are absent.
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling is not yet a GPU-fast path; it copies probability information to host before drawing shots.

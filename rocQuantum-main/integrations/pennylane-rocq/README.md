@@ -31,8 +31,8 @@ PennyLane will automatically discover the `lightning.rocq`, `lightning.rocm`, `r
 
 - Verified in adapter tests against PennyLane `0.45.0`.
 - The package can be imported before `rocquantum_bind` is present; device creation raises a clear binding-install error.
-- `lightning.rocq` / `lightning.rocm` are compatibility entry points intended to mirror the user experience of PennyLane Lightning devices on AMD GPUs. They currently share the rocQuantum `QubitDevice` adapter; full Lightning.GPU parity still requires native adjoint differentiation, broader observable support, batching, and ROCm E2E performance validation.
-- The current device is a legacy `QubitDevice` adapter behind PennyLane's compatibility facade. It exposes `qml.state()`, native sampling through `QuantumSimulator.measure()`, and statevector sampling fallback for older bindings.
+- `lightning.rocq` / `lightning.rocm` are compatibility entry points intended to mirror the user experience of PennyLane Lightning devices on AMD GPUs. They currently share the rocQuantum `QubitDevice` adapter; full Lightning.GPU parity still requires native adjoint differentiation, batching, and ROCm E2E performance validation.
+- The current device is a legacy `QubitDevice` adapter behind PennyLane's compatibility facade. It exposes `qml.state()`, native sampling through `QuantumSimulator.measure()`, native analytic Pauli expectation through `QuantumSimulator.expectation_pauli_string()`, and statevector fallbacks for older bindings.
 
 ## Usage Example
 

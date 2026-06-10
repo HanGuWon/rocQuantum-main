@@ -32,6 +32,13 @@ class _FakeOperation:
         self.matrix = np.asarray(matrix, dtype=np.complex128) if matrix is not None else None
 
 
+class _FakeObservable:
+    def __init__(self, name, wires=None, operands=None):
+        self.name = name
+        self.wires = list(wires or [])
+        self.operands = tuple(operands or ())
+
+
 class _FakeQSim:
     instances = []
 
@@ -40,6 +47,7 @@ class _FakeQSim:
         self.applied_gates = []
         self.executed = False
         self.measured = []
+        self.expectations = []
         _FakeQSim.instances.append(self)
 
     def ApplyGate(self, gate, *indices):
@@ -57,6 +65,10 @@ class _FakeQSim:
     def measure(self, qubits, shots):
         self.measured.append((tuple(qubits), int(shots)))
         return [0, 1, 3, 0][: int(shots)]
+
+    def expectation_pauli_string(self, pauli_string, targets):
+        self.expectations.append((pauli_string, tuple(targets)))
+        return 0.25
 
 
 def _build_fake_pennylane_modules():
@@ -183,6 +195,22 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
         subset_probs = device.analytic_probability(wires=[0])
         self.assertEqual(len(subset_probs), 2)
         self.assertAlmostEqual(float(np.sum(subset_probs)), 1.0)
+
+    def test_expval_uses_native_pauli_expectation_when_available(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0, 1], shots=None)
+
+        obs = _FakeObservable(
+            "Prod",
+            wires=[0, 1],
+            operands=[
+                _FakeObservable("PauliZ", wires=[0]),
+                _FakeObservable("PauliX", wires=[1]),
+            ],
+        )
+
+        self.assertEqual(device.expval(obs), 0.25)
+        self.assertEqual(_FakeQSim.instances[-1].expectations, [("ZX", (0, 1))])
 
 
 if __name__ == "__main__":

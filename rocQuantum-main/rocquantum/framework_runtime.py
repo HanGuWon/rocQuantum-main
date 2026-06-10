@@ -106,6 +106,49 @@ def counts_from_memory(memory: Sequence[str]) -> dict[str, int]:
     return dict(Counter(memory))
 
 
+def expectation_from_statevector(
+    statevector: Sequence[complex],
+    pauli_string: str,
+    targets: Sequence[int],
+) -> float:
+    state = np.asarray(statevector, dtype=np.complex128)
+    if len(pauli_string) != len(targets):
+        raise ValueError("Pauli string length must match target qubit count.")
+    if not targets:
+        return 1.0
+
+    num_qubits = int(np.log2(state.size)) if state.size else 0
+    if state.size != (1 << num_qubits):
+        raise ValueError("Statevector length must be a power of two.")
+
+    normalized_paulis = [pauli.upper() for pauli in pauli_string]
+    normalized_targets = normalize_targets(targets)
+    if len(set(normalized_targets)) != len(normalized_targets):
+        raise ValueError("Pauli expectation targets must be unique.")
+    for target in normalized_targets:
+        if target < 0 or target >= num_qubits:
+            raise ValueError("Pauli expectation target is outside the statevector qubit range.")
+    for pauli in normalized_paulis:
+        if pauli not in {"I", "X", "Y", "Z"}:
+            raise ValueError("Pauli string may only contain I, X, Y, or Z.")
+
+    result = 0.0 + 0.0j
+    for basis_index, amplitude in enumerate(state):
+        partner_index = basis_index
+        phase = 1.0 + 0.0j
+        for pauli, target in zip(normalized_paulis, normalized_targets):
+            bit = (basis_index >> target) & 1
+            if pauli == "X":
+                partner_index ^= 1 << target
+            elif pauli == "Y":
+                partner_index ^= 1 << target
+                phase *= 1j if bit == 0 else -1j
+            elif pauli == "Z":
+                phase *= 1.0 if bit == 0 else -1.0
+        result += np.conj(state[partner_index]) * phase * amplitude
+    return float(np.real_if_close(result).real)
+
+
 class RocQuantumRuntime:
     """Small adapter around the public rocquantum_bind simulator surface."""
 
@@ -219,3 +262,27 @@ class RocQuantumRuntime:
         if not callable(measure):
             raise NotImplementedError("The active rocQuantum binding does not expose native sampling.")
         return [int(sample) for sample in measure(normalize_targets(qubits), int(shots))]
+
+    def expectation_value(self, pauli: str, target: int) -> float:
+        native = getattr(self.simulator, "expectation_value", None)
+        if callable(native):
+            return float(native(str(pauli), int(target)))
+
+        legacy = getattr(self.simulator, "GetExpectationValue", None)
+        if callable(legacy):
+            return float(legacy(str(pauli), int(target)))
+
+        return self.expectation_pauli_string(str(pauli), [int(target)])
+
+    def expectation_pauli_string(self, pauli_string: str, targets: Iterable[int]) -> float:
+        normalized_targets = normalize_targets(targets)
+
+        native = getattr(self.simulator, "expectation_pauli_string", None)
+        if callable(native):
+            return float(native(str(pauli_string), normalized_targets))
+
+        legacy = getattr(self.simulator, "GetExpectationPauliString", None)
+        if callable(legacy):
+            return float(legacy(str(pauli_string), normalized_targets))
+
+        return expectation_from_statevector(self.statevector(), str(pauli_string), normalized_targets)

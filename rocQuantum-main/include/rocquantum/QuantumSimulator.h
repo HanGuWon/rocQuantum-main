@@ -22,6 +22,9 @@ public:
                       const std::vector<unsigned>& targets);
     std::vector<std::complex<double>> get_statevector() const;
     std::vector<long long> measure(const std::vector<unsigned>& qubits, int shots);
+    double expectation_value(const std::string& pauli, unsigned target);
+    double expectation_pauli_string(const std::string& pauli_string,
+                                    const std::vector<unsigned>& targets);
     unsigned num_qubits() const noexcept;
 
     // Legacy API retained for compatibility with previous QSim bindings.
@@ -30,6 +33,9 @@ public:
     void ApplyGate(const std::vector<std::complex<double>>& gate_matrix, int target_qubit);
     void Execute();
     std::vector<std::complex<double>> GetStateVector() const;
+    double GetExpectationValue(const std::string& pauli, int target_qubit);
+    double GetExpectationPauliString(const std::string& pauli_string,
+                                     const std::vector<unsigned>& targets);
 
 private:
     void ensure_valid_qubit(unsigned qubit) const;

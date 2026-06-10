@@ -26,12 +26,14 @@ class _FakeQuantumSimulator:
         self.ops = []
         self.matrices = []
         self.measurements = []
+        self.expectations = []
         _FakeQuantumSimulator.instances.append(self)
 
     def reset(self):
         self.ops.clear()
         self.matrices.clear()
         self.measurements.clear()
+        self.expectations.clear()
 
     def num_qubits(self):
         return self._num_qubits
@@ -55,6 +57,12 @@ class _FakeQuantumSimulator:
         else:
             state[0] = 1.0
         return state
+
+    def expectation_pauli_string(self, pauli_string, targets):
+        self.expectations.append((pauli_string, tuple(targets)))
+        if pauli_string == "Z" and tuple(targets) == (0,):
+            return 0.5
+        return 0.0
 
     def ApplyGate(self, *args):
         self.ops.append(("legacy", args, ()))
@@ -141,6 +149,26 @@ def test_pennylane_plugin_aliases_load_with_real_pennylane(monkeypatch):
     assert rocm_alias.short_name == "lightning.rocm"
 
 
+def test_pennylane_expval_uses_native_pauli_expectation(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.RY(0.123, wires=0)
+        return qml.expval(qml.PauliZ(0))
+
+    assert circuit() == 0.5
+    assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
+
+
 def test_root_package_declares_framework_entry_points():
     toml_reader = tomllib
     if toml_reader is None:
@@ -159,3 +187,11 @@ def test_root_package_declares_framework_entry_points():
     assert pennylane_plugins["lightning.rocq"] == "pennylane_rocq:LightningRocqDevice"
     assert pennylane_plugins["lightning.rocm"] == "pennylane_rocq:LightningRocmDevice"
     assert entry_points["qiskit.providers"]["rocquantum"] == "qiskit_rocquantum_provider:RocQuantumProvider"
+
+
+def test_statevector_expectation_fallback_handles_y_phase():
+    from rocquantum.framework_runtime import expectation_from_statevector
+
+    state = np.array([1.0, 1.0j], dtype=np.complex128) / math.sqrt(2.0)
+
+    assert expectation_from_statevector(state, "Y", [0]) == pytest.approx(1.0)
