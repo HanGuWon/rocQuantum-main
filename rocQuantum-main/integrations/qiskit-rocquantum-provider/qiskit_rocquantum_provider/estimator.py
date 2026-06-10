@@ -87,17 +87,22 @@ def _combine_observable_terms(terms, num_qubits: int):
         combined[normalized_label] = combined.get(normalized_label, 0.0 + 0.0j) + complex(coeff)
     return [
         (coeff, label)
-        for label, coeff in combined.items()
+        for label, coeff in sorted(combined.items())
         if abs(coeff) > 1e-15
     ]
 
 
-def estimate_pauli_observable(runtime, observable, num_qubits: int) -> float:
-    result = 0.0 + 0.0j
-    terms = _combine_observable_terms(
-        _observable_terms(observable, num_qubits=int(num_qubits)),
-        int(num_qubits),
+def _observable_signature(observable, num_qubits: int):
+    return tuple(
+        _combine_observable_terms(
+            _observable_terms(observable, num_qubits=int(num_qubits)),
+            int(num_qubits),
+        )
     )
+
+
+def _estimate_combined_observable_terms(runtime, terms, num_qubits: int) -> float:
+    result = 0.0 + 0.0j
     for coeff, label in terms:
         pauli_string, targets = _label_to_runtime_term(label, int(num_qubits))
         if not targets:
@@ -109,6 +114,14 @@ def estimate_pauli_observable(runtime, observable, num_qubits: int) -> float:
     if np.iscomplexobj(real_result):
         raise ValueError("Observable expectation has a non-negligible imaginary component.")
     return float(real_result)
+
+
+def estimate_pauli_observable(runtime, observable, num_qubits: int) -> float:
+    return _estimate_combined_observable_terms(
+        runtime,
+        _observable_signature(observable, int(num_qubits)),
+        int(num_qubits),
+    )
 
 
 def _index_for_shape(index, shape):
@@ -150,14 +163,18 @@ class RocQuantumEstimator(BaseEstimatorV2):
         for parameter_index, indices in indices_by_parameter.items():
             circuit = bound_circuits[parameter_index]
             self._backend._apply_circuit(circuit, include_global_phase=False)
+            observable_cache = {}
             for index in indices:
                 observable_index = _index_for_shape(index, pub.observables.shape)
                 observable = pub.observables[observable_index]
-                evs[index] = estimate_pauli_observable(
-                    self._backend._runtime,
-                    observable,
-                    circuit.num_qubits,
-                )
+                signature = _observable_signature(observable, int(circuit.num_qubits))
+                if signature not in observable_cache:
+                    observable_cache[signature] = _estimate_combined_observable_terms(
+                        self._backend._runtime,
+                        signature,
+                        circuit.num_qubits,
+                    )
+                evs[index] = observable_cache[signature]
 
         if pub.shape == ():
             evs = evs[()]

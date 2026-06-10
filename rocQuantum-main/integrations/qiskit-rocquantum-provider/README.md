@@ -27,7 +27,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Modern Job Contract**: `backend.run()` returns a synchronous Qiskit `Job` object whose `result()` method returns the `Result`.
 - **Primitive Factories**: `RocQuantumProvider.get_sampler()` and `get_estimator()` return native rocQuantum `SamplerV2` / `EstimatorV2` implementations that avoid generic backend wrapper overhead on the default path.
 - **Native Pauli Expectations**: `RocQuantumProvider.estimate_expectation()` evaluates Qiskit `SparsePauliOp`/`Pauli` observables through the rocQuantum Pauli-string expectation path.
-- **Estimator Observable Batching**: `RocQuantumEstimator` applies each bound circuit once per parameter point and evaluates all broadcasted observables on that state, reducing redundant GPU kernel work for VQE-style observable batches.
+- **Estimator Observable Batching**: `RocQuantumEstimator` applies each bound circuit once per parameter point and caches canonical duplicate observables while evaluating broadcasted observables on that state, reducing redundant GPU kernel work for VQE-style observable batches.
 
 ## Installation
 

@@ -1156,6 +1156,33 @@ def test_qiskit_native_estimator_reuses_bound_circuit_for_observable_batch(monke
     assert sim.expectations == [("Z", (0,)), ("X", (0,))]
 
 
+def test_qiskit_native_estimator_reuses_duplicate_observable_batch_terms(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+    observables = [
+        SparsePauliOp.from_list([("Z", 0.5), ("Z", 0.7)]),
+        SparsePauliOp.from_list([("Z", 1.2)]),
+        SparsePauliOp.from_list([("X", 1.0)]),
+    ]
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observables)],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.6, 0.6, 0.5]))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("H", (0,), ())]
+    assert sim.total_gate_applications == 1
+    assert sim.expectations == [("Z", (0,)), ("X", (0,))]
+
+
 def test_qiskit_provider_estimates_sparse_pauli_observable_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
