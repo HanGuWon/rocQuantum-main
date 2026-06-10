@@ -15,7 +15,9 @@ Audit refresh note (2026-06-10):
 - Previous rows that described canonical `rocq.operator.get_expectation_value()` as unimplemented are stale; the current gap is split API behavior between canonical `rocq` and legacy `python/rocq`.
 - GateFusion is wired opportunistically into canonical `rocq.backends.StateVectorBackend`, but the legacy `python/rocq` queue flush path still replays gates one by one.
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is no longer a hard stub for the current MVP subset: qalloc, H/X/Y/Z, CNOT, RX/RY/RZ.
-- Qiskit and PennyLane adapters now avoid several avoidable full statevector readbacks: Qiskit `backend.run()` defaults to sampling without state output, PennyLane finite-shot measurements use native `measure()` where available, and PennyLane analytic Pauli/Hadamard/Hamiltonian expectations skip diagonalizing rotations and use native Pauli-string expectations.
+- Qiskit and PennyLane adapters now avoid several avoidable full statevector readbacks: Qiskit `backend.run()` defaults to sampling without state output, Qiskit Estimator reuses a bound circuit across observable batches, PennyLane finite-shot measurements use native `measure()` where available, and PennyLane analytic Pauli/Hadamard/Hamiltonian expectations skip diagonalizing rotations and use native Pauli-string expectations.
+- Public simulator and framework paths now expose native `MCX` / `CSWAP` dispatch for Qiskit `ccx` / `mcx` / `cswap` and PennyLane all-one-control `MultiControlledX` / `Toffoli` / `CSWAP`, while non-default PennyLane control values remain on the matrix fallback path.
+- PennyLane `qml.SparseHamiltonian` analytic expectation / variance is now supported through a statevector CSR fallback, not a native sparse-observable GPU kernel.
 
 The detailed findings below still describe the original audit snapshot; use them together with the runtime update above.
 
@@ -51,7 +53,7 @@ What is not real today:
 | `rocquantum/src/hipStateVec` | Real HIP kernels for state-vector simulation, sampling, measurement, expectation values, some distributed scaffolding |
 | `rocquantum/src/hipTensorNet` | Real contraction/SVD core, but pathfinder/slicing/dtype breadth is overstated |
 | `rocquantum/src/hipDensityMat` | Real density-matrix core with limited gate/noise/observable support |
-| `rocquantum/src/simulator.cpp` | Real public C++ simulator wrapper, but API surface is narrower than backend capability |
+| `rocquantum/src/simulator.cpp` | Real public C++ simulator wrapper; now exposes `MCX` / `CSWAP`, but generic controlled-unitary breadth remains narrower than backend capability |
 | `rocqCompiler/*` | Partial MLIR/QIR codegen path; not integrated into a working execution loop |
 | `rocq/*` | Top-level Python surface with direct backend execution and mock fallbacks |
 | `python/rocq/*` | Separate legacy-ish Python surface with `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers, but broader runtime behavior remains split |
@@ -64,7 +66,7 @@ What is not real today:
 ### Native simulator core
 
 - `hipStateVec` implements native single-qubit gates, `CNOT`, `CZ`, `SWAP`, `CRX`, `CRY`, `CRZ`, destructive measurement, sampling, state readback, single-Pauli expectations, Z-product expectations, and generic Pauli-string expectations.
-- Backend-native `MCX` and `CSWAP` logic exists in `rocquantum/src/hipStateVec/hipStateVec.cpp`, even though public simulator APIs and tests do not surface it cleanly.
+- Backend-native `MCX` and `CSWAP` logic in `rocquantum/src/hipStateVec/hipStateVec.cpp` is now surfaced through `QuantumSimulator::apply_gate()` and framework adapter tests.
 - `rocquantum::QuantumSimulator` exposes basic gate application, matrix application, statevector readback, and measurement/count generation.
 
 ### Density matrix and noise
@@ -124,7 +126,7 @@ What is not real today:
 - Compiler-driven execution parity with CUDA-Q is absent.
 - Mid-circuit measurement plus classical control flow is absent as a coherent supported feature.
 - Public `QuantumSimulator` now exposes Pauli expectation helpers through `expectation_value()` and `expectation_pauli_string()`, with root pybind coverage for framework adapters.
-- Public `QuantumSimulator` named APIs for `MCX`, `CSWAP`, and generic controlled unitary are absent.
+- Public `QuantumSimulator` named APIs now route `MCX` and `CSWAP`; a broad generic controlled-unitary public surface is still absent.
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling is not yet a GPU-fast path; it copies probability information to host before drawing shots.
 - Stabilizer/tableau/Pauli-propagation backends were not found.
@@ -146,7 +148,7 @@ What is not real today:
 | Expectations | Native `hipStateVec` helpers exist; canonical `rocq.observe()` and legacy `Circuit.expval()` are wired for supported Pauli operators | Hermitian/broader operator coverage remains limited |
 | Tensor-network contraction | Native HIP/rocBLAS/rocSOLVER path | Pathfinder/slicing breadth not fully wired |
 | Density matrix | Native limited kernel set | Generic single-qubit Kraus channels and sampling use correctness-first paths; multi-qubit channels and GPU-fast density sampling remain absent |
-| Framework adapters | Use native simulator for core operations; PennyLane/Cirq/Qiskit sampling paths now prefer `QuantumSimulator.measure()`; PennyLane analytic Pauli/Hadamard/Hamiltonian expectations and Qiskit estimator expectations use native Pauli-string helpers without mandatory statevector readback | PennyLane/Cirq keep host sampling fallback for legacy bindings; Qiskit and PennyLane broad non-Pauli/dynamic/non-unitary coverage remains partial; many tests are mock/source-contract only |
+| Framework adapters | Use native simulator for core operations; PennyLane/Cirq/Qiskit sampling paths now prefer `QuantumSimulator.measure()`; Qiskit estimator batches reuse prepared circuits for multiple observables; Qiskit/PennyLane multi-control defaults reach native `MCX` / `CSWAP`; PennyLane analytic Pauli/Hadamard/Hamiltonian expectations and Qiskit estimator expectations use native Pauli-string helpers without mandatory statevector readback | PennyLane/Cirq keep host sampling fallback for legacy bindings; PennyLane `SparseHamiltonian` uses a statevector CSR fallback; Qiskit and PennyLane broad non-Pauli/dynamic/non-unitary coverage remains partial; many tests are mock/source-contract only |
 | Top-level `rocq` backend selection | Can hit native bindings | Falls back to mock state objects when compiled backend is missing |
 
 ## Comparison Baselines Used
