@@ -39,6 +39,7 @@ class _FakeQSim:
         self.num_qubits = num_qubits
         self.applied_gates = []
         self.executed = False
+        self.measured = []
         _FakeQSim.instances.append(self)
 
     def ApplyGate(self, gate, *indices):
@@ -52,6 +53,10 @@ class _FakeQSim:
         out = np.zeros(size, dtype=np.complex128)
         out[0] = 1.0 + 0.0j
         return out
+
+    def measure(self, qubits, shots):
+        self.measured.append((tuple(qubits), int(shots)))
+        return [0, 1, 3, 0][: int(shots)]
 
 
 def _build_fake_pennylane_modules():
@@ -144,10 +149,24 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             device.apply([_FakeOperation("FooGate", [0])])
 
-    def test_generate_samples_returns_binary_rows(self):
+    def test_generate_samples_uses_native_measure_when_available(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0, 1], shots=4)
+
+        samples = device.generate_samples()
+        qsim = _FakeQSim.instances[-1]
+
+        self.assertEqual(samples.shape, (4, 2))
+        self.assertEqual(qsim.measured, [((0, 1), 4)])
+        np.testing.assert_array_equal(samples[1], np.array([1, 0], dtype=int))
+        np.testing.assert_array_equal(samples[2], np.array([1, 1], dtype=int))
+        self.assertTrue(set(np.unique(samples)).issubset({0, 1}))
+
+    def test_generate_samples_falls_back_to_statevector_sampling_for_legacy_bindings(self):
         module = _load_device_module()
         device = module.RocQDevice(wires=[0, 1], shots=4)
         device._state = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.complex128)
+        device.sim.measure = None
 
         with mock.patch("numpy.random.multinomial", return_value=np.array([1, 2, 1, 0], dtype=int)):
             samples = device.generate_samples()

@@ -20,6 +20,13 @@ PENNYLANE_TO_ROCQ_GATES = {
     "CNOT": "CNOT", "CZ": "CZ",
 }
 
+
+def _samples_to_binary_rows(raw_samples, num_wires):
+    return np.array(
+        [[(int(sample) >> bit) & 1 for bit in range(num_wires)] for sample in raw_samples],
+        dtype=int,
+    )
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -59,6 +66,15 @@ class RocQDevice(QubitDevice):
         return self._state
 
     def generate_samples(self):
+        if self.shots is None:
+            raise ValueError("shots must be set before generating samples.")
+
+        all_wires = list(range(len(self.wires)))
+        measure = getattr(self.sim, "measure", None)
+        if callable(measure):
+            raw_samples = measure(all_wires, int(self.shots))
+            return _samples_to_binary_rows(raw_samples, len(all_wires))
+
         probs = self.analytic_probability(wires=self.wires)
         num_states = len(probs)
         samples_count = np.random.multinomial(self.shots, probs)

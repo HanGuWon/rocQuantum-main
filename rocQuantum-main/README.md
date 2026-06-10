@@ -89,7 +89,7 @@ Use those files as the authoritative capability summary for the current codebase
 - TensorNet supports the build's compiled complex dtype (`C64` by default, `C128` in `ROCQ_PRECISION_DOUBLE` builds); METIS/KAHYPAR pathfinders and runtime slicing report unsupported unless compiled in.
 - `hipDensityMatApplyChannel` accepts single-qubit Kraus channels only, and density-matrix sampling currently copies diagonal probability information to host before drawing shots.
 - `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, but the legacy surface remains separate from canonical `rocq`.
-- PennyLane and Cirq adapters use host-side sampling paths.
+- PennyLane and Cirq adapters now prefer `QuantumSimulator.measure()` for sampling, but still keep host-side fallback paths for older bindings that do not expose `measure`.
 - Several provider backends remain skeletons or thin clients.
 
 ## Build

@@ -106,6 +106,7 @@ class _FakeQSim:
         self.num_qubits = num_qubits
         self.applied_gates = []
         self.executed = False
+        self.measured = []
         _FakeQSim.instances.append(self)
 
     def ApplyGate(self, gate, *indices):
@@ -119,6 +120,10 @@ class _FakeQSim:
         out = np.zeros(size, dtype=np.complex128)
         out[0] = 1.0 + 0.0j
         return out
+
+    def measure(self, qubits, shots):
+        self.measured.append((tuple(qubits), int(shots)))
+        return [0, 1, 1][: int(shots)]
 
 
 def _build_fake_cirq_module():
@@ -226,16 +231,12 @@ class TestCirqAdapterRuntime(unittest.TestCase):
             _FakeOp(cirq.MeasurementGate("m"), 0),
         ])
 
-        with mock.patch.object(
-            adapter.RocQuantumSimulator,
-            "_get_final_statevector",
-            return_value=np.array([0.5 + 0.0j, 0.5 + 0.0j], dtype=np.complex128),
-        ):
-            with mock.patch("numpy.random.choice", return_value=np.array([0, 1, 1], dtype=np.int64)):
-                result = sim._run(circuit, param_resolver=None, repetitions=3)
+        result = sim._run(circuit, param_resolver=None, repetitions=3)
+        qsim = _FakeQSim.instances[-1]
 
         self.assertIn("m", result)
         self.assertEqual(result["m"].shape, (3, 1))
+        self.assertEqual(qsim.measured, [((0,), 3)])
         np.testing.assert_array_equal(result["m"][:, 0], np.array([0, 1, 1], dtype=np.int64))
 
 

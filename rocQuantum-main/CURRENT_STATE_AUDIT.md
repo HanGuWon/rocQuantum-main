@@ -145,7 +145,7 @@ What is not real today:
 | Expectations | Native `hipStateVec` helpers exist; canonical `rocq.observe()` and legacy `Circuit.expval()` are wired for supported Pauli operators | Hermitian/broader operator coverage remains limited |
 | Tensor-network contraction | Native HIP/rocBLAS/rocSOLVER path | Pathfinder/slicing breadth not fully wired |
 | Density matrix | Native limited kernel set | Generic single-qubit Kraus channels and sampling use correctness-first paths; multi-qubit channels and GPU-fast density sampling remain absent |
-| Framework adapters | Use native simulator for some operations | PennyLane/Cirq sample on host with NumPy; many tests are mock-only |
+| Framework adapters | Use native simulator for core operations; PennyLane/Cirq/Qiskit sampling paths now prefer `QuantumSimulator.measure()` | PennyLane/Cirq keep host sampling fallback for legacy bindings; many tests are mock/source-contract only |
 | Top-level `rocq` backend selection | Can hit native bindings | Falls back to mock state objects when compiled backend is missing |
 
 ## Comparison Baselines Used

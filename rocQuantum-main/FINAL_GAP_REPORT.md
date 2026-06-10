@@ -117,7 +117,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 6. Gate fusion exists and is wired for narrow canonical `rocq` spans; unsupported fusion queue entries fail instead of being silently dropped, but legacy `python/rocq` and broader patterns remain unfused.
 7. `hipTensorNet` breadth is overstated relative to what is built and tested.
 8. `hipDensityMat` is real but still too narrow for broad noisy-simulation claims: generic single-qubit Kraus channels and host-side density sampling exist, while multi-qubit channels and GPU-fast shot workflows remain incomplete.
-9. Integrations are mostly thin adapters, not proof of a strong platform story.
+9. Integrations are still thin adapters, though PennyLane/Cirq/Qiskit sampling now prefers the native simulator `measure()` path where available.
 10. CUDA-QX-style libraries are still shells.
 
 ## P0 / P1 / P2 Roadmap

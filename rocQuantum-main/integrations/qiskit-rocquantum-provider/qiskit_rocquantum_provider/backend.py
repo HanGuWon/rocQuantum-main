@@ -10,6 +10,17 @@ from qiskit.circuit.library import RXGate, RYGate, RZGate, CXGate, HGate, Unitar
 
 from rocquantum_bind import QuantumSimulator
 
+
+def _format_qiskit_memory(sample, measured_items, memory_width):
+    if memory_width <= 0:
+        memory_width = len(measured_items)
+    bits = ["0"] * memory_width
+    for packed_bit, (classical_bit, _) in enumerate(measured_items):
+        output_index = memory_width - 1 - classical_bit
+        if 0 <= output_index < memory_width:
+            bits[output_index] = "1" if ((int(sample) >> packed_bit) & 1) else "0"
+    return "".join(bits)
+
 class RocQuantumBackend(BackendV2):
     """
     rocQuantum Qiskit Backend.
@@ -75,21 +86,23 @@ class RocQuantumBackend(BackendV2):
                     c_index = circuit.find_bit(instruction.clbits[0]).index
                     measured_bits[c_index] = q_indices[0]
 
-            # Perform measurement on the required qubits
-            qubits_to_measure = list(measured_bits.values())
-            if not qubits_to_measure: # If no measure op, measure all
-                qubits_to_measure = list(range(circuit.num_qubits))
+            # Perform measurement on the required qubits.  rocsvSample packs
+            # result bits in the order qubits are requested, so keep the
+            # classical-bit mapping explicit when formatting Qiskit memory.
+            if measured_bits:
+                measured_items = sorted(measured_bits.items())
+            else: # If no measure op, measure all into matching bit positions.
+                measured_items = [(idx, idx) for idx in range(circuit.num_qubits)]
+            qubits_to_measure = [qubit for _, qubit in measured_items]
 
             raw_samples = self._simulator.measure(qubits_to_measure, shots)
-            
-            # Format results into Qiskit's desired structure
-            counts = Counter(raw_samples)
-            # Format keys as binary strings '0b...'
-            formatted_counts = {bin(k): v for k, v in counts.items()}
+            memory_width = getattr(circuit, "num_clbits", 0) or len(measured_items)
+            memory = [_format_qiskit_memory(sample, measured_items, memory_width) for sample in raw_samples]
+            formatted_counts = dict(Counter(memory))
 
             exp_data = ExperimentResultData(
                 counts=formatted_counts,
-                memory=[bin(s) for s in raw_samples] # Memory stores each shot result
+                memory=memory
             )
             
             exp_result = ExperimentResult(

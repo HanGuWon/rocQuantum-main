@@ -18,22 +18,40 @@ CIRQ_TO_ROCQ_GATES = {
     type(cirq.CZ): "CZ",
 }
 
+
+def _samples_to_bits(raw_samples, width):
+    return np.array(
+        [[(int(sample) >> bit) & 1 for bit in range(width)] for sample in raw_samples],
+        dtype=np.int8,
+    )
+
+
 class RocQuantumSimulator(cirq.SimulatesFinalState, cirq.SimulatesSamples):
     def _run(self, circuit, param_resolver, repetitions):
         qubit_order = sorted(circuit.all_qubits())
-        state_vector = self._get_final_statevector(circuit, qubit_order)
-        probs = np.abs(state_vector) ** 2
-        outcomes = np.random.choice(len(probs), size=repetitions, p=probs)
+        sim, q_map = self._execute_circuit(circuit, qubit_order)
+        state_vector = None
+        full_outcomes = None
         measurements = {}
+
         for op in circuit.all_operations():
             if isinstance(op.gate, cirq.MeasurementGate):
                 key = op.gate.key
-                indices = [qubit_order.index(q) for q in op.qubits]
-                values = (outcomes[:, np.newaxis] >> indices) & 1
+                indices = [q_map[q] for q in op.qubits]
+                measure = getattr(sim, "measure", None)
+                if callable(measure):
+                    raw_samples = measure(indices, repetitions)
+                    values = _samples_to_bits(raw_samples, len(indices))
+                else:
+                    if state_vector is None:
+                        state_vector = sim.GetStateVector()
+                        probs = np.abs(state_vector) ** 2
+                        full_outcomes = np.random.choice(len(probs), size=repetitions, p=probs)
+                    values = (full_outcomes[:, np.newaxis] >> indices) & 1
                 measurements[key] = values
         return measurements
 
-    def _get_final_statevector(self, circuit, qubit_order):
+    def _execute_circuit(self, circuit, qubit_order):
         q_map = {q: i for i, q in enumerate(qubit_order)}
         sim = rocquantum_bind.QSim(num_qubits=len(q_map))
         for op in circuit.all_operations():
@@ -49,6 +67,10 @@ class RocQuantumSimulator(cirq.SimulatesFinalState, cirq.SimulatesSamples):
             else:
                 raise TypeError(f"Unsupported gate: {op.gate}")
         sim.Execute()
+        return sim, q_map
+
+    def _get_final_statevector(self, circuit, qubit_order):
+        sim, _ = self._execute_circuit(circuit, qubit_order)
         return sim.GetStateVector()
 
     def _perform_final_state_simulation(self, circuit, qubit_order, initial_state):
