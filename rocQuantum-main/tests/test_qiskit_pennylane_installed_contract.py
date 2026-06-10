@@ -1054,6 +1054,31 @@ def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch)
     assert counts_sim.statevector_reads == 0
 
 
+def test_pennylane_finite_shot_probs_uses_native_measure(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane.exceptions import PennyLaneDeprecationWarning
+
+    with pytest.warns(PennyLaneDeprecationWarning):
+        dev = qml.device("lightning.rocq", wires=2, shots=4)
+
+    @qml.qnode(dev)
+    def probs_circuit():
+        qml.Hadamard(wires=0)
+        qml.CNOT(wires=[0, 1])
+        return qml.probs(wires=[0, 1])
+
+    np.testing.assert_allclose(probs_circuit(), np.array([0.5, 0.0, 0.0, 0.5]))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.measurements == [((0, 1), 4)]
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_shot_vector_uses_total_native_measure(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
