@@ -402,6 +402,30 @@ def _apply_ch(runtime, wire_indices):
     runtime.apply_operation("RY", [target], [-np.pi / 4])
 
 
+def _apply_iswap(runtime, wire_indices):
+    if len(wire_indices) != 2:
+        raise ValueError("ISWAP requires exactly two wires.")
+
+    left, right = wire_indices
+    runtime.apply_operation("S", [left])
+    runtime.apply_operation("S", [right])
+    runtime.apply_operation("H", [left])
+    runtime.apply_operation("CNOT", [left, right])
+    runtime.apply_operation("CNOT", [right, left])
+    runtime.apply_operation("H", [right])
+
+
+def _apply_pswap(runtime, wire_indices, phi):
+    if len(wire_indices) != 2:
+        raise ValueError("PSWAP requires exactly two wires.")
+
+    left, right = wire_indices
+    runtime.apply_operation("SWAP", [left, right])
+    runtime.apply_operation("CNOT", [left, right])
+    _apply_phase_shift(runtime, [right], phi)
+    runtime.apply_operation("CNOT", [left, right])
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -625,6 +649,33 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_gate_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_ch(self._runtime, wire_indices)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "ISWAP":
+                try:
+                    if not _supports_native_gate_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_iswap(self._runtime, wire_indices)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "PSWAP":
+                try:
+                    (phi,) = getattr(op, "parameters", [])
+                    if not _supports_native_phase_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_pswap(self._runtime, wire_indices, phi)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(

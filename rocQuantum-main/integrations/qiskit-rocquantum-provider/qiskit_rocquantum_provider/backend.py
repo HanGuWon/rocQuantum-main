@@ -65,7 +65,7 @@ from .job import RocQuantumJob
 
 MATRIX_FALLBACK_OPS = {
     "ccx", "crx", "cry", "crz", "cswap",
-    "ecr", "iswap",
+    "ecr",
     "rccx", "rcccx",
     "state_preparation", "unitary",
 }
@@ -327,6 +327,18 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("cx", [control, target])
         self._runtime.apply_operation("cx", [target, control])
 
+    def _apply_iswap_gate(self, q_indices):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit iswap gate requires exactly two qubits.")
+
+        left, right = q_indices
+        self._runtime.apply_operation("s", [left])
+        self._runtime.apply_operation("s", [right])
+        self._runtime.apply_operation("h", [left])
+        self._runtime.apply_operation("cx", [left, right])
+        self._runtime.apply_operation("cx", [right, left])
+        self._runtime.apply_operation("h", [right])
+
     def _apply_circuit(self, circuit, *, include_global_phase: bool = False):
         self._ensure_simulator(circuit.num_qubits)
         if include_global_phase:
@@ -423,15 +435,17 @@ class RocQuantumBackend(BackendV2):
                 touched_qubits.update(q_indices)
                 continue
 
-            if op.name in {"ch", "cy", "ccz", "dcx"} and self._supports_native_parametric_decomposition():
+            if op.name in {"ch", "cy", "ccz", "dcx", "iswap"} and self._supports_native_parametric_decomposition():
                 if op.name == "ch":
                     self._apply_ch_gate(q_indices)
                 elif op.name == "cy":
                     self._apply_cy_gate(q_indices)
                 elif op.name == "ccz":
                     self._apply_ccz_gate(q_indices)
-                else:
+                elif op.name == "dcx":
                     self._apply_dcx_gate(q_indices)
+                else:
+                    self._apply_iswap_gate(q_indices)
                 touched_qubits.update(q_indices)
                 continue
 

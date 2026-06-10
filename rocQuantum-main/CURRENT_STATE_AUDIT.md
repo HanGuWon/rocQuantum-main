@@ -18,6 +18,7 @@ Audit refresh note (2026-06-10):
 - Qiskit and PennyLane adapters now avoid several avoidable full statevector readbacks: Qiskit `backend.run()` defaults to sampling without state output, Qiskit Estimator reuses a bound circuit across observable batches, PennyLane finite-shot measurements use native `measure()` where available, and PennyLane analytic Pauli/Hadamard/Hamiltonian expectations skip diagonalizing rotations and use native Pauli-string expectations.
 - Public simulator and framework paths now expose native `MCX` / `CSWAP` dispatch for Qiskit `ccx` / `mcx` / `cswap` and PennyLane all-one-control `MultiControlledX` / `Toffoli` / `CSWAP`, while non-default PennyLane control values remain on the matrix fallback path.
 - Qiskit `ch` / `cy` / `ccz` / `dcx` and PennyLane `qml.CH` / `qml.CY` / `qml.CCZ` now use exact native controlled-Pauli decompositions instead of dense matrix dispatch.
+- Qiskit `iswap` and PennyLane `qml.ISWAP` / `qml.PSWAP` now use exact native swap/phase decompositions instead of dense two-qubit matrix dispatch.
 - Qiskit `sx` / `sxdg` / `u` now use exact native single-qubit rotation decompositions, including global phase only for statevector-producing runs.
 - Qiskit `p` / `cp` now use exact native `rz` / `cx` decompositions, including global phase only for statevector-producing runs and skipping it on sampling / estimator paths.
 - Qiskit `rxx` / `ryy` / `rzz` and PennyLane `qml.IsingXX` / `qml.IsingYY` / `qml.IsingZZ` now use exact native CNOT/rotation decompositions instead of dense two-qubit matrix dispatch.
