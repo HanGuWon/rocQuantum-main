@@ -529,6 +529,27 @@ def _apply_double_excitation(runtime, wire_indices, theta):
     runtime.apply_operation("CNOT", [third, fourth])
 
 
+def _apply_fermionic_swap(runtime, wire_indices, theta):
+    if len(wire_indices) != 2:
+        raise ValueError("FermionicSWAP requires exactly two wires.")
+
+    left, right = wire_indices
+    half_theta = theta / 2
+    runtime.apply_operation("H", [left])
+    runtime.apply_operation("H", [right])
+    _apply_multirz(runtime, wire_indices, half_theta)
+    runtime.apply_operation("H", [left])
+    runtime.apply_operation("H", [right])
+    runtime.apply_operation("RX", [left], [np.pi / 2])
+    runtime.apply_operation("RX", [right], [np.pi / 2])
+    _apply_multirz(runtime, wire_indices, half_theta)
+    runtime.apply_operation("RX", [left], [-np.pi / 2])
+    runtime.apply_operation("RX", [right], [-np.pi / 2])
+    runtime.apply_operation("RZ", [left], [half_theta])
+    runtime.apply_operation("RZ", [right], [half_theta])
+    _apply_global_phase(runtime, left, half_theta)
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -847,6 +868,20 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_parametric_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_double_excitation(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "FermionicSWAP":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_phase_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_fermionic_swap(self._runtime, wire_indices, theta)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(

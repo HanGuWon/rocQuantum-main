@@ -1450,6 +1450,22 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         ("H", (3,), ()),
         ("CNOT", (0, 2), ()),
         ("CNOT", (2, 3), ()),
+        ("H", (0,), ()),
+        ("H", (1,), ()),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.45,)),
+        ("CNOT", (0, 1), ()),
+        ("H", (0,), ()),
+        ("H", (1,), ()),
+        ("RX", (0,), (np.pi / 2,)),
+        ("RX", (1,), (np.pi / 2,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.45,)),
+        ("CNOT", (0, 1), ()),
+        ("RX", (0,), (-np.pi / 2,)),
+        ("RX", (1,), (-np.pi / 2,)),
+        ("RZ", (0,), (0.45,)),
+        ("RZ", (1,), (0.45,)),
     ]
     assert [targets for _, targets in sim.matrices] == [
         (0,),
@@ -1470,7 +1486,7 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         (1,),
         (1,),
         (0, 1, 2, 3),
-        (0, 1),
+        (0,),
     ]
 
 
