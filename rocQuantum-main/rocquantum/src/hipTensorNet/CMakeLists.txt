@@ -51,6 +51,12 @@ if(BUILD_TESTING)
     add_executable(test_contraction_regression test_hipTensorNet_contraction_regression.cpp)
     target_link_libraries(test_contraction_regression PRIVATE rocqsim_tensornet)
 
+    add_executable(
+        benchmark_hipTensorNet_contraction
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../benchmarks/tensornet_contraction_benchmark.cpp
+    )
+    target_link_libraries(benchmark_hipTensorNet_contraction PRIVATE rocqsim_tensornet)
+
     add_executable(test_permutation ../../tests/hipTensorNet/test_PermutationKernels.cpp)
     target_link_libraries(test_permutation PRIVATE rocqsim_tensornet)
 

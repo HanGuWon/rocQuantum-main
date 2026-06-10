@@ -115,7 +115,7 @@ What is not real today:
 ### Packaging and CI
 
 - Native CMake build exists, but Python packaging is split between `pyproject.toml`, `setup.py`, `rocquantum_bind`, and `_rocq_hip_backend`.
-- CI covers Python import/package contracts and one GPU runtime regression, but not a release-grade runtime matrix.
+- CI covers Python import/package contracts, one GPU runtime regression, and a release benchmark artifact registry. The registry records statevec, distributed reduction, TensorNet, and DensityMat benchmark JSON when native ROCm binaries are available, or explicit skipped JSON when they are not.
 
 ## What Is Stubbed Or Absent
 

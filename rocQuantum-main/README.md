@@ -106,7 +106,19 @@ cmake -S . -B build-ci -G Ninja \
 cmake --build build-ci --parallel
 ```
 
-On a ROCm multi-GPU runner, the distributed reduction benchmark can emit a JSON artifact:
+The release benchmark registry is defined in `benchmarks/benchmark_manifest.json`. It covers
+state-vector fast path/fallback and fusion timing, distributed RCCL vs host fallback reductions,
+TensorNet contraction planning, and DensityMat channel/observable/sampling timing. The runner
+emits one JSON file per benchmark plus `benchmark-summary.json`; if a native binary or ROCm
+device is unavailable, it writes an explicit skipped artifact instead of pretending a result exists.
+
+```bash
+python3 benchmarks/run_release_benchmarks.py \
+  --build-dir build-ci \
+  --output-dir benchmark-artifacts
+```
+
+On a ROCm multi-GPU runner, the distributed reduction benchmark can also be run directly:
 
 ```bash
 ./build-ci/rocquantum/src/hipStateVec/benchmark_hipStateVec_distributed_reductions \

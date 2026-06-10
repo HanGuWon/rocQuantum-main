@@ -83,6 +83,7 @@ cmake -S . -B build-ci -G Ninja -DBUILD_TESTING=ON -DROCQUANTUM_BUILD_BINDINGS=O
 cmake --build build-ci --parallel
 ctest --test-dir build-ci --output-on-failure
 python -m unittest tests.test_p0_fixes tests.test_p1_compiler tests.test_p2_packaging tests.test_statevec_fastpath_contract tests.test_rccl_distributed_contract tests.test_tensornet_contract tests.test_cpp_expectation
+python3 benchmarks/run_release_benchmarks.py --build-dir build-ci --output-dir benchmark-artifacts
 ./build-ci/rocquantum/src/hipStateVec/benchmark_hipStateVec_distributed_reductions --output distributed-reductions.json
 ```
 

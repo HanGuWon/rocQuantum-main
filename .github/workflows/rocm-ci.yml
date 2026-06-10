@@ -55,6 +55,7 @@ jobs:
             tests/test_cpp_expectation.py \
             tests/test_cirq_integration.py \
             tests/test_pennylane_integration.py \
+            tests/test_benchmark_release_contract.py \
             --junitxml "${ARTIFACT_DIR}/junit-fast-checks.xml" \
             2>&1 | tee "${ARTIFACT_DIR}/pytest-fast-checks.log"
 
@@ -194,6 +195,17 @@ jobs:
             echo "Detected ${GPU_COUNT} GPU(s); skipping MultiGPUTests (need >=2)." | tee "${ARTIFACT_DIR}/ctest-multigpu.log"
           fi
 
+      - name: Run release benchmark registry
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          mkdir -p "${ARTIFACT_DIR}"
+          python3 benchmarks/run_release_benchmarks.py \
+            --build-dir build-rocm-ci \
+            --output-dir "${ARTIFACT_DIR}/benchmark-artifacts" \
+            2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
+
       - name: Write summary
         if: always()
         env:
@@ -205,6 +217,7 @@ jobs:
             echo
             echo "- Result: ${{ job.status }}"
             echo "- Runner labels: self-hosted,linux,x64,rocm,rocm-gpu,gfx90a"
+            echo "- Benchmark artifacts: ${ARTIFACT_DIR}/benchmark-artifacts"
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } | tee "${ARTIFACT_DIR}/summary-rocm-runtime.md" >> "${GITHUB_STEP_SUMMARY}"
 

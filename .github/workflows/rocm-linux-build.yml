@@ -53,6 +53,7 @@ jobs:
           python -m unittest tests.test_cirq_integration -v
           python -m unittest tests.test_pennylane_integration -v
           python -m unittest tests.test_cpp_expectation -v
+          python -m unittest tests.test_benchmark_release_contract -v
 
   build:
     name: Build ROCm ${{ matrix.rocm_label }}
@@ -114,3 +115,23 @@ jobs:
             exit 0
           fi
           ctest --test-dir build-ci --output-on-failure -R HipTensorNetContractionRegression
+
+      - name: Run release benchmark registry
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-linux-build-${{ matrix.rocm_label }}
+        run: |
+          mkdir -p "${ARTIFACT_DIR}"
+          python3 benchmarks/run_release_benchmarks.py \
+            --build-dir build-ci \
+            --output-dir "${ARTIFACT_DIR}/benchmark-artifacts" \
+            2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
+
+      - name: Upload ROCm build benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocm-linux-build-${{ matrix.rocm_label }}-${{ github.run_id }}
+          path: ci-artifacts/rocm-linux-build-${{ matrix.rocm_label }}
+          if-no-files-found: warn
+          retention-days: 14

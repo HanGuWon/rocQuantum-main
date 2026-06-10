@@ -116,6 +116,17 @@ jobs:
             echo "rocprof not available on runner" | tee "${ARTIFACT_DIR}/rocprof-run.log"
           fi
 
+      - name: Run release benchmark registry
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          mkdir -p "${ARTIFACT_DIR}"
+          python3 benchmarks/run_release_benchmarks.py \
+            --build-dir build-rocm-nightly \
+            --output-dir "${ARTIFACT_DIR}/benchmark-artifacts" \
+            2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
+
       - name: Capture GPU telemetry snapshot (amdsmi/rocm-smi)
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
@@ -142,6 +153,7 @@ jobs:
             echo
             echo "- Result: ${{ job.status }}"
             echo "- Runner labels: self-hosted,linux,x64,rocm,rocm-multigpu"
+            echo "- Benchmark artifacts: ${ARTIFACT_DIR}/benchmark-artifacts"
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } | tee "${ARTIFACT_DIR}/summary-rocm-nightly.md" >> "${GITHUB_STEP_SUMMARY}"
 

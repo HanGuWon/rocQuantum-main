@@ -17,7 +17,7 @@ Compiler/runtime execution parity, distributed execution maturity, and higher-le
 
 ## Executive Summary
 
-`rocQuantum-main` has real ROCm-native simulator value today, especially in `hipStateVec`, `hipTensorNet`, and `hipDensityMat`. What it does not yet have is a coherent product story that matches CUDA-Q, cuQuantum, or CUDA-QX.
+`rocQuantum-main` has real ROCm-native simulator value today, especially in `hipStateVec`, `hipTensorNet`, and `hipDensityMat`. It now has a release benchmark artifact registry for those areas, but it still does not have a coherent product story that matches CUDA-Q, cuQuantum, or CUDA-QX.
 
 The repo is currently strongest as:
 

@@ -74,4 +74,13 @@ if(BUILD_TESTING)
         benchmark_hipStateVec_distributed_reductions
         PRIVATE hipStateVec HIP::hip_runtime
     )
+
+    add_executable(
+        benchmark_hipStateVec_core_paths
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../benchmarks/statevec_core_benchmark.cpp
+    )
+    target_link_libraries(
+        benchmark_hipStateVec_core_paths
+        PRIVATE hipStateVec HIP::hip_runtime
+    )
 endif()
