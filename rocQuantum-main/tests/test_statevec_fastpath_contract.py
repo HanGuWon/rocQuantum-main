@@ -56,6 +56,20 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("processed[i-1] = true;", source)
         self.assertIn("processed[i+1] = true;", source)
 
+    def test_distributed_host_fallback_is_explicit_mode(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("ROCQ_DISTRIBUTED_FALLBACK_MODE", source)
+        self.assertIn("ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK", source)
+        self.assertIn("apply_matrix_distributed_host_fallback", source)
+        self.assertGreaterEqual(
+            source.count("return apply_matrix_distributed_host_fallback"),
+            7,
+            "Distributed single/control/matrix fallbacks should share the same explicit host path.",
+        )
+        self.assertGreaterEqual(source.count("distributed_host_fallback_enabled()"), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

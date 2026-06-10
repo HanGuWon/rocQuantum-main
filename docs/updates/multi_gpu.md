@@ -12,7 +12,8 @@
 ## Current Limitations (must be explicit)
 - Non-local distributed gate operations are incomplete and can return `ROCQ_STATUS_NOT_IMPLEMENTED`.
 - Sampling/expectation in distributed mode are incomplete for several APIs.
-- Host remap fallback is correctness-oriented and slow.
+- Host remap/fallback paths are correctness-oriented and slow.
+- Non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix correctness fallback requires explicit opt-in with `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
 
 ## Performance Note
 Host remap (`D2H gather -> CPU remap -> H2D scatter`) is expected to scale poorly with large state vectors and should be tagged as `slow/debug fallback`.

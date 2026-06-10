@@ -56,6 +56,7 @@ Current truth:
 - Experimental CI ROCm lane: `7.2.4`
 - Latest production ROCm verified from official AMD docs during this refresh: `7.2.4`
 - Newest AMD GPU target verified during this audit: `MI355X` / `gfx950`
+- Distributed non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix correctness fallback exists only as explicit slow/debug mode via `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
 
 Recommended compatibility plan:
 
