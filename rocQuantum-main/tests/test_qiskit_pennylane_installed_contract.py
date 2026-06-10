@@ -1771,6 +1771,77 @@ def test_pennylane_single_excitation_phase_variants_decompose_natively(monkeypat
     np.testing.assert_allclose(sim.matrices[1][0], np.eye(2) * np.exp(-0.2j))
 
 
+def test_pennylane_double_excitation_phase_variants_decompose_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    def phase_ops(theta, sign):
+        alpha = sign * theta / 2
+        ops = []
+        for wires, coefficient in (
+            ((0, 1), 1),
+            ((0, 2), -1),
+            ((0, 3), -1),
+            ((1, 2), -1),
+            ((1, 3), -1),
+            ((2, 3), 1),
+        ):
+            control, target = wires
+            ops.extend(
+                [
+                    ("CNOT", (control, target), ()),
+                    ("RZ", (target,), (coefficient * alpha / 4,)),
+                    ("CNOT", (control, target), ()),
+                ]
+            )
+        ops.extend(
+            [
+                ("CNOT", (0, 3), ()),
+                ("CNOT", (1, 3), ()),
+                ("CNOT", (2, 3), ()),
+                ("RZ", (3,), (alpha / 4,)),
+                ("CNOT", (2, 3), ()),
+                ("CNOT", (1, 3), ()),
+                ("CNOT", (0, 3), ()),
+            ]
+        )
+        return ops
+
+    dev = qml.device("lightning.rocq", wires=4)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.DoubleExcitationPlus(0.8, wires=[0, 1, 2, 3])
+        qml.DoubleExcitationMinus(0.6, wires=[0, 1, 2, 3])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops[:25] == phase_ops(0.8, 1)
+    assert sim.ops[25:29] == [
+        ("CNOT", (2, 3), ()),
+        ("CNOT", (0, 2), ()),
+        ("H", (3,), ()),
+        ("H", (0,), ()),
+    ]
+    assert sim.ops[53:78] == phase_ops(0.6, -1)
+    assert sim.ops[78:82] == [
+        ("CNOT", (2, 3), ()),
+        ("CNOT", (0, 2), ()),
+        ("H", (3,), ()),
+        ("H", (0,), ()),
+    ]
+    assert [targets for _, targets in sim.matrices] == [(0,), (0,)]
+    np.testing.assert_allclose(sim.matrices[0][0], np.eye(2) * np.exp(1j * 7 * 0.8 / 16))
+    np.testing.assert_allclose(sim.matrices[1][0], np.eye(2) * np.exp(-1j * 7 * 0.6 / 16))
+
+
 def test_pennylane_qft_uses_native_controlled_phase_decomposition(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

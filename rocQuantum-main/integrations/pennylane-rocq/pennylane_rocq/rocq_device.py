@@ -592,6 +592,29 @@ def _apply_double_excitation(runtime, wire_indices, theta):
     runtime.apply_operation("CNOT", [third, fourth])
 
 
+def _apply_double_excitation_phase_variant(runtime, wire_indices, theta, sign):
+    if len(wire_indices) != 4:
+        raise ValueError("DoubleExcitation phase variants require exactly four wires.")
+
+    alpha = sign * theta / 2
+    _apply_global_phase(runtime, wire_indices[0], 7 * alpha / 8)
+    for relative_wires, coefficient in (
+        ((0, 1), 1),
+        ((0, 2), -1),
+        ((0, 3), -1),
+        ((1, 2), -1),
+        ((1, 3), -1),
+        ((2, 3), 1),
+        ((0, 1, 2, 3), 1),
+    ):
+        _apply_multirz(
+            runtime,
+            [wire_indices[index] for index in relative_wires],
+            coefficient * alpha / 4,
+        )
+    _apply_double_excitation(runtime, wire_indices, theta)
+
+
 def _apply_fermionic_swap(runtime, wire_indices, theta):
     if len(wire_indices) != 2:
         raise ValueError("FermionicSWAP requires exactly two wires.")
@@ -999,6 +1022,21 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_parametric_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_double_excitation(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name in {"DoubleExcitationPlus", "DoubleExcitationMinus"}:
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_phase_decomposition(self._runtime):
+                        raise NotImplementedError
+                    sign = 1 if gate_name == "DoubleExcitationPlus" else -1
+                    _apply_double_excitation_phase_variant(self._runtime, wire_indices, theta, sign)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
