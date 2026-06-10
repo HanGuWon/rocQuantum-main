@@ -281,7 +281,7 @@ class RocQDevice(QubitDevice):
     version = "0.1.0"
     pennylane_requires = ">=0.30"
 
-    operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | NATIVE_PARAMETRIC_OPS | MATRIX_OPS | {"BasisState", "Rot"}
+    operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | NATIVE_PARAMETRIC_OPS | MATRIX_OPS | {"BasisState", "StatePrep", "Rot"}
     observables = {
         "PauliX", "PauliY", "PauliZ", "Hadamard", "Identity",
         "Hermitian", "Projector", "SparseHamiltonian",
@@ -366,6 +366,16 @@ class RocQDevice(QubitDevice):
                 for bit, wire_index in zip(bits, wire_indices):
                     if int(bit):
                         self._runtime.apply_operation("X", [wire_index])
+                operation_applied = True
+            elif gate_name == "StatePrep":
+                if operation_applied:
+                    raise ValueError("StatePrep is only supported as an initial state preparation.")
+                matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                self._runtime.apply_operation(
+                    "QubitUnitary",
+                    wire_indices,
+                    matrix=matrix,
+                )
                 operation_applied = True
             elif gate_name in PENNYLANE_TO_ROCQ_GATES:
                 self._runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)

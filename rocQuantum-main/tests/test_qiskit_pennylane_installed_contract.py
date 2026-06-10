@@ -1034,6 +1034,53 @@ def test_pennylane_basis_state_prepares_with_native_x_gates(monkeypatch):
     ]
 
 
+def test_pennylane_stateprep_dispatches_initial_matrix(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    state = np.array([0.0, 1.0], dtype=np.complex128)
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.StatePrep(state, wires=[0])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == []
+    matrix, targets = sim.matrices[0]
+    assert targets == (0,)
+    np.testing.assert_allclose(matrix, qml.matrix(qml.StatePrep(state, wires=[0])))
+
+
+def test_pennylane_stateprep_after_operation_is_rejected(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.Hadamard(wires=0)
+        qml.StatePrep(np.array([1.0, 0.0], dtype=np.complex128), wires=[0])
+        return qml.state()
+
+    with pytest.raises(ValueError, match="StatePrep is only supported as an initial state preparation"):
+        circuit()
+
+
 def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

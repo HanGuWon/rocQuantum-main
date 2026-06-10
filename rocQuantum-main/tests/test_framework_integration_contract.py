@@ -83,6 +83,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"MultiControlledX\", \"MultiRZ\"", source)
         self.assertIn("\"IsingXX\", \"IsingYY\", \"IsingZZ\", \"IsingXY\"", source)
         self.assertIn("\"SingleExcitation\", \"SingleExcitationPlus\", \"SingleExcitationMinus\"", source)
+        self.assertIn("\"BasisState\", \"StatePrep\", \"Rot\"", source)
+        self.assertIn("StatePrep is only supported as an initial state preparation", source)
         self.assertIn("_native_mcx_wire_indices", source)
         self.assertIn("control_values", source)
         self.assertIn("_apply_native_or_matrix(self._runtime, \"MCX\"", source)
