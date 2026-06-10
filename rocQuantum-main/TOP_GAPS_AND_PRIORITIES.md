@@ -13,7 +13,7 @@ Audit date: 2026-04-05
 7. `hipTensorNet` has real core functionality and now exposes optimizer/dtype/slicing capabilities, but METIS/KAHYPAR pathfinders and runtime slicing remain unsupported unless compiled in.
 8. `hipDensityMat` is real but narrow; single-qubit Kraus channels and host-side density sampling now exist, while multi-qubit channels, GPU-fast sampling, and richer observable support are still missing.
 9. Framework integrations are thin adapters with native sampling preferred in PennyLane/Cirq/Qiskit, but still rely on mock-heavy tests rather than strong native ROCm end-to-end proof.
-10. Higher-level CUDA-QX-style libraries are still shells; VQE and QEC are not serious supported workflows yet.
+10. Higher-level CUDA-QX-style libraries now have an experimental VQE/QAOA/repetition-code subset, but this is still far from a serious supported CUDA-QX analogue.
 
 ## Priority Framework
 
@@ -72,7 +72,7 @@ Scope: broaden scope only after truth and core execution are stable.
 | --- | --- | --- |
 | Complete compiler-driven runtime | Bigger architectural work | MLIR/QIR execution path is real, tested, and documented |
 | Complete distributed multi-GPU | Requires deeper runtime design and test infrastructure | Distributed gates, measurement, and sampling are proven on multi-GPU runners |
-| Add CUDA-QX-style solver/QEC libraries | Higher-level scope should not mask base gaps | QEC/VQE examples run on supported backends with real tests |
+| Add CUDA-QX-style solver/QEC libraries | Higher-level scope should not mask base gaps | Experimental VQE/QAOA/QEC examples run on supported backends with real tests |
 | Broaden provider/integration maturity | Secondary to local ROCm credibility | Native and remote adapter guarantees are explicit and tested |
 
 ## Verification Commands

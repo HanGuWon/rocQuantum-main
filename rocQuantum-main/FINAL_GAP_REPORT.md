@@ -40,8 +40,8 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | Multi-GPU / distributed | PARTIAL | Real scaffolding exists, but many paths remain `NOT_IMPLEMENTED` |
 | Packaging / install / export | PARTIAL | Native build exists, but releasable packaging is not coherent |
 | Python surfaces | PARTIAL | Two divergent stacks exist, one with mock fallbacks |
-| Integrations | PARTIAL | Thin adapters exist, but PennyLane/Cirq still sample on host |
-| Higher-level libraries | STUB / ABSENT | QEC and VQE are framework shells, not robust CUDA-QX analogues |
+| Integrations | PARTIAL | Thin adapters exist, but PennyLane/Cirq/Qiskit sampling now prefers native `measure()` where available |
+| Higher-level libraries | PARTIAL | Experimental VQE/QAOA/repetition-code helpers exist, but they are not robust CUDA-QX analogues |
 
 ## ROCm Integration Maturity
 
@@ -97,12 +97,13 @@ The main difference is not just feature count; it is product completeness and te
 
 ## CUDA-QX Gap Summary
 
-Compared with the official CUDA-QX baseline (`https://github.com/NVIDIA/cudaqx`), the repo is not yet competitive at the higher-level library layer.
+Compared with the official CUDA-QX baseline (`https://github.com/NVIDIA/cudaqx`), the repo now has a small experimental supported subset but is not yet competitive at the higher-level library layer.
 
 Current state:
 
-- QEC framework exists only as a partial scaffold
-- VQE solver exists only as a scaffold
+- QEC is limited to a 3-qubit repetition-code single-round helper
+- VQE is limited to Pauli-observable objectives through `rocq.observe()` plus numerical gradient helpers
+- QAOA is limited to a MaxCut-style ansatz/cost helper
 - no robust decoder, solver, or hybrid-library stack was found
 
 This is a P2 area. It should not be used to market parity while P0 and P1 remain open.
@@ -142,7 +143,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 
 - Complete compiler-driven runtime
 - Expand distributed execution
-- Build real higher-level solver and QEC libraries
+- Expand higher-level solver and QEC libraries beyond the experimental VQE/QAOA/repetition-code subset
 
 ## Compatibility Plan For Latest And Older AMD GPUs
 

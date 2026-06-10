@@ -12,7 +12,7 @@ on a "Circuit Fragmentation" strategy.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Callable, Any
+from typing import List, Dict, Callable, Any, Optional
 
 # --- rocQuantum Imports ---
 try:
@@ -106,3 +106,69 @@ class QEC_Experiment:
             "correction_applied": str(correction_operator),
             "logical_operators": code.define_logical_operators(),
         }
+
+
+def _most_likely_syndrome(counts: Dict[str, int]) -> List[int]:
+    if not counts:
+        raise ValueError("No syndrome samples were produced.")
+    bitstring = max(counts.items(), key=lambda item: item[1])[0]
+    if len(bitstring) < 2:
+        bitstring = bitstring.zfill(2)
+    # rocq packs measured qubits in request order, then formats the integer as
+    # a big-endian bitstring. For qubits [3, 4], q3 is the rightmost bit.
+    return [int(bitstring[-1]), int(bitstring[-2])]
+
+
+def run_repetition_code_single_round(
+    initial_bits: Optional[List[int]] = None,
+    error_qubit: Optional[int] = None,
+    shots: int = 1,
+    backend: str = "state_vector",
+) -> Dict[str, Any]:
+    """Run one experimental 3-qubit bit-flip repetition-code syndrome round.
+
+    This helper uses 3 data qubits plus two ancillas and samples the two
+    stabilizer ancillas at the end of the circuit. It is intentionally a small
+    executable subset, not a full fault-tolerant QEC framework.
+    """
+    if rocq is None:
+        raise RuntimeError(
+            "Canonical 'rocq' package is not available. Install the Python package "
+            "before running QEC experiments."
+        )
+    if shots <= 0:
+        raise ValueError("shots must be positive.")
+
+    bits = list(initial_bits or [0, 0, 0])
+    if len(bits) != 3 or any(bit not in (0, 1) for bit in bits):
+        raise ValueError("initial_bits must be a length-3 list containing only 0 or 1.")
+    if error_qubit is not None and error_qubit not in (0, 1, 2):
+        raise ValueError("error_qubit must be one of 0, 1, 2, or None.")
+
+    @rocq.kernel
+    def repetition_round():
+        q = rocq.qvec(5)
+        for idx, bit in enumerate(bits):
+            if bit:
+                rocq.x(q[idx])
+        if error_qubit is not None:
+            rocq.x(q[error_qubit])
+
+        rocq.cnot(q[0], q[3])
+        rocq.cnot(q[1], q[3])
+        rocq.cnot(q[1], q[4])
+        rocq.cnot(q[2], q[4])
+
+    counts = rocq.sample(repetition_round, shots, backend=backend, qubits=[3, 4])
+    syndrome = _most_likely_syndrome(counts)
+
+    from rocquantum.qec.decoders.repetition_decoder import RepetitionCodeDecoder
+
+    correction = RepetitionCodeDecoder().decode(syndrome)
+    return {
+        "syndrome": syndrome,
+        "counts": counts,
+        "correction": correction,
+        "correction_applied": correction.to_string(),
+        "experimental_supported_subset": "three_qubit_repetition_single_round",
+    }

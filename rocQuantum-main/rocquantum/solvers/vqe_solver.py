@@ -15,17 +15,28 @@ from abc import ABC, abstractmethod
 try:
     import rocq
     from rocq.operator import PauliOperator
-    from rocq.kernel import QuantumKernel, execute
+    from rocq.kernel import QuantumKernel, observe
 except ImportError:
     # Fallback: allow module to be imported for inspection even if rocq
     # is not installed in the current environment.
     rocq = None  # type: ignore
     PauliOperator = None  # type: ignore
     QuantumKernel = None  # type: ignore
-    execute = None  # type: ignore
+    observe = None  # type: ignore
 
-# --- Third-party Imports ---
-from scipy.optimize import minimize, OptimizeResult
+# --- Optional Third-party Imports ---
+try:
+    from scipy.optimize import minimize, OptimizeResult
+except ImportError:  # pragma: no cover - exercised in minimal CI environments.
+    class OptimizeResult(dict):
+        def __getattr__(self, key):
+            try:
+                return self[key]
+            except KeyError as exc:
+                raise AttributeError(key) from exc
+
+    def minimize(*args, **kwargs):
+        raise RuntimeError("SciPy is required to use SciPyOptimizer.minimize().")
 
 # --- Type Hinting Placeholders ---
 AnsatzKernel = Callable[..., None]  # An ansatz is a kernel function
@@ -107,7 +118,8 @@ class VQE_Solver:
 
     def __init__(
         self,
-        optimizer: Optimizer = None
+        optimizer: Optimizer = None,
+        backend: str = "state_vector"
     ):
         """
         Initializes the VQE_Solver.
@@ -118,6 +130,7 @@ class VQE_Solver:
                 `SciPyOptimizer` is used.
         """
         self.optimizer = optimizer if optimizer is not None else SciPyOptimizer()
+        self.backend = backend
 
         self._intermediate_results = []
 
@@ -131,15 +144,56 @@ class VQE_Solver:
         """
         Internal objective function evaluated by the classical optimizer.
         """
-        if execute is None:
+        if observe is None:
             raise RuntimeError(
                 "Canonical 'rocq' package is not available. Install the Python package "
                 "and retry."
             )
-        raise NotImplementedError(
-            "VQE objective evaluation is not yet wired to a backend expectation API. "
-            "Placeholder energies are intentionally disabled."
+        energy = observe(
+            ansatz_kernel,
+            hamiltonian,
+            *np.asarray(params, dtype=float).tolist(),
+            backend=self.backend,
         )
+        energy = float(np.real(energy))
+        self._intermediate_results.append({
+            "parameters": np.asarray(params, dtype=float).copy(),
+            "energy": energy,
+        })
+        return energy
+
+    def estimate_gradient(
+        self,
+        params: np.ndarray,
+        hamiltonian: PauliOperator,
+        ansatz_kernel: AnsatzKernel,
+        num_qubits: int,
+        method: str = "parameter_shift",
+        step: float = 1e-5,
+    ) -> np.ndarray:
+        """Estimate the VQE objective gradient for the supported experimental subset."""
+        params = np.asarray(params, dtype=float)
+        gradient = np.zeros_like(params, dtype=float)
+        method = method.lower()
+
+        if method == "parameter_shift":
+            shift = np.pi / 2.0
+            scale = 0.5
+        elif method in {"finite_diff", "finite_difference"}:
+            shift = float(step)
+            scale = 1.0 / (2.0 * shift)
+        else:
+            raise ValueError("method must be 'parameter_shift' or 'finite_diff'.")
+
+        for idx in range(params.size):
+            plus = params.copy()
+            minus = params.copy()
+            plus[idx] += shift
+            minus[idx] -= shift
+            f_plus = self._objective_function(plus, hamiltonian, ansatz_kernel, num_qubits)
+            f_minus = self._objective_function(minus, hamiltonian, ansatz_kernel, num_qubits)
+            gradient[idx] = scale * (f_plus - f_minus)
+        return gradient
 
     def solve(
         self,
@@ -170,37 +224,18 @@ class VQE_Solver:
         }
         return solution
 
-# --- Example Usage ---
 if __name__ == '__main__':
-    # 1. Initialize the rocQuantum Simulator
-    try:
-        # VQE_Solver no longer requires a simulator argument
-        print("rocQuantum VQE example (canonical API).")
-    except Exception as e:
-        print(f"Failed to initialize: {e}")
-        exit()
-
-    # 2. Problem Definition
-    hamiltonian = PauliOperator({
-        "Z0 Z1": -1.0,
-        "X0": -0.5,
-        "X1": -0.5
-    })
-    print("Hamiltonian:\n", hamiltonian)
+    print("rocQuantum VQE example (experimental canonical API).")
+    hamiltonian = PauliOperator("Z0")
 
     @rocq.kernel
-    def simple_ansatz(q, theta_0: float, theta_1: float):
-        q.h(0)
-        q.h(1)
-        q.rx(theta_0, 0)
-        q.rx(theta_1, 1)
-        q.cx(0, 1)
+    def simple_ansatz(theta: float):
+        q = rocq.qvec(1)
+        rocq.rx(theta, q[0])
 
-    initial_parameters = np.array([0.5, 0.5])
-    num_qubits_for_problem = 2
+    initial_parameters = np.array([0.5])
+    num_qubits_for_problem = 1
 
-    # 3. Instantiate and Run the Solver
-    # Plug in the desired optimizer strategy.
     scipy_optimizer = SciPyOptimizer(options={'method': 'COBYLA', 'tol': 1e-6})
     vqe_solver = VQE_Solver(optimizer=scipy_optimizer)
 

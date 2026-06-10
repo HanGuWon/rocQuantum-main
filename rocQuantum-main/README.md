@@ -31,7 +31,7 @@ Not implemented today:
 
 - End-to-end compiler-driven execution parity with CUDA-Q beyond the supported MVP subset
 - Release-grade distributed multi-GPU support
-- CUDA-QX-style higher-level libraries with robust QEC/solver coverage
+- CUDA-QX-style higher-level libraries beyond the experimental VQE/QAOA/repetition-code subset
 
 ## Audit Documents
 
@@ -77,6 +77,7 @@ Use those files as the authoritative capability summary for the current codebase
 | `hipDensityMat` | Real but limited; generic channels and sampling are correctness-first paths |
 | `rocqCompiler` | Partial codegen path plus a narrow compile-and-execute MVP for qalloc/H/X/Y/Z/CNOT/RX/RY/RZ |
 | Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring |
+| Higher-level helpers | Experimental VQE objective/gradient, MaxCut-style QAOA helper, and 3-qubit repetition-code single-round helper |
 | `python/rocq` | Separate legacy compatibility surface; Pauli expectations now use native helpers, while queue/fusion and other paths still need consolidation |
 
 ## Important Limitations
@@ -88,6 +89,7 @@ Use those files as the authoritative capability summary for the current codebase
 - Generic matrix/control-matrix cases outside HIP fast paths return `NOT_IMPLEMENTED` by default; set `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` only for explicit slow/debug host fallback.
 - TensorNet supports the build's compiled complex dtype (`C64` by default, `C128` in `ROCQ_PRECISION_DOUBLE` builds); METIS/KAHYPAR pathfinders and runtime slicing report unsupported unless compiled in.
 - `hipDensityMatApplyChannel` accepts single-qubit Kraus channels only, and density-matrix sampling currently copies diagonal probability information to host before drawing shots.
+- Higher-level CUDA-QX-style helpers are explicitly experimental: VQE supports Pauli-observable objectives through `rocq.observe()`, QAOA is a MaxCut-style ansatz helper, and QEC is limited to a single 3-qubit repetition-code syndrome round.
 - `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, but the legacy surface remains separate from canonical `rocq`.
 - PennyLane and Cirq adapters now prefer `QuantumSimulator.measure()` for sampling, but still keep host-side fallback paths for older bindings that do not expose `measure`.
 - Several provider backends remain skeletons or thin clients.

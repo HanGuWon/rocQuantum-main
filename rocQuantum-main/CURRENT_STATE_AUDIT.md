@@ -56,7 +56,7 @@ What is not real today:
 | `python/rocq/*` | Separate legacy-ish Python surface with `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers, but broader runtime behavior remains split |
 | `integrations/*` | Thin framework adapters with mixed native and host-side behavior |
 | `rocquantum/backends/*` | Mixed remote-provider clients, local mocks, and skeleton placeholders |
-| `rocquantum/qec`, `rocquantum/solvers` | Framework shells, not production-ready CUDA-QX analogs |
+| `rocquantum/qec`, `rocquantum/solvers` | Experimental VQE/QAOA/repetition-code helpers, not production-ready CUDA-QX analogs |
 
 ## What Works Today
 
@@ -127,7 +127,7 @@ What is not real today:
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling is not yet a GPU-fast path; it copies probability information to host before drawing shots.
 - Stabilizer/tableau/Pauli-propagation backends were not found.
-- CUDA-QX-style higher-level solver/QEC libraries are not implemented beyond framework shells.
+- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient, MaxCut-style QAOA helper, and one 3-qubit repetition-code syndrome round.
 
 ## Highest-Risk Overclaims Before This Audit
 

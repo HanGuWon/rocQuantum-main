@@ -9,7 +9,7 @@ Concrete implementation of a decoder for the 3-qubit bit-flip repetition code.
 
 from typing import List
 
-from rocquantum.python.rocq import PauliOperator
+from rocq.operator import PauliOperator
 from rocquantum.qec.framework import Decoder
 
 class RepetitionCodeDecoder(Decoder):
@@ -23,17 +23,17 @@ class RepetitionCodeDecoder(Decoder):
         """
         if syndrome == [0, 0]:
             # No error detected
-            return PauliOperator()
+            return PauliOperator("I")
         elif syndrome == [1, 0]:
             # Error on data qubit 0
-            return PauliOperator({"X0": 1.0})
+            return PauliOperator("X0")
         elif syndrome == [1, 1]:
             # Error on data qubit 1
-            return PauliOperator({"X1": 1.0})
+            return PauliOperator("X1")
         elif syndrome == [0, 1]:
             # Error on data qubit 2
-            return PauliOperator({"X2": 1.0})
+            return PauliOperator("X2")
         else:
             # This case implies more than one error, which this simple
             # code cannot correct. Return no correction.
-            return PauliOperator()
+            return PauliOperator("I")
