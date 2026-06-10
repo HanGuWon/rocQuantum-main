@@ -9,7 +9,7 @@ This package provides a PennyLane device that uses the [rocQuantum-1](https://gi
 - **High-performance statevector simulation**: Leverages the rocQuantum C++ backend for fast and efficient calculations.
 - **Full PennyLane Integration**: Supports core PennyLane measurement types, including `qml.state()` and `qml.counts()`.
 - **Hardware-like Sampling**: Simulates measurement shots to provide realistic count dictionaries.
-- **Plugin Aliases**: Registers both `rocquantum.qpu` and the historical `rocq.pennylane` alias.
+- **Lightning-style Plugin Aliases**: Registers `lightning.rocq` and `lightning.rocm` in addition to `rocquantum.qpu` and the historical `rocq.pennylane` alias.
 
 ## Installation
 
@@ -25,12 +25,13 @@ Once the prerequisites are met, you can install this package from the root direc
 pip install .
 ```
 
-PennyLane will automatically discover the `rocquantum.qpu` device upon successful installation.
+PennyLane will automatically discover the `lightning.rocq`, `lightning.rocm`, `rocquantum.qpu`, and `rocq.pennylane` devices upon successful installation.
 
 ## Compatibility Notes
 
 - Verified in adapter tests against PennyLane `0.45.0`.
 - The package can be imported before `rocquantum_bind` is present; device creation raises a clear binding-install error.
+- `lightning.rocq` / `lightning.rocm` are compatibility entry points intended to mirror the user experience of PennyLane Lightning devices on AMD GPUs. They currently share the rocQuantum `QubitDevice` adapter; full Lightning.GPU parity still requires native adjoint differentiation, broader observable support, batching, and ROCm E2E performance validation.
 - The current device is a legacy `QubitDevice` adapter behind PennyLane's compatibility facade. It exposes `qml.state()`, native sampling through `QuantumSimulator.measure()`, and statevector sampling fallback for older bindings.
 
 ## Usage Example
@@ -42,7 +43,7 @@ import pennylane as qml
 from pennylane import numpy as np
 
 # 1. Load the rocQuantum device for statevector simulation
-dev_state = qml.device("rocquantum.qpu", wires=2)
+dev_state = qml.device("lightning.rocq", wires=2)
 
 @qml.qnode(dev_state)
 def bell_state_circuit_state():
@@ -59,7 +60,7 @@ print("-" * 20)
 
 # 2. Load the rocQuantum device for measurement sampling
 shots = 1000
-dev_counts = qml.device("rocquantum.qpu", wires=2, shots=shots)
+dev_counts = qml.device("lightning.rocq", wires=2, shots=shots)
 
 @qml.qnode(dev_counts)
 def bell_state_circuit_counts():

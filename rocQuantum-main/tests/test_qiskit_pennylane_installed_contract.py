@@ -8,6 +8,11 @@ import types
 import numpy as np
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
@@ -94,6 +99,19 @@ def test_qiskit_backend_returns_job_and_fixed_width_counts(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 6)]
 
 
+def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.primitives import BackendEstimatorV2, BackendSamplerV2
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+
+    assert isinstance(provider.get_sampler(), BackendSamplerV2)
+    assert isinstance(provider.get_estimator(), BackendEstimatorV2)
+
+
 def test_pennylane_plugin_aliases_load_with_real_pennylane(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -103,7 +121,7 @@ def test_pennylane_plugin_aliases_load_with_real_pennylane(monkeypatch):
 
     import pennylane as qml
 
-    dev = qml.device("rocquantum.qpu", wires=2)
+    dev = qml.device("lightning.rocq", wires=2)
 
     @qml.qnode(dev)
     def circuit():
@@ -118,3 +136,26 @@ def test_pennylane_plugin_aliases_load_with_real_pennylane(monkeypatch):
 
     alias_dev = qml.device("rocq.pennylane", wires=1)
     assert alias_dev.short_name == "rocq.pennylane"
+
+    rocm_alias = qml.device("lightning.rocm", wires=1)
+    assert rocm_alias.short_name == "lightning.rocm"
+
+
+def test_root_package_declares_framework_entry_points():
+    toml_reader = tomllib
+    if toml_reader is None:
+        toml_reader = pytest.importorskip("tomli")
+
+    pyproject_path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
+    with open(pyproject_path, "rb") as f:
+        pyproject = toml_reader.load(f)
+
+    packages = pyproject["tool"]["scikit-build"]["wheel"]["packages"]
+    assert packages["qiskit_rocquantum_provider"].endswith("qiskit_rocquantum_provider")
+    assert packages["pennylane_rocq"].endswith("pennylane_rocq")
+
+    entry_points = pyproject["project"]["entry-points"]
+    pennylane_plugins = entry_points["pennylane.plugins"]
+    assert pennylane_plugins["lightning.rocq"] == "pennylane_rocq:LightningRocqDevice"
+    assert pennylane_plugins["lightning.rocm"] == "pennylane_rocq:LightningRocmDevice"
+    assert entry_points["qiskit.providers"]["rocquantum"] == "qiskit_rocquantum_provider:RocQuantumProvider"

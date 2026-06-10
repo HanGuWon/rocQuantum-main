@@ -11,6 +11,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Measurement Sampling**: Supports realistic measurement outcomes and provides a counts dictionary via `get_counts()`.
 - **Automatic Discovery**: Once installed, Qiskit can automatically discover and list this provider's backends.
 - **Modern Job Contract**: `backend.run()` returns a synchronous Qiskit `Job` object whose `result()` method returns the `Result`.
+- **Primitive Factories**: `RocQuantumProvider.get_sampler()` and `get_estimator()` return Qiskit `BackendSamplerV2` / `BackendEstimatorV2` instances backed by the rocQuantum backend.
 
 ## Installation
 
@@ -32,6 +33,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 
 - Verified in adapter tests against Qiskit `2.4.1`.
 - The provider uses `BackendV2`, exposes `max_circuits`, and imports result model classes from both old and new Qiskit locations.
+- Qiskit primitive support is provided through `BackendSamplerV2` and `BackendEstimatorV2` wrappers over `rocq_simulator`.
 - `rocquantum_bind` is loaded when a circuit is executed, so importing the provider remains possible before the native extension is present.
 
 ## Usage Example
@@ -80,6 +82,9 @@ counts = result_counts.get_counts()
 
 print("Measurement Counts:")
 print(counts)
+
+sampler = provider.get_sampler()
+estimator = provider.get_estimator()
 
 
 # Expected output:

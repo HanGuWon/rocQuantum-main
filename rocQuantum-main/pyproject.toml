@@ -33,9 +33,20 @@ all = ["rocquantum[backends,pennylane,qiskit,dev]"]
 [project.scripts]
 rocq = "rocq_cli:main"
 
+[project.entry-points."pennylane.plugins"]
+"rocquantum.qpu" = "pennylane_rocq:RocQDevice"
+"rocq.pennylane" = "pennylane_rocq:RocqDevice"
+"lightning.rocq" = "pennylane_rocq:LightningRocqDevice"
+"lightning.rocm" = "pennylane_rocq:LightningRocmDevice"
+
+[project.entry-points."qiskit.providers"]
+rocquantum = "qiskit_rocquantum_provider:RocQuantumProvider"
+
 [tool.scikit-build.cmake]
 minimum-version = "3.21"
 
 [tool.scikit-build.wheel.packages]
 rocq = "rocq"
 rocquantum = "rocquantum"
+qiskit_rocquantum_provider = "integrations/qiskit-rocquantum-provider/qiskit_rocquantum_provider"
+pennylane_rocq = "integrations/pennylane-rocq/pennylane_rocq"

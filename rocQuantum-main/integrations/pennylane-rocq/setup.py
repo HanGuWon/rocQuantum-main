@@ -15,6 +15,8 @@ setup(
         "pennylane.plugins": [
             "rocquantum.qpu = pennylane_rocq:RocQDevice",
             "rocq.pennylane = pennylane_rocq:RocqDevice",
+            "lightning.rocq = pennylane_rocq:LightningRocqDevice",
+            "lightning.rocm = pennylane_rocq:LightningRocmDevice",
         ]
     },
 )
