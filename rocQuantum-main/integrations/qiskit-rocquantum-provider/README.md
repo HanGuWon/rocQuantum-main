@@ -11,7 +11,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Measurement Sampling**: Supports realistic measurement outcomes and provides a counts dictionary via `get_counts()`.
 - **Automatic Discovery**: Once installed, Qiskit can automatically discover and list this provider's backends.
 - **Modern Job Contract**: `backend.run()` returns a synchronous Qiskit `Job` object whose `result()` method returns the `Result`.
-- **Primitive Factories**: `RocQuantumProvider.get_sampler()` and `get_estimator()` return Qiskit `BackendSamplerV2` / `BackendEstimatorV2` instances backed by the rocQuantum backend.
+- **Primitive Factories**: `RocQuantumProvider.get_sampler()` returns Qiskit `BackendSamplerV2`, while `get_estimator()` returns a native rocQuantum `EstimatorV2` that evaluates Pauli observables without shot sampling.
 - **Native Pauli Expectations**: `RocQuantumProvider.estimate_expectation()` evaluates Qiskit `SparsePauliOp`/`Pauli` observables through the rocQuantum Pauli-string expectation path.
 
 ## Installation
@@ -34,7 +34,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 
 - Verified in adapter tests against Qiskit `2.4.1`.
 - The provider uses `BackendV2`, exposes `max_circuits`, and imports result model classes from both old and new Qiskit locations.
-- Qiskit primitive support is provided through `BackendSamplerV2` and `BackendEstimatorV2` wrappers over `rocq_simulator`; adapter tests exercise both wrapper construction and simple `run()` calls.
+- Qiskit sampler support is provided through `BackendSamplerV2`; estimator support defaults to `RocQuantumEstimator`, a native deterministic `EstimatorV2` over `QuantumSimulator.expectation_pauli_string()`. Pass `native=False` to `get_estimator()` to request Qiskit's generic `BackendEstimatorV2` wrapper.
 - Direct Pauli expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, and `(label, coeff)` term lists.
 - Aer-style `save_statevector` marker instructions are treated as no-op result annotations; `QuantumCircuit.save_statevector()` is not part of base Qiskit `2.4.1`.
 - `rocquantum_bind` is loaded when a circuit is executed, so importing the provider remains possible before the native extension is present.
@@ -88,6 +88,7 @@ print(counts)
 
 sampler = provider.get_sampler()
 estimator = provider.get_estimator()
+backend_estimator = provider.get_estimator(native=False)
 
 qc_expectation = QuantumCircuit(3)
 qc_expectation.h(0)

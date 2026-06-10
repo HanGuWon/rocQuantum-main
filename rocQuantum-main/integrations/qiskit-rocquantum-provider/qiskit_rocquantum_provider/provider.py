@@ -41,8 +41,17 @@ class RocQuantumProvider(_ProviderBase):
 
         return BackendSamplerV2(backend=self.get_backend(name), options=options or None)
 
-    def get_estimator(self, name="rocq_simulator", **options):
-        """Return a Qiskit BackendEstimatorV2 backed by rocQuantum."""
+    def get_estimator(self, name="rocq_simulator", native=True, **options):
+        """Return a Qiskit EstimatorV2 backed by rocQuantum."""
+        if native:
+            from .estimator import RocQuantumEstimator
+
+            default_precision = options.pop("default_precision", 0.0) if options else 0.0
+            return RocQuantumEstimator(
+                self.get_backend(name),
+                default_precision=default_precision,
+            )
+
         from qiskit.primitives import BackendEstimatorV2
 
         return BackendEstimatorV2(backend=self.get_backend(name), options=options or None)

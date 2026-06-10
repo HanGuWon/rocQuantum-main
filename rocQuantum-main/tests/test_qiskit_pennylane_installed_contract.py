@@ -163,12 +163,13 @@ def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     _install_fake_binding(monkeypatch)
 
     from qiskit.primitives import BackendEstimatorV2, BackendSamplerV2
-    from qiskit_rocquantum_provider import RocQuantumProvider
+    from qiskit_rocquantum_provider import RocQuantumEstimator, RocQuantumProvider
 
     provider = RocQuantumProvider()
 
     assert isinstance(provider.get_sampler(), BackendSamplerV2)
-    assert isinstance(provider.get_estimator(), BackendEstimatorV2)
+    assert isinstance(provider.get_estimator(), RocQuantumEstimator)
+    assert isinstance(provider.get_estimator(native=False), BackendEstimatorV2)
 
 
 def test_qiskit_provider_primitives_run_with_backend(monkeypatch):
@@ -193,11 +194,36 @@ def test_qiskit_provider_primitives_run_with_backend(monkeypatch):
     observable = SparsePauliOp.from_list([("Z", 1.0)])
     estimator_pub = provider.get_estimator().run(
         [(estimator_circuit, observable)],
-        precision=0.1,
     ).result()[0]
 
-    assert float(estimator_pub.data.evs) == pytest.approx(1.0)
+    assert float(estimator_pub.data.evs) == pytest.approx(0.5)
     assert float(estimator_pub.data.stds) == pytest.approx(0.0)
+    assert estimator_pub.metadata["native"] is True
+    assert estimator_pub.metadata["shots"] == 0
+    assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_binds_parameter_values(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1)
+    circuit.ry(theta, 0)
+    observable = SparsePauliOp.from_list([("Z", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    np.testing.assert_allclose(result.data.stds, np.array([0.0, 0.0]))
+    assert _FakeQuantumSimulator.instances[-1].ops == [("RY", (0,), (0.2,))]
 
 
 def test_qiskit_provider_estimates_sparse_pauli_observable_natively(monkeypatch):

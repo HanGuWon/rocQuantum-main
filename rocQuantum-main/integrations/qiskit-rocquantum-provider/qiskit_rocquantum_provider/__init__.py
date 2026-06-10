@@ -3,12 +3,13 @@
 Qiskit provider for the rocQuantum high-performance simulator backend.
 """
 from .backend import RocQuantumBackend
-from .estimator import estimate_pauli_observable
+from .estimator import RocQuantumEstimator, estimate_pauli_observable
 from .job import RocQuantumJob
 from .provider import RocQuantumProvider
 
 __all__ = [
     "RocQuantumBackend",
+    "RocQuantumEstimator",
     "RocQuantumJob",
     "RocQuantumProvider",
     "estimate_pauli_observable",

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from qiskit.primitives import BaseEstimatorV2
+from qiskit.primitives.containers import DataBin, EstimatorPub, PrimitiveResult, PubResult
+from qiskit.primitives.primitive_job import PrimitiveJob
+
 
 def _observable_terms(observable):
     try:
@@ -17,6 +21,9 @@ def _observable_terms(observable):
 
     if isinstance(observable, str):
         return [(1.0 + 0.0j, observable)]
+
+    if isinstance(observable, dict):
+        return [(complex(coeff), str(label)) for label, coeff in observable.items()]
 
     if isinstance(observable, tuple) and len(observable) == 2 and isinstance(observable[0], str):
         label, coeff = observable
@@ -62,3 +69,56 @@ def estimate_pauli_observable(runtime, observable, num_qubits: int) -> float:
     if np.iscomplexobj(real_result):
         raise ValueError("Observable expectation has a non-negligible imaginary component.")
     return float(real_result)
+
+
+def _index_for_shape(index, shape):
+    if not shape:
+        return ()
+
+    offset = len(index) - len(shape)
+    return tuple(0 if dim == 1 else index[offset + axis] for axis, dim in enumerate(shape))
+
+
+class RocQuantumEstimator(BaseEstimatorV2):
+    """Native Qiskit EstimatorV2 backed by rocQuantum Pauli expectations."""
+
+    def __init__(self, backend, *, default_precision: float = 0.0):
+        self._backend = backend
+        self._default_precision = float(default_precision)
+
+    def run(self, pubs, *, precision: float | None = None):
+        target_precision = self._default_precision if precision is None else float(precision)
+        coerced_pubs = [EstimatorPub.coerce(pub, target_precision) for pub in pubs]
+        job = PrimitiveJob(self._run, coerced_pubs)
+        job._submit()
+        return job
+
+    def _run(self, pubs):
+        results = [self._run_pub(pub) for pub in pubs]
+        return PrimitiveResult(results, metadata={"version": 2})
+
+    def _run_pub(self, pub):
+        evs = np.empty(pub.shape, dtype=float)
+        stds = np.zeros(pub.shape, dtype=float)
+        bound_circuits = np.asarray(pub.parameter_values.bind_all(pub.circuit), dtype=object)
+
+        for index in np.ndindex(pub.shape):
+            observable_index = _index_for_shape(index, pub.observables.shape)
+            parameter_index = _index_for_shape(index, pub.parameter_values.shape)
+            circuit = bound_circuits[parameter_index]
+            observable = pub.observables[observable_index]
+            evs[index] = self._backend.estimate_expectation(circuit, observable)
+
+        if pub.shape == ():
+            evs = evs[()]
+            stds = stds[()]
+
+        return PubResult(
+            DataBin(evs=evs, stds=stds, shape=pub.shape),
+            metadata={
+                "target_precision": pub.precision,
+                "shots": 0,
+                "circuit_metadata": getattr(pub.circuit, "metadata", None) or {},
+                "native": True,
+            },
+        )

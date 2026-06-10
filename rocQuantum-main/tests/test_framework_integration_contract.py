@@ -28,6 +28,13 @@ _QISKIT_BACKEND = os.path.join(
     "qiskit_rocquantum_provider",
     "backend.py",
 )
+_QISKIT_ESTIMATOR = os.path.join(
+    _PROJECT_ROOT,
+    "integrations",
+    "qiskit-rocquantum-provider",
+    "qiskit_rocquantum_provider",
+    "estimator.py",
+)
 
 
 class TestFrameworkIntegrationContract(unittest.TestCase):
@@ -65,6 +72,15 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("formatted_counts = counts_from_memory(memory)", source)
         self.assertIn("return RocQuantumJob(self, job_id, result)", source)
         self.assertNotIn("{bin(k): v for k, v in counts.items()}", source)
+
+    def test_qiskit_estimator_uses_native_expectation(self):
+        with open(_QISKIT_ESTIMATOR, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("class RocQuantumEstimator", source)
+        self.assertIn("EstimatorPub.coerce", source)
+        self.assertIn("estimate_expectation", source)
+        self.assertIn("shots\": 0", source)
 
 
 if __name__ == "__main__":
