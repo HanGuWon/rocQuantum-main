@@ -35,8 +35,17 @@ class RocQuantumProvider(_ProviderBase):
             raise ValueError(f"More than one backend matches {name!r}.")
         return matches[0]
 
-    def get_sampler(self, name="rocq_simulator", **options):
-        """Return a Qiskit BackendSamplerV2 backed by rocQuantum."""
+    def get_sampler(self, name="rocq_simulator", native=True, **options):
+        """Return a Qiskit SamplerV2 backed by rocQuantum."""
+        if native:
+            from .sampler import RocQuantumSampler
+
+            default_shots = options.pop("default_shots", 1024) if options else 1024
+            return RocQuantumSampler(
+                self.get_backend(name),
+                default_shots=default_shots,
+            )
+
         from qiskit.primitives import BackendSamplerV2
 
         return BackendSamplerV2(backend=self.get_backend(name), options=options or None)

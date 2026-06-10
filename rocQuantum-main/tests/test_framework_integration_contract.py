@@ -36,6 +36,13 @@ _QISKIT_ESTIMATOR = os.path.join(
     "qiskit_rocquantum_provider",
     "estimator.py",
 )
+_QISKIT_SAMPLER = os.path.join(
+    _PROJECT_ROOT,
+    "integrations",
+    "qiskit-rocquantum-provider",
+    "qiskit_rocquantum_provider",
+    "sampler.py",
+)
 
 
 class TestFrameworkIntegrationContract(unittest.TestCase):
@@ -95,6 +102,16 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("EstimatorPub.coerce", source)
         self.assertIn("estimate_expectation", source)
         self.assertIn("shots\": 0", source)
+
+    def test_qiskit_sampler_uses_native_sampling(self):
+        with open(_QISKIT_SAMPLER, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("class RocQuantumSampler", source)
+        self.assertIn("SamplerPub.coerce", source)
+        self.assertIn("self._backend._apply_circuit", source)
+        self.assertIn("self._backend._runtime.measure", source)
+        self.assertIn("BitArray.from_bool_array", source)
 
 
 if __name__ == "__main__":

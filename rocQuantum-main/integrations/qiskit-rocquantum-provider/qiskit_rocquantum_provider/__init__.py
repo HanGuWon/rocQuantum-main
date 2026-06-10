@@ -6,11 +6,13 @@ from .backend import RocQuantumBackend
 from .estimator import RocQuantumEstimator, estimate_pauli_observable
 from .job import RocQuantumJob
 from .provider import RocQuantumProvider
+from .sampler import RocQuantumSampler
 
 __all__ = [
     "RocQuantumBackend",
     "RocQuantumEstimator",
     "RocQuantumJob",
     "RocQuantumProvider",
+    "RocQuantumSampler",
     "estimate_pauli_observable",
 ]

@@ -212,11 +212,12 @@ def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     _install_fake_binding(monkeypatch)
 
     from qiskit.primitives import BackendEstimatorV2, BackendSamplerV2
-    from qiskit_rocquantum_provider import RocQuantumEstimator, RocQuantumProvider
+    from qiskit_rocquantum_provider import RocQuantumEstimator, RocQuantumProvider, RocQuantumSampler
 
     provider = RocQuantumProvider()
 
-    assert isinstance(provider.get_sampler(), BackendSamplerV2)
+    assert isinstance(provider.get_sampler(), RocQuantumSampler)
+    assert isinstance(provider.get_sampler(native=False), BackendSamplerV2)
     assert isinstance(provider.get_estimator(), RocQuantumEstimator)
     assert isinstance(provider.get_estimator(native=False), BackendEstimatorV2)
 
@@ -238,6 +239,7 @@ def test_qiskit_provider_primitives_run_with_backend(monkeypatch):
 
     assert sampler_pub.data.c.num_shots == 4
     assert sampler_pub.data.c.get_counts() == {"0": 4}
+    assert sampler_pub.metadata["native"] is True
 
     estimator_circuit = QuantumCircuit(1)
     observable = SparsePauliOp.from_list([("Z", 1.0)])
@@ -250,6 +252,30 @@ def test_qiskit_provider_primitives_run_with_backend(monkeypatch):
     assert estimator_pub.metadata["native"] is True
     assert estimator_pub.metadata["shots"] == 0
     assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_sampler_binds_parameter_values(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1, 1)
+    circuit.ry(theta, 0)
+    circuit.measure(0, 0)
+
+    result = RocQuantumProvider().get_sampler().run(
+        [(circuit, [0.1, 0.2])],
+        shots=3,
+    ).result()[0]
+
+    assert result.data.c.shape == (2,)
+    assert result.data.c.num_shots == 3
+    assert [result.data.c[idx].get_counts() for idx in range(2)] == [{"0": 3}, {"0": 3}]
+    assert _FakeQuantumSimulator.instances[-1].ops == [("RY", (0,), (0.2,))]
 
 
 def test_qiskit_native_estimator_binds_parameter_values(monkeypatch):
