@@ -323,11 +323,16 @@ class RocQDevice(QubitDevice):
         execute = getattr(self.sim, "Execute", None)
         if callable(execute):
             execute()
-        self._state = self._runtime.statevector() if self.shots is None else None
+        self._state = None
+
+    def _ensure_state(self):
+        if self._state is None:
+            self._state = self._runtime.statevector()
+        return self._state
 
     @property
     def state(self):
-        return self._state
+        return self._ensure_state()
 
     def generate_samples(self):
         if self.shots is None:
@@ -340,9 +345,7 @@ class RocQDevice(QubitDevice):
             raw_samples = self._runtime.measure(all_wires, shots)
             return samples_to_binary_rows(raw_samples, len(all_wires))
 
-        if self._state is None:
-            self._state = self._runtime.statevector()
-        return sample_rows_from_statevector(self._state, shots)
+        return sample_rows_from_statevector(self._ensure_state(), shots)
 
     def expval(self, observable, shot_range=None, bin_size=None):
         if self.shots is not None or shot_range is not None or bin_size is not None:
@@ -367,8 +370,7 @@ class RocQDevice(QubitDevice):
         return _real_measurement_result(second_moment - mean * mean, "Variance")
 
     def analytic_probability(self, wires=None):
-        if self._state is None: return None
-        all_probs = np.abs(self._state) ** 2
+        all_probs = np.abs(self._ensure_state()) ** 2
         if wires is None or len(wires) == 0: return all_probs
         requested_wires = set(getattr(wires, "labels", wires))
         wires_to_trace = [i for i, w in enumerate(self.wires) if w not in requested_wires]

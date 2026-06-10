@@ -724,7 +724,9 @@ def test_pennylane_expval_uses_native_pauli_expectation(monkeypatch):
         return qml.expval(qml.PauliZ(0))
 
     assert circuit() == 0.5
-    assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_var_uses_native_pauli_expectation(monkeypatch):
@@ -744,7 +746,9 @@ def test_pennylane_var_uses_native_pauli_expectation(monkeypatch):
         return qml.var(qml.PauliZ(0))
 
     assert circuit() == pytest.approx(0.75)
-    assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_non_pauli_observables_use_statevector_fallback(monkeypatch):
@@ -1153,10 +1157,12 @@ def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):
         return qml.expval(hamiltonian)
 
     assert circuit() == pytest.approx(0.725)
-    assert _FakeQuantumSimulator.instances[-1].expectations == [
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [
         ("Z", (0,)),
         ("XZ", (0, 1)),
     ]
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_hamiltonian_expval_combines_duplicate_pauli_terms(monkeypatch):
@@ -1179,7 +1185,9 @@ def test_pennylane_hamiltonian_expval_combines_duplicate_pauli_terms(monkeypatch
         return qml.expval(hamiltonian)
 
     assert circuit() == pytest.approx(0.85)
-    assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_hamiltonian_var_uses_native_pauli_products(monkeypatch):
@@ -1203,12 +1211,14 @@ def test_pennylane_hamiltonian_var_uses_native_pauli_products(monkeypatch):
         return qml.var(hamiltonian)
 
     assert circuit() == pytest.approx(1.464375)
-    assert _FakeQuantumSimulator.instances[-1].expectations == [
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [
         ("Z", (0,)),
         ("XZ", (0, 1)),
         ("Z", (0,)),
         ("XZ", (0, 1)),
     ]
+    assert sim.statevector_reads == 0
 
 
 def test_root_package_declares_framework_entry_points():
