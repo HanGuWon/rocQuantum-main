@@ -138,7 +138,7 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
 
     def test_apply_dispatches_named_and_matrix_ops(self):
         module = _load_device_module()
-        device = module.RocQDevice(wires=[0, 1], shots=5)
+        device = module.RocQDevice(wires=[0, 1], shots=None)
 
         matrix = np.array([[0, 1], [1, 0]], dtype=np.complex128)
         operations = [

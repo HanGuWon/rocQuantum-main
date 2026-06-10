@@ -1032,7 +1032,9 @@ def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch)
         samples,
         np.array([[0, 0], [1, 1], [0, 0], [1, 1]], dtype=int),
     )
-    assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 4)]
+    sample_sim = _FakeQuantumSimulator.instances[-1]
+    assert sample_sim.measurements == [((0, 1), 4)]
+    assert sample_sim.statevector_reads == 0
 
     with pytest.warns(PennyLaneDeprecationWarning):
         counts_dev = qml.device("lightning.rocq", wires=2, shots=4)
@@ -1046,7 +1048,9 @@ def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch)
     counts = {str(key): int(value) for key, value in counts_circuit().items()}
 
     assert counts == {"00": 2, "11": 2}
-    assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 4)]
+    counts_sim = _FakeQuantumSimulator.instances[-1]
+    assert counts_sim.measurements == [((0, 1), 4)]
+    assert counts_sim.statevector_reads == 0
 
 
 def test_pennylane_shot_vector_uses_total_native_measure(monkeypatch):
@@ -1070,7 +1074,9 @@ def test_pennylane_shot_vector_uses_total_native_measure(monkeypatch):
 
     np.testing.assert_array_equal(first, np.array([0, 0], dtype=int))
     np.testing.assert_array_equal(second, np.array([0, 0, 0], dtype=int))
-    assert _FakeQuantumSimulator.instances[-1].measurements == [((0,), 5)]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.measurements == [((0,), 5)]
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_probs_returns_full_and_marginal_probabilities(monkeypatch):

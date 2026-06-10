@@ -323,7 +323,7 @@ class RocQDevice(QubitDevice):
         execute = getattr(self.sim, "Execute", None)
         if callable(execute):
             execute()
-        self._state = self._runtime.statevector()
+        self._state = self._runtime.statevector() if self.shots is None else None
 
     @property
     def state(self):
@@ -340,6 +340,8 @@ class RocQDevice(QubitDevice):
             raw_samples = self._runtime.measure(all_wires, shots)
             return samples_to_binary_rows(raw_samples, len(all_wires))
 
+        if self._state is None:
+            self._state = self._runtime.statevector()
         return sample_rows_from_statevector(self._state, shots)
 
     def expval(self, observable, shot_range=None, bin_size=None):
