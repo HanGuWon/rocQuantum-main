@@ -437,6 +437,26 @@ def test_qiskit_native_multi_control_and_matrix_fallback_gates(monkeypatch):
     assert len(sim.matrices) == 8
 
 
+def test_qiskit_backend_dispatches_general_mcx_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(4)
+    circuit.mcx([0, 1, 2], 3)
+
+    assert "mcx" in set(backend.target.operation_names)
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("MCX", (0, 1, 2, 3), ())]
+    assert sim.matrices == []
+
+
 def test_qiskit_backend_runs_direct_state_preparation(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

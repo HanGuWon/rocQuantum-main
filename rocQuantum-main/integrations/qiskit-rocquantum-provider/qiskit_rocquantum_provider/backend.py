@@ -25,6 +25,7 @@ from qiskit.circuit.library import (
     ECRGate,
     HGate,
     IGate,
+    MCXGate,
     RXGate,
     RYGate,
     RZGate,
@@ -112,6 +113,7 @@ def _instruction_target(num_qubits):
     target.add_instruction(HGate(), name="h")
     target.add_instruction(IGate(), name="id")
     target.add_instruction(iSwapGate(), name="iswap")
+    target.add_instruction(MCXGate(3), name="mcx")
     target.add_instruction(PhaseGate(0.0), name="p")
     target.add_instruction(RCCXGate(), name="rccx")
     target.add_instruction(RC3XGate(), name="rcccx")
