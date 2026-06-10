@@ -521,6 +521,34 @@ rocqStatus_t rocsvGetExpectationMatrix(rocsvHandle_t handle,
                                        rocComplex* result);
 
 /**
+ * @brief Computes <psi|H|psi> and <psi|H^2|psi> for a CSR sparse matrix over the full state.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector.
+ * @param[in] numQubits Total number of qubits.
+ * @param[in] d_data Device pointer to CSR non-zero matrix values.
+ * @param[in] d_indices Device pointer to CSR column indices.
+ * @param[in] d_indptr Device pointer to CSR row offsets with rows + 1 entries.
+ * @param[in] rows Number of sparse matrix rows. Must equal 2^numQubits.
+ * @param[in] cols Number of sparse matrix columns. Must equal rows.
+ * @param[in] nnz Number of sparse matrix non-zero entries.
+ * @param[out] mean Host pointer to store <psi|H|psi>.
+ * @param[out] secondMoment Host pointer to store <psi|H^2|psi> for Hermitian H.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetSparseMatrixMoments(rocsvHandle_t handle,
+                                         rocComplex* d_state,
+                                         unsigned numQubits,
+                                         const rocComplex* d_data,
+                                         const size_t* d_indices,
+                                         const size_t* d_indptr,
+                                         size_t rows,
+                                         size_t cols,
+                                         size_t nnz,
+                                         rocComplex* mean,
+                                         rocComplex* secondMoment);
+
+/**
  * @brief Reports temporary workspace size required by expectation APIs.
  *
  * Current implementation requires no extra workspace and reports 0.

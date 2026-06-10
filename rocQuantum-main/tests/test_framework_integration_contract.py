@@ -185,6 +185,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             header = f.read()
         with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
             implementation = f.read()
+        with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            hipstatevec = f.read()
         with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
             bindings = f.read()
 
@@ -195,8 +197,16 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("QuantumSimulator::sparse_hamiltonian_moments", implementation)
         self.assertIn("QuantumSimulator::expectation_matrix", implementation)
         self.assertIn("rocsvGetExpectationMatrix", implementation)
+        self.assertIn("rocsvGetSparseMatrixMoments", implementation)
+        self.assertIn("rocsvGetSparseMatrixMoments", hipstatevec)
+        self.assertIn("reduce_sparse_matrix_moments_kernel", hipstatevec)
         self.assertIn("Sparse Hamiltonian CSR indptr", implementation)
-        self.assertIn("h_state", implementation)
+        sparse_body = implementation.split("QuantumSimulator::sparse_hamiltonian_moments", 1)[1].split(
+            "unsigned QuantumSimulator::num_qubits", 1
+        )[0]
+        self.assertIn("hipMemcpyHostToDevice", sparse_body)
+        self.assertNotIn("get_statevector()", sparse_body)
+        self.assertNotIn("h_state", sparse_body)
         self.assertIn(".def(\"expectation_matrix\"", bindings)
         self.assertIn(".def(\"ExpectationMatrix\"", bindings)
         self.assertIn(".def(\"sparse_hamiltonian_moments\"", bindings)

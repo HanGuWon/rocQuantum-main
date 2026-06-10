@@ -1605,6 +1605,66 @@ __global__ void reduce_expectation_matrix_kernel(const rocComplex* state,
     }
 }
 
+__global__ void reduce_sparse_matrix_moments_kernel(const rocComplex* state,
+                                                    const rocComplex* data,
+                                                    const size_t* indices,
+                                                    const size_t* indptr,
+                                                    size_t rows,
+                                                    rocComplex* meanBlockSums,
+                                                    rocComplex* secondBlockSums) {
+    extern __shared__ double shared[];
+    double* mean_re_sums = shared;
+    double* mean_im_sums = shared + blockDim.x;
+    double* second_re_sums = shared + 2 * blockDim.x;
+    double* second_im_sums = shared + 3 * blockDim.x;
+    const unsigned tid = threadIdx.x;
+    const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + tid;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+
+    double mean_re = 0.0;
+    double mean_im = 0.0;
+    double second_re = 0.0;
+    double second_im = 0.0;
+    for (size_t row = gid; row < rows; row += stride) {
+        double accum_re = 0.0;
+        double accum_im = 0.0;
+        for (size_t offset = indptr[row]; offset < indptr[row + 1]; ++offset) {
+            const rocComplex value = data[offset];
+            const rocComplex ket = state[indices[offset]];
+            accum_re += static_cast<double>(value.x) * static_cast<double>(ket.x) -
+                        static_cast<double>(value.y) * static_cast<double>(ket.y);
+            accum_im += static_cast<double>(value.x) * static_cast<double>(ket.y) +
+                        static_cast<double>(value.y) * static_cast<double>(ket.x);
+        }
+
+        const rocComplex bra = state[row];
+        mean_re += static_cast<double>(bra.x) * accum_re + static_cast<double>(bra.y) * accum_im;
+        mean_im += static_cast<double>(bra.x) * accum_im - static_cast<double>(bra.y) * accum_re;
+        second_re += accum_re * accum_re + accum_im * accum_im;
+    }
+
+    mean_re_sums[tid] = mean_re;
+    mean_im_sums[tid] = mean_im;
+    second_re_sums[tid] = second_re;
+    second_im_sums[tid] = second_im;
+    __syncthreads();
+
+    for (unsigned s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            mean_re_sums[tid] += mean_re_sums[tid + s];
+            mean_im_sums[tid] += mean_im_sums[tid + s];
+            second_re_sums[tid] += second_re_sums[tid + s];
+            second_im_sums[tid] += second_im_sums[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        meanBlockSums[blockIdx.x] = make_complex(mean_re_sums[0], mean_im_sums[0]);
+        secondBlockSums[blockIdx.x] = make_complex(second_re_sums[0], second_im_sums[0]);
+    }
+}
+
 __global__ void accumulate_sample_probabilities_kernel(const rocComplex* state,
                                                        size_t numElements,
                                                        const unsigned* measuredQubits,
@@ -4964,6 +5024,125 @@ rocqStatus_t rocsvGetExpectationMatrix(rocsvHandle_t handle,
         total_im += static_cast<double>(block_sum.y);
     }
     *result = make_complex(total_re, total_im);
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t rocsvGetSparseMatrixMoments(rocsvHandle_t handle,
+                                         rocComplex* d_state,
+                                         unsigned numQubits,
+                                         const rocComplex* d_data,
+                                         const size_t* d_indices,
+                                         const size_t* d_indptr,
+                                         size_t rows,
+                                         size_t cols,
+                                         size_t nnz,
+                                         rocComplex* mean,
+                                         rocComplex* secondMoment) {
+    if (!handle || !d_indptr || !mean || !secondMoment || rows == 0 || cols == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (rows != cols) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (nnz > 0 && (!d_data || !d_indices)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (uses_distributed_state(handle, d_state)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (effective_batch_size(handle, state) != 1) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (rows != state_elements || cols != state_elements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(rows, threads_per_block);
+
+    void* d_mean_block_sums_void = nullptr;
+    rocqStatus_t status = device_malloc(handle,
+                                        &d_mean_block_sums_void,
+                                        static_cast<size_t>(blocks) * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    rocComplex* d_mean_block_sums = static_cast<rocComplex*>(d_mean_block_sums_void);
+
+    void* d_second_block_sums_void = nullptr;
+    status = device_malloc(handle,
+                           &d_second_block_sums_void,
+                           static_cast<size_t>(blocks) * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_mean_block_sums);
+        return status;
+    }
+    rocComplex* d_second_block_sums = static_cast<rocComplex*>(d_second_block_sums_void);
+
+    hipLaunchKernelGGL(reduce_sparse_matrix_moments_kernel,
+                       dim3(blocks),
+                       dim3(threads_per_block),
+                       4 * threads_per_block * sizeof(double),
+                       handle->streams[0],
+                       state,
+                       d_data,
+                       d_indices,
+                       d_indptr,
+                       rows,
+                       d_mean_block_sums,
+                       d_second_block_sums);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_second_block_sums);
+        device_free(handle, d_mean_block_sums);
+        return status;
+    }
+
+    std::vector<rocComplex> mean_block_sums(static_cast<size_t>(blocks));
+    status = copy_device_to_host(mean_block_sums.data(),
+                                 d_mean_block_sums,
+                                 mean_block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_second_block_sums);
+        device_free(handle, d_mean_block_sums);
+        return status;
+    }
+
+    std::vector<rocComplex> second_block_sums(static_cast<size_t>(blocks));
+    status = copy_device_to_host(second_block_sums.data(),
+                                 d_second_block_sums,
+                                 second_block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    device_free(handle, d_second_block_sums);
+    device_free(handle, d_mean_block_sums);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    double mean_re = 0.0;
+    double mean_im = 0.0;
+    double second_re = 0.0;
+    double second_im = 0.0;
+    for (size_t block = 0; block < mean_block_sums.size(); ++block) {
+        mean_re += static_cast<double>(mean_block_sums[block].x);
+        mean_im += static_cast<double>(mean_block_sums[block].y);
+        second_re += static_cast<double>(second_block_sums[block].x);
+        second_im += static_cast<double>(second_block_sums[block].y);
+    }
+
+    *mean = make_complex(mean_re, mean_im);
+    *secondMoment = make_complex(second_re, second_im);
     return ROCQ_STATUS_SUCCESS;
 }
 

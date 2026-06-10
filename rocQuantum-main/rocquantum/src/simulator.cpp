@@ -647,23 +647,87 @@ std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::sparse_h
         }
     }
 
-    const std::vector<std::complex<double>> state = get_statevector();
-    std::vector<std::complex<double>> h_state(rows, std::complex<double>{0.0, 0.0});
-    for (std::size_t row = 0; row < rows; ++row) {
-        std::complex<double> accum{0.0, 0.0};
-        for (std::size_t offset = indptr[row]; offset < indptr[row + 1]; ++offset) {
-            accum += data[offset] * state[indices[offset]];
-        }
-        h_state[row] = accum;
+    std::vector<rocComplex> raw_data;
+    raw_data.reserve(data.size());
+    for (const std::complex<double>& value : data) {
+        raw_data.push_back(to_roc_complex(value));
     }
 
-    std::complex<double> mean{0.0, 0.0};
-    std::complex<double> second_moment{0.0, 0.0};
-    for (std::size_t row = 0; row < rows; ++row) {
-        mean += std::conj(state[row]) * h_state[row];
-        second_moment += std::conj(h_state[row]) * h_state[row];
+    rocComplex* d_data = nullptr;
+    std::size_t* d_indices = nullptr;
+    std::size_t* d_indptr = nullptr;
+    auto free_sparse_buffers = [&]() {
+        if (d_data) {
+            check_hip(hipFree(d_data), "sparse Hamiltonian data free");
+        }
+        if (d_indices) {
+            check_hip(hipFree(d_indices), "sparse Hamiltonian indices free");
+        }
+        if (d_indptr) {
+            check_hip(hipFree(d_indptr), "sparse Hamiltonian indptr free");
+        }
+    };
+    auto cleanup_after_error = [&]() {
+        if (d_data) {
+            hipFree(d_data);
+        }
+        if (d_indices) {
+            hipFree(d_indices);
+        }
+        if (d_indptr) {
+            hipFree(d_indptr);
+        }
+    };
+
+    rocComplex raw_mean = to_roc_complex(std::complex<double>{0.0, 0.0});
+    rocComplex raw_second_moment = to_roc_complex(std::complex<double>{0.0, 0.0});
+    try {
+        if (!raw_data.empty()) {
+            check_hip(hipMalloc(&d_data, raw_data.size() * sizeof(rocComplex)),
+                      "sparse Hamiltonian data allocation");
+            check_hip(hipMemcpy(d_data,
+                                raw_data.data(),
+                                raw_data.size() * sizeof(rocComplex),
+                                hipMemcpyHostToDevice),
+                      "sparse Hamiltonian data upload");
+        }
+        if (!indices.empty()) {
+            check_hip(hipMalloc(&d_indices, indices.size() * sizeof(std::size_t)),
+                      "sparse Hamiltonian indices allocation");
+            check_hip(hipMemcpy(d_indices,
+                                indices.data(),
+                                indices.size() * sizeof(std::size_t),
+                                hipMemcpyHostToDevice),
+                      "sparse Hamiltonian indices upload");
+        }
+        check_hip(hipMalloc(&d_indptr, indptr.size() * sizeof(std::size_t)),
+                  "sparse Hamiltonian indptr allocation");
+        check_hip(hipMemcpy(d_indptr,
+                            indptr.data(),
+                            indptr.size() * sizeof(std::size_t),
+                            hipMemcpyHostToDevice),
+                  "sparse Hamiltonian indptr upload");
+
+        check_status(rocsvGetSparseMatrixMoments(sim_handle_,
+                                                 device_state_vector_,
+                                                 num_qubits_,
+                                                 d_data,
+                                                 d_indices,
+                                                 d_indptr,
+                                                 rows,
+                                                 cols,
+                                                 raw_data.size(),
+                                                 &raw_mean,
+                                                 &raw_second_moment),
+                     "sparse Hamiltonian moments");
+    } catch (...) {
+        cleanup_after_error();
+        throw;
     }
-    return {mean, second_moment};
+    free_sparse_buffers();
+
+    return {{static_cast<double>(raw_mean.x), static_cast<double>(raw_mean.y)},
+            {static_cast<double>(raw_second_moment.x), static_cast<double>(raw_second_moment.y)}};
 }
 
 unsigned QuantumSimulator::num_qubits() const noexcept {
