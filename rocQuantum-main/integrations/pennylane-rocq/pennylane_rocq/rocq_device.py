@@ -493,6 +493,42 @@ def _apply_single_excitation(runtime, wire_indices, theta):
     runtime.apply_operation("H", [left])
 
 
+def _apply_double_excitation(runtime, wire_indices, theta):
+    if len(wire_indices) != 4:
+        raise ValueError("DoubleExcitation requires exactly four wires.")
+
+    first, second, third, fourth = wire_indices
+    angle = theta / 8
+    runtime.apply_operation("CNOT", [third, fourth])
+    runtime.apply_operation("CNOT", [first, third])
+    runtime.apply_operation("H", [fourth])
+    runtime.apply_operation("H", [first])
+    runtime.apply_operation("CNOT", [third, fourth])
+    runtime.apply_operation("CNOT", [first, second])
+    runtime.apply_operation("RY", [second], [angle])
+    runtime.apply_operation("RY", [first], [-angle])
+    runtime.apply_operation("CNOT", [first, fourth])
+    runtime.apply_operation("H", [fourth])
+    runtime.apply_operation("CNOT", [fourth, second])
+    runtime.apply_operation("RY", [second], [angle])
+    runtime.apply_operation("RY", [first], [-angle])
+    runtime.apply_operation("CNOT", [third, second])
+    runtime.apply_operation("CNOT", [third, first])
+    runtime.apply_operation("RY", [second], [-angle])
+    runtime.apply_operation("RY", [first], [angle])
+    runtime.apply_operation("CNOT", [fourth, second])
+    runtime.apply_operation("H", [fourth])
+    runtime.apply_operation("CNOT", [first, fourth])
+    runtime.apply_operation("RY", [second], [-angle])
+    runtime.apply_operation("RY", [first], [angle])
+    runtime.apply_operation("CNOT", [first, second])
+    runtime.apply_operation("CNOT", [third, first])
+    runtime.apply_operation("H", [first])
+    runtime.apply_operation("H", [fourth])
+    runtime.apply_operation("CNOT", [first, third])
+    runtime.apply_operation("CNOT", [third, fourth])
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -797,6 +833,20 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_parametric_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_single_excitation(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "DoubleExcitation":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_parametric_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_double_excitation(self._runtime, wire_indices, theta)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(

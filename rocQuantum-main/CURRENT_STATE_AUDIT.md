@@ -23,7 +23,7 @@ Audit refresh note (2026-06-10):
 - Qiskit `sx` / `sxdg` / `u` now use exact native single-qubit rotation decompositions, including global phase only for statevector-producing runs.
 - Qiskit `p` / `cp` now use exact native `rz` / `cx` decompositions, including global phase only for statevector-producing runs and skipping it on sampling / estimator paths.
 - Qiskit `rxx` / `ryy` / `rzz` and PennyLane `qml.IsingXX` / `qml.IsingYY` / `qml.IsingXY` / `qml.IsingZZ` now use exact native CNOT/rotation decompositions instead of dense two-qubit matrix dispatch.
-- PennyLane `qml.SingleExcitation` now uses an exact native `H` / `CNOT` / `RY` decomposition instead of dense two-qubit matrix dispatch.
+- PennyLane `qml.SingleExcitation` and `qml.DoubleExcitation` now use exact native `H` / `CNOT` / `RY` decompositions instead of dense two- and four-qubit matrix dispatch.
 - PennyLane `qml.PhaseShift`, `qml.ControlledPhaseShift`, and open-control `qml.CPhaseShift00/01/10` now use exact global-phase plus native `RZ` / `CNOT` decompositions, avoiding dense controlled-phase matrix upload in QFT-style circuits.
 - PennyLane `qml.SparseHamiltonian` analytic expectation / variance is now supported through a statevector CSR fallback, not a native sparse-observable GPU kernel.
 
