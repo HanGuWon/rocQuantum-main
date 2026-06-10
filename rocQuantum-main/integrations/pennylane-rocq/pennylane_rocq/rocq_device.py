@@ -454,6 +454,22 @@ def _apply_multirz(runtime, wire_indices, theta):
         runtime.apply_operation("CNOT", [control, target])
 
 
+def _apply_multirz_batch(runtime, wire_indices, thetas):
+    if not wire_indices:
+        raise ValueError("MultiRZ requires at least one wire.")
+    if len(wire_indices) == 1:
+        runtime.apply_operation_batch("RZ", [wire_indices[0]], thetas)
+        return
+
+    target = wire_indices[-1]
+    controls = list(wire_indices[:-1])
+    for control in controls:
+        runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation_batch("RZ", [target], thetas)
+    for control in reversed(controls):
+        runtime.apply_operation("CNOT", [control, target])
+
+
 def _supports_native_phase_decomposition(runtime):
     simulator = runtime.simulator
     has_gate_dispatch = callable(getattr(simulator, "apply_gate", None))
@@ -488,6 +504,13 @@ def _apply_phase_shift(runtime, wire_indices, theta):
     runtime.apply_operation("RZ", [wire_index], [theta])
 
 
+def _apply_phase_shift_batch(runtime, wire_indices, thetas):
+    if len(wire_indices) != 1:
+        raise ValueError("PhaseShift requires exactly one wire.")
+
+    runtime.apply_operation_batch("RZ", [wire_indices[0]], thetas)
+
+
 def _apply_sx(runtime, wire_indices):
     if len(wire_indices) != 1:
         raise ValueError("SX requires exactly one wire.")
@@ -508,6 +531,19 @@ def _apply_controlled_phase_shift(runtime, wire_indices, theta):
     runtime.apply_operation("RZ", [target], [-0.5 * theta])
     runtime.apply_operation("CNOT", [control, target])
     runtime.apply_operation("RZ", [target], [0.5 * theta])
+
+
+def _apply_controlled_phase_shift_batch(runtime, wire_indices, thetas):
+    if len(wire_indices) != 2:
+        raise ValueError("ControlledPhaseShift requires exactly two wires.")
+
+    control, target = wire_indices
+    half_thetas = [0.5 * theta for theta in thetas]
+    runtime.apply_operation_batch("RZ", [control], half_thetas)
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation_batch("RZ", [target], [-theta for theta in half_thetas])
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation_batch("RZ", [target], half_thetas)
 
 
 def _apply_controlled_phase_variant(runtime, wire_indices, theta, control_state):
@@ -536,6 +572,16 @@ def _apply_isingxx(runtime, wire_indices, theta):
     runtime.apply_operation("CNOT", [control, target])
 
 
+def _apply_isingxx_batch(runtime, wire_indices, thetas):
+    if len(wire_indices) != 2:
+        raise ValueError("IsingXX requires exactly two wires.")
+
+    control, target = wire_indices
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation_batch("RX", [control], thetas)
+    runtime.apply_operation("CNOT", [control, target])
+
+
 def _apply_isingyy(runtime, wire_indices, theta):
     if len(wire_indices) != 2:
         raise ValueError("IsingYY requires exactly two wires.")
@@ -543,6 +589,17 @@ def _apply_isingyy(runtime, wire_indices, theta):
     for wire_index in wire_indices:
         runtime.apply_operation("RX", [wire_index], [np.pi / 2])
     _apply_multirz(runtime, wire_indices, theta)
+    for wire_index in wire_indices:
+        runtime.apply_operation("RX", [wire_index], [-np.pi / 2])
+
+
+def _apply_isingyy_batch(runtime, wire_indices, thetas):
+    if len(wire_indices) != 2:
+        raise ValueError("IsingYY requires exactly two wires.")
+
+    for wire_index in wire_indices:
+        runtime.apply_operation("RX", [wire_index], [np.pi / 2])
+    _apply_multirz_batch(runtime, wire_indices, thetas)
     for wire_index in wire_indices:
         runtime.apply_operation("RX", [wire_index], [-np.pi / 2])
 
@@ -969,6 +1026,22 @@ class RocQDevice(QubitDevice):
                 len(params) == 1 for params in params_by_op
             ):
                 self._runtime.apply_operation_batch(gate_name, wire_indices, [params[0] for params in params_by_op])
+                continue
+
+            if gate_name in {"PhaseShift", "ControlledPhaseShift", "IsingXX", "IsingYY", "IsingZZ"} and all(
+                len(params) == 1 for params in params_by_op
+            ):
+                thetas = [params[0] for params in params_by_op]
+                if gate_name == "PhaseShift":
+                    _apply_phase_shift_batch(self._runtime, wire_indices, thetas)
+                elif gate_name == "ControlledPhaseShift":
+                    _apply_controlled_phase_shift_batch(self._runtime, wire_indices, thetas)
+                elif gate_name == "IsingXX":
+                    _apply_isingxx_batch(self._runtime, wire_indices, thetas)
+                elif gate_name == "IsingYY":
+                    _apply_isingyy_batch(self._runtime, wire_indices, thetas)
+                else:
+                    _apply_multirz_batch(self._runtime, wire_indices, thetas)
                 continue
 
             if any(params != params_by_op[0] for params in params_by_op[1:]):
