@@ -844,6 +844,39 @@ def test_pennylane_non_pauli_observables_use_statevector_fallback(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].expectations == []
 
 
+def test_pennylane_sparse_hamiltonian_uses_sparse_statevector_fallback(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def expval_circuit():
+        return qml.expval(observable)
+
+    @qml.qnode(dev)
+    def var_circuit():
+        return qml.var(observable)
+
+    assert expval_circuit() == pytest.approx(1.0)
+    expval_sim = _FakeQuantumSimulator.instances[-1]
+    assert expval_sim.expectations == []
+    assert expval_sim.statevector_reads == 1
+
+    assert var_circuit() == pytest.approx(0.0)
+    var_sim = _FakeQuantumSimulator.instances[-1]
+    assert var_sim.expectations == []
+    assert var_sim.statevector_reads == 1
+
+
 def test_pennylane_hadamard_observable_uses_native_pauli_terms(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

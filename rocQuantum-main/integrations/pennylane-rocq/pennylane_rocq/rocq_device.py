@@ -213,6 +213,14 @@ def _real_measurement_result(value, measurement_name):
     return float(real_value)
 
 
+def _sparse_hamiltonian_moments(state, observable, wire_order):
+    sparse_matrix = observable.sparse_matrix(wire_order=wire_order, format="csr")
+    h_state = sparse_matrix.dot(state)
+    mean = np.vdot(state, h_state)
+    second_moment = np.vdot(h_state, h_state)
+    return mean, second_moment
+
+
 def _shot_count(shots):
     total_shots = getattr(shots, "total_shots", None)
     if total_shots is not None:
@@ -241,7 +249,7 @@ class RocQDevice(QubitDevice):
     operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | NATIVE_PARAMETRIC_OPS | MATRIX_OPS | {"BasisState", "Rot"}
     observables = {
         "PauliX", "PauliY", "PauliZ", "Hadamard", "Identity",
-        "Hermitian", "Projector",
+        "Hermitian", "Projector", "SparseHamiltonian",
         "Counts", "State",
         "Prod", "Tensor", "SProd", "Sum", "LinearCombination", "Hamiltonian",
     }
@@ -395,6 +403,10 @@ class RocQDevice(QubitDevice):
         if self._diagonalizing_rotations_applied:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
+        if observable.name == "SparseHamiltonian":
+            mean, _ = _sparse_hamiltonian_moments(self._ensure_state(), observable, self.wires)
+            return _real_measurement_result(mean, "Expectation value")
+
         terms = _pauli_terms_from_observable(observable, self.wire_map)
         if terms is None:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
@@ -406,6 +418,10 @@ class RocQDevice(QubitDevice):
             return super().var(observable, shot_range=shot_range, bin_size=bin_size)
         if self._diagonalizing_rotations_applied:
             return super().var(observable, shot_range=shot_range, bin_size=bin_size)
+
+        if observable.name == "SparseHamiltonian":
+            mean, second_moment = _sparse_hamiltonian_moments(self._ensure_state(), observable, self.wires)
+            return _real_measurement_result(second_moment - mean * mean, "Variance")
 
         terms = _pauli_terms_from_observable(observable, self.wire_map)
         if terms is None:
