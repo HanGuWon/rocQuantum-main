@@ -2814,6 +2814,64 @@ def test_runtime_probabilities_falls_back_when_native_reports_not_implemented(mo
     assert sim.statevector_reads == 1
 
 
+def test_runtime_can_create_and_read_batched_bindings():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _BatchedBindingSimulator:
+        created = []
+
+        def __init__(self, num_qubits, batch_size=1):
+            self._num_qubits = int(num_qubits)
+            self._batch_size = int(batch_size)
+            self._states = np.zeros((self._batch_size, 1 << self._num_qubits), dtype=np.complex128)
+            for batch_index in range(self._batch_size):
+                self._states[batch_index, batch_index % self._states.shape[1]] = 1.0
+            self.created.append((self._num_qubits, self._batch_size))
+
+        def num_qubits(self):
+            return self._num_qubits
+
+        def batch_size(self):
+            return self._batch_size
+
+        def get_statevector(self, batch_index=0):
+            return self._states[int(batch_index)].copy()
+
+        def get_statevectors(self):
+            return self._states.copy()
+
+        def set_statevectors(self, states):
+            self._states = np.asarray(states, dtype=np.complex128).reshape(
+                self._batch_size,
+                1 << self._num_qubits,
+            )
+
+    fake = types.ModuleType("rocquantum_bind")
+    fake.QuantumSimulator = _BatchedBindingSimulator
+
+    runtime = RocQuantumRuntime.from_bindings(2, binding_module=fake, batch_size=3)
+
+    assert _BatchedBindingSimulator.created == [(2, 3)]
+    assert runtime.batch_size() == 3
+    np.testing.assert_allclose(runtime.statevector(1), np.array([0, 1, 0, 0], dtype=np.complex128))
+    np.testing.assert_allclose(
+        runtime.statevectors(),
+        np.array(
+            [
+                [1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [0, 0, 1, 0],
+            ],
+            dtype=np.complex128,
+        ),
+    )
+
+    updated = np.zeros((3, 4), dtype=np.complex128)
+    updated[:, 3] = 1.0
+    runtime.set_statevectors(updated)
+    np.testing.assert_allclose(runtime.statevectors(), updated)
+
+
 def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

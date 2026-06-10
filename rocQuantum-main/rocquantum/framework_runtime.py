@@ -252,7 +252,7 @@ class RocQuantumRuntime:
         self.preserve_global_phase = True
 
     @classmethod
-    def from_bindings(cls, num_qubits: int, binding_module=None):
+    def from_bindings(cls, num_qubits: int, binding_module=None, batch_size: int = 1):
         if binding_module is None:
             try:
                 import rocquantum_bind as binding_module
@@ -267,7 +267,12 @@ class RocQuantumRuntime:
             simulator_cls = getattr(binding_module, "QSim", None)
         if simulator_cls is None:
             raise ImportError("rocquantum_bind exposes neither QuantumSimulator nor QSim.")
-        return cls(simulator_cls(int(num_qubits)))
+        batch_size = int(batch_size)
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1.")
+        if batch_size == 1:
+            return cls(simulator_cls(int(num_qubits)))
+        return cls(simulator_cls(int(num_qubits), batch_size))
 
     def reset(self) -> None:
         reset = getattr(self.simulator, "reset", None)
@@ -294,6 +299,12 @@ class RocQuantumRuntime:
         if callable(getter):
             return int(getter())
         return int(getattr(self.simulator, "num_qubits", 0))
+
+    def batch_size(self) -> int:
+        getter = getattr(self.simulator, "batch_size", None)
+        if callable(getter):
+            return int(getter())
+        return int(getattr(self.simulator, "batch_size", 1))
 
     def apply_operation(
         self,
@@ -394,13 +405,42 @@ class RocQuantumRuntime:
 
         raise NotImplementedError("The active rocQuantum binding does not expose statevector upload.")
 
-    def statevector(self) -> np.ndarray:
+    def set_statevectors(self, statevectors: object) -> None:
+        normalized_states = np.ascontiguousarray(np.asarray(statevectors, dtype=np.complex128).reshape(-1))
+        setter = getattr(self.simulator, "set_statevectors", None)
+        if callable(setter):
+            setter(normalized_states)
+            return
+
+        if self.batch_size() == 1:
+            self.set_statevector(normalized_states)
+            return
+
+        raise NotImplementedError("The active rocQuantum binding does not expose batched statevector upload.")
+
+    def statevector(self, batch_index: int = 0) -> np.ndarray:
         getter = getattr(self.simulator, "get_statevector", None)
         if not callable(getter):
             getter = getattr(self.simulator, "GetStateVector", None)
         if not callable(getter):
             raise NotImplementedError("The active rocQuantum binding does not expose state readback.")
-        return np.asarray(getter(), dtype=np.complex128)
+        if batch_index == 0:
+            try:
+                return np.asarray(getter(batch_index), dtype=np.complex128)
+            except TypeError:
+                return np.asarray(getter(), dtype=np.complex128)
+        return np.asarray(getter(batch_index), dtype=np.complex128)
+
+    def statevectors(self) -> np.ndarray:
+        getter = getattr(self.simulator, "get_statevectors", None)
+        if not callable(getter):
+            getter = getattr(self.simulator, "GetStateVectors", None)
+        if callable(getter):
+            states = np.asarray(getter(), dtype=np.complex128)
+            return states.reshape(self.batch_size(), 1 << self.num_qubits())
+        if self.batch_size() == 1:
+            return self.statevector().reshape(1, -1)
+        raise NotImplementedError("The active rocQuantum binding does not expose batched state readback.")
 
     def measure(self, qubits: Iterable[int], shots: int) -> list[int]:
         measure = getattr(self.simulator, "measure", None)

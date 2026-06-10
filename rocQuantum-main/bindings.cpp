@@ -35,7 +35,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
     auto simulator = py::class_<rocquantum::QuantumSimulator>(m, "QuantumSimulator");
 
     simulator
-        .def(py::init<unsigned>(), py::arg("num_qubits"))
+        .def(py::init<unsigned, std::size_t>(), py::arg("num_qubits"), py::arg("batch_size") = 1)
         .def("reset", &rocquantum::QuantumSimulator::reset)
         .def("reset_qubit",
              &rocquantum::QuantumSimulator::reset_qubit,
@@ -118,10 +118,32 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("state"),
              "Upload a full host statevector into the simulator state.")
+        .def("set_statevectors",
+             [](rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> states) {
+                 std::vector<std::complex<double>> host(static_cast<std::size_t>(states.size()));
+                 std::memcpy(host.data(), states.data(), host.size() * sizeof(std::complex<double>));
+                 self.set_statevectors(host);
+             },
+             py::arg("states"),
+             "Upload all host statevectors for a batched simulator state.")
         .def("get_statevector",
-             [](const rocquantum::QuantumSimulator& self) {
-                 auto state = self.get_statevector();
+             [](const rocquantum::QuantumSimulator& self, std::size_t batch_index) {
+                 auto state = self.get_statevector(batch_index);
                  py::array_t<std::complex<double>> result(state.size());
+                 std::memcpy(result.mutable_data(), state.data(), state.size() * sizeof(std::complex<double>));
+                 return result;
+             },
+             py::arg("batch_index") = 0)
+        .def("get_statevectors",
+             [](const rocquantum::QuantumSimulator& self) {
+                 auto state = self.get_statevectors();
+                 const auto batch = static_cast<py::ssize_t>(self.batch_size());
+                 const auto width = static_cast<py::ssize_t>(state.size() / self.batch_size());
+                 py::array_t<std::complex<double>> result({
+                     batch,
+                     width,
+                 });
                  std::memcpy(result.mutable_data(), state.data(), state.size() * sizeof(std::complex<double>));
                  return result;
              })
@@ -207,6 +229,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("shape"),
              "Return (<H>, <H^2>) from a CSR sparse Hamiltonian without densifying it.")
         .def("num_qubits", &rocquantum::QuantumSimulator::num_qubits)
+        .def("batch_size", &rocquantum::QuantumSimulator::batch_size)
         // Legacy-style bindings
         .def("ApplyGate",
              [](rocquantum::QuantumSimulator& self, const std::string& gate_name, int target_qubit) {
@@ -255,6 +278,18 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              [](const rocquantum::QuantumSimulator& self) {
                  auto state = self.GetStateVector();
                  py::array_t<std::complex<double>> result(state.size());
+                 std::memcpy(result.mutable_data(), state.data(), state.size() * sizeof(std::complex<double>));
+                 return result;
+             })
+        .def("GetStateVectors",
+             [](const rocquantum::QuantumSimulator& self) {
+                 auto state = self.GetStateVectors();
+                 const auto batch = static_cast<py::ssize_t>(self.batch_size());
+                 const auto width = static_cast<py::ssize_t>(state.size() / self.batch_size());
+                 py::array_t<std::complex<double>> result({
+                     batch,
+                     width,
+                 });
                  std::memcpy(result.mutable_data(), state.data(), state.size() * sizeof(std::complex<double>));
                  return result;
              })

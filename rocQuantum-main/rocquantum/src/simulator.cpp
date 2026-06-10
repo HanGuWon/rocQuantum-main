@@ -60,13 +60,20 @@ std::vector<rocComplex> row_major_to_column_major(const std::vector<std::complex
 
 namespace rocquantum {
 
-QuantumSimulator::QuantumSimulator(unsigned num_qubits)
+QuantumSimulator::QuantumSimulator(unsigned num_qubits, std::size_t batch_size)
     : num_qubits_(num_qubits),
+      batch_size_(batch_size),
       state_vec_size_(0),
       sim_handle_(nullptr),
       device_state_vector_(nullptr) {
     if (num_qubits_ == 0) {
         throw std::invalid_argument("QuantumSimulator requires at least one qubit.");
+    }
+    if (batch_size_ == 0) {
+        throw std::invalid_argument("QuantumSimulator batch_size must be at least 1.");
+    }
+    if (batch_size_ > static_cast<std::size_t>(std::numeric_limits<unsigned>::max())) {
+        throw std::invalid_argument("QuantumSimulator batch_size exceeds API limit.");
     }
     if (num_qubits_ >= static_cast<unsigned>(sizeof(std::size_t) * 8)) {
         throw std::invalid_argument("num_qubits is too large for this build.");
@@ -76,7 +83,8 @@ QuantumSimulator::QuantumSimulator(unsigned num_qubits)
 
     check_status(rocsvCreate(&sim_handle_), "handle creation");
     try {
-        check_status(rocsvAllocateState(sim_handle_, num_qubits_, &device_state_vector_, 1), "state allocation");
+        check_status(rocsvAllocateState(sim_handle_, num_qubits_, &device_state_vector_, batch_size_),
+                     "state allocation");
         check_status(rocsvInitializeState(sim_handle_, device_state_vector_, num_qubits_), "state initialization");
     } catch (...) {
         if (sim_handle_) {
@@ -426,27 +434,60 @@ void QuantumSimulator::apply_controlled_matrix(const std::vector<std::complex<do
 }
 
 void QuantumSimulator::set_statevector(const std::vector<std::complex<double>>& state) {
+    if (batch_size_ != 1) {
+        throw std::invalid_argument("set_statevector is only valid when batch_size is 1; use set_statevectors.");
+    }
     if (state.size() != state_vec_size_) {
         throw std::invalid_argument("set_statevector input size must equal 2^num_qubits.");
     }
 
-    std::vector<rocComplex> raw(state.size());
-    for (std::size_t i = 0; i < state.size(); ++i) {
-        raw[i] = to_roc_complex(state[i]);
+    set_statevectors(state);
+}
+
+void QuantumSimulator::set_statevectors(const std::vector<std::complex<double>>& states) {
+    if (states.size() != batch_size_ * state_vec_size_) {
+        throw std::invalid_argument("set_statevectors input size must equal batch_size * 2^num_qubits.");
+    }
+
+    std::vector<rocComplex> raw(states.size());
+    for (std::size_t i = 0; i < states.size(); ++i) {
+        raw[i] = to_roc_complex(states[i]);
     }
 
     check_hip(hipMemcpy(device_state_vector_,
                         raw.data(),
                         raw.size() * sizeof(rocComplex),
                         hipMemcpyHostToDevice),
-              "statevector upload");
+              "statevectors upload");
 }
 
-std::vector<std::complex<double>> QuantumSimulator::get_statevector() const {
+std::vector<std::complex<double>> QuantumSimulator::get_statevector(std::size_t batch_index) const {
+    if (batch_index >= batch_size_) {
+        throw std::out_of_range("batch_index is out of range for simulator batch_size.");
+    }
+
     std::vector<rocComplex> raw(state_vec_size_);
-    check_status(rocsvGetStateVectorFull(sim_handle_, device_state_vector_, raw.data()), "state readback");
+    check_status(
+        rocsvGetStateVectorSlice(
+            sim_handle_,
+            device_state_vector_,
+            raw.data(),
+            static_cast<unsigned>(batch_index)),
+        "state slice readback");
 
     std::vector<std::complex<double>> out(state_vec_size_);
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        out[i] = std::complex<double>(static_cast<double>(raw[i].x),
+                                      static_cast<double>(raw[i].y));
+    }
+    return out;
+}
+
+std::vector<std::complex<double>> QuantumSimulator::get_statevectors() const {
+    std::vector<rocComplex> raw(batch_size_ * state_vec_size_);
+    check_status(rocsvGetStateVectorFull(sim_handle_, device_state_vector_, raw.data()), "state batch readback");
+
+    std::vector<std::complex<double>> out(raw.size());
     for (std::size_t i = 0; i < raw.size(); ++i) {
         out[i] = std::complex<double>(static_cast<double>(raw[i].x),
                                       static_cast<double>(raw[i].y));
@@ -734,6 +775,10 @@ unsigned QuantumSimulator::num_qubits() const noexcept {
     return num_qubits_;
 }
 
+std::size_t QuantumSimulator::batch_size() const noexcept {
+    return batch_size_;
+}
+
 void QuantumSimulator::ApplyGate(const std::string& gate_name, int target_qubit) {
     apply_gate(gate_name, {static_cast<unsigned>(target_qubit)}, {});
 }
@@ -772,6 +817,10 @@ void QuantumSimulator::ResetQubit(int target_qubit) {
 
 std::vector<std::complex<double>> QuantumSimulator::GetStateVector() const {
     return get_statevector();
+}
+
+std::vector<std::complex<double>> QuantumSimulator::GetStateVectors() const {
+    return get_statevectors();
 }
 
 std::vector<double> QuantumSimulator::Probabilities(const std::vector<unsigned>& qubits) const {

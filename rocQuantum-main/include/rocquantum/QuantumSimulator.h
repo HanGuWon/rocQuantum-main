@@ -12,7 +12,7 @@ namespace rocquantum {
 
 class QuantumSimulator {
 public:
-    explicit QuantumSimulator(unsigned num_qubits);
+    explicit QuantumSimulator(unsigned num_qubits, std::size_t batch_size = 1);
     ~QuantumSimulator();
 
     void reset();
@@ -26,7 +26,9 @@ public:
                                  const std::vector<unsigned>& controls,
                                  const std::vector<unsigned>& targets);
     void set_statevector(const std::vector<std::complex<double>>& state);
-    std::vector<std::complex<double>> get_statevector() const;
+    void set_statevectors(const std::vector<std::complex<double>>& states);
+    std::vector<std::complex<double>> get_statevector(std::size_t batch_index = 0) const;
+    std::vector<std::complex<double>> get_statevectors() const;
     std::vector<double> probabilities(const std::vector<unsigned>& qubits) const;
     std::vector<long long> measure(const std::vector<unsigned>& qubits, int shots);
     double expectation_value(const std::string& pauli, unsigned target);
@@ -41,6 +43,7 @@ public:
         std::size_t rows,
         std::size_t cols) const;
     unsigned num_qubits() const noexcept;
+    std::size_t batch_size() const noexcept;
 
     // Legacy API retained for compatibility with previous QSim bindings.
     void ApplyGate(const std::string& gate_name, int target_qubit);
@@ -52,6 +55,7 @@ public:
     void Execute();
     void ResetQubit(int target_qubit);
     std::vector<std::complex<double>> GetStateVector() const;
+    std::vector<std::complex<double>> GetStateVectors() const;
     std::vector<double> Probabilities(const std::vector<unsigned>& qubits) const;
     double GetExpectationValue(const std::string& pauli, int target_qubit);
     double GetExpectationPauliString(const std::string& pauli_string,
@@ -70,6 +74,7 @@ private:
     void synchronize() const;
 
     unsigned num_qubits_;
+    std::size_t batch_size_;
     size_t state_vec_size_;
     rocsvHandle_t sim_handle_;
     rocComplex* device_state_vector_;

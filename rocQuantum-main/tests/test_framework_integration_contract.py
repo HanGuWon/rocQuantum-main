@@ -108,9 +108,21 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             bindings = f.read()
 
         self.assertIn("void set_statevector", header)
+        self.assertIn("void set_statevectors", header)
+        self.assertIn("std::vector<std::complex<double>> get_statevectors", header)
+        self.assertIn("std::size_t batch_size", header)
         self.assertIn("QuantumSimulator::set_statevector", implementation)
+        self.assertIn("QuantumSimulator::set_statevectors", implementation)
+        self.assertIn("QuantumSimulator::get_statevector(std::size_t batch_index)", implementation)
+        self.assertIn("QuantumSimulator::get_statevectors", implementation)
+        self.assertIn("rocsvAllocateState(sim_handle_, num_qubits_, &device_state_vector_, batch_size_)", implementation)
+        self.assertIn("rocsvGetStateVectorSlice", implementation)
+        self.assertIn("rocsvGetStateVectorFull", implementation)
         self.assertIn("hipMemcpyHostToDevice", implementation)
         self.assertIn(".def(\"set_statevector\"", bindings)
+        self.assertIn(".def(\"set_statevectors\"", bindings)
+        self.assertIn(".def(\"get_statevectors\"", bindings)
+        self.assertIn(".def(\"batch_size\"", bindings)
 
     def test_public_simulator_exposes_native_probabilities(self):
         with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
