@@ -141,6 +141,27 @@ def _pauli_map_to_term(pauli_map):
     return "".join(pauli_map[target] for target in targets), targets
 
 
+def _canonical_pauli_term(term):
+    coeff, pauli_string, targets = term
+    pauli_map = _term_to_pauli_map(pauli_string, targets)
+    canonical_paulis, canonical_targets = _pauli_map_to_term(pauli_map)
+    return complex(coeff), canonical_paulis, tuple(canonical_targets)
+
+
+def _combine_pauli_terms(terms):
+    combined = {}
+    for term in terms:
+        coeff, pauli_string, targets = _canonical_pauli_term(term)
+        key = (pauli_string, targets)
+        combined[key] = combined.get(key, 0.0 + 0.0j) + coeff
+
+    return [
+        (coeff, pauli_string, list(targets))
+        for (pauli_string, targets), coeff in combined.items()
+        if abs(coeff) > 1e-15
+    ]
+
+
 def _multiply_pauli_terms(left, right):
     left_coeff, left_paulis, left_targets = left
     right_coeff, right_paulis, right_targets = right
@@ -160,12 +181,17 @@ def _multiply_pauli_terms(left, right):
 
 
 def _pauli_square_terms(terms):
-    return [_multiply_pauli_terms(left, right) for left in terms for right in terms]
+    combined_terms = _combine_pauli_terms(terms)
+    return _combine_pauli_terms(
+        _multiply_pauli_terms(left, right)
+        for left in combined_terms
+        for right in combined_terms
+    )
 
 
 def _evaluate_pauli_terms(runtime, terms):
     result = 0.0 + 0.0j
-    for coeff, pauli_string, targets in terms:
+    for coeff, pauli_string, targets in _combine_pauli_terms(terms):
         if not targets:
             result += coeff
         else:
