@@ -157,6 +157,14 @@ class _FakeQuantumSimulator:
         weights = np.arange(1, dimension + 1, dtype=float)
         return weights / np.sum(weights)
 
+    def probabilities_batch(self, qubits):
+        qubits = tuple(int(qubit) for qubit in qubits)
+        self.probability_requests.append(qubits)
+        dimension = 1 << len(qubits)
+        weights = np.arange(1, dimension + 1, dtype=float)
+        probabilities = weights / np.sum(weights)
+        return np.tile(probabilities, (self._batch_size, 1))
+
     def expectation_pauli_string(self, pauli_string, targets):
         self.expectations.append((pauli_string, tuple(targets)))
         if pauli_string == "Z" and tuple(targets) == (0,):
@@ -1565,6 +1573,32 @@ def test_pennylane_batch_execute_uses_batched_controlled_parametric_gate(monkeyp
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("CRX", (0, 1), (0.1, 0.2))]
     assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_pennylane_batch_execute_uses_batched_probabilities(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    circuits = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.probs(wires=[0])]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.probs(wires=[0])]),
+    ]
+
+    results = dev.batch_execute(circuits)
+
+    assert len(results) == 2
+    np.testing.assert_allclose(results[0], np.array([1 / 3, 2 / 3]))
+    np.testing.assert_allclose(results[1], np.array([1 / 3, 2 / 3]))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.probability_requests == [(0,)]
 
 
 def test_pennylane_paulix_expval_skips_diagonalizing_rotation(monkeypatch):

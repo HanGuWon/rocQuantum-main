@@ -381,6 +381,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def batch_execute", source)
         self.assertIn("_try_execute_batched_parameter_circuits", source)
         self.assertIn("self._runtime.apply_operation_batch", source)
+        self.assertIn("self._runtime.probabilities_batch", source)
         self.assertIn("_analytic_measurements_use_native_pauli", source)
         self.assertIn("_skip_diagonalizing_rotations", source)
         self.assertIn("_diagonalizing_rotations_applied", source)
