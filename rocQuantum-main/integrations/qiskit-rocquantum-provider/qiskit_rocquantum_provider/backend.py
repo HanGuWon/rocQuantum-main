@@ -149,6 +149,7 @@ class RocQuantumBackend(BackendV2):
         self._ensure_simulator(circuit.num_qubits)
 
         measured_bits = {}  # Map classical bit index to qubit index
+        measurement_started = False
         for instruction in circuit.data:
             op = instruction.operation
             if op.name in {"barrier", "delay", "save_statevector"}:
@@ -157,10 +158,17 @@ class RocQuantumBackend(BackendV2):
             q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
 
             if op.name == 'measure':
+                measurement_started = True
                 # Store which classical bit this measurement corresponds to
                 c_index = circuit.find_bit(instruction.clbits[0]).index
                 measured_bits[c_index] = q_indices[0]
                 continue
+
+            if measurement_started:
+                raise ValueError(
+                    "RocQuantumBackend only supports terminal measurements. "
+                    f"Operation {op.name!r} appears after a measurement."
+                )
 
             matrix = op.to_matrix() if op.name in MATRIX_FALLBACK_OPS else None
             self._runtime.apply_operation(
