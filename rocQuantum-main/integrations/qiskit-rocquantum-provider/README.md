@@ -11,7 +11,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Measurement Sampling**: Supports realistic measurement outcomes and provides a counts dictionary via `get_counts()`.
 - **Native Controlled Rotations**: Exposes Qiskit `crx`, `cry`, and `crz` target operations and dispatches them to rocQuantum native gates when the binding supports them.
 - **Native Multi-control Gates**: Dispatches Qiskit `ccx`, `mcx`, and `cswap` through rocQuantum native `MCX` / `CSWAP` gate aliases when the binding supports them, while preserving matrix fallback where Qiskit exposes a dense matrix.
-- **Native Controlled-Pauli Decomposition**: Dispatches Qiskit `ch`, `cy`, `ccz`, and `dcx` through exact native `ry` / `s` / `sdg` / `h` / `cx` / `mcx` decompositions.
+- **Native Controlled-Pauli Decomposition**: Dispatches Qiskit `ch`, `cy`, `ccz`, `dcx`, and `ecr` through exact native `rx` / `ry` / `s` / `sdg` / `h` / `x` / `cx` / `mcx` decompositions.
 - **Native Phase Decomposition**: Dispatches Qiskit `p` and `cp` through exact global-phase plus native `rz` / `cx` decompositions, skipping physically irrelevant global phase work on sampling-only and estimator paths.
 - **Native Pauli Rotation Decomposition**: Dispatches Qiskit `rxx`, `ryy`, and `rzz` through exact native `rx` / `rz` / `cx` sequences instead of dense two-qubit matrices.
 - **Native Swap Decomposition**: Dispatches Qiskit `iswap` through exact native `s` / `h` / `cx` gates instead of a dense two-qubit matrix.
@@ -46,7 +46,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 - The provider uses `BackendV2`, exposes `max_circuits`, and imports result model classes from both old and new Qiskit locations.
 - The Qiskit target declares a finite compiler capacity (`max_target_qubits`, default `64`) so `transpile(circuit, backend)` can compile local simulator circuits.
 - The target includes `crx`, `cry`, and `crz`; older bindings can still fall back through matrix application when available.
-- `ccx`, general all-one-control `mcx`, and `cswap` are routed to native multi-control public simulator gates when available. `ch`, `cy`, `ccz`, `dcx`, and `iswap` use exact native decompositions. Other relative-phase controlled gates such as `rccx` / `rcccx` remain matrix fallbacks.
+- `ccx`, general all-one-control `mcx`, and `cswap` are routed to native multi-control public simulator gates when available. `ch`, `cy`, `ccz`, `dcx`, `ecr`, and `iswap` use exact native decompositions. Other relative-phase controlled gates such as `rccx` / `rcccx` remain matrix fallbacks.
 - Qiskit `sx`, `sxdg`, `u`, `p`, `cp`, `rxx`, `ryy`, and `rzz` are target-visible but prefer exact native decomposition; statevector-producing `sx` / `sxdg` / `u` / `p` / `cp` runs include the required global phase, while sampling-only and estimator runs omit it because it cannot affect observed results.
 - Direct execution can also matrix-dispatch non-target unitary instructions with up to four qubits when Qiskit can provide a dense matrix, including open-control variants such as `ccx_o1` / `ch_o0`. Larger or non-unitary instructions remain unsupported unless added explicitly.
 - Direct `unitary` and `state_preparation` operations execute through `apply_matrix()` without attempting to normalize matrix/vector parameters as scalar gate angles.

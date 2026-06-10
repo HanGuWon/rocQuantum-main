@@ -533,6 +533,10 @@ def test_qiskit_native_multi_control_and_matrix_fallback_gates(monkeypatch):
         ("H", (2,), ()),
         ("CSWAP", (0, 1, 2), ()),
         ("S", (0,), ()),
+        ("RX", (1,), (np.pi / 2,)),
+        ("CNOT", (0, 1), ()),
+        ("X", (0,), ()),
+        ("S", (0,), ()),
         ("S", (1,), ()),
         ("H", (0,), ()),
         ("CNOT", (0, 1), ()),
@@ -542,7 +546,6 @@ def test_qiskit_native_multi_control_and_matrix_fallback_gates(monkeypatch):
         ("CNOT", (1, 0), ()),
     ]
     assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
-        ((4, 4), (0, 1)),
         ((8, 8), (0, 1, 2)),
         ((16, 16), (0, 1, 2, 3)),
     ]
@@ -1372,6 +1375,12 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         ("CNOT", (0, 1), ()),
         ("CNOT", (1, 0), ()),
         ("H", (1,), ()),
+        ("Z", (0,), ()),
+        ("CNOT", (0, 1), ()),
+        ("RX", (1,), (np.pi / 2,)),
+        ("RX", (0,), (np.pi / 2,)),
+        ("RY", (0,), (np.pi / 2,)),
+        ("RX", (0,), (np.pi / 2,)),
     ]
     assert [targets for _, targets in sim.matrices] == [
         (0,),
@@ -1380,7 +1389,7 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         (1,),
         (0, 1),
         (0, 1),
-        (0, 1),
+        (1,),
         (0, 1),
         (0, 1, 2, 3),
         (0, 1, 2, 3),

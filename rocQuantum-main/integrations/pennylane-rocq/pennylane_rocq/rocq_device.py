@@ -322,6 +322,15 @@ def _apply_phase_shift(runtime, wire_indices, theta):
     runtime.apply_operation("RZ", [wire_index], [theta])
 
 
+def _apply_sx(runtime, wire_indices):
+    if len(wire_indices) != 1:
+        raise ValueError("SX requires exactly one wire.")
+
+    wire_index = wire_indices[0]
+    _apply_global_phase(runtime, wire_index, np.pi / 4)
+    runtime.apply_operation("RX", [wire_index], [np.pi / 2])
+
+
 def _apply_controlled_phase_shift(runtime, wire_indices, theta):
     if len(wire_indices) != 2:
         raise ValueError("ControlledPhaseShift requires exactly two wires.")
@@ -424,6 +433,19 @@ def _apply_pswap(runtime, wire_indices, phi):
     runtime.apply_operation("CNOT", [left, right])
     _apply_phase_shift(runtime, [right], phi)
     runtime.apply_operation("CNOT", [left, right])
+
+
+def _apply_ecr(runtime, wire_indices):
+    if len(wire_indices) != 2:
+        raise ValueError("ECR requires exactly two wires.")
+
+    control, target = wire_indices
+    runtime.apply_operation("Z", [control])
+    runtime.apply_operation("CNOT", [control, target])
+    _apply_sx(runtime, [target])
+    runtime.apply_operation("RX", [control], [np.pi / 2])
+    runtime.apply_operation("RY", [control], [np.pi / 2])
+    runtime.apply_operation("RX", [control], [np.pi / 2])
 
 
 class RocQDevice(QubitDevice):
@@ -676,6 +698,19 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_phase_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_pswap(self._runtime, wire_indices, phi)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "ECR":
+                try:
+                    if not _supports_native_phase_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_ecr(self._runtime, wire_indices)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
