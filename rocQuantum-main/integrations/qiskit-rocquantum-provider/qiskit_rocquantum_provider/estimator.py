@@ -73,10 +73,17 @@ def _label_to_runtime_term(label: str, num_qubits: int):
     return "".join(paulis), targets
 
 
-def _combine_observable_terms(terms):
+def _canonical_observable_label(label: str, num_qubits: int):
+    normalized_label = str(label).upper()
+    if len(normalized_label) > int(num_qubits):
+        raise ValueError("Observable acts on more qubits than the circuit.")
+    return "I" * (int(num_qubits) - len(normalized_label)) + normalized_label
+
+
+def _combine_observable_terms(terms, num_qubits: int):
     combined = {}
     for coeff, label in terms:
-        normalized_label = str(label).upper()
+        normalized_label = _canonical_observable_label(label, int(num_qubits))
         combined[normalized_label] = combined.get(normalized_label, 0.0 + 0.0j) + complex(coeff)
     return [
         (coeff, label)
@@ -87,7 +94,10 @@ def _combine_observable_terms(terms):
 
 def estimate_pauli_observable(runtime, observable, num_qubits: int) -> float:
     result = 0.0 + 0.0j
-    terms = _combine_observable_terms(_observable_terms(observable, num_qubits=int(num_qubits)))
+    terms = _combine_observable_terms(
+        _observable_terms(observable, num_qubits=int(num_qubits)),
+        int(num_qubits),
+    )
     for coeff, label in terms:
         pauli_string, targets = _label_to_runtime_term(label, int(num_qubits))
         if not targets:

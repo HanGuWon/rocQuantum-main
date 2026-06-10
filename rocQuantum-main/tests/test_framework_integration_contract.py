@@ -117,6 +117,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
 
         self.assertIn("class RocQuantumEstimator", source)
         self.assertIn("EstimatorPub.coerce", source)
+        self.assertIn("_canonical_observable_label", source)
+        self.assertIn("_combine_observable_terms", source)
         self.assertIn("estimate_expectation", source)
         self.assertIn("shots\": 0", source)
 

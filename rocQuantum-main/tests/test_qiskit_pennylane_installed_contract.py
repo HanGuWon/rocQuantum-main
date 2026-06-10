@@ -658,6 +658,21 @@ def test_qiskit_provider_combines_duplicate_pauli_terms(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
 
 
+def test_qiskit_provider_combines_padded_duplicate_pauli_labels(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    circuit = QuantumCircuit(2)
+    observable = [("Z", 0.5), ("IZ", 0.7), ("II", 0.25)]
+
+    assert provider.estimate_expectation(circuit, observable) == pytest.approx(0.85)
+    assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
+
+
 def test_qiskit_provider_estimates_sparse_observable_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
