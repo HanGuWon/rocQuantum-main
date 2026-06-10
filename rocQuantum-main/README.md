@@ -69,6 +69,7 @@ Use those files as the authoritative capability summary for the current codebase
 - Current experimental/latest CI lane: ROCm `7.2.4`
 - ROCm CMake packages are consumed through official config targets such as `hip` / `hip::host`, `roc::rocblas`, `roc::rocsolver`, and optional RCCL target `rccl`
 - Windows helper scripts are kept for development convenience but are not treated as release-grade support
+- When no AMD GPU is available, the accepted local validation baseline is the Python mock/native-binding contract suite. ROCm hardware E2E and performance validation should be skipped explicitly, not inferred from mock results.
 
 ## Native Component Snapshot
 
@@ -93,7 +94,8 @@ Use those files as the authoritative capability summary for the current codebase
 - `hipDensityMatApplyChannel` accepts single-qubit Kraus channels only, and density-matrix sampling currently copies diagonal probability information to host before drawing shots.
 - Higher-level CUDA-QX-style helpers are explicitly experimental: VQE supports Pauli-observable objectives through `rocq.observe()`, QAOA is a MaxCut-style ansatz helper, and QEC is limited to a single 3-qubit repetition-code syndrome round.
 - `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, but the legacy surface remains separate from canonical `rocq`.
-- PennyLane and Cirq adapters now prefer `QuantumSimulator.measure()` for sampling, but still keep host-side fallback paths for older bindings that do not expose `measure`.
+- Qiskit, PennyLane, and Cirq adapters now prefer `QuantumSimulator.measure()` for sampling, but still keep host-side fallback paths where needed for older bindings that do not expose `measure`.
+- Qiskit direct `prepare_state()` and untouched-qubit `initialize()` are mapped to matrix state-preparation fallback; later `initialize()`, mid-circuit `reset`, classically conditioned operations, and Qiskit control-flow ops are explicit unsupported boundaries until non-unitary/dynamic-circuit runtime support exists.
 - Several provider backends remain skeletons or thin clients.
 
 ## Build

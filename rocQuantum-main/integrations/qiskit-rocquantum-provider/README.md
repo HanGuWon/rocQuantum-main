@@ -11,6 +11,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Measurement Sampling**: Supports realistic measurement outcomes and provides a counts dictionary via `get_counts()`.
 - **Native Controlled Rotations**: Exposes Qiskit `crx`, `cry`, and `crz` target operations and dispatches them to rocQuantum native gates when the binding supports them.
 - **Matrix Fallback Gates**: Exposes common Qiskit matrix gates including `sx`, `sxdg`, `p`, `cp`, `rxx`, `ryy`, `rzz`, and `u` through rocQuantum matrix application.
+- **State Preparation Boundary**: Runs direct `QuantumCircuit.prepare_state()` through a `StatePreparation` matrix fallback and supports initial `initialize()` on untouched qubits; later `initialize()` is rejected because it requires non-unitary reset support.
 - **Automatic Discovery**: Once installed, Qiskit can automatically discover and list this provider's backends.
 - **Modern Job Contract**: `backend.run()` returns a synchronous Qiskit `Job` object whose `result()` method returns the `Result`.
 - **Primitive Factories**: `RocQuantumProvider.get_sampler()` and `get_estimator()` return native rocQuantum `SamplerV2` / `EstimatorV2` implementations that avoid generic backend wrapper overhead on the default path.
@@ -39,12 +40,20 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 - The Qiskit target declares a finite compiler capacity (`max_target_qubits`, default `64`) so `transpile(circuit, backend)` can compile local simulator circuits.
 - The target includes `crx`, `cry`, and `crz`; older bindings can still fall back through matrix application when available.
 - Common one- and two-qubit matrix gates (`sx`, `sxdg`, `p`, `cp`, `rxx`, `ryy`, `rzz`, `u`) are target-visible and execute through `apply_matrix()`.
+- Direct `unitary` and `state_preparation` operations execute through `apply_matrix()` without attempting to normalize matrix/vector parameters as scalar gate angles.
+- `reset` is target-visible and accepted only before the target qubit has been operated on, where it is a no-op from the all-zero initial state. Mid-circuit `reset` and later `initialize()` are rejected with explicit diagnostics.
+- Qiskit control-flow operations (`if_else`, `for_loop`, `while_loop`, `switch_case`, break/continue) and classically conditioned operations are rejected explicitly. Dynamic-circuit support needs runtime-level non-unitary/classical-control semantics first.
 - Qiskit sampler support defaults to `RocQuantumSampler`, a native `SamplerV2` over `QuantumSimulator.measure()`; estimator support defaults to `RocQuantumEstimator`, a native deterministic `EstimatorV2` over `QuantumSimulator.expectation_pauli_string()`. Pass `native=False` to `get_sampler()` / `get_estimator()` to request Qiskit's generic backend wrappers.
 - Direct Pauli expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, and `(label, coeff)` term lists.
 - `backend.run(..., statevector=False)` skips the pre-measurement statevector readback for sampling-only workloads, avoiding a full host transfer on larger GPU simulations.
 - `backend.run(..., sampling=False)` skips measurement and counts formatting for statevector-only workloads.
 - Aer-style `save_statevector` marker instructions are treated as no-op result annotations; `QuantumCircuit.save_statevector()` is not part of base Qiskit `2.4.1`.
 - `rocquantum_bind` is loaded when a circuit is executed, so importing the provider remains possible before the native extension is present.
+- On machines without an AMD GPU, use the installed-contract test with the fake native binding as the local validation baseline:
+
+```bash
+python -m pytest tests/test_qiskit_pennylane_installed_contract.py -q -p no:cacheprovider
+```
 
 ## Usage Example
 
