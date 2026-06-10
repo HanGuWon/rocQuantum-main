@@ -29,8 +29,16 @@ PENNYLANE_TO_ROCQ_GATES = {
 NATIVE_PARAMETRIC_OPS = {"RX", "RY", "RZ", "CRX", "CRY", "CRZ"}
 MATRIX_OPS = {
     "QubitUnitary",
-    "PhaseShift", "ControlledPhaseShift", "CRot",
+    "ControlledQubitUnitary",
+    "PhaseShift", "ControlledPhaseShift",
+    "CPhaseShift00", "CPhaseShift01", "CPhaseShift10",
+    "CH", "CY", "CCZ", "CRot",
+    "MultiControlledX", "MultiRZ",
     "IsingXX", "IsingYY", "IsingZZ", "IsingXY",
+    "PSWAP", "ISWAP", "SISWAP", "SQISW", "ECR",
+    "SingleExcitation", "SingleExcitationPlus", "SingleExcitationMinus",
+    "DoubleExcitation", "DoubleExcitationPlus", "DoubleExcitationMinus",
+    "OrbitalRotation", "FermionicSWAP",
     "Toffoli", "CSWAP",
 }
 PENNYLANE_PAULI_TO_CHAR = {

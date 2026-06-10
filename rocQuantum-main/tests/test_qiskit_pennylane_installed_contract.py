@@ -562,6 +562,63 @@ def test_pennylane_common_gates_use_matrix_fallback_without_decomposition(monkey
     ]
 
 
+def test_pennylane_extended_gates_use_matrix_fallback(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=4)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.CH(wires=[0, 1])
+        qml.CY(wires=[0, 1])
+        qml.CCZ(wires=[0, 1, 2])
+        qml.CPhaseShift00(0.1, wires=[0, 1])
+        qml.CPhaseShift01(0.2, wires=[0, 1])
+        qml.CPhaseShift10(0.3, wires=[0, 1])
+        qml.MultiControlledX(wires=[0, 1, 2])
+        qml.MultiRZ(0.4, wires=[0, 1, 2])
+        qml.PSWAP(0.5, wires=[0, 1])
+        qml.ISWAP(wires=[0, 1])
+        qml.SISWAP(wires=[0, 1])
+        qml.SQISW(wires=[0, 1])
+        qml.ECR(wires=[0, 1])
+        qml.SingleExcitation(0.6, wires=[0, 1])
+        qml.DoubleExcitation(0.7, wires=[0, 1, 2, 3])
+        qml.OrbitalRotation(0.8, wires=[0, 1, 2, 3])
+        qml.FermionicSWAP(0.9, wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == []
+    assert [targets for _, targets in sim.matrices] == [
+        (0, 1),
+        (0, 1),
+        (0, 1, 2),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1, 2),
+        (0, 1, 2),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1),
+        (0, 1, 2, 3),
+        (0, 1, 2, 3),
+        (0, 1),
+    ]
+
+
 def test_pennylane_parameter_shift_gradient_pipeline_runs(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

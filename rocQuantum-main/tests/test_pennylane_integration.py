@@ -167,12 +167,17 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
             _FakeOperation("ControlledPhaseShift", [0, 1], matrix=matrix),
             _FakeOperation("IsingXX", [0, 1], matrix=matrix),
             _FakeOperation("CRot", [0, 1], matrix=matrix),
+            _FakeOperation("CH", [0, 1], matrix=matrix),
+            _FakeOperation("CY", [0, 1], matrix=matrix),
+            _FakeOperation("MultiRZ", [0, 1], matrix=matrix),
+            _FakeOperation("PSWAP", [0, 1], matrix=matrix),
+            _FakeOperation("ECR", [0, 1], matrix=matrix),
         ]
 
         device.apply(operations)
         qsim = _FakeQSim.instances[-1]
 
-        self.assertEqual([indices for _, indices in qsim.applied_gates], [(0, 1)] * 3)
+        self.assertEqual([indices for _, indices in qsim.applied_gates], [(0, 1)] * len(operations))
         for applied_matrix, _ in qsim.applied_gates:
             np.testing.assert_allclose(applied_matrix, matrix)
 

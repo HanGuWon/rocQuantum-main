@@ -10,7 +10,7 @@ This package provides a PennyLane device that uses the [rocQuantum-1](https://gi
 - **Full PennyLane Integration**: Supports core PennyLane measurement types, including `qml.state()`, `qml.probs()`, `qml.counts()`, Pauli `qml.expval()`, and Pauli `qml.var()`.
 - **Hardware-like Sampling**: Simulates measurement shots to provide realistic count dictionaries.
 - **Lightning-style Plugin Aliases**: Registers `lightning.rocq` and `lightning.rocm` in addition to `rocquantum.qpu` and the historical `rocq.pennylane` alias.
-- **GPU Matrix Fallbacks**: Dispatches common PennyLane matrix-defined gates such as `PhaseShift`, `ControlledPhaseShift`, `CRot`, and Ising gates through rocQuantum matrix application instead of decomposing them into longer gate sequences.
+- **GPU Matrix Fallbacks**: Dispatches common PennyLane matrix-defined gates such as `PhaseShift`, controlled phase variants, `CH` / `CY` / `CCZ`, `MultiControlledX`, `MultiRZ`, Ising gates, swap-family gates, excitation gates, `OrbitalRotation`, and `FermionicSWAP` through rocQuantum matrix application instead of decomposing them into longer gate sequences.
 
 ## Installation
 
