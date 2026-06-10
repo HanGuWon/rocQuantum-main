@@ -275,6 +275,25 @@ def test_qiskit_backend_rejects_reset_after_operation(monkeypatch):
         backend.run(circuit).result()
 
 
+def test_qiskit_backend_rejects_control_flow_operations(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1, 1)
+    if not hasattr(circuit, "if_test"):
+        pytest.skip("Qiskit version does not expose QuantumCircuit.if_test")
+
+    with circuit.if_test((circuit.clbits[0], True)):
+        circuit.x(0)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    with pytest.raises(ValueError, match="control-flow operations"):
+        backend.run(circuit).result()
+
+
 def test_qiskit_backend_applies_global_phase_for_statevector(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

@@ -66,6 +66,16 @@ MATRIX_FALLBACK_OPS = {
     "p", "rccx", "rcccx", "rxx", "ryy", "rzz",
     "sx", "sxdg", "u", "unitary",
 }
+CONTROL_FLOW_OPS = {
+    "break_loop", "continue_loop", "for_loop", "if_else", "switch_case", "while_loop",
+}
+
+
+def _instruction_condition(instruction):
+    operation_condition = getattr(instruction.operation, "condition", None)
+    if operation_condition is not None:
+        return operation_condition
+    return getattr(instruction, "condition", None)
 
 
 def _instruction_target(num_qubits):
@@ -178,6 +188,18 @@ class RocQuantumBackend(BackendV2):
             op = instruction.operation
             if op.name in {"barrier", "delay", "save_statevector"}:
                 continue
+
+            if op.name in CONTROL_FLOW_OPS or getattr(op, "blocks", None) is not None:
+                raise ValueError(
+                    "RocQuantumBackend does not support Qiskit control-flow operations yet. "
+                    "Transpile or decompose dynamic circuits before execution."
+                )
+
+            if _instruction_condition(instruction) is not None:
+                raise ValueError(
+                    "RocQuantumBackend does not support classically conditioned operations yet. "
+                    "Transpile or decompose dynamic circuits before execution."
+                )
 
             q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
 
