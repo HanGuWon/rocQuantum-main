@@ -454,6 +454,40 @@ std::vector<std::complex<double>> QuantumSimulator::get_statevector() const {
     return out;
 }
 
+std::vector<double> QuantumSimulator::probabilities(const std::vector<unsigned>& qubits) const {
+    std::vector<unsigned> targets;
+    if (qubits.empty()) {
+        targets.reserve(num_qubits_);
+        for (unsigned q = 0; q < num_qubits_; ++q) {
+            targets.push_back(q);
+        }
+    } else {
+        targets = qubits;
+    }
+
+    if (targets.size() > 20) {
+        throw std::runtime_error("probabilities currently supports at most 20 target qubits.");
+    }
+
+    std::unordered_set<unsigned> unique_qubits;
+    for (unsigned q : targets) {
+        ensure_valid_qubit(q);
+        if (!unique_qubits.insert(q).second) {
+            throw std::invalid_argument("probability qubits must be unique.");
+        }
+    }
+
+    std::vector<double> out(std::size_t{1} << targets.size(), 0.0);
+    check_status(rocsvProbabilities(sim_handle_,
+                                    device_state_vector_,
+                                    num_qubits_,
+                                    targets.data(),
+                                    static_cast<unsigned>(targets.size()),
+                                    out.data()),
+                 "probabilities");
+    return out;
+}
+
 std::vector<long long> QuantumSimulator::measure(const std::vector<unsigned>& qubits, int shots) {
     if (shots < 0) {
         throw std::invalid_argument("shots must be non-negative.");
@@ -621,6 +655,10 @@ void QuantumSimulator::ResetQubit(int target_qubit) {
 
 std::vector<std::complex<double>> QuantumSimulator::GetStateVector() const {
     return get_statevector();
+}
+
+std::vector<double> QuantumSimulator::Probabilities(const std::vector<unsigned>& qubits) const {
+    return probabilities(qubits);
 }
 
 double QuantumSimulator::GetExpectationValue(const std::string& pauli, int target_qubit) {

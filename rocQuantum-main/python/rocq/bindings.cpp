@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <complex>                 // For std::complex
+#include <stdexcept>
 #include <string>
 
 namespace py = pybind11;
@@ -437,6 +438,33 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             return h_results;
         }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("measured_qubits"), py::arg("num_shots"),
            "Samples from the state vector and returns an array of measurement outcomes (bitstrings).");
+
+    m.def("probabilities",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::vector<unsigned>& measuredQubits_vec) {
+            if (measuredQubits_vec.empty()) {
+                throw std::invalid_argument("probabilities requires at least one measured qubit.");
+            }
+            if (measuredQubits_vec.size() > 20) {
+                throw std::runtime_error("probabilities currently supports at most 20 measured qubits.");
+            }
+            const std::size_t num_outcomes = std::size_t{1} << measuredQubits_vec.size();
+            py::array_t<double> h_probabilities(num_outcomes);
+
+            rocqStatus_t status = rocsvProbabilities(
+                                        handle_wrapper.get(),
+                                        d_state_buffer.get_ptr<rocComplex>(),
+                                        numQubits,
+                                        measuredQubits_vec.data(),
+                                        static_cast<unsigned>(measuredQubits_vec.size()),
+                                        h_probabilities.mutable_data());
+
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvProbabilities failed: " + std::to_string(status));
+            }
+            return h_probabilities;
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("measured_qubits"),
+           "Returns normalized computational-basis probabilities for selected qubits.");
 
     m.def("apply_controlled_matrix",
         [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,

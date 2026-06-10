@@ -2629,6 +2629,23 @@ def test_pennylane_analytic_probs_prefers_native_probability_hook(monkeypatch):
     assert marginal_sim.statevector_reads == 0
 
 
+def test_runtime_probabilities_falls_back_when_native_reports_not_implemented(monkeypatch):
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    sim = _FakeQuantumSimulator(2)
+
+    def unavailable_probabilities(qubits):
+        sim.probability_requests.append(tuple(qubits))
+        raise RuntimeError("hipStateVec error during probabilities (status 5)")
+
+    monkeypatch.setattr(sim, "probabilities", unavailable_probabilities)
+    runtime = RocQuantumRuntime(sim)
+
+    np.testing.assert_allclose(runtime.probabilities([0, 1]), np.array([0.5, 0.0, 0.0, 0.5]))
+    assert sim.probability_requests == [(0, 1)]
+    assert sim.statevector_reads == 1
+
+
 def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

@@ -125,6 +125,15 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                  std::memcpy(result.mutable_data(), state.data(), state.size() * sizeof(std::complex<double>));
                  return result;
              })
+        .def("probabilities",
+             [](const rocquantum::QuantumSimulator& self, const std::vector<unsigned>& qubits) {
+                 auto probabilities = self.probabilities(qubits);
+                 py::array_t<double> result(probabilities.size());
+                 std::memcpy(result.mutable_data(), probabilities.data(), probabilities.size() * sizeof(double));
+                 return result;
+             },
+             py::arg("qubits"),
+             "Return normalized computational-basis probabilities for selected qubits.")
         .def("measure", &rocquantum::QuantumSimulator::measure, py::arg("qubits"), py::arg("shots"))
         .def("expectation_value",
              &rocquantum::QuantumSimulator::expectation_value,
@@ -222,6 +231,14 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                  std::memcpy(result.mutable_data(), state.data(), state.size() * sizeof(std::complex<double>));
                  return result;
              })
+        .def("Probabilities",
+             [](const rocquantum::QuantumSimulator& self, const std::vector<unsigned>& qubits) {
+                 auto probabilities = self.Probabilities(qubits);
+                 py::array_t<double> result(probabilities.size());
+                 std::memcpy(result.mutable_data(), probabilities.data(), probabilities.size() * sizeof(double));
+                 return result;
+             },
+             py::arg("qubits"))
         .def("GetExpectationValue",
              &rocquantum::QuantumSimulator::GetExpectationValue,
              py::arg("pauli"),

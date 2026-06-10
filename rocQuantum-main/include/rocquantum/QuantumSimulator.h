@@ -27,6 +27,7 @@ public:
                                  const std::vector<unsigned>& targets);
     void set_statevector(const std::vector<std::complex<double>>& state);
     std::vector<std::complex<double>> get_statevector() const;
+    std::vector<double> probabilities(const std::vector<unsigned>& qubits) const;
     std::vector<long long> measure(const std::vector<unsigned>& qubits, int shots);
     double expectation_value(const std::string& pauli, unsigned target);
     double expectation_pauli_string(const std::string& pauli_string,
@@ -49,6 +50,7 @@ public:
     void Execute();
     void ResetQubit(int target_qubit);
     std::vector<std::complex<double>> GetStateVector() const;
+    std::vector<double> Probabilities(const std::vector<unsigned>& qubits) const;
     double GetExpectationValue(const std::string& pauli, int target_qubit);
     double GetExpectationPauliString(const std::string& pauli_string,
                                      const std::vector<unsigned>& targets);

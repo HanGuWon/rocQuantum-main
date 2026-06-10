@@ -410,14 +410,27 @@ class RocQuantumRuntime:
 
     def probabilities(self, qubits: Iterable[int] | None = None) -> np.ndarray:
         normalized_qubits = None if qubits is None else normalize_targets(qubits)
+        native_qubits = [] if normalized_qubits is None else normalized_qubits
+
+        def _native_probabilities_unavailable(exc: Exception) -> bool:
+            message = str(exc)
+            return isinstance(exc, NotImplementedError) or "status 5" in message or "at most 20 target qubits" in message
 
         native = getattr(self.simulator, "probabilities", None)
         if callable(native):
-            return np.asarray(native([] if normalized_qubits is None else normalized_qubits), dtype=float)
+            try:
+                return np.asarray(native(native_qubits), dtype=float)
+            except Exception as exc:
+                if not _native_probabilities_unavailable(exc):
+                    raise
 
         legacy = getattr(self.simulator, "Probabilities", None)
         if callable(legacy):
-            return np.asarray(legacy([] if normalized_qubits is None else normalized_qubits), dtype=float)
+            try:
+                return np.asarray(legacy(native_qubits), dtype=float)
+            except Exception as exc:
+                if not _native_probabilities_unavailable(exc):
+                    raise
 
         return probabilities_from_statevector(self.statevector(), normalized_qubits)
 

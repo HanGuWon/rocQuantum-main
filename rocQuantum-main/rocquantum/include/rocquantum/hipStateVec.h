@@ -529,6 +529,25 @@ rocqStatus_t rocsvSample(rocsvHandle_t handle,
                          unsigned numShots,
                          uint64_t* h_results);
 
+/**
+ * @brief Computes computational-basis probabilities for selected qubits.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector.
+ * @param[in] numQubits Total number of qubits.
+ * @param[in] measuredQubits Array of qubit indices whose marginal probabilities are requested.
+ * @param[in] numMeasuredQubits The number of measured qubits.
+ * @param[out] h_probabilities Host pointer to 2^numMeasuredQubits normalized probabilities.
+ *                            Outcome bit b corresponds to measuredQubits[b].
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvProbabilities(rocsvHandle_t handle,
+                                rocComplex* d_state,
+                                unsigned numQubits,
+                                const unsigned* measuredQubits,
+                                unsigned numMeasuredQubits,
+                                double* h_probabilities);
+
 
 /**
  * @brief Applies a general matrix to target qubits, controlled by multiple control qubits.

@@ -55,6 +55,18 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
             "simulator.cpp missing state vector output method",
         )
 
+    def test_state_vector_probability_entrypoint_is_public(self):
+        header = self._read("rocquantum", "include", "rocquantum", "hipStateVec.h")
+        source = self._read("rocquantum", "src", "hipStateVec", "hipStateVec.cpp")
+        simulator_header = self._read("include", "rocquantum", "QuantumSimulator.h")
+        bindings = self._read("bindings.cpp")
+
+        self.assertIn("rocsvProbabilities", header)
+        self.assertRegex(source, r"rocqStatus_t\s+rocsvProbabilities\s*\(")
+        self.assertIn("accumulate_local_sample_probabilities", source)
+        self.assertIn("std::vector<double> probabilities", simulator_header)
+        self.assertIn(".def(\"probabilities\"", bindings)
+
 
 if __name__ == "__main__":
     unittest.main()

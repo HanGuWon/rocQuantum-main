@@ -55,7 +55,22 @@ _QUANTUM_SIMULATOR_HEADER = os.path.join(
     "rocquantum",
     "QuantumSimulator.h",
 )
+_HIPSTATEVEC_HEADER = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "include",
+    "rocquantum",
+    "hipStateVec.h",
+)
+_HIPSTATEVEC_SOURCE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "hipStateVec.cpp",
+)
 _BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "bindings.cpp")
+_LOW_LEVEL_BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
 
 
 class TestFrameworkIntegrationContract(unittest.TestCase):
@@ -95,6 +110,34 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("QuantumSimulator::set_statevector", implementation)
         self.assertIn("hipMemcpyHostToDevice", implementation)
         self.assertIn(".def(\"set_statevector\"", bindings)
+
+    def test_public_simulator_exposes_native_probabilities(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_HIPSTATEVEC_HEADER, "r", encoding="utf-8") as f:
+            hip_header = f.read()
+        with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            hip_source = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_LOW_LEVEL_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            low_level_bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("std::vector<double> probabilities", header)
+        self.assertIn("std::vector<double> Probabilities", header)
+        self.assertIn("QuantumSimulator::probabilities", implementation)
+        self.assertIn("rocsvProbabilities", implementation)
+        self.assertIn("rocsvProbabilities", hip_header)
+        self.assertRegex(hip_source, r"rocqStatus_t\s+rocsvProbabilities\s*\(")
+        self.assertIn("accumulate_local_sample_probabilities", hip_source)
+        self.assertIn(".def(\"probabilities\"", bindings)
+        self.assertIn(".def(\"Probabilities\"", bindings)
+        self.assertIn("m.def(\"probabilities\"", low_level_bindings)
+        self.assertIn("_native_probabilities_unavailable", runtime)
 
     def test_public_simulator_exposes_controlled_matrix_application(self):
         with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
