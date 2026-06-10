@@ -493,6 +493,24 @@ def _apply_single_excitation(runtime, wire_indices, theta):
     runtime.apply_operation("H", [left])
 
 
+def _apply_single_excitation_phase_variant(runtime, wire_indices, theta, sign):
+    if len(wire_indices) != 2:
+        raise ValueError("SingleExcitation phase variants require exactly two wires.")
+
+    left, right = wire_indices
+    half_theta = theta / 2
+    runtime.apply_operation("H", [right])
+    runtime.apply_operation("CNOT", [right, left])
+    runtime.apply_operation("RY", [left], [half_theta])
+    runtime.apply_operation("RY", [right], [half_theta])
+    _apply_cy(runtime, [right, left])
+    runtime.apply_operation("S", [right])
+    runtime.apply_operation("H", [right])
+    runtime.apply_operation("RZ", [right], [-sign * half_theta])
+    runtime.apply_operation("CNOT", [left, right])
+    _apply_global_phase(runtime, left, sign * theta / 4)
+
+
 def _apply_double_excitation(runtime, wire_indices, theta):
     if len(wire_indices) != 4:
         raise ValueError("DoubleExcitation requires exactly four wires.")
@@ -865,6 +883,21 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_parametric_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_single_excitation(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name in {"SingleExcitationPlus", "SingleExcitationMinus"}:
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_phase_decomposition(self._runtime):
+                        raise NotImplementedError
+                    sign = 1 if gate_name == "SingleExcitationPlus" else -1
+                    _apply_single_excitation_phase_variant(self._runtime, wire_indices, theta, sign)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(

@@ -1559,6 +1559,55 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
     ]
 
 
+def test_pennylane_single_excitation_phase_variants_decompose_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.SingleExcitationPlus(0.6, wires=[0, 1])
+        qml.SingleExcitationMinus(0.8, wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("H", (1,), ()),
+        ("CNOT", (1, 0), ()),
+        ("RY", (0,), (0.3,)),
+        ("RY", (1,), (0.3,)),
+        ("SDG", (0,), ()),
+        ("CNOT", (1, 0), ()),
+        ("S", (0,), ()),
+        ("S", (1,), ()),
+        ("H", (1,), ()),
+        ("RZ", (1,), (-0.3,)),
+        ("CNOT", (0, 1), ()),
+        ("H", (1,), ()),
+        ("CNOT", (1, 0), ()),
+        ("RY", (0,), (0.4,)),
+        ("RY", (1,), (0.4,)),
+        ("SDG", (0,), ()),
+        ("CNOT", (1, 0), ()),
+        ("S", (0,), ()),
+        ("S", (1,), ()),
+        ("H", (1,), ()),
+        ("RZ", (1,), (0.4,)),
+        ("CNOT", (0, 1), ()),
+    ]
+    assert [targets for _, targets in sim.matrices] == [(0,), (0,)]
+    np.testing.assert_allclose(sim.matrices[0][0], np.eye(2) * np.exp(0.15j))
+    np.testing.assert_allclose(sim.matrices[1][0], np.eye(2) * np.exp(-0.2j))
+
+
 def test_pennylane_qft_uses_native_controlled_phase_decomposition(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
