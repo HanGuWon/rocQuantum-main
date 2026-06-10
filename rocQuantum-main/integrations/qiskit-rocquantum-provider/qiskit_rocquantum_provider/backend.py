@@ -399,6 +399,47 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("rz", [target], [-quarter_pi])
         self._runtime.apply_operation("h", [target])
 
+    def _apply_controlled_base_gate(self, op, q_indices):
+        num_controls = int(getattr(op, "num_ctrl_qubits", 0))
+        base_gate = getattr(op, "base_gate", None)
+        base_name = getattr(base_gate, "name", None)
+        if num_controls < 1 or len(q_indices) != num_controls + 1:
+            return False
+        if base_name not in {"x", "h"}:
+            return False
+        if base_name == "h" and num_controls != 1:
+            return False
+
+        ctrl_state = getattr(op, "ctrl_state", None)
+        ctrl_state = (1 << num_controls) - 1 if ctrl_state is None else int(ctrl_state)
+        controls = list(q_indices[:num_controls])
+        target = q_indices[num_controls]
+        open_controls = [
+            control
+            for control_index, control in enumerate(controls)
+            if not ((ctrl_state >> control_index) & 1)
+        ]
+
+        flipped = []
+        try:
+            for control in open_controls:
+                self._runtime.apply_operation("x", [control])
+                flipped.append(control)
+            if base_name == "x":
+                if len(controls) == 1:
+                    self._runtime.apply_operation("cx", [controls[0], target])
+                else:
+                    self._runtime.apply_operation("mcx", controls + [target])
+            else:
+                self._apply_ch_gate([controls[0], target])
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+            flipped.clear()
+        finally:
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+        return True
+
     def _apply_circuit(self, circuit, *, include_global_phase: bool = False):
         self._ensure_simulator(circuit.num_qubits)
         if include_global_phase:
@@ -521,6 +562,14 @@ class RocQuantumBackend(BackendV2):
                     self._apply_rcccx_gate(q_indices)
                 touched_qubits.update(q_indices)
                 continue
+
+            if self._supports_native_parametric_decomposition():
+                try:
+                    if self._apply_controlled_base_gate(op, q_indices):
+                        touched_qubits.update(q_indices)
+                        continue
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    pass
 
             matrix = _operation_matrix(op)
             if matrix is not None and op.name in {"state_preparation", "unitary"}:

@@ -602,7 +602,7 @@ def test_qiskit_backend_dispatches_general_mcx_natively(monkeypatch):
     assert sim.matrices == []
 
 
-def test_qiskit_backend_matrix_fallback_covers_open_control_unitaries(monkeypatch):
+def test_qiskit_backend_decomposes_open_control_x_and_h_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
 
@@ -619,17 +619,20 @@ def test_qiskit_backend_matrix_fallback_covers_open_control_unitaries(monkeypatc
     backend.run(circuit, sampling=False).result()
 
     sim = _FakeQuantumSimulator.instances[-1]
-    assert sim.ops == []
-    assert [targets for _, targets in sim.matrices] == [
-        (0, 1, 2),
-        (0, 1),
-        (0, 1, 2, 3),
+    assert sim.ops == [
+        ("X", (1,), ()),
+        ("MCX", (0, 1, 2), ()),
+        ("X", (1,), ()),
+        ("X", (0,), ()),
+        ("RY", (1,), (np.pi / 4,)),
+        ("CNOT", (0, 1), ()),
+        ("RY", (1,), (-np.pi / 4,)),
+        ("X", (0,), ()),
+        ("X", (1,), ()),
+        ("MCX", (0, 1, 2, 3), ()),
+        ("X", (1,), ()),
     ]
-    assert [matrix.shape for matrix, _ in sim.matrices] == [
-        (8, 8),
-        (4, 4),
-        (16, 16),
-    ]
+    assert sim.matrices == []
 
 
 def test_qiskit_backend_runs_direct_state_preparation(monkeypatch):
