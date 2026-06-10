@@ -29,8 +29,11 @@ class _FakeQuantumSimulator:
         self.matrices = []
         self.statevectors = []
         self.measurements = []
+        self.total_measurements = []
         self.expectations = []
         self.sparse_moments = []
+        self.reset_qubits = []
+        self.total_reset_qubits = []
         self.statevector_reads = 0
         self.total_gate_applications = 0
         self.total_matrix_applications = 0
@@ -43,6 +46,7 @@ class _FakeQuantumSimulator:
         self.measurements.clear()
         self.expectations.clear()
         self.sparse_moments.clear()
+        self.reset_qubits.clear()
         self.statevector_reads = 0
         self._measured = False
 
@@ -62,11 +66,16 @@ class _FakeQuantumSimulator:
 
     def measure(self, qubits, shots):
         self.measurements.append((tuple(qubits), int(shots)))
+        self.total_measurements.append((tuple(qubits), int(shots)))
         self._measured = True
         if self._num_qubits == 1 and len(qubits) == 1:
             return [0 for _ in range(int(shots))]
         high = (1 << len(qubits)) - 1
         return [0 if shot % 2 == 0 else high for shot in range(int(shots))]
+
+    def reset_qubit(self, target):
+        self.reset_qubits.append(int(target))
+        self.total_reset_qubits.append(int(target))
 
     def get_statevector(self):
         self.statevector_reads += 1
@@ -299,7 +308,28 @@ def test_qiskit_backend_allows_initial_reset_as_noop(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].ops == [("X", (0,), ())]
 
 
-def test_qiskit_backend_rejects_reset_after_operation(monkeypatch):
+def test_qiskit_backend_samples_runtime_reset_shot_by_shot(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2, 2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    circuit.reset(0)
+    circuit.measure([0, 1], [0, 1])
+
+    result = backend.run(circuit, shots=4, statevector=False).result()
+
+    assert result.success
+    assert _FakeQuantumSimulator.instances[-1].total_reset_qubits == [0, 0, 0, 0]
+    assert _FakeQuantumSimulator.instances[-1].total_measurements == [((0, 1), 1)] * 4
+
+
+def test_qiskit_backend_rejects_statevector_for_runtime_reset(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
 
@@ -311,8 +341,8 @@ def test_qiskit_backend_rejects_reset_after_operation(monkeypatch):
     circuit.h(0)
     circuit.reset(0)
 
-    with pytest.raises(ValueError, match="reset before a qubit has been operated on"):
-        backend.run(circuit).result()
+    with pytest.raises(ValueError, match="single statevector"):
+        backend.run(circuit, statevector=True).result()
 
 
 def test_qiskit_backend_rejects_control_flow_operations(monkeypatch):

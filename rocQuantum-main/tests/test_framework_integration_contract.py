@@ -94,6 +94,25 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("hipMemcpyHostToDevice", implementation)
         self.assertIn(".def(\"set_statevector\"", bindings)
 
+    def test_public_simulator_exposes_qubit_reset(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("void reset_qubit", header)
+        self.assertIn("void ResetQubit", header)
+        self.assertIn("QuantumSimulator::reset_qubit", implementation)
+        self.assertIn("rocsvMeasure", implementation)
+        self.assertIn("rocsvApplyX", implementation)
+        self.assertIn(".def(\"reset_qubit\"", bindings)
+        self.assertIn(".def(\"ResetQubit\"", bindings)
+        self.assertIn("def reset_qubit", runtime)
+
     def test_public_simulator_exposes_sparse_hamiltonian_moments(self):
         with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
             header = f.read()

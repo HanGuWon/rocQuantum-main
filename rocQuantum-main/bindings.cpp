@@ -37,6 +37,10 @@ PYBIND11_MODULE(rocquantum_bind, m) {
     simulator
         .def(py::init<unsigned>(), py::arg("num_qubits"))
         .def("reset", &rocquantum::QuantumSimulator::reset)
+        .def("reset_qubit",
+             &rocquantum::QuantumSimulator::reset_qubit,
+             py::arg("target"),
+             "Reset one qubit by native measurement collapse followed by conditional X.")
         .def("apply_gate",
              [](rocquantum::QuantumSimulator& self,
                 const std::string& gate_name,
@@ -163,6 +167,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("gate_matrix"),
              py::arg("target_qubit"))
         .def("Execute", &rocquantum::QuantumSimulator::Execute)
+        .def("ResetQubit", &rocquantum::QuantumSimulator::ResetQubit, py::arg("target_qubit"))
         .def("GetStateVector",
              [](const rocquantum::QuantumSimulator& self) {
                  auto state = self.GetStateVector();

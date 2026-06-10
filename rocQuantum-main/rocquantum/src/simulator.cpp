@@ -100,6 +100,23 @@ void QuantumSimulator::reset() {
     check_status(rocsvInitializeState(sim_handle_, device_state_vector_, num_qubits_), "reset");
 }
 
+void QuantumSimulator::reset_qubit(unsigned target) {
+    ensure_valid_qubit(target);
+    int outcome = 0;
+    double probability = 0.0;
+    check_status(rocsvMeasure(sim_handle_,
+                              device_state_vector_,
+                              num_qubits_,
+                              target,
+                              &outcome,
+                              &probability),
+                 "reset qubit measurement");
+    if (outcome == 1) {
+        check_status(rocsvApplyX(sim_handle_, device_state_vector_, num_qubits_, target),
+                     "reset qubit conditional X");
+    }
+}
+
 void QuantumSimulator::apply_gate(const std::string& gate_name,
                                   const std::vector<unsigned>& targets,
                                   const std::vector<double>& params) {
@@ -523,6 +540,13 @@ void QuantumSimulator::ApplyGate(const std::vector<std::complex<double>>& gate_m
 
 void QuantumSimulator::Execute() {
     synchronize();
+}
+
+void QuantumSimulator::ResetQubit(int target_qubit) {
+    if (target_qubit < 0) {
+        throw std::out_of_range("Qubit index out of bounds for simulator instance.");
+    }
+    reset_qubit(static_cast<unsigned>(target_qubit));
 }
 
 std::vector<std::complex<double>> QuantumSimulator::GetStateVector() const {

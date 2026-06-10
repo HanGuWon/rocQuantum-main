@@ -242,6 +242,19 @@ class RocQuantumRuntime:
             return
         self.simulator = type(self.simulator)(int(self.num_qubits()))
 
+    def reset_qubit(self, target: int) -> None:
+        native = getattr(self.simulator, "reset_qubit", None)
+        if callable(native):
+            native(int(target))
+            return
+
+        legacy = getattr(self.simulator, "ResetQubit", None)
+        if callable(legacy):
+            legacy(int(target))
+            return
+
+        raise NotImplementedError("The active rocQuantum binding does not expose qubit reset.")
+
     def num_qubits(self) -> int:
         getter = getattr(self.simulator, "num_qubits", None)
         if callable(getter):

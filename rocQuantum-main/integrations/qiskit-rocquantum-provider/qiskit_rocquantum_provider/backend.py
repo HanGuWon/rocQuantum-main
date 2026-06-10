@@ -245,6 +245,24 @@ class RocQuantumBackend(BackendV2):
     def _supports_native_parametric_decomposition(self):
         return callable(getattr(self._runtime.simulator, "apply_gate", None))
 
+    @staticmethod
+    def _has_runtime_reset(circuit):
+        touched_qubits = set()
+        for instruction in circuit.data:
+            op = instruction.operation
+            if op.name in {"barrier", "delay", "save_statevector", "measure"}:
+                continue
+
+            q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
+            if op.name == "reset":
+                if touched_qubits & set(q_indices):
+                    return True
+                continue
+
+            touched_qubits.update(q_indices)
+
+        return False
+
     def _apply_global_phase_value(self, phase, target=0):
         if abs(float(phase)) <= 1e-15:
             return
@@ -578,7 +596,7 @@ class RocQuantumBackend(BackendV2):
                 self._runtime.apply_operation("x", [control])
         return True
 
-    def _apply_circuit(self, circuit, *, include_global_phase: bool = False):
+    def _apply_circuit(self, circuit, *, include_global_phase: bool = False, allow_runtime_reset: bool = False):
         self._ensure_simulator(circuit.num_qubits)
         if include_global_phase:
             self._apply_global_phase(circuit)
@@ -642,10 +660,14 @@ class RocQuantumBackend(BackendV2):
             if op.name == "reset":
                 reset_targets = set(q_indices)
                 if touched_qubits & reset_targets:
-                    raise ValueError(
-                        "RocQuantumBackend only supports reset before a qubit has been operated on. "
-                        "Mid-circuit reset requires non-unitary state reinitialization support."
-                    )
+                    if not allow_runtime_reset:
+                        raise ValueError(
+                            "RocQuantumBackend reset after a qubit has been operated on requires "
+                            "shot-by-shot sampling through QuantumSimulator.reset_qubit()."
+                        )
+                    for target in q_indices:
+                        self._runtime.reset_qubit(target)
+                    touched_qubits.update(q_indices)
                 continue
 
             if op.name == 'measure':
@@ -771,8 +793,43 @@ class RocQuantumBackend(BackendV2):
 
     def estimate_expectation(self, circuit, observable):
         """Return a native Pauli expectation for a circuit and Qiskit observable."""
+        if self._has_runtime_reset(circuit):
+            raise ValueError(
+                "RocQuantumBackend estimator does not support runtime reset yet. "
+                "Use backend.run(..., sampling=True) for shot-by-shot reset sampling."
+            )
         self._apply_circuit(circuit, include_global_phase=False)
         return estimate_pauli_observable(self._runtime, observable, circuit.num_qubits)
+
+    def _run_runtime_reset_sampling(self, circuit, shots, memory_enabled):
+        memory = []
+        measured_items = None
+        memory_width = getattr(circuit, "num_clbits", 0)
+
+        for _ in range(int(shots)):
+            measured_bits = self._apply_circuit(
+                circuit,
+                include_global_phase=False,
+                allow_runtime_reset=True,
+            )
+            current_items = (
+                sorted(measured_bits.items())
+                if measured_bits
+                else [(idx, idx) for idx in range(circuit.num_qubits)]
+            )
+            if measured_items is None:
+                measured_items = current_items
+
+            qubits_to_measure, sample_offsets = qiskit_sample_plan(current_items)
+            raw_sample = self._runtime.measure(qubits_to_measure, 1)
+            width = memory_width or len(current_items)
+            memory.extend(qiskit_memory_from_samples(raw_sample, current_items, width, sample_offsets))
+
+        formatted_counts = counts_from_memory(memory)
+        return {
+            "counts": formatted_counts,
+            "memory": memory if memory_enabled else None,
+        }
 
     def run(self, run_input, **options):
         if not isinstance(run_input, list):
@@ -787,6 +844,38 @@ class RocQuantumBackend(BackendV2):
                 options.get("statevector", self.options.statevector)
                 or self._requests_statevector(circuit)
             )
+            return_sampling = bool(options.get("sampling", self.options.sampling))
+            has_runtime_reset = self._has_runtime_reset(circuit)
+
+            if has_runtime_reset:
+                if return_statevector:
+                    raise ValueError(
+                        "RocQuantumBackend cannot return a single statevector for circuits with "
+                        "runtime reset because reset is a non-unitary shot-trajectory operation."
+                    )
+                if not return_sampling:
+                    raise ValueError("RocQuantumBackend runtime reset requires sampling=True.")
+
+                data = self._run_runtime_reset_sampling(
+                    circuit,
+                    shots,
+                    bool(options.get("memory", self.options.memory)),
+                )
+                exp_data = ExperimentResultData(**data)
+                results.append(
+                    ExperimentResult(
+                        shots=shots,
+                        success=True,
+                        data=exp_data,
+                        header=getattr(
+                            circuit,
+                            "header",
+                            {"name": getattr(circuit, "name", None), "metadata": getattr(circuit, "metadata", None)},
+                        ),
+                    )
+                )
+                continue
+
             measured_bits = self._apply_circuit(circuit, include_global_phase=return_statevector)
 
             # Perform measurement on the required qubits.  rocsvSample packs
@@ -800,7 +889,6 @@ class RocQuantumBackend(BackendV2):
 
             statevector = self._runtime.statevector() if return_statevector else None
 
-            return_sampling = bool(options.get("sampling", self.options.sampling))
             data = {}
             result_shots = 0
             if return_sampling:

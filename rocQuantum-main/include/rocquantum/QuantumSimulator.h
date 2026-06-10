@@ -16,6 +16,7 @@ public:
     ~QuantumSimulator();
 
     void reset();
+    void reset_qubit(unsigned target);
     void apply_gate(const std::string& gate_name,
                     const std::vector<unsigned>& targets,
                     const std::vector<double>& params = {});
@@ -40,6 +41,7 @@ public:
     void ApplyGate(const std::string& gate_name, int control_qubit, int target_qubit);
     void ApplyGate(const std::vector<std::complex<double>>& gate_matrix, int target_qubit);
     void Execute();
+    void ResetQubit(int target_qubit);
     std::vector<std::complex<double>> GetStateVector() const;
     double GetExpectationValue(const std::string& pauli, int target_qubit);
     double GetExpectationPauliString(const std::string& pauli_string,

@@ -95,7 +95,7 @@ Use those files as the authoritative capability summary for the current codebase
 - Higher-level CUDA-QX-style helpers are explicitly experimental: VQE supports Pauli-observable objectives through `rocq.observe()`, QAOA is a MaxCut-style ansatz helper, and QEC is limited to a single 3-qubit repetition-code syndrome round.
 - `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, but the legacy surface remains separate from canonical `rocq`.
 - Qiskit, PennyLane, and Cirq adapters now prefer `QuantumSimulator.measure()` for sampling, but still keep host-side fallback paths where needed for older bindings that do not expose `measure`.
-- Qiskit direct `prepare_state()` and untouched-qubit `initialize()` are mapped to matrix state-preparation fallback; later `initialize()`, mid-circuit `reset`, classically conditioned operations, and Qiskit control-flow ops are explicit unsupported boundaries until non-unitary/dynamic-circuit runtime support exists.
+- Qiskit direct `prepare_state()` and untouched-qubit `initialize()` are mapped to matrix state-preparation fallback; `reset` after prior operations is supported only in `backend.run(..., sampling=True)` through shot-by-shot `QuantumSimulator.reset_qubit()` trajectories. Later `initialize()`, statevector/estimator output for runtime-reset circuits, classically conditioned operations, and Qiskit control-flow ops remain explicit unsupported boundaries.
 - Several provider backends remain skeletons or thin clients.
 
 ## Build
