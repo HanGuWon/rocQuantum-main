@@ -9,12 +9,19 @@ except ImportError:
     from qiskit.result.models import ExperimentResult, ExperimentResultData
 from qiskit.circuit import Measure
 from qiskit.circuit.library import (
+    CCXGate,
+    CCZGate,
     CPhaseGate,
+    CSwapGate,
     CXGate,
     CZGate,
+    CHGate,
+    CYGate,
     CRXGate,
     CRYGate,
     CRZGate,
+    DCXGate,
+    ECRGate,
     HGate,
     IGate,
     RXGate,
@@ -23,6 +30,8 @@ from qiskit.circuit.library import (
     RXXGate,
     RYYGate,
     RZZGate,
+    RCCXGate,
+    RC3XGate,
     SGate,
     SdgGate,
     SXGate,
@@ -35,6 +44,7 @@ from qiskit.circuit.library import (
     XGate,
     YGate,
     ZGate,
+    iSwapGate,
 )
 
 from rocquantum.framework_runtime import (
@@ -49,23 +59,34 @@ from .job import RocQuantumJob
 
 
 MATRIX_FALLBACK_OPS = {
-    "cp", "crx", "cry", "crz",
-    "p", "rxx", "ryy", "rzz",
+    "ccx", "ccz", "ch", "cp", "crx", "cry", "crz", "cswap", "cy",
+    "dcx", "ecr", "iswap",
+    "p", "rccx", "rcccx", "rxx", "ryy", "rzz",
     "sx", "sxdg", "u", "unitary",
 }
 
 
 def _instruction_target(num_qubits):
     target = Target(num_qubits=int(num_qubits))
+    target.add_instruction(CCXGate(), name="ccx")
+    target.add_instruction(CCZGate(), name="ccz")
+    target.add_instruction(CHGate(), name="ch")
     target.add_instruction(CPhaseGate(0.0), name="cp")
+    target.add_instruction(CSwapGate(), name="cswap")
     target.add_instruction(CXGate(), name="cx")
     target.add_instruction(CZGate(), name="cz")
+    target.add_instruction(CYGate(), name="cy")
     target.add_instruction(CRXGate(0.0), name="crx")
     target.add_instruction(CRYGate(0.0), name="cry")
     target.add_instruction(CRZGate(0.0), name="crz")
+    target.add_instruction(DCXGate(), name="dcx")
+    target.add_instruction(ECRGate(), name="ecr")
     target.add_instruction(HGate(), name="h")
     target.add_instruction(IGate(), name="id")
+    target.add_instruction(iSwapGate(), name="iswap")
     target.add_instruction(PhaseGate(0.0), name="p")
+    target.add_instruction(RCCXGate(), name="rccx")
+    target.add_instruction(RC3XGate(), name="rcccx")
     target.add_instruction(RXGate(0.0), name="rx")
     target.add_instruction(RYGate(0.0), name="ry")
     target.add_instruction(RZGate(0.0), name="rz")

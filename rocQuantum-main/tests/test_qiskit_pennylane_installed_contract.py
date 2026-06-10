@@ -230,6 +230,48 @@ def test_qiskit_target_supports_transpile_and_matrix_fallback_gates(monkeypatch)
     assert len(_FakeQuantumSimulator.instances[-1].matrices) == 4
 
 
+def test_qiskit_matrix_fallback_covers_controlled_and_multi_qubit_gates(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import (
+        CCXGate,
+        CCZGate,
+        CHGate,
+        CSwapGate,
+        CYGate,
+        DCXGate,
+        ECRGate,
+        RCCXGate,
+        RC3XGate,
+        iSwapGate,
+    )
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(4)
+    circuit.append(CHGate(), [0, 1])
+    circuit.append(CYGate(), [0, 1])
+    circuit.append(CCXGate(), [0, 1, 2])
+    circuit.append(CCZGate(), [0, 1, 2])
+    circuit.append(CSwapGate(), [0, 1, 2])
+    circuit.append(ECRGate(), [0, 1])
+    circuit.append(iSwapGate(), [0, 1])
+    circuit.append(DCXGate(), [0, 1])
+    circuit.append(RCCXGate(), [0, 1, 2])
+    circuit.append(RC3XGate(), [0, 1, 2, 3])
+
+    assert {
+        "ccx", "ccz", "ch", "cswap", "cy",
+        "dcx", "ecr", "iswap", "rccx", "rcccx",
+    }.issubset(set(backend.target.operation_names))
+
+    backend.run(circuit, shots=1, statevector=False).result()
+
+    assert len(_FakeQuantumSimulator.instances[-1].matrices) == 10
+
+
 def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
