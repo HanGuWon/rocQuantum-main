@@ -365,7 +365,7 @@ def test_qiskit_backend_dispatches_controlled_rotations_natively(monkeypatch):
     ]
 
 
-def test_qiskit_target_supports_transpile_and_matrix_fallback_gates(monkeypatch):
+def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
 
@@ -387,7 +387,48 @@ def test_qiskit_target_supports_transpile_and_matrix_fallback_gates(monkeypatch)
 
     backend.run(circuit, shots=1).result()
 
-    assert len(_FakeQuantumSimulator.instances[-1].matrices) == 4
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("RZ", (0,), (0.2,)),
+        ("RZ", (0,), (0.15,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-0.15,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.15,)),
+    ]
+    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
+        ((2, 2), (0,)),
+        ((4, 4), (0, 1)),
+    ]
+
+
+def test_qiskit_phase_decomposition_preserves_statevector_global_phase(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2)
+    circuit.p(0.2, 0)
+    circuit.cp(0.3, 0, 1)
+
+    backend.run(circuit, sampling=False, statevector=True).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("RZ", (0,), (0.2,)),
+        ("RZ", (0,), (0.15,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-0.15,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.15,)),
+    ]
+    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
+        ((2, 2), (0,)),
+        ((2, 2), (0,)),
+    ]
 
 
 def test_qiskit_native_multi_control_and_matrix_fallback_gates(monkeypatch):

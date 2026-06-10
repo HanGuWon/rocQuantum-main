@@ -189,23 +189,56 @@ class RocQuantumBackend(BackendV2):
         else:
             self._runtime.reset()
 
-    def _apply_global_phase(self, circuit):
-        if circuit.num_qubits == 0:
+    def _supports_native_phase_decomposition(self, include_global_phase):
+        simulator = self._runtime.simulator
+        has_gate_dispatch = callable(getattr(simulator, "apply_gate", None))
+        has_matrix_dispatch = callable(getattr(simulator, "apply_matrix", None)) or callable(
+            getattr(simulator, "ApplyGate", None)
+        )
+        return has_gate_dispatch and (has_matrix_dispatch or not include_global_phase)
+
+    def _apply_global_phase_value(self, phase, target=0):
+        if abs(float(phase)) <= 1e-15:
             return
 
-        phase = float(getattr(circuit, "global_phase", 0.0))
-        if abs(phase) <= 1e-15:
-            return
-
-        phase_factor = cmath.exp(1j * phase)
+        phase_factor = cmath.exp(1j * float(phase))
         self._runtime.apply_operation(
             "unitary",
-            [0],
+            [target],
             matrix=[
                 [phase_factor, 0.0],
                 [0.0, phase_factor],
             ],
         )
+
+    def _apply_global_phase(self, circuit):
+        if circuit.num_qubits == 0:
+            return
+
+        phase = float(getattr(circuit, "global_phase", 0.0))
+        self._apply_global_phase_value(phase)
+
+    def _apply_phase_gate(self, q_indices, theta, *, include_global_phase):
+        if len(q_indices) != 1:
+            raise ValueError("Qiskit p gate requires exactly one qubit.")
+
+        target = q_indices[0]
+        if include_global_phase:
+            self._apply_global_phase_value(0.5 * theta, target=target)
+        self._runtime.apply_operation("rz", [target], [theta])
+
+    def _apply_controlled_phase_gate(self, q_indices, theta, *, include_global_phase):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit cp gate requires exactly two qubits.")
+
+        control, target = q_indices
+        if include_global_phase:
+            self._apply_global_phase_value(0.25 * theta, target=control)
+        self._runtime.apply_operation("rz", [control], [0.5 * theta])
+        self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation("rz", [target], [-0.5 * theta])
+        self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation("rz", [target], [0.5 * theta])
 
     def _apply_circuit(self, circuit, *, include_global_phase: bool = False):
         self._ensure_simulator(circuit.num_qubits)
@@ -269,6 +302,15 @@ class RocQuantumBackend(BackendV2):
                 # Store which classical bit this measurement corresponds to
                 c_index = circuit.find_bit(instruction.clbits[0]).index
                 measured_bits[c_index] = q_indices[0]
+                continue
+
+            if op.name in {"p", "cp"} and self._supports_native_phase_decomposition(include_global_phase):
+                (theta,) = normalize_params(op.params)
+                if op.name == "p":
+                    self._apply_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
+                else:
+                    self._apply_controlled_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
+                touched_qubits.update(q_indices)
                 continue
 
             matrix = _operation_matrix(op)
