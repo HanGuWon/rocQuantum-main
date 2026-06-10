@@ -297,6 +297,12 @@ class RocQuantumBackend(BackendV2):
             self._apply_global_phase_value(0.5 * theta, target=target)
         self._runtime.apply_operation("rz", [target], [theta])
 
+    def _apply_phase_gate_batch(self, q_indices, thetas):
+        if len(q_indices) != 1:
+            raise ValueError("Qiskit p gate requires exactly one qubit.")
+
+        self._runtime.apply_operation_batch("rz", [q_indices[0]], thetas)
+
     def _apply_controlled_phase_gate(self, q_indices, theta, *, include_global_phase):
         if len(q_indices) != 2:
             raise ValueError("Qiskit cp gate requires exactly two qubits.")
@@ -310,6 +316,18 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("cx", [control, target])
         self._runtime.apply_operation("rz", [target], [0.5 * theta])
 
+    def _apply_controlled_phase_gate_batch(self, q_indices, thetas):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit cp gate requires exactly two qubits.")
+
+        control, target = q_indices
+        half_thetas = [0.5 * theta for theta in thetas]
+        self._runtime.apply_operation_batch("rz", [control], half_thetas)
+        self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation_batch("rz", [target], [-theta for theta in half_thetas])
+        self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation_batch("rz", [target], half_thetas)
+
     def _apply_rzz_gate(self, q_indices, theta):
         if len(q_indices) != 2:
             raise ValueError("Qiskit rzz gate requires exactly two qubits.")
@@ -317,6 +335,15 @@ class RocQuantumBackend(BackendV2):
         control, target = q_indices
         self._runtime.apply_operation("cx", [control, target])
         self._runtime.apply_operation("rz", [target], [theta])
+        self._runtime.apply_operation("cx", [control, target])
+
+    def _apply_rzz_gate_batch(self, q_indices, thetas):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit rzz gate requires exactly two qubits.")
+
+        control, target = q_indices
+        self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation_batch("rz", [target], thetas)
         self._runtime.apply_operation("cx", [control, target])
 
     def _apply_multirz_gate(self, q_indices, theta):
@@ -383,6 +410,15 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("rx", [control], [theta])
         self._runtime.apply_operation("cx", [control, target])
 
+    def _apply_rxx_gate_batch(self, q_indices, thetas):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit rxx gate requires exactly two qubits.")
+
+        control, target = q_indices
+        self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation_batch("rx", [control], thetas)
+        self._runtime.apply_operation("cx", [control, target])
+
     def _apply_ryy_gate(self, q_indices, theta):
         if len(q_indices) != 2:
             raise ValueError("Qiskit ryy gate requires exactly two qubits.")
@@ -390,6 +426,16 @@ class RocQuantumBackend(BackendV2):
         for qubit in q_indices:
             self._runtime.apply_operation("rx", [qubit], [cmath.pi / 2])
         self._apply_rzz_gate(q_indices, theta)
+        for qubit in q_indices:
+            self._runtime.apply_operation("rx", [qubit], [-cmath.pi / 2])
+
+    def _apply_ryy_gate_batch(self, q_indices, thetas):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit ryy gate requires exactly two qubits.")
+
+        for qubit in q_indices:
+            self._runtime.apply_operation("rx", [qubit], [cmath.pi / 2])
+        self._apply_rzz_gate_batch(q_indices, thetas)
         for qubit in q_indices:
             self._runtime.apply_operation("rx", [qubit], [-cmath.pi / 2])
 
@@ -918,11 +964,27 @@ class RocQuantumBackend(BackendV2):
                 )
                 continue
 
+            if reference_op.name in {"p", "cp", "rxx", "ryy", "rzz"} and all(
+                len(params) == 1 for params in params_by_circuit
+            ):
+                thetas = [params[0] for params in params_by_circuit]
+                if reference_op.name == "p":
+                    self._apply_phase_gate_batch(q_indices, thetas)
+                elif reference_op.name == "cp":
+                    self._apply_controlled_phase_gate_batch(q_indices, thetas)
+                elif reference_op.name == "rxx":
+                    self._apply_rxx_gate_batch(q_indices, thetas)
+                elif reference_op.name == "ryy":
+                    self._apply_ryy_gate_batch(q_indices, thetas)
+                else:
+                    self._apply_rzz_gate_batch(q_indices, thetas)
+                continue
+
             first_params = params_by_circuit[0]
             if any(params != first_params for params in params_by_circuit[1:]):
                 raise NotImplementedError(
-                    "Batched Qiskit execution only supports varying RX/RY/RZ and CRX/CRY/CRZ "
-                    f"parameters, got {reference_op.name!r}."
+                    "Batched Qiskit execution only supports varying RX/RY/RZ, CRX/CRY/CRZ, "
+                    f"and decomposed p/cp/rxx/ryy/rzz parameters, got {reference_op.name!r}."
                 )
 
             matrix = _operation_matrix(reference_op)
