@@ -64,9 +64,9 @@ from .job import RocQuantumJob
 
 
 MATRIX_FALLBACK_OPS = {
-    "ccx", "ccz", "ch", "cp", "crx", "cry", "crz", "cswap", "cy",
+    "ccx", "ccz", "ch", "crx", "cry", "crz", "cswap", "cy",
     "dcx", "ecr", "iswap",
-    "p", "rccx", "rcccx", "rxx", "ryy", "rzz",
+    "rccx", "rcccx", "rxx", "ryy",
     "state_preparation", "sx", "sxdg", "u", "unitary",
 }
 MAX_AUTOMATIC_MATRIX_FALLBACK_QUBITS = 4
@@ -197,6 +197,9 @@ class RocQuantumBackend(BackendV2):
         )
         return has_gate_dispatch and (has_matrix_dispatch or not include_global_phase)
 
+    def _supports_native_parametric_decomposition(self):
+        return callable(getattr(self._runtime.simulator, "apply_gate", None))
+
     def _apply_global_phase_value(self, phase, target=0):
         if abs(float(phase)) <= 1e-15:
             return
@@ -239,6 +242,15 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("rz", [target], [-0.5 * theta])
         self._runtime.apply_operation("cx", [control, target])
         self._runtime.apply_operation("rz", [target], [0.5 * theta])
+
+    def _apply_rzz_gate(self, q_indices, theta):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit rzz gate requires exactly two qubits.")
+
+        control, target = q_indices
+        self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation("rz", [target], [theta])
+        self._runtime.apply_operation("cx", [control, target])
 
     def _apply_circuit(self, circuit, *, include_global_phase: bool = False):
         self._ensure_simulator(circuit.num_qubits)
@@ -310,6 +322,12 @@ class RocQuantumBackend(BackendV2):
                     self._apply_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
                 else:
                     self._apply_controlled_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
+                touched_qubits.update(q_indices)
+                continue
+
+            if op.name == "rzz" and self._supports_native_parametric_decomposition():
+                (theta,) = normalize_params(op.params)
+                self._apply_rzz_gate(q_indices, theta)
                 touched_qubits.update(q_indices)
                 continue
 

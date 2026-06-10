@@ -299,6 +299,10 @@ def _supports_native_phase_decomposition(runtime):
     return has_gate_dispatch and has_matrix_dispatch
 
 
+def _supports_native_parametric_decomposition(runtime):
+    return callable(getattr(runtime.simulator, "apply_gate", None))
+
+
 def _apply_global_phase(runtime, wire_index, phase):
     factor = np.exp(1j * phase)
     matrix = np.array([[factor, 0.0], [0.0, factor]], dtype=np.complex128)
@@ -495,6 +499,22 @@ class RocQDevice(QubitDevice):
             elif gate_name == "MultiRZ":
                 try:
                     (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_parametric_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_multirz(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "IsingZZ":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_parametric_decomposition(self._runtime):
+                        raise NotImplementedError
                     _apply_multirz(self._runtime, wire_indices, theta)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))

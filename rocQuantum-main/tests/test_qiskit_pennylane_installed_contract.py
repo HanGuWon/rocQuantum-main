@@ -395,10 +395,12 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
         ("RZ", (1,), (-0.15,)),
         ("CNOT", (0, 1), ()),
         ("RZ", (1,), (0.15,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.4,)),
+        ("CNOT", (0, 1), ()),
     ]
     assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
         ((2, 2), (0,)),
-        ((4, 4), (0, 1)),
     ]
 
 
@@ -1154,6 +1156,9 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
         ("RZ", (1,), (-0.1,)),
         ("CNOT", (0, 1), ()),
         ("RZ", (1,), (0.1,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.5,)),
+        ("CNOT", (0, 1), ()),
         ("MCX", (0, 1, 2), ()),
     ]
     assert [targets for _, targets in sim.matrices] == [
@@ -1162,12 +1167,10 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
         (0, 1),
         (0, 1),
         (0, 1),
-        (0, 1),
     ]
     assert [matrix.shape for matrix, _ in sim.matrices] == [
         (2, 2),
         (2, 2),
-        (4, 4),
         (4, 4),
         (4, 4),
         (4, 4),
@@ -1328,6 +1331,33 @@ def test_pennylane_qft_uses_native_controlled_phase_decomposition(monkeypatch):
     assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
         ((2, 2), (1,)),
     ]
+
+
+def test_pennylane_isingzz_dispatches_native_cnot_chain(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.IsingZZ(0.7, wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.7,)),
+        ("CNOT", (0, 1), ()),
+    ]
+    assert sim.matrices == []
 
 
 def test_pennylane_multirz_dispatches_native_cnot_chain(monkeypatch):
