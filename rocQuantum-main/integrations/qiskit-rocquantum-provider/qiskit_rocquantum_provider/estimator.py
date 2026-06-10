@@ -272,7 +272,7 @@ class RocQuantumEstimator(BaseEstimatorV2):
 
     def _try_run_pub_batched_parameters(self, pub):
         parameter_shape = pub.parameter_values.shape
-        if not parameter_shape or pub.observables.shape != ():
+        if not parameter_shape:
             return None
 
         bound_circuits = np.asarray(pub.parameter_values.bind_all(pub.circuit), dtype=object)
@@ -281,26 +281,45 @@ class RocQuantumEstimator(BaseEstimatorV2):
             return None
 
         circuits = [bound_circuits[index] for index in parameter_indices]
-        observable = pub.observables[()]
-        _, plan = _observable_plan(observable, int(pub.circuit.num_qubits))
-        kind, payload = plan
-        if kind != "pauli":
-            return None
 
         try:
             self._backend._apply_circuit_batch(circuits, include_global_phase=False)
-            values = _estimate_combined_observable_terms_batch(
-                self._backend._runtime,
-                payload,
-                int(pub.circuit.num_qubits),
-            )
         except (NotImplementedError, RuntimeError, TypeError, ValueError):
             return None
 
+        observable_indices = sorted(
+            {
+                _index_for_shape(index, pub.observables.shape)
+                for index in np.ndindex(pub.shape)
+            }
+        )
+        observable_cache_keys = {}
+        observable_values_by_cache = {}
+        for observable_index in observable_indices:
+            observable = pub.observables[observable_index]
+            try:
+                cache_key, plan = _observable_plan(observable, int(pub.circuit.num_qubits))
+                kind, payload = plan
+                if kind != "pauli":
+                    return None
+                if cache_key not in observable_values_by_cache:
+                    observable_values_by_cache[cache_key] = _estimate_combined_observable_terms_batch(
+                        self._backend._runtime,
+                        payload,
+                        int(pub.circuit.num_qubits),
+                    )
+                observable_cache_keys[observable_index] = cache_key
+            except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                return None
+
+        parameter_offsets = {index: offset for offset, index in enumerate(parameter_indices)}
         evs = np.empty(pub.shape, dtype=float)
         stds = np.zeros(pub.shape, dtype=float)
-        for value_index, parameter_index in enumerate(parameter_indices):
-            evs[parameter_index] = values[value_index]
+        for index in np.ndindex(pub.shape):
+            parameter_index = _index_for_shape(index, parameter_shape)
+            observable_index = _index_for_shape(index, pub.observables.shape)
+            cache_key = observable_cache_keys[observable_index]
+            evs[index] = observable_values_by_cache[cache_key][parameter_offsets[parameter_index]]
 
         return PubResult(
             DataBin(evs=evs, stds=stds, shape=pub.shape),
