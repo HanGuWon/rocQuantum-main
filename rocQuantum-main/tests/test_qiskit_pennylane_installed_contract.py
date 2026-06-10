@@ -21,6 +21,7 @@ if _PROJECT_ROOT not in sys.path:
 class _FakeQuantumSimulator:
     instances = []
     enable_sparse_moments = False
+    enable_probabilities = False
 
     def __init__(self, num_qubits):
         self._num_qubits = int(num_qubits)
@@ -32,6 +33,7 @@ class _FakeQuantumSimulator:
         self.measurements = []
         self.total_measurements = []
         self.expectations = []
+        self.probability_requests = []
         self.sparse_moments = []
         self.reset_qubits = []
         self.total_reset_qubits = []
@@ -47,6 +49,7 @@ class _FakeQuantumSimulator:
         self.statevectors.clear()
         self.measurements.clear()
         self.expectations.clear()
+        self.probability_requests.clear()
         self.sparse_moments.clear()
         self.reset_qubits.clear()
         self.statevector_reads = 0
@@ -101,6 +104,15 @@ class _FakeQuantumSimulator:
             state[0] = 1.0
         return state
 
+    def probabilities(self, qubits):
+        if not self.enable_probabilities:
+            raise NotImplementedError("native probabilities disabled")
+        qubits = tuple(int(qubit) for qubit in qubits)
+        self.probability_requests.append(qubits)
+        dimension = 1 << len(qubits)
+        weights = np.arange(1, dimension + 1, dtype=float)
+        return weights / np.sum(weights)
+
     def expectation_pauli_string(self, pauli_string, targets):
         self.expectations.append((pauli_string, tuple(targets)))
         if pauli_string == "Z" and tuple(targets) == (0,):
@@ -143,6 +155,7 @@ def _install_fake_binding(monkeypatch):
     monkeypatch.setitem(sys.modules, "rocquantum_bind", fake)
     _FakeQuantumSimulator.instances.clear()
     _FakeQuantumSimulator.enable_sparse_moments = False
+    _FakeQuantumSimulator.enable_probabilities = False
     return fake
 
 
@@ -2579,6 +2592,41 @@ def test_pennylane_probs_returns_full_and_marginal_probabilities(monkeypatch):
 
     np.testing.assert_allclose(full_probs(), np.array([0.5, 0.0, 0.0, 0.5]))
     np.testing.assert_allclose(marginal_probs(), np.array([0.5, 0.5]))
+
+
+def test_pennylane_analytic_probs_prefers_native_probability_hook(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.enable_probabilities = True
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def full_probs():
+        qml.Hadamard(wires=0)
+        qml.CNOT(wires=[0, 1])
+        return qml.probs(wires=[0, 1])
+
+    @qml.qnode(dev)
+    def marginal_probs():
+        qml.Hadamard(wires=0)
+        qml.CNOT(wires=[0, 1])
+        return qml.probs(wires=[0])
+
+    np.testing.assert_allclose(full_probs(), np.array([0.1, 0.2, 0.3, 0.4]))
+    full_sim = _FakeQuantumSimulator.instances[-1]
+    assert full_sim.probability_requests == [(0, 1)]
+    assert full_sim.statevector_reads == 0
+
+    np.testing.assert_allclose(marginal_probs(), np.array([1 / 3, 2 / 3]))
+    marginal_sim = _FakeQuantumSimulator.instances[-1]
+    assert marginal_sim.probability_requests == [(0,)]
+    assert marginal_sim.statevector_reads == 0
 
 
 def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):

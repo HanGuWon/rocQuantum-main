@@ -70,6 +70,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"TOFFOLI\": \"MCX\"", source)
         self.assertIn("\"CSWAP\": \"CSWAP\"", source)
         self.assertIn("def statevector_to_little_endian_wires", source)
+        self.assertIn("def probabilities_from_statevector", source)
+        self.assertIn("def probabilities(self, qubits", source)
         self.assertIn("def set_statevector", source)
 
     def test_public_simulator_dispatches_native_multi_control_gates(self):
@@ -225,6 +227,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("samples_to_binary_rows", source)
         self.assertIn("sample_rows_from_statevector", source, "legacy fallback should remain explicit")
         self.assertIn("def analytic_probability", source)
+        self.assertIn("self._runtime.probabilities", source)
         self.assertIn("if not wires_to_trace: return all_probs", source)
         self.assertIn("def expval", source)
         self.assertIn("def var", source)

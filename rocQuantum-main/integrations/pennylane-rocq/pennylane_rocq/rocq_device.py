@@ -1347,6 +1347,17 @@ class RocQDevice(QubitDevice):
         return _real_measurement_result(second_moment - mean * mean, "Variance")
 
     def analytic_probability(self, wires=None):
+        requested_labels = list(self.wires if wires is None or len(wires) == 0 else getattr(wires, "labels", wires))
+        wire_indices = [self.wire_map[wire] for wire in requested_labels]
+        has_native_probabilities = callable(getattr(self.sim, "probabilities", None)) or callable(
+            getattr(self.sim, "Probabilities", None)
+        )
+        if has_native_probabilities:
+            try:
+                return self._runtime.probabilities(wire_indices)
+            except NotImplementedError:
+                pass
+
         all_probs = np.abs(self._ensure_state()) ** 2
         if wires is None or len(wires) == 0: return all_probs
         requested_wires = set(getattr(wires, "labels", wires))

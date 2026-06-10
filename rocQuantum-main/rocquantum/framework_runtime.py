@@ -129,6 +129,39 @@ def sample_rows_from_statevector(statevector: Sequence[complex], shots: int, rng
     return samples_to_binary_rows(sample_indices, num_wires)
 
 
+def probabilities_from_statevector(
+    statevector: Sequence[complex],
+    qubits: Iterable[int] | None = None,
+) -> np.ndarray:
+    state = np.asarray(statevector, dtype=np.complex128)
+    probabilities = np.abs(state) ** 2
+    total = float(np.sum(probabilities))
+    if total <= 0.0:
+        raise ValueError("Statevector probabilities sum to zero.")
+    probabilities = probabilities / total
+
+    num_qubits = int(np.log2(state.size)) if state.size else 0
+    if state.size != (1 << num_qubits):
+        raise ValueError("Statevector length must be a power of two.")
+
+    if qubits is None:
+        normalized_qubits = list(range(num_qubits))
+    else:
+        normalized_qubits = normalize_targets(qubits)
+
+    if not normalized_qubits or normalized_qubits == list(range(num_qubits)):
+        return np.ascontiguousarray(probabilities)
+
+    marginal = np.zeros(1 << len(normalized_qubits), dtype=float)
+    for basis_index, probability in enumerate(probabilities):
+        marginal_index = 0
+        for output_bit, qubit in enumerate(normalized_qubits):
+            if (int(basis_index) >> int(qubit)) & 1:
+                marginal_index |= 1 << output_bit
+        marginal[marginal_index] += float(probability)
+    return np.ascontiguousarray(marginal)
+
+
 def qiskit_memory_from_samples(
     raw_samples: Sequence[int],
     measured_items: Sequence[tuple[int, int]],
@@ -374,6 +407,19 @@ class RocQuantumRuntime:
         if not callable(measure):
             raise NotImplementedError("The active rocQuantum binding does not expose native sampling.")
         return [int(sample) for sample in measure(normalize_targets(qubits), int(shots))]
+
+    def probabilities(self, qubits: Iterable[int] | None = None) -> np.ndarray:
+        normalized_qubits = None if qubits is None else normalize_targets(qubits)
+
+        native = getattr(self.simulator, "probabilities", None)
+        if callable(native):
+            return np.asarray(native([] if normalized_qubits is None else normalized_qubits), dtype=float)
+
+        legacy = getattr(self.simulator, "Probabilities", None)
+        if callable(legacy):
+            return np.asarray(legacy([] if normalized_qubits is None else normalized_qubits), dtype=float)
+
+        return probabilities_from_statevector(self.statevector(), normalized_qubits)
 
     def expectation_value(self, pauli: str, target: int) -> float:
         native = getattr(self.simulator, "expectation_value", None)
