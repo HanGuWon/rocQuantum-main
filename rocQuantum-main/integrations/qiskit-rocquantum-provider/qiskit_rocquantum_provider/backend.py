@@ -127,7 +127,7 @@ class RocQuantumBackend(BackendV2):
 
     @classmethod
     def _default_options(cls):
-        return Options(shots=1024, memory=True, statevector=True)
+        return Options(shots=1024, memory=True, statevector=True, sampling=True)
 
     @property
     def target(self):
@@ -206,15 +206,22 @@ class RocQuantumBackend(BackendV2):
                 or self._requests_statevector(circuit)
             )
             statevector = self._runtime.statevector() if return_statevector else None
-            raw_samples = self._runtime.measure(qubits_to_measure, shots)
-            memory_width = getattr(circuit, "num_clbits", 0) or len(measured_items)
-            memory = qiskit_memory_from_samples(raw_samples, measured_items, memory_width)
-            formatted_counts = counts_from_memory(memory)
 
-            data = {
-                "counts": formatted_counts,
-                "memory": memory if options.get("memory", self.options.memory) else None,
-            }
+            return_sampling = bool(options.get("sampling", self.options.sampling))
+            data = {}
+            result_shots = 0
+            if return_sampling:
+                raw_samples = self._runtime.measure(qubits_to_measure, shots)
+                memory_width = getattr(circuit, "num_clbits", 0) or len(measured_items)
+                memory = qiskit_memory_from_samples(raw_samples, measured_items, memory_width)
+                formatted_counts = counts_from_memory(memory)
+                data.update(
+                    {
+                        "counts": formatted_counts,
+                        "memory": memory if options.get("memory", self.options.memory) else None,
+                    }
+                )
+                result_shots = shots
             if return_statevector:
                 data["statevector"] = statevector
 
@@ -223,7 +230,7 @@ class RocQuantumBackend(BackendV2):
             )
 
             exp_result = ExperimentResult(
-                shots=shots,
+                shots=result_shots,
                 success=True,
                 data=exp_data,
                 header=getattr(

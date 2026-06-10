@@ -42,6 +42,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 - Qiskit sampler support defaults to `RocQuantumSampler`, a native `SamplerV2` over `QuantumSimulator.measure()`; estimator support defaults to `RocQuantumEstimator`, a native deterministic `EstimatorV2` over `QuantumSimulator.expectation_pauli_string()`. Pass `native=False` to `get_sampler()` / `get_estimator()` to request Qiskit's generic backend wrappers.
 - Direct Pauli expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, and `(label, coeff)` term lists.
 - `backend.run(..., statevector=False)` skips the pre-measurement statevector readback for sampling-only workloads, avoiding a full host transfer on larger GPU simulations.
+- `backend.run(..., sampling=False)` skips measurement and counts formatting for statevector-only workloads.
 - Aer-style `save_statevector` marker instructions are treated as no-op result annotations; `QuantumCircuit.save_statevector()` is not part of base Qiskit `2.4.1`.
 - `rocquantum_bind` is loaded when a circuit is executed, so importing the provider remains possible before the native extension is present.
 

@@ -181,6 +181,28 @@ def test_qiskit_backend_can_skip_statevector_readback_for_sampling(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].statevector_reads == 0
 
 
+def test_qiskit_backend_can_skip_sampling_for_statevector_only(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+
+    result = backend.run(circuit, sampling=False).result()
+    state = result.get_statevector()
+
+    expected = np.array([1.0 / math.sqrt(2.0), 0.0, 0.0, 1.0 / math.sqrt(2.0)])
+    np.testing.assert_allclose(state, expected)
+    assert result.results[0].shots == 0
+    assert _FakeQuantumSimulator.instances[-1].measurements == []
+    assert _FakeQuantumSimulator.instances[-1].statevector_reads == 1
+
+
 def test_qiskit_backend_dispatches_controlled_rotations_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
