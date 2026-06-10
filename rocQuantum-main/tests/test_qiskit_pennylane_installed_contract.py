@@ -2576,6 +2576,69 @@ def test_pennylane_parameter_shift_gradient_pipeline_runs(monkeypatch):
     assert qml.grad(circuit)(theta) == pytest.approx(0.0)
 
 
+def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
+    pytest.importorskip("pennylane")
+
+    class _RYPreservingSimulator(_FakeQuantumSimulator):
+        def __init__(self, num_qubits):
+            super().__init__(num_qubits)
+            self._state = np.zeros(1 << self._num_qubits, dtype=np.complex128)
+            self._state[0] = 1.0
+
+        def reset(self):
+            super().reset()
+            self._state = np.zeros(1 << self._num_qubits, dtype=np.complex128)
+            self._state[0] = 1.0
+
+        def apply_gate(self, name, targets, params=None):
+            super().apply_gate(name, targets, params)
+            if name != "RY" or tuple(targets) != (0,):
+                return
+            theta = float((params or ())[0])
+            c = math.cos(theta / 2.0)
+            s = math.sin(theta / 2.0)
+            old_state = self._state.copy()
+            self._state[0] = c * old_state[0] - s * old_state[1]
+            self._state[1] = s * old_state[0] + c * old_state[1]
+
+        def _peek_statevector(self):
+            return self._state.copy()
+
+        def expectation_pauli_string(self, pauli_string, targets):
+            self.expectations.append((pauli_string, tuple(targets)))
+            if pauli_string == "Z" and tuple(targets) == (0,):
+                return float(abs(self._state[0]) ** 2 - abs(self._state[1]) ** 2)
+            return super().expectation_pauli_string(pauli_string, targets)
+
+    fake = _install_fake_binding(monkeypatch)
+    fake.QuantumSimulator = _RYPreservingSimulator
+    fake.QSim = _RYPreservingSimulator
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane import numpy as pnp
+    from pennylane.devices import ExecutionConfig
+
+    dev = qml.device("lightning.rocq", wires=1)
+    assert dev.supports_derivatives(ExecutionConfig(gradient_method="adjoint"))
+    assert not dev.supports_derivatives(ExecutionConfig(gradient_method="device"))
+
+    @qml.qnode(dev, diff_method="adjoint")
+    def circuit(theta):
+        qml.RY(theta, wires=0)
+        return qml.expval(qml.PauliZ(0))
+
+    theta = pnp.array(0.321, requires_grad=True)
+
+    assert circuit(theta) == pytest.approx(math.cos(float(theta)))
+    assert qml.grad(circuit)(theta) == pytest.approx(-math.sin(float(theta)))
+    sim = _RYPreservingSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.statevector_reads == 1
+
+
 def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

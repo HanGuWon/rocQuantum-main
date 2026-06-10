@@ -311,7 +311,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("_sparse_hamiltonian_moments", source)
         self.assertIn("sparse_matrix(wire_order=wire_order, format=\"csr\")", source)
         self.assertIn("rotation_ops = list(rotations or [])", source)
-        self.assertIn("list(operations) + rotation_ops", source)
+        self.assertIn("circuit_ops + rotation_ops", source)
+        self.assertIn("def execute_and_gradients", source)
+        self.assertIn("_capture_adjoint_reference_state", source)
+        self.assertIn("def _apply_unitary", source)
         self.assertIn("_pauli_square_terms", source)
         self.assertIn("expectation_pauli_string", source)
 

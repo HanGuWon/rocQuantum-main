@@ -786,6 +786,8 @@ class RocQDevice(QubitDevice):
         self._state = None
         self._skip_diagonalizing_rotations = False
         self._diagonalizing_rotations_applied = False
+        self._capture_pre_rotated_state = False
+        self._pre_rotated_state = None
         self._preserve_global_phase = True
         self.reset()
 
@@ -801,6 +803,7 @@ class RocQDevice(QubitDevice):
         self.sim = self._runtime.simulator
         self._runtime.preserve_global_phase = self._preserve_global_phase
         self._state = None
+        self._pre_rotated_state = None
         self._diagonalizing_rotations_applied = False
 
     def _circuit_preserves_global_phase(self, circuit):
@@ -838,6 +841,17 @@ class RocQDevice(QubitDevice):
             return []
         return super()._get_diagonalizing_gates(circuit)
 
+    def execute_and_gradients(self, circuits, method="jacobian", **kwargs):
+        if method != "adjoint_jacobian":
+            return super().execute_and_gradients(circuits, method=method, **kwargs)
+
+        previous = self._capture_pre_rotated_state
+        self._capture_pre_rotated_state = True
+        try:
+            return super().execute_and_gradients(circuits, method=method, **kwargs)
+        finally:
+            self._capture_pre_rotated_state = previous
+
     def execute(self, circuit, **kwargs):
         skip_rotations = self._analytic_measurements_use_native_pauli(circuit)
         preserve_global_phase = self._circuit_preserves_global_phase(circuit)
@@ -855,10 +869,13 @@ class RocQDevice(QubitDevice):
 
     def apply(self, operations: list[Operation], rotations=None, **kwargs):
         operation_applied = False
+        circuit_ops = list(operations)
         rotation_ops = list(rotations or [])
         self._diagonalizing_rotations_applied = bool(rotation_ops)
         self._runtime.preserve_global_phase = self._preserve_global_phase
-        for op in list(operations) + rotation_ops:
+        for op_index, op in enumerate(circuit_ops + rotation_ops):
+            if op_index == len(circuit_ops):
+                self._capture_adjoint_reference_state(flush=True)
             gate_name = op.name
             wire_indices = [self.wire_map[w] for w in op.wires]
             if gate_name == "BasisState":
@@ -1299,6 +1316,34 @@ class RocQDevice(QubitDevice):
         if callable(execute):
             execute()
         self._state = None
+        if len(rotation_ops) == 0:
+            self._capture_adjoint_reference_state(flush=False)
+
+    def _capture_adjoint_reference_state(self, *, flush):
+        if not self._capture_pre_rotated_state:
+            return
+        if flush:
+            execute = getattr(self.sim, "Execute", None)
+            if callable(execute):
+                execute()
+            self._state = None
+        self._pre_rotated_state = self._reshape(self._ensure_state(), [2] * self.num_wires)
+
+    def _apply_operation(self, state, operation):
+        if operation.name == "Identity":
+            return state
+        matrix = np.asarray(qml.matrix(operation), dtype=self.C_DTYPE)
+        return self._apply_unitary(state, matrix, operation.wires)
+
+    def _apply_unitary(self, state, mat, wires):
+        device_wires = list(self.map_wires(wires))
+        matrix = np.asarray(mat, dtype=self.C_DTYPE).reshape([2] * len(device_wires) * 2)
+        axes = (list(range(len(device_wires), 2 * len(device_wires))), device_wires)
+        contracted = np.tensordot(matrix, state, axes=axes)
+        unused_axes = [idx for idx in range(self.num_wires) if idx not in device_wires]
+        permutation = list(device_wires) + unused_axes
+        inverse_permutation = np.argsort(permutation)
+        return np.transpose(contracted, inverse_permutation)
 
     def _ensure_state(self):
         if self._state is None:
