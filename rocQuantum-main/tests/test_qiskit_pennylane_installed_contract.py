@@ -274,6 +274,26 @@ def test_pennylane_expval_uses_native_pauli_expectation(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
 
 
+def test_pennylane_var_uses_native_pauli_expectation(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.RY(0.123, wires=0)
+        return qml.var(qml.PauliZ(0))
+
+    assert circuit() == pytest.approx(0.75)
+    assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
+
+
 def test_pennylane_rot_dispatches_native_rotation_sequence(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -386,6 +406,39 @@ def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):
 
     assert circuit() == pytest.approx(0.725)
     assert _FakeQuantumSimulator.instances[-1].expectations == [
+        ("Z", (0,)),
+        ("XZ", (0, 1)),
+    ]
+
+
+def test_pennylane_hamiltonian_var_uses_native_pauli_products(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    hamiltonian = qml.Hamiltonian(
+        [1.2, -0.5, 0.25],
+        [qml.PauliZ(0), qml.PauliX(0) @ qml.PauliZ(1), qml.Identity(0)],
+    )
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.Hadamard(wires=0)
+        return qml.var(hamiltonian)
+
+    assert circuit() == pytest.approx(1.464375)
+    assert _FakeQuantumSimulator.instances[-1].expectations == [
+        ("Z", (0,)),
+        ("XZ", (0, 1)),
+        ("YZ", (0, 1)),
+        ("Z", (0,)),
+        ("YZ", (0, 1)),
+        ("XZ", (0, 1)),
         ("Z", (0,)),
         ("XZ", (0, 1)),
     ]

@@ -40,6 +40,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("samples_to_binary_rows", source)
         self.assertIn("sample_rows_from_statevector", source, "legacy fallback should remain explicit")
         self.assertIn("def expval", source)
+        self.assertIn("def var", source)
+        self.assertIn("_pauli_square_terms", source)
         self.assertIn("expectation_pauli_string", source)
 
     def test_cirq_sampling_prefers_native_measure(self):

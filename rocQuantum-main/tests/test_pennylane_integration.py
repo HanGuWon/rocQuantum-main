@@ -213,6 +213,15 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
         self.assertEqual(device.expval(obs), 0.25)
         self.assertEqual(_FakeQSim.instances[-1].expectations, [("ZX", (0, 1))])
 
+    def test_var_uses_native_pauli_expectation_when_available(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0], shots=None)
+
+        obs = _FakeObservable("PauliZ", wires=[0])
+
+        self.assertEqual(device.var(obs), 0.9375)
+        self.assertEqual(_FakeQSim.instances[-1].expectations, [("Z", (0,))])
+
 
 if __name__ == "__main__":
     unittest.main()

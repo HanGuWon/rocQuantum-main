@@ -34,6 +34,24 @@ PENNYLANE_PAULI_TO_CHAR = {
     "PauliY": "Y",
     "PauliZ": "Z",
 }
+PAULI_PRODUCTS = {
+    ("I", "I"): (1.0 + 0.0j, "I"),
+    ("I", "X"): (1.0 + 0.0j, "X"),
+    ("I", "Y"): (1.0 + 0.0j, "Y"),
+    ("I", "Z"): (1.0 + 0.0j, "Z"),
+    ("X", "I"): (1.0 + 0.0j, "X"),
+    ("X", "X"): (1.0 + 0.0j, "I"),
+    ("X", "Y"): (0.0 + 1.0j, "Z"),
+    ("X", "Z"): (0.0 - 1.0j, "Y"),
+    ("Y", "I"): (1.0 + 0.0j, "Y"),
+    ("Y", "X"): (0.0 - 1.0j, "Z"),
+    ("Y", "Y"): (1.0 + 0.0j, "I"),
+    ("Y", "Z"): (0.0 + 1.0j, "X"),
+    ("Z", "I"): (1.0 + 0.0j, "Z"),
+    ("Z", "X"): (0.0 + 1.0j, "Y"),
+    ("Z", "Y"): (0.0 - 1.0j, "X"),
+    ("Z", "Z"): (1.0 + 0.0j, "I"),
+}
 
 
 def _pauli_string_from_observable(observable, wire_map):
@@ -98,6 +116,54 @@ def _pauli_terms_from_observable(observable, wire_map):
         return terms
 
     return None
+
+
+def _term_to_pauli_map(pauli_string, targets):
+    return {int(target): pauli for pauli, target in zip(pauli_string, targets)}
+
+
+def _pauli_map_to_term(pauli_map):
+    targets = sorted(pauli_map)
+    return "".join(pauli_map[target] for target in targets), targets
+
+
+def _multiply_pauli_terms(left, right):
+    left_coeff, left_paulis, left_targets = left
+    right_coeff, right_paulis, right_targets = right
+    left_map = _term_to_pauli_map(left_paulis, left_targets)
+    right_map = _term_to_pauli_map(right_paulis, right_targets)
+
+    coeff = complex(left_coeff) * complex(right_coeff)
+    product_map = {}
+    for target in sorted(set(left_map) | set(right_map)):
+        phase, pauli = PAULI_PRODUCTS[(left_map.get(target, "I"), right_map.get(target, "I"))]
+        coeff *= phase
+        if pauli != "I":
+            product_map[target] = pauli
+
+    pauli_string, targets = _pauli_map_to_term(product_map)
+    return coeff, pauli_string, targets
+
+
+def _pauli_square_terms(terms):
+    return [_multiply_pauli_terms(left, right) for left in terms for right in terms]
+
+
+def _evaluate_pauli_terms(runtime, terms):
+    result = 0.0 + 0.0j
+    for coeff, pauli_string, targets in terms:
+        if not targets:
+            result += coeff
+        else:
+            result += coeff * runtime.expectation_pauli_string(pauli_string, targets)
+    return result
+
+
+def _real_measurement_result(value, measurement_name):
+    real_value = np.real_if_close(value)
+    if np.iscomplexobj(real_value):
+        raise ValueError(f"{measurement_name} has a non-negligible imaginary component.")
+    return float(real_value)
 
 
 class RocQDevice(QubitDevice):
@@ -211,13 +277,19 @@ class RocQDevice(QubitDevice):
         if terms is None:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
-        result = 0.0 + 0.0j
-        for coeff, pauli_string, targets in terms:
-            if not targets:
-                result += coeff
-            else:
-                result += coeff * self._runtime.expectation_pauli_string(pauli_string, targets)
-        return float(np.real_if_close(result).real)
+        return _real_measurement_result(_evaluate_pauli_terms(self._runtime, terms), "Expectation value")
+
+    def var(self, observable, shot_range=None, bin_size=None):
+        if self.shots is not None or shot_range is not None or bin_size is not None:
+            return super().var(observable, shot_range=shot_range, bin_size=bin_size)
+
+        terms = _pauli_terms_from_observable(observable, self.wire_map)
+        if terms is None:
+            return super().var(observable, shot_range=shot_range, bin_size=bin_size)
+
+        mean = _evaluate_pauli_terms(self._runtime, terms)
+        second_moment = _evaluate_pauli_terms(self._runtime, _pauli_square_terms(terms))
+        return _real_measurement_result(second_moment - mean * mean, "Variance")
 
     def analytic_probability(self, wires=None):
         if self._state is None: return None
