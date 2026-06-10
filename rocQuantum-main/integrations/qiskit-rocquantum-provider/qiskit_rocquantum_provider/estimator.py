@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from numbers import Real
+
 import numpy as np
 
 from qiskit.primitives import BaseEstimatorV2
-from qiskit.primitives.containers import DataBin, EstimatorPub, PrimitiveResult, PubResult
+from qiskit.primitives.containers import BindingsArray, DataBin, EstimatorPub, PrimitiveResult, PubResult
+from qiskit.primitives.containers.observables_array import object_array
 from qiskit.primitives.primitive_job import PrimitiveJob
 
 
@@ -72,6 +76,88 @@ def _dense_operator_matrix(observable, num_qubits: int):
             "Use SparsePauliOp/Pauli for padded or partial observables."
         )
     return matrix
+
+
+def _is_dense_operator_observable(observable) -> bool:
+    try:
+        from qiskit.quantum_info import Operator
+    except ImportError:
+        return False
+    return isinstance(observable, Operator)
+
+
+def _contains_dense_operator_observable(observables) -> bool:
+    try:
+        observable_array = object_array(observables, copy=False)
+    except (TypeError, ValueError):
+        return _is_dense_operator_observable(observables)
+    return any(_is_dense_operator_observable(observable) for observable in observable_array.flat)
+
+
+def _validate_precision(precision: float | None) -> None:
+    if precision is None:
+        return
+    if not isinstance(precision, Real):
+        raise TypeError(f"precision must be a real number, not {type(precision)}.")
+    if precision < 0:
+        raise ValueError("precision must be non-negative")
+
+
+class _DenseOperatorObservablesArray:
+    def __init__(self, observables):
+        self._array = object_array(observables, copy=True)
+        self._shape = self._array.shape
+
+    @property
+    def shape(self):
+        return self._shape
+
+    def __getitem__(self, index):
+        return self._array[index]
+
+
+class _DenseOperatorEstimatorPub:
+    def __init__(self, circuit, observables, parameter_values=None, precision=None):
+        self.circuit = circuit
+        self.observables = _DenseOperatorObservablesArray(observables)
+        self.parameter_values = parameter_values or BindingsArray()
+        self.precision = precision
+        self.shape = np.broadcast_shapes(self.observables.shape, self.parameter_values.shape)
+
+    @classmethod
+    def coerce(cls, pub, precision: float | None = None):
+        _validate_precision(precision)
+        if isinstance(pub, EstimatorPub):
+            return pub
+        if len(pub) not in [2, 3, 4]:
+            raise ValueError(f"The length of pub must be 2, 3 or 4, but length {len(pub)} is given.")
+
+        circuit = pub[0]
+        parameter_values = None
+        if len(pub) > 2 and pub[2] is not None:
+            values = pub[2]
+            if not isinstance(values, (BindingsArray, Mapping)):
+                values = {tuple(circuit.parameters): values}
+            parameter_values = BindingsArray.coerce(values)
+
+        if len(pub) > 3 and pub[3] is not None:
+            precision = pub[3]
+            _validate_precision(precision)
+
+        return cls(circuit, pub[1], parameter_values=parameter_values, precision=precision)
+
+
+def _coerce_estimator_pub(pub, precision: float | None):
+    try:
+        return EstimatorPub.coerce(pub, precision)
+    except TypeError:
+        try:
+            pub_len = len(pub)
+        except TypeError:
+            raise
+        if pub_len in [2, 3, 4] and _contains_dense_operator_observable(pub[1]):
+            return _DenseOperatorEstimatorPub.coerce(pub, precision)
+        raise
 
 
 def _label_to_runtime_term(label: str, num_qubits: int):
@@ -237,7 +323,7 @@ class RocQuantumEstimator(BaseEstimatorV2):
 
     def run(self, pubs, *, precision: float | None = None):
         target_precision = self._default_precision if precision is None else float(precision)
-        coerced_pubs = [EstimatorPub.coerce(pub, target_precision) for pub in pubs]
+        coerced_pubs = [_coerce_estimator_pub(pub, target_precision) for pub in pubs]
         job = PrimitiveJob(self._run, coerced_pubs)
         job._submit()
         return job

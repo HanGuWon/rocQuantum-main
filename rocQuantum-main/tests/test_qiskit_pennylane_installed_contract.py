@@ -1456,6 +1456,58 @@ def test_qiskit_estimator_dense_operator_batch_helper_uses_matrix_batch(monkeypa
     np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -1.0]))
 
 
+def test_qiskit_native_estimator_accepts_dense_operator(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1)
+    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable)],
+    ).result()[0]
+
+    assert float(result.data.evs) == pytest.approx(1.0)
+    assert result.metadata["native"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.matrix_expectations[0][1] == (0,)
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+
+
+def test_qiskit_native_estimator_batches_dense_operator_parameters(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1)
+    circuit.ry(theta, 0)
+    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([1.0, 1.0], dtype=float))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.matrix_batch_expectations[0][1] == (0,)
+    assert sim.matrix_expectations == []
+
+
 def test_qiskit_native_estimator_reuses_bound_circuit_for_observable_batch(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
