@@ -38,6 +38,7 @@ class _FakeQuantumSimulator:
         self.expectations = []
         self.batch_expectations = []
         self.matrix_expectations = []
+        self.matrix_batch_expectations = []
         self.probability_requests = []
         self.sparse_moments = []
         self.reset_qubits = []
@@ -57,6 +58,7 @@ class _FakeQuantumSimulator:
         self.expectations.clear()
         self.batch_expectations.clear()
         self.matrix_expectations.clear()
+        self.matrix_batch_expectations.clear()
         self.probability_requests.clear()
         self.sparse_moments.clear()
         self.reset_qubits.clear()
@@ -128,7 +130,18 @@ class _FakeQuantumSimulator:
         matrix = np.asarray(matrix, dtype=np.complex128)
         targets = tuple(int(target) for target in targets)
         self.matrix_expectations.append((matrix, targets))
+        return self._expectation_matrix_value(matrix, targets)
 
+    def expectation_matrix_batch(self, matrix, targets):
+        if not self.enable_matrix_expectation:
+            raise NotImplementedError("native matrix expectation batch disabled")
+        matrix = np.asarray(matrix, dtype=np.complex128)
+        targets = tuple(int(target) for target in targets)
+        self.matrix_batch_expectations.append((matrix, targets))
+        value = self._expectation_matrix_value(matrix, targets)
+        return np.full(self._batch_size, value, dtype=np.complex128)
+
+    def _expectation_matrix_value(self, matrix, targets):
         state = self._peek_statevector()
         dimension = 1 << len(targets)
         result = 0.0 + 0.0j
@@ -1417,6 +1430,32 @@ def test_qiskit_pauli_estimator_combines_batched_expectations(monkeypatch):
     assert runtime.calls == [("Z", (0,))]
 
 
+def test_qiskit_estimator_dense_operator_batch_helper_uses_matrix_batch(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable_batch
+
+    class BatchRuntime:
+        def __init__(self):
+            self.calls = []
+
+        def expectation_matrix_batch(self, matrix, targets):
+            self.calls.append((np.asarray(matrix, dtype=np.complex128), tuple(targets)))
+            return np.array([1.0 + 0.0j, -1.0 + 0.0j], dtype=np.complex128)
+
+    runtime = BatchRuntime()
+    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+
+    np.testing.assert_allclose(
+        estimate_observable_batch(runtime, observable, 1),
+        np.array([1.0, -1.0], dtype=float),
+    )
+    assert runtime.calls[0][1] == (0,)
+    np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -1.0]))
+
+
 def test_qiskit_native_estimator_reuses_bound_circuit_for_observable_batch(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -1767,6 +1806,61 @@ def test_pennylane_batch_execute_uses_batched_variance(monkeypatch):
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
     assert sim.batch_expectations == [("Z", (0,)), ("Z", (0,))]
+
+
+def test_pennylane_batch_execute_uses_batched_hermitian_expval(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.Hermitian(np.diag([1.0, -1.0]).astype(np.complex128), wires=0)
+    circuits = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.expval(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.expval(observable)]),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((1.0, 1.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.matrix_batch_expectations[0][1] == (0,)
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], np.diag([1.0, -1.0]))
+    assert sim.matrix_expectations == []
+    assert sim.batch_expectations == []
+    assert sim.statevector_reads == 0
+
+
+def test_pennylane_batch_execute_uses_batched_hermitian_variance(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.Hermitian(np.diag([1.0, -1.0]).astype(np.complex128), wires=0)
+    circuits = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.var(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.var(observable)]),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.0, 0.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert len(sim.matrix_batch_expectations) == 2
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], np.diag([1.0, -1.0]))
+    np.testing.assert_allclose(sim.matrix_batch_expectations[1][0], np.eye(2))
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_batch_execute_uses_batched_mixed_analytic_measurements(monkeypatch):
@@ -3471,6 +3565,10 @@ def test_runtime_can_create_and_read_batched_bindings():
     np.testing.assert_allclose(
         runtime.expectation_pauli_string_batch("Z", [0]),
         np.array([-1.0, -1.0, -1.0], dtype=float),
+    )
+    np.testing.assert_allclose(
+        runtime.expectation_matrix_batch(np.diag([1.0, -1.0]).astype(np.complex128), [0]),
+        np.array([-1.0, -1.0, -1.0], dtype=np.complex128),
     )
     runtime.apply_operation_batch("ry", [0], [0.1, 0.2, 0.3])
     assert runtime.simulator.batch_ops == [("RY", (0,), (0.1, 0.2, 0.3))]

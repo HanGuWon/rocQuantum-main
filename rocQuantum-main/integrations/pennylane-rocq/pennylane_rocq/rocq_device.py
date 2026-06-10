@@ -285,6 +285,40 @@ def _native_hermitian_expectation(runtime, observable, wire_map):
     return runtime.expectation_matrix(matrix, targets)
 
 
+def _observable_batch_payload(observable, wire_map):
+    if observable is None:
+        return None
+
+    terms = _pauli_terms_from_observable(observable, wire_map)
+    if terms is not None:
+        return "pauli", _combine_pauli_terms(terms)
+
+    components = _hermitian_matrix_and_targets(observable, wire_map)
+    if components is not None:
+        matrix, targets = components
+        return "matrix", matrix, tuple(targets)
+
+    return None
+
+
+def _observable_batch_payload_matches(observable, wire_map, reference_payload):
+    current = _observable_batch_payload(observable, wire_map)
+    if current is None or current[0] != reference_payload[0]:
+        return False
+    if reference_payload[0] == "pauli":
+        return current[1] == reference_payload[1]
+    return current[2] == reference_payload[2] and np.array_equal(current[1], reference_payload[1])
+
+
+def _evaluate_observable_batch_payload(runtime, payload):
+    kind = payload[0]
+    if kind == "pauli":
+        return _evaluate_pauli_terms_batch(runtime, payload[1])
+    if kind == "matrix":
+        return runtime.expectation_matrix_batch(payload[1], payload[2])
+    raise TypeError(f"Unsupported observable batch payload kind: {kind!r}")
+
+
 def _shot_count(shots):
     total_shots = getattr(shots, "total_shots", None)
     if total_shots is not None:
@@ -996,10 +1030,10 @@ class RocQDevice(QubitDevice):
         for measurement_name, measurement in zip(measurement_names, reference_measurements):
             if measurement_name in {"ExpectationMP", "VarianceMP"}:
                 observable = getattr(measurement, "obs", None)
-                reference_terms = _pauli_terms_from_observable(observable, self.wire_map)
-                if reference_terms is None:
+                payload = _observable_batch_payload(observable, self.wire_map)
+                if payload is None:
                     return None
-                reference_measurement_specs.append((measurement_name, _combine_pauli_terms(reference_terms)))
+                reference_measurement_specs.append((measurement_name, payload))
             elif measurement_name in {"ProbabilityMP", "SampleMP", "CountsMP"}:
                 reference_measurement_specs.append((measurement_name, tuple(measurement.wires)))
             else:
@@ -1016,8 +1050,11 @@ class RocQDevice(QubitDevice):
                 return None
             for measurement, (measurement_name, reference_payload) in zip(measurements, reference_measurement_specs):
                 if measurement_name in {"ExpectationMP", "VarianceMP"}:
-                    terms = _pauli_terms_from_observable(getattr(measurement, "obs", None), self.wire_map)
-                    if terms is None or _combine_pauli_terms(terms) != reference_payload:
+                    if not _observable_batch_payload_matches(
+                        getattr(measurement, "obs", None),
+                        self.wire_map,
+                        reference_payload,
+                    ):
                         return None
                 elif measurement_name in {"ProbabilityMP", "SampleMP", "CountsMP"} and (
                     tuple(measurement.wires) != reference_payload
@@ -1080,9 +1117,13 @@ class RocQDevice(QubitDevice):
                     batched_values.append(self._runtime.probabilities_batch(probability_targets))
                     continue
 
-                means = _evaluate_pauli_terms_batch(self._runtime, payload)
+                means = _evaluate_observable_batch_payload(self._runtime, payload)
                 if measurement_name == "VarianceMP":
-                    second_moments = _evaluate_pauli_terms_batch(self._runtime, _pauli_square_terms(payload))
+                    if payload[0] == "pauli":
+                        second_payload = ("pauli", _pauli_square_terms(payload[1]))
+                    else:
+                        second_payload = ("matrix", payload[1] @ payload[1], payload[2])
+                    second_moments = _evaluate_observable_batch_payload(self._runtime, second_payload)
                     batched_values.append(second_moments - means * means)
                 else:
                     batched_values.append(means)

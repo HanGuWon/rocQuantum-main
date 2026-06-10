@@ -274,6 +274,48 @@ def expectation_from_statevector(
     return float(np.real_if_close(result).real)
 
 
+def expectation_matrix_from_statevector(
+    statevector: Sequence[complex],
+    matrix: object,
+    targets: Sequence[int],
+) -> complex:
+    state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    num_qubits = int(np.log2(state.size)) if state.size else 0
+    if state.size != (1 << num_qubits):
+        raise ValueError("Statevector length must be a power of two.")
+
+    normalized_targets = normalize_targets(targets)
+    if not normalized_targets:
+        raise ValueError("Dense matrix expectation requires at least one target qubit.")
+    if len(set(normalized_targets)) != len(normalized_targets):
+        raise ValueError("Dense matrix expectation targets must be unique.")
+    for target in normalized_targets:
+        if target < 0 or target >= num_qubits:
+            raise ValueError("Dense matrix expectation target is outside the statevector qubit range.")
+
+    normalized_matrix = np.asarray(matrix, dtype=np.complex128)
+    dimension = 1 << len(normalized_targets)
+    if normalized_matrix.shape != (dimension, dimension):
+        raise ValueError("Dense expectation matrix dimension must be 2^len(targets).")
+
+    result = 0.0 + 0.0j
+    for row_index, amplitude in enumerate(state):
+        row_target = 0
+        base_index = int(row_index)
+        for output_bit, target in enumerate(normalized_targets):
+            mask = 1 << target
+            if row_index & mask:
+                row_target |= 1 << output_bit
+            base_index &= ~mask
+        for col_target in range(dimension):
+            col_index = base_index
+            for output_bit, target in enumerate(normalized_targets):
+                if (col_target >> output_bit) & 1:
+                    col_index |= 1 << target
+            result += np.conj(amplitude) * normalized_matrix[row_target, col_target] * state[col_index]
+    return complex(result)
+
+
 class RocQuantumRuntime:
     """Small adapter around the public rocquantum_bind simulator surface."""
 
@@ -663,6 +705,45 @@ class RocQuantumRuntime:
             return complex(legacy(normalized_matrix, normalized_targets))
 
         raise NotImplementedError("The active rocQuantum binding does not expose dense matrix expectations.")
+
+    def expectation_matrix_batch(self, matrix: object, targets: Iterable[int]) -> np.ndarray:
+        normalized_targets = normalize_targets(targets)
+        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+
+        def _native_expectation_unavailable(exc: Exception) -> bool:
+            message = str(exc)
+            return isinstance(exc, NotImplementedError) or "status 5" in message
+
+        native = getattr(self.simulator, "expectation_matrix_batch", None)
+        if callable(native):
+            try:
+                return np.asarray(native(normalized_matrix, normalized_targets), dtype=np.complex128).reshape(
+                    self.batch_size()
+                )
+            except Exception as exc:
+                if not _native_expectation_unavailable(exc):
+                    raise
+
+        legacy = getattr(self.simulator, "ExpectationMatrixBatch", None)
+        if callable(legacy):
+            try:
+                return np.asarray(legacy(normalized_matrix, normalized_targets), dtype=np.complex128).reshape(
+                    self.batch_size()
+                )
+            except Exception as exc:
+                if not _native_expectation_unavailable(exc):
+                    raise
+
+        if self.batch_size() == 1:
+            return np.asarray([self.expectation_matrix(normalized_matrix, normalized_targets)], dtype=np.complex128)
+
+        return np.asarray(
+            [
+                expectation_matrix_from_statevector(state, normalized_matrix, normalized_targets)
+                for state in self.statevectors()
+            ],
+            dtype=np.complex128,
+        )
 
     def sparse_hamiltonian_moments(
         self,

@@ -810,6 +810,63 @@ std::complex<double> QuantumSimulator::expectation_matrix(
     return {static_cast<double>(raw_result.x), static_cast<double>(raw_result.y)};
 }
 
+std::vector<std::complex<double>> QuantumSimulator::expectation_matrix_batch(
+    const std::vector<std::complex<double>>& matrix,
+    const std::vector<unsigned>& targets) const {
+    if (targets.empty()) {
+        throw std::invalid_argument("expectation_matrix_batch requires at least one target qubit.");
+    }
+    if (targets.size() > 4) {
+        throw std::runtime_error("expectation_matrix_batch currently supports at most 4 target qubits.");
+    }
+
+    std::unordered_set<unsigned> unique_targets;
+    for (unsigned target : targets) {
+        ensure_valid_qubit(target);
+        if (!unique_targets.insert(target).second) {
+            throw std::invalid_argument("expectation_matrix_batch target qubits must be unique.");
+        }
+    }
+
+    const std::size_t matrix_dim = std::size_t{1} << targets.size();
+    const std::size_t expected_elements = matrix_dim * matrix_dim;
+    if (matrix.size() != expected_elements) {
+        throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
+    }
+
+    const std::vector<rocComplex> matrix_col_major = row_major_to_column_major(matrix, matrix_dim);
+    rocComplex* d_matrix = nullptr;
+    check_hip(hipMalloc(&d_matrix, matrix_col_major.size() * sizeof(rocComplex)),
+              "batched expectation matrix allocation");
+    std::vector<rocComplex> raw_results(batch_size_, to_roc_complex(std::complex<double>{0.0, 0.0}));
+    try {
+        check_hip(hipMemcpy(d_matrix,
+                            matrix_col_major.data(),
+                            matrix_col_major.size() * sizeof(rocComplex),
+                            hipMemcpyHostToDevice),
+                  "batched expectation matrix upload");
+        check_status(rocsvGetExpectationMatrixBatch(sim_handle_,
+                                                    device_state_vector_,
+                                                    num_qubits_,
+                                                    targets.data(),
+                                                    static_cast<unsigned>(targets.size()),
+                                                    d_matrix,
+                                                    matrix_dim,
+                                                    raw_results.data()),
+                     "batch matrix expectation");
+    } catch (...) {
+        hipFree(d_matrix);
+        throw;
+    }
+    check_hip(hipFree(d_matrix), "batched expectation matrix free");
+
+    std::vector<std::complex<double>> out(raw_results.size());
+    for (std::size_t idx = 0; idx < raw_results.size(); ++idx) {
+        out[idx] = {static_cast<double>(raw_results[idx].x), static_cast<double>(raw_results[idx].y)};
+    }
+    return out;
+}
+
 std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::sparse_hamiltonian_moments(
     const std::vector<std::complex<double>>& data,
     const std::vector<std::size_t>& indices,
@@ -1014,6 +1071,12 @@ std::complex<double> QuantumSimulator::ExpectationMatrix(
     const std::vector<std::complex<double>>& matrix,
     const std::vector<unsigned>& targets) const {
     return expectation_matrix(matrix, targets);
+}
+
+std::vector<std::complex<double>> QuantumSimulator::ExpectationMatrixBatch(
+    const std::vector<std::complex<double>>& matrix,
+    const std::vector<unsigned>& targets) const {
+    return expectation_matrix_batch(matrix, targets);
 }
 
 std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::SparseHamiltonianMoments(

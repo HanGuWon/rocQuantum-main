@@ -179,9 +179,29 @@ def _estimate_observable_plan(runtime, plan, num_qubits: int) -> float:
     raise TypeError(f"Unsupported observable plan kind: {kind!r}")
 
 
+def _estimate_observable_plan_batch(runtime, plan, num_qubits: int) -> np.ndarray:
+    kind, payload = plan
+    if kind == "pauli":
+        return _estimate_combined_observable_terms_batch(runtime, payload, int(num_qubits))
+
+    if kind == "matrix":
+        result = runtime.expectation_matrix_batch(payload, list(range(int(num_qubits))))
+        real_result = np.real_if_close(result)
+        if np.iscomplexobj(real_result):
+            raise ValueError("Observable expectation has a non-negligible imaginary component.")
+        return np.asarray(real_result, dtype=float)
+
+    raise TypeError(f"Unsupported observable plan kind: {kind!r}")
+
+
 def estimate_observable(runtime, observable, num_qubits: int) -> float:
     _, plan = _observable_plan(observable, int(num_qubits))
     return _estimate_observable_plan(runtime, plan, int(num_qubits))
+
+
+def estimate_observable_batch(runtime, observable, num_qubits: int) -> np.ndarray:
+    _, plan = _observable_plan(observable, int(num_qubits))
+    return _estimate_observable_plan_batch(runtime, plan, int(num_qubits))
 
 
 def estimate_pauli_observable(runtime, observable, num_qubits: int) -> float:
@@ -299,13 +319,10 @@ class RocQuantumEstimator(BaseEstimatorV2):
             observable = pub.observables[observable_index]
             try:
                 cache_key, plan = _observable_plan(observable, int(pub.circuit.num_qubits))
-                kind, payload = plan
-                if kind != "pauli":
-                    return None
                 if cache_key not in observable_values_by_cache:
-                    observable_values_by_cache[cache_key] = _estimate_combined_observable_terms_batch(
+                    observable_values_by_cache[cache_key] = _estimate_observable_plan_batch(
                         self._backend._runtime,
-                        payload,
+                        plan,
                         int(pub.circuit.num_qubits),
                     )
                 observable_cache_keys[observable_index] = cache_key
