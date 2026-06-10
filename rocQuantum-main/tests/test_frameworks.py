@@ -1,23 +1,23 @@
 import sys
 import os
 import numpy as np
+import pytest
 
 # --- Setup Python Path ---
 project_root = os.path.dirname(os.path.abspath(__file__))
 integrations_path = os.path.join(project_root, '..', 'integrations')
 build_path = os.path.join(project_root, '..', 'build')
 sys.path.insert(0, os.path.abspath(integrations_path))
+sys.path.insert(0, os.path.abspath(os.path.join(integrations_path, "pennylane-rocq")))
+sys.path.insert(0, os.path.abspath(os.path.join(integrations_path, "qiskit-rocquantum-provider")))
 sys.path.insert(0, os.path.abspath(build_path))
 
-try:
-    import pennylane as qml
-    from qiskit import QuantumCircuit, transpile
-    from qiskit_rocquantum_provider.provider import RocQuantumProvider
-    print("Successfully imported all frameworks and providers.")
-except ImportError as e:
-    print(f"Import Error: {e}")
-    print("Please ensure you have run the build commands and that PennyLane and Qiskit are installed.")
-    sys.exit(1)
+qml = pytest.importorskip("pennylane")
+pytest.importorskip("rocquantum_bind", reason="compiled rocquantum_bind module is unavailable")
+pytest.importorskip("qiskit")
+
+from qiskit import QuantumCircuit, transpile
+from qiskit_rocquantum_provider.provider import RocQuantumProvider
 
 def test_pennylane_integration():
     print("\n--- Testing PennyLane Integration (Bell State) ---")
