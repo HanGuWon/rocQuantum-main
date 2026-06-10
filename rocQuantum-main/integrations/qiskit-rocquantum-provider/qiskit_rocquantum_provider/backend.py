@@ -53,6 +53,7 @@ from rocquantum.framework_runtime import (
     counts_from_memory,
     normalize_params,
     qiskit_memory_from_samples,
+    qiskit_sample_plan,
 )
 
 from .estimator import estimate_pauli_observable
@@ -232,7 +233,7 @@ class RocQuantumBackend(BackendV2):
                 measured_items = sorted(measured_bits.items())
             else: # If no measure op, measure all into matching bit positions.
                 measured_items = [(idx, idx) for idx in range(circuit.num_qubits)]
-            qubits_to_measure = [qubit for _, qubit in measured_items]
+            qubits_to_measure, sample_offsets = qiskit_sample_plan(measured_items)
 
             statevector = self._runtime.statevector() if return_statevector else None
 
@@ -242,7 +243,7 @@ class RocQuantumBackend(BackendV2):
             if return_sampling:
                 raw_samples = self._runtime.measure(qubits_to_measure, shots)
                 memory_width = getattr(circuit, "num_clbits", 0) or len(measured_items)
-                memory = qiskit_memory_from_samples(raw_samples, measured_items, memory_width)
+                memory = qiskit_memory_from_samples(raw_samples, measured_items, memory_width, sample_offsets)
                 formatted_counts = counts_from_memory(memory)
                 data.update(
                     {

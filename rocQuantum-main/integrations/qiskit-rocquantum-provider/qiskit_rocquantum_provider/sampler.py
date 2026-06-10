@@ -6,6 +6,8 @@ from qiskit.primitives import BaseSamplerV2
 from qiskit.primitives.containers import BitArray, DataBin, PrimitiveResult, SamplerPub, SamplerPubResult
 from qiskit.primitives.primitive_job import PrimitiveJob
 
+from rocquantum.framework_runtime import qiskit_sample_plan
+
 
 def _measurement_plan(circuit, measured_bits):
     if measured_bits:
@@ -13,7 +15,11 @@ def _measurement_plan(circuit, measured_bits):
     else:
         measured_items = [(idx, idx) for idx in range(circuit.num_qubits)]
 
-    sample_offsets = {classical_index: offset for offset, (classical_index, _) in enumerate(measured_items)}
+    sample_qubits, measured_sample_offsets = qiskit_sample_plan(measured_items)
+    sample_offsets = {
+        classical_index: measured_sample_offsets[offset]
+        for offset, (classical_index, _) in enumerate(measured_items)
+    }
     registers = []
     for register in circuit.cregs:
         items = []
@@ -27,7 +33,7 @@ def _measurement_plan(circuit, measured_bits):
     if not registers:
         registers.append(("meas", [(idx, idx) for idx in range(len(measured_items))], len(measured_items)))
 
-    return measured_items, registers
+    return sample_qubits, registers
 
 
 def _samples_for_register(raw_samples, items, width):
@@ -65,9 +71,9 @@ class RocQuantumSampler(BaseSamplerV2):
         for index in np.ndindex(pub.shape):
             circuit = bound_circuits[index]
             measured_bits = self._backend._apply_circuit(circuit)
-            measured_items, registers = _measurement_plan(circuit, measured_bits)
+            sample_qubits, registers = _measurement_plan(circuit, measured_bits)
             raw_samples = self._backend._runtime.measure(
-                [qubit for _, qubit in measured_items],
+                sample_qubits,
                 int(pub.shots),
             )
             for register_name, items, width in registers:

@@ -122,6 +122,25 @@ def test_qiskit_backend_returns_job_and_fixed_width_counts(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 6)]
 
 
+def test_qiskit_backend_deduplicates_repeated_terminal_measurements(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2, 2)
+    circuit.h(0)
+    circuit.measure(0, 0)
+    circuit.measure(0, 1)
+
+    result = backend.run(circuit, shots=6, statevector=False).result()
+
+    assert result.get_counts() == {"00": 3, "11": 3}
+    assert _FakeQuantumSimulator.instances[-1].measurements == [((0,), 6)]
+
+
 def test_qiskit_backend_returns_statevector_before_sampling(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -397,6 +416,24 @@ def test_qiskit_provider_primitives_run_with_backend(monkeypatch):
     assert estimator_pub.metadata["native"] is True
     assert estimator_pub.metadata["shots"] == 0
     assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_sampler_deduplicates_repeated_terminal_measurements(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(2, 2)
+    circuit.h(0)
+    circuit.measure(0, 0)
+    circuit.measure(0, 1)
+
+    result = RocQuantumProvider().get_sampler().run([circuit], shots=6).result()[0]
+
+    assert result.data.c.get_counts() == {"00": 3, "11": 3}
+    assert _FakeQuantumSimulator.instances[-1].measurements == [((0,), 6)]
 
 
 def test_qiskit_native_sampler_binds_parameter_values(monkeypatch):

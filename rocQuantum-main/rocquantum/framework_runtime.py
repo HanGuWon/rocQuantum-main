@@ -113,19 +113,35 @@ def qiskit_memory_from_samples(
     raw_samples: Sequence[int],
     measured_items: Sequence[tuple[int, int]],
     memory_width: int,
+    sample_offsets: Sequence[int] | None = None,
 ) -> list[str]:
     if memory_width <= 0:
         memory_width = len(measured_items)
+    if sample_offsets is None:
+        sample_offsets = list(range(len(measured_items)))
 
     memory = []
     for sample in raw_samples:
         bits = ["0"] * memory_width
-        for packed_bit, (classical_bit, _) in enumerate(measured_items):
+        for packed_bit, (classical_bit, _) in zip(sample_offsets, measured_items):
             output_index = memory_width - 1 - int(classical_bit)
             if 0 <= output_index < memory_width:
                 bits[output_index] = "1" if ((int(sample) >> packed_bit) & 1) else "0"
         memory.append("".join(bits))
     return memory
+
+
+def qiskit_sample_plan(measured_items: Sequence[tuple[int, int]]) -> tuple[list[int], list[int]]:
+    qubit_offsets = {}
+    sample_qubits = []
+    sample_offsets = []
+    for _, qubit in measured_items:
+        normalized_qubit = int(qubit)
+        if normalized_qubit not in qubit_offsets:
+            qubit_offsets[normalized_qubit] = len(sample_qubits)
+            sample_qubits.append(normalized_qubit)
+        sample_offsets.append(qubit_offsets[normalized_qubit])
+    return sample_qubits, sample_offsets
 
 
 def counts_from_memory(memory: Sequence[str]) -> dict[str, int]:
