@@ -303,6 +303,57 @@ def _apply_mcx_with_control_values(runtime, wire_indices, control_values):
             runtime.apply_operation("X", [wire_index])
 
 
+def _controlled_qubit_unitary_components(op, wire_map):
+    control_wires = list(getattr(op, "control_wires", ()))
+    target_wires = list(getattr(op, "target_wires", ()))
+    control_values = getattr(op, "control_values", None)
+    if control_values is None:
+        control_values = getattr(op, "hyperparameters", {}).get("control_values")
+
+    if not control_wires or not target_wires or control_values is None:
+        return None
+    if len(control_values) != len(control_wires):
+        return None
+
+    base = getattr(op, "base", None)
+    if base is None:
+        base = getattr(op, "hyperparameters", {}).get("base")
+    if base is None:
+        return None
+
+    try:
+        matrix = matrix_to_little_endian_wires(qml.matrix(base))
+    except (TypeError, ValueError, RuntimeError):
+        return None
+    expected_dimension = 1 << len(target_wires)
+    if matrix.shape != (expected_dimension, expected_dimension):
+        return None
+
+    controls = [wire_map[wire] for wire in control_wires]
+    targets = [wire_map[wire] for wire in target_wires]
+    return matrix, controls, targets, list(control_values)
+
+
+def _apply_controlled_qubit_unitary(runtime, matrix, controls, targets, control_values):
+    open_controls = [
+        wire_index
+        for wire_index, value in zip(controls, control_values)
+        if not _control_value_is_one(value)
+    ]
+    flipped = []
+    try:
+        for wire_index in open_controls:
+            runtime.apply_operation("X", [wire_index])
+            flipped.append(wire_index)
+        runtime.apply_controlled_matrix(matrix, controls, targets)
+        for wire_index in reversed(flipped):
+            runtime.apply_operation("X", [wire_index])
+        flipped.clear()
+    finally:
+        for wire_index in reversed(flipped):
+            runtime.apply_operation("X", [wire_index])
+
+
 def _apply_native_or_matrix(runtime, native_name, wire_indices, op):
     try:
         runtime.apply_operation(native_name, wire_indices)
@@ -1123,6 +1174,33 @@ class RocQDevice(QubitDevice):
                         wire_indices,
                         matrix=matrix,
                     )
+                operation_applied = True
+            elif gate_name == "ControlledQubitUnitary":
+                native_components = _controlled_qubit_unitary_components(op, self.wire_map)
+                if native_components is None:
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                else:
+                    matrix, controls, targets, control_values = native_components
+                    try:
+                        _apply_controlled_qubit_unitary(
+                            self._runtime,
+                            matrix,
+                            controls,
+                            targets,
+                            control_values,
+                        )
+                    except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                        matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                        self._runtime.apply_operation(
+                            gate_name,
+                            wire_indices,
+                            matrix=matrix,
+                        )
                 operation_applied = True
             elif gate_name in {"CPhaseShift00", "CPhaseShift01", "CPhaseShift10"}:
                 try:

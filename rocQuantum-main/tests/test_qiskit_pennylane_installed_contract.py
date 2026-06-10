@@ -1717,6 +1717,63 @@ def test_pennylane_matrix_fallback_converts_wire_order_for_rocquantum(monkeypatc
     np.testing.assert_allclose(matrix, expected_local_little_endian)
 
 
+def test_pennylane_controlled_qubit_unitary_uses_native_controlled_matrix(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    base = np.array([[1.0, 0.0], [0.0, 1.0j]], dtype=np.complex128)
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.ControlledQubitUnitary(base, wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.matrices == []
+    assert len(sim.controlled_matrices) == 1
+    matrix, controls, targets = sim.controlled_matrices[0]
+    np.testing.assert_allclose(matrix, base)
+    assert controls == (0,)
+    assert targets == (1,)
+
+
+def test_pennylane_open_controlled_qubit_unitary_flips_around_native_matrix(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    base = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.ControlledQubitUnitary(base, wires=[0, 1], control_values=[False])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.matrices == []
+    assert sim.ops == [("X", (0,), ()), ("X", (0,), ())]
+    assert len(sim.controlled_matrices) == 1
+    matrix, controls, targets = sim.controlled_matrices[0]
+    np.testing.assert_allclose(matrix, base)
+    assert controls == (0,)
+    assert targets == (1,)
+
+
 def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

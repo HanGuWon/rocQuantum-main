@@ -29,6 +29,7 @@ Audit refresh note (2026-06-10):
 - Qiskit `rxx` / `ryy` / `rzz` and PennyLane `qml.IsingXX` / `qml.IsingYY` / `qml.IsingXY` / `qml.IsingZZ` now use exact native CNOT/rotation decompositions instead of dense two-qubit matrix dispatch.
 - Direct Qiskit `PauliEvolutionGate` operations for single Pauli strings and commuting Pauli sums now use exact native rotation / `MultiRZ` decompositions instead of dense matrix dispatch.
 - Qiskit `reset` after prior operations now runs through `QuantumSimulator.reset_qubit()` in the sampling path by re-executing the circuit per shot; statevector and estimator paths still reject runtime-reset circuits because there is no single final pure state trajectory.
+- PennyLane `qml.ControlledQubitUnitary` can now use `QuantumSimulator.apply_controlled_matrix()` through the shared runtime, including open controls via exact `X`-flip wrapping, avoiding full dense controlled-matrix upload when the binding exposes the controlled-matrix surface.
 - PennyLane `qml.SingleExcitation` and `qml.DoubleExcitation` now use exact native `H` / `CNOT` / `RY` decompositions instead of dense two- and four-qubit matrix dispatch.
 - PennyLane `qml.SingleExcitationPlus` / `qml.SingleExcitationMinus` now use exact native decompositions with one-qubit global-phase matrices instead of dense two-qubit matrix dispatch.
 - PennyLane `qml.DoubleExcitationPlus` / `qml.DoubleExcitationMinus` now use exact global-phase plus Z-string `MultiRZ` phase corrections and native `DoubleExcitation` decomposition instead of dense four-qubit matrix dispatch.
@@ -118,7 +119,7 @@ What is not real today:
 ### Generic matrix and controlled-unitary support
 
 - Generic matrix application is partially native; larger/general host-side logic still exists in `rocquantum/src/hipStateVec/hipStateVec.cpp` but is no longer the default path.
-- Generic controlled unitary support is also partial. `QuantumSimulator::apply_controlled_matrix()` now exposes the backend controlled-matrix path to framework adapters, while unsupported breadth still follows the same explicit-fallback policy.
+- Generic controlled unitary support is also partial. `QuantumSimulator::apply_controlled_matrix()` now exposes the backend controlled-matrix path to framework adapters, and Qiskit / PennyLane adapters use it for generic controlled base-unitary dispatch where the binding supports it. Unsupported breadth still follows the same explicit-fallback policy.
 - As of the 2026-06-10 fast-path refresh, those host fallbacks are no longer a default performance path. Unsupported cases return `ROCQ_STATUS_NOT_IMPLEMENTED` unless `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` is set for explicit slow/debug fallback.
 
 ### Multi-GPU/distributed
