@@ -544,11 +544,35 @@ def test_qiskit_native_multi_control_and_matrix_fallback_gates(monkeypatch):
         ("H", (1,), ()),
         ("CNOT", (0, 1), ()),
         ("CNOT", (1, 0), ()),
+        ("H", (2,), ()),
+        ("RZ", (2,), (np.pi / 4,)),
+        ("CNOT", (1, 2), ()),
+        ("RZ", (2,), (-np.pi / 4,)),
+        ("CNOT", (0, 2), ()),
+        ("RZ", (2,), (np.pi / 4,)),
+        ("CNOT", (1, 2), ()),
+        ("RZ", (2,), (-np.pi / 4,)),
+        ("H", (2,), ()),
+        ("H", (3,), ()),
+        ("RZ", (3,), (np.pi / 4,)),
+        ("CNOT", (2, 3), ()),
+        ("RZ", (3,), (-np.pi / 4,)),
+        ("H", (3,), ()),
+        ("CNOT", (0, 3), ()),
+        ("RZ", (3,), (np.pi / 4,)),
+        ("CNOT", (1, 3), ()),
+        ("RZ", (3,), (-np.pi / 4,)),
+        ("CNOT", (0, 3), ()),
+        ("RZ", (3,), (np.pi / 4,)),
+        ("CNOT", (1, 3), ()),
+        ("RZ", (3,), (-np.pi / 4,)),
+        ("H", (3,), ()),
+        ("RZ", (3,), (np.pi / 4,)),
+        ("CNOT", (2, 3), ()),
+        ("RZ", (3,), (-np.pi / 4,)),
+        ("H", (3,), ()),
     ]
-    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
-        ((8, 8), (0, 1, 2)),
-        ((16, 16), (0, 1, 2, 3)),
-    ]
+    assert sim.matrices == []
 
 
 def test_qiskit_backend_dispatches_general_mcx_natively(monkeypatch):

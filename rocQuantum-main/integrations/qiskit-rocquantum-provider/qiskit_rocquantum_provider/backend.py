@@ -65,7 +65,6 @@ from .job import RocQuantumJob
 
 MATRIX_FALLBACK_OPS = {
     "ccx", "crx", "cry", "crz", "cswap",
-    "rccx", "rcccx",
     "state_preparation", "unitary",
 }
 MAX_AUTOMATIC_MATRIX_FALLBACK_QUBITS = 4
@@ -348,6 +347,47 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("cx", [control, target])
         self._runtime.apply_operation("x", [control])
 
+    def _apply_rccx_gate(self, q_indices):
+        if len(q_indices) != 3:
+            raise ValueError("Qiskit rccx gate requires exactly three qubits.")
+
+        control_a, control_b, target = q_indices
+        quarter_pi = cmath.pi / 4
+        self._runtime.apply_operation("h", [target])
+        self._runtime.apply_operation("rz", [target], [quarter_pi])
+        self._runtime.apply_operation("cx", [control_b, target])
+        self._runtime.apply_operation("rz", [target], [-quarter_pi])
+        self._runtime.apply_operation("cx", [control_a, target])
+        self._runtime.apply_operation("rz", [target], [quarter_pi])
+        self._runtime.apply_operation("cx", [control_b, target])
+        self._runtime.apply_operation("rz", [target], [-quarter_pi])
+        self._runtime.apply_operation("h", [target])
+
+    def _apply_rcccx_gate(self, q_indices):
+        if len(q_indices) != 4:
+            raise ValueError("Qiskit rcccx gate requires exactly four qubits.")
+
+        control_a, control_b, control_c, target = q_indices
+        quarter_pi = cmath.pi / 4
+        self._runtime.apply_operation("h", [target])
+        self._runtime.apply_operation("rz", [target], [quarter_pi])
+        self._runtime.apply_operation("cx", [control_c, target])
+        self._runtime.apply_operation("rz", [target], [-quarter_pi])
+        self._runtime.apply_operation("h", [target])
+        self._runtime.apply_operation("cx", [control_a, target])
+        self._runtime.apply_operation("rz", [target], [quarter_pi])
+        self._runtime.apply_operation("cx", [control_b, target])
+        self._runtime.apply_operation("rz", [target], [-quarter_pi])
+        self._runtime.apply_operation("cx", [control_a, target])
+        self._runtime.apply_operation("rz", [target], [quarter_pi])
+        self._runtime.apply_operation("cx", [control_b, target])
+        self._runtime.apply_operation("rz", [target], [-quarter_pi])
+        self._runtime.apply_operation("h", [target])
+        self._runtime.apply_operation("rz", [target], [quarter_pi])
+        self._runtime.apply_operation("cx", [control_c, target])
+        self._runtime.apply_operation("rz", [target], [-quarter_pi])
+        self._runtime.apply_operation("h", [target])
+
     def _apply_circuit(self, circuit, *, include_global_phase: bool = False):
         self._ensure_simulator(circuit.num_qubits)
         if include_global_phase:
@@ -444,7 +484,9 @@ class RocQuantumBackend(BackendV2):
                 touched_qubits.update(q_indices)
                 continue
 
-            if op.name in {"ch", "cy", "ccz", "dcx", "ecr", "iswap"} and self._supports_native_parametric_decomposition():
+            if op.name in {
+                "ch", "cy", "ccz", "dcx", "ecr", "iswap", "rccx", "rcccx"
+            } and self._supports_native_parametric_decomposition():
                 if op.name == "ch":
                     self._apply_ch_gate(q_indices)
                 elif op.name == "cy":
@@ -455,8 +497,12 @@ class RocQuantumBackend(BackendV2):
                     self._apply_dcx_gate(q_indices)
                 elif op.name == "ecr":
                     self._apply_ecr_gate(q_indices)
-                else:
+                elif op.name == "iswap":
                     self._apply_iswap_gate(q_indices)
+                elif op.name == "rccx":
+                    self._apply_rccx_gate(q_indices)
+                else:
+                    self._apply_rcccx_gate(q_indices)
                 touched_qubits.update(q_indices)
                 continue
 
