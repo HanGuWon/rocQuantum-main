@@ -64,7 +64,7 @@ from .job import RocQuantumJob
 
 
 MATRIX_FALLBACK_OPS = {
-    "ccx", "ccz", "ch", "crx", "cry", "crz", "cswap", "cy",
+    "ccx", "ch", "crx", "cry", "crz", "cswap",
     "dcx", "ecr", "iswap",
     "rccx", "rcccx",
     "state_preparation", "unitary",
@@ -292,6 +292,24 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("ry", [target], [theta])
         self._runtime.apply_operation("rz", [target], [phi])
 
+    def _apply_cy_gate(self, q_indices):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit cy gate requires exactly two qubits.")
+
+        control, target = q_indices
+        self._runtime.apply_operation("sdg", [target])
+        self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation("s", [target])
+
+    def _apply_ccz_gate(self, q_indices):
+        if len(q_indices) != 3:
+            raise ValueError("Qiskit ccz gate requires exactly three qubits.")
+
+        control_a, control_b, target = q_indices
+        self._runtime.apply_operation("h", [target])
+        self._runtime.apply_operation("mcx", [control_a, control_b, target])
+        self._runtime.apply_operation("h", [target])
+
     def _apply_circuit(self, circuit, *, include_global_phase: bool = False):
         self._ensure_simulator(circuit.num_qubits)
         if include_global_phase:
@@ -385,6 +403,14 @@ class RocQuantumBackend(BackendV2):
                 else:
                     theta, phi, lam = params
                     self._apply_u_gate(q_indices, theta, phi, lam, include_global_phase=include_global_phase)
+                touched_qubits.update(q_indices)
+                continue
+
+            if op.name in {"cy", "ccz"} and self._supports_native_parametric_decomposition():
+                if op.name == "cy":
+                    self._apply_cy_gate(q_indices)
+                else:
+                    self._apply_ccz_gate(q_indices)
                 touched_qubits.update(q_indices)
                 continue
 

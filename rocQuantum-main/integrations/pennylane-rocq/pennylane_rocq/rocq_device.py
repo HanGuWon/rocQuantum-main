@@ -303,6 +303,10 @@ def _supports_native_parametric_decomposition(runtime):
     return callable(getattr(runtime.simulator, "apply_gate", None))
 
 
+def _supports_native_gate_decomposition(runtime):
+    return callable(getattr(runtime.simulator, "apply_gate", None))
+
+
 def _apply_global_phase(runtime, wire_index, phase):
     factor = np.exp(1j * phase)
     matrix = np.array([[factor, 0.0], [0.0, factor]], dtype=np.complex128)
@@ -366,6 +370,26 @@ def _apply_isingyy(runtime, wire_indices, theta):
     _apply_multirz(runtime, wire_indices, theta)
     for wire_index in wire_indices:
         runtime.apply_operation("RX", [wire_index], [-np.pi / 2])
+
+
+def _apply_cy(runtime, wire_indices):
+    if len(wire_indices) != 2:
+        raise ValueError("CY requires exactly two wires.")
+
+    control, target = wire_indices
+    runtime.apply_operation("SDG", [target])
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation("S", [target])
+
+
+def _apply_ccz(runtime, wire_indices):
+    if len(wire_indices) != 3:
+        raise ValueError("CCZ requires exactly three wires.")
+
+    control_a, control_b, target = wire_indices
+    runtime.apply_operation("H", [target])
+    runtime.apply_operation("MCX", [control_a, control_b, target])
+    runtime.apply_operation("H", [target])
 
 
 class RocQDevice(QubitDevice):
@@ -565,6 +589,32 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_parametric_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_isingyy(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "CY":
+                try:
+                    if not _supports_native_gate_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_cy(self._runtime, wire_indices)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "CCZ":
+                try:
+                    if not _supports_native_gate_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_ccz(self._runtime, wire_indices)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
