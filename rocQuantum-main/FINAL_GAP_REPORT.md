@@ -35,7 +35,7 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | Area | Status | Summary |
 | --- | --- | --- |
 | Native HIP simulator core | IMPLEMENTED | Core statevector, tensor-network, and limited density-matrix primitives are real |
-| Compiler-driven execution | STUB / ABSENT | `compile_and_execute()` is stubbed and no real MLIR/QIR execution bridge exists |
+| Compiler-driven execution | PARTIAL | `compile_and_execute()` now executes a narrow qalloc/H/X/Y/Z/CNOT/RX/RY/RZ MLIR subset; broad compiler/runtime parity is still absent |
 | High-level expectation APIs | PARTIAL | Native kernels exist, but public API coverage is split and inconsistent |
 | Multi-GPU / distributed | PARTIAL | Real scaffolding exists, but many paths remain `NOT_IMPLEMENTED` |
 | Packaging / install / export | PARTIAL | Native build exists, but releasable packaging is not coherent |
@@ -109,7 +109,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 
 ## Top 10 Missing Or Misleading Areas
 
-1. `compile_and_execute()` is exposed but stubbed.
+1. `compile_and_execute()` is exposed and now has an MVP execution subset, but it is not a full CUDA-Q-style compiler runtime.
 2. Multi-GPU support is partial and previously overclaimed.
 3. Native expectations exist but the public API story is split and misleading.
 4. Two divergent Python stacks exist without one canonical answer.

@@ -16,6 +16,7 @@ import math
 import os
 import sys
 import unittest
+from unittest import mock
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
@@ -143,7 +144,8 @@ class TestPythonPublicAPIFlow(unittest.TestCase):
             rocq.h(q[0])
             rocq.cnot(q[0], q[1])
 
-        state = rocq.execute(bell_program, backend="state_vector")
+        with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+            state = rocq.execute(bell_program, backend="state_vector")
         if isinstance(state, str):
             self.assertIn("mock_cpp_state_vector_data", state)
         else:

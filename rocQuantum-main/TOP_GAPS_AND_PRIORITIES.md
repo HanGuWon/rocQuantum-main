@@ -4,7 +4,7 @@ Audit date: 2026-04-05
 
 ## Top 10 Gaps
 
-1. `compile_and_execute()` is a stub while bindings and surrounding docs still made compiler/runtime parity easy to overread.
+1. `compile_and_execute()` now has a narrow qalloc/H/X/Y/Z/CNOT/RX/RY/RZ execution MVP, but bindings and docs must keep it from reading as full compiler/runtime parity.
 2. Multi-GPU support is partial and ambiguous: real scaffolding exists, non-local single/control/CNOT/CZ/generic matrix paths now have explicit slow/debug host fallback, and local-domain expectation/sampling reductions have an optional RCCL fast path, but many distributed paths still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
 3. Native expectation kernels exist in `hipStateVec`, and canonical `rocq.observe()` / `rocq.operator.get_expectation_value()` plus legacy `python/rocq` Pauli expectation paths now reach native helpers, but the user-facing API story is still split across two Python surfaces.
 4. The repo contains two divergent Python stacks, `rocq` and `python/rocq`, without one canonical runtime/compiler story.
@@ -50,7 +50,7 @@ Scope: broaden scope only after truth and core execution are stable.
 
 | Item | Why It Is P0 | Acceptance |
 | --- | --- | --- |
-| Truth-fix compiler/runtime docs and bindings | Largest false positive versus CUDA-Q | `compile_and_execute` is visibly documented as stub everywhere it appears |
+| Truth-fix compiler/runtime docs and bindings | Largest false positive versus CUDA-Q | `compile_and_execute` is visibly documented as a narrow MVP subset everywhere it appears |
 | Truth-fix multi-GPU docs and Python errors | Largest ambiguity in advertised capability | `multi_gpu=True` unsupported paths raise explicit partial-support errors |
 | Truth-fix expectation-value story | VQE/hybrid workflows depend on it | High-level docs distinguish native Pauli expectation helpers from broader operator gaps |
 | Truth-fix packaging/install story | Users cannot infer one supported install path today | README and audit docs explain the active build path and current limitations |

@@ -20,6 +20,7 @@ Implemented today:
 Only partial today:
 
 - MLIR/QIR compiler flow
+- `compile_and_execute()` for a narrow MLIR subset: qalloc, H/X/Y/Z, CNOT, RX/RY/RZ
 - Generic matrix and controlled-unitary coverage
 - Multi-GPU / distributed execution
 - Observable breadth and density-matrix GPU-fast sampling coverage
@@ -28,7 +29,7 @@ Only partial today:
 
 Not implemented today:
 
-- End-to-end compiler-driven `compile_and_execute` parity with CUDA-Q
+- End-to-end compiler-driven execution parity with CUDA-Q beyond the supported MVP subset
 - Release-grade distributed multi-GPU support
 - CUDA-QX-style higher-level libraries with robust QEC/solver coverage
 
@@ -74,13 +75,13 @@ Use those files as the authoritative capability summary for the current codebase
 | `hipStateVec` | Real and useful, but not fully surfaced through every public API |
 | `hipTensorNet` | Real contraction core with explicit optimizer/dtype/slicing capabilities, narrower than a full cuTensorNet analogue |
 | `hipDensityMat` | Real but limited; generic channels and sampling are correctness-first paths |
-| `rocqCompiler` | Partial codegen path, no real compile-and-execute loop |
+| `rocqCompiler` | Partial codegen path plus a narrow compile-and-execute MVP for qalloc/H/X/Y/Z/CNOT/RX/RY/RZ |
 | Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring |
 | `python/rocq` | Separate legacy compatibility surface; Pauli expectations now use native helpers, while queue/fusion and other paths still need consolidation |
 
 ## Important Limitations
 
-- `rocqCompiler::MLIRCompiler::compile_and_execute()` is a stub and currently raises.
+- `rocqCompiler::MLIRCompiler::compile_and_execute()` executes only the current MVP subset: qalloc, H/X/Y/Z, CNOT, RX/RY/RZ. Unsupported compiler ops raise diagnostics.
 - `multi_gpu=True` should be treated as experimental partial support, not full distributed execution.
 - Distributed non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix correctness fallback is explicit slow/debug mode: set `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
 - RCCL-backed distributed expectation and sampling reductions are limited to local-domain qubits; set `ROCQ_DISTRIBUTED_COMM=rccl` or `ROCQ_REQUIRE_RCCL=1` to require RCCL on a ROCm runner.

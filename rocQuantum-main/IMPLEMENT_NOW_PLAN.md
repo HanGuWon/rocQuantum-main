@@ -2,9 +2,9 @@
 
 Audit date: 2026-04-05
 
-## 1. Truth-fix compiler/runtime parity
+## 1. Compiler/runtime MVP execution path
 
-- Change: document and surface `rocqCompiler::MLIRCompiler::compile_and_execute()` as a stub everywhere the shipped API exposes it
+- Change: keep compiler/runtime parity claims narrow while wiring `rocqCompiler::MLIRCompiler::compile_and_execute()` for the supported qalloc/H/X/Y/Z/CNOT/RX/RY/RZ MLIR subset
 - Files:
   - `bindings.cpp`
   - `rocqCompiler/MLIRCompiler.cpp`
@@ -15,7 +15,7 @@ Audit date: 2026-04-05
 - Validation:
   - `rg -n "compile_and_execute|emit_qir" bindings.cpp rocqCompiler/MLIRCompiler.cpp README.md`
   - `python -m unittest tests.test_p1_compiler -v`
-- Risk: Low
+- Risk: Medium; this is an MVP execution bridge, not a full CUDA-Q-style compiler runtime
 
 ## 2. Resolve the multi-GPU truth story
 

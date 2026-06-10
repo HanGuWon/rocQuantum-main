@@ -25,9 +25,9 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("mlir"),
              py::arg("args") = py::dict(),
-             "Stub API. The current compiler path can emit QIR but does not execute "
-             "MLIR/QIR end to end. This method currently raises at runtime; use "
-             "emit_qir() or the direct simulator APIs instead.")
+             "Executes the supported MLIR subset (qalloc, H/X/Y/Z, CNOT, RX/RY/RZ) "
+             "through the selected backend and returns the final state vector. "
+             "Unsupported ops raise actionable diagnostics.")
         .def("emit_qir", &rocq::MLIRCompiler::emit_qir,
              "Compiles the MLIR string down to QIR (LLVM IR).");
 

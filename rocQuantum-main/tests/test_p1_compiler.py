@@ -58,12 +58,32 @@ class TestLoweringCoverage(unittest.TestCase):
 
 
 class TestCompileAndExecuteContract(unittest.TestCase):
-    def test_no_placeholder_return(self):
+    def test_compile_and_execute_dispatches_supported_subset(self):
         path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "MLIRCompiler.cpp")
         with open(path, "r", encoding="utf-8") as f:
             src = f.read()
+
         self.assertNotIn("return {};", src)
-        self.assertIn("throw std::runtime_error", src)
+        self.assertNotIn("not yet implemented", src)
+        self.assertIn("extract_executable_ops", src)
+        self.assertIn("backend->initialize(num_qubits)", src)
+        self.assertIn("backend->apply_gate", src)
+        self.assertIn("backend->apply_parametrized_gate", src)
+        self.assertIn("backend->get_state_vector", src)
+        self.assertIn("unsupported quantum op", src)
+        self.assertIn("quantum.rx", src)
+        self.assertIn("quantum.ry", src)
+        self.assertIn("quantum.rz", src)
+        self.assertIn("quantum.cnot", src)
+
+    def test_binding_documents_compile_and_execute_mvp(self):
+        path = os.path.join(_PROJECT_ROOT, "bindings.cpp")
+        with open(path, "r", encoding="utf-8") as f:
+            src = f.read()
+
+        self.assertIn("qalloc, H/X/Y/Z, CNOT, RX/RY/RZ", src)
+        self.assertIn("Unsupported ops raise actionable diagnostics", src)
+        self.assertNotIn("Stub API", src)
 
 
 class TestKernelMlirEmission(unittest.TestCase):

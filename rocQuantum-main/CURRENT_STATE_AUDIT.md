@@ -14,6 +14,7 @@ Audit refresh note (2026-06-10):
 - Official AMD production ROCm documentation now points to ROCm `7.2.4`, released 2026-05-29.
 - Previous rows that described canonical `rocq.operator.get_expectation_value()` as unimplemented are stale; the current gap is split API behavior between canonical `rocq` and legacy `python/rocq`.
 - GateFusion is wired opportunistically into canonical `rocq.backends.StateVectorBackend`, but the legacy `python/rocq` queue flush path still replays gates one by one.
+- `rocqCompiler::MLIRCompiler::compile_and_execute()` is no longer a hard stub for the current MVP subset: qalloc, H/X/Y/Z, CNOT, RX/RY/RZ.
 
 The detailed findings below still describe the original audit snapshot; use them together with the runtime update above.
 
@@ -37,7 +38,7 @@ What is real today:
 What is not real today:
 
 - End-to-end compiler-driven execution parity with CUDA-Q is not present.
-- `rocqCompiler::MLIRCompiler::compile_and_execute()` is a hard stub.
+- `rocqCompiler::MLIRCompiler::compile_and_execute()` is only an MVP subset executor, not a CUDA-Q-style full compiler runtime.
 - Distributed multi-GPU is only partially implemented and was overclaimed in docs.
 - High-level expectation-value workflows are split across canonical runtime APIs and legacy Python bindings.
 - Packaging, install/export, and CI do not describe one coherent release artifact.
@@ -88,7 +89,7 @@ What is not real today:
 ### Compiler/runtime
 
 - `rocqCompiler::MLIRCompiler::emit_qir()` exists and does partial lowering to LLVM IR/QIR.
-- Lowering coverage is incomplete and the compiler code path is not integrated into the shipped build in a way that yields a credible end-to-end execution loop.
+- Lowering coverage is incomplete, but `compile_and_execute()` now parses the emitted MLIR subset and dispatches qalloc/H/X/Y/Z/CNOT/RX/RY/RZ to the configured backend.
 - The repo carries two separate compiler/IR stories: `rocqCompiler/*` and `rocquantum/include/src/rocqCompiler/*`.
 
 ### Generic matrix and controlled-unitary support
@@ -118,7 +119,7 @@ What is not real today:
 
 ## What Is Stubbed Or Absent
 
-- `rocqCompiler::MLIRCompiler::compile_and_execute()` always throws.
+- `rocqCompiler::MLIRCompiler::compile_and_execute()` rejects unsupported ops with diagnostics outside the MVP subset.
 - Compiler-driven execution parity with CUDA-Q is absent.
 - Mid-circuit measurement plus classical control flow is absent as a coherent supported feature.
 - Public `QuantumSimulator` expectation APIs are absent.
