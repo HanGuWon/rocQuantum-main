@@ -375,11 +375,13 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
     backend = RocQuantumProvider().get_backend("rocq_simulator")
     circuit = QuantumCircuit(2)
     circuit.sx(0)
+    circuit.sxdg(1)
     circuit.p(0.2, 0)
     circuit.cp(0.3, 0, 1)
     circuit.rxx(0.4, 0, 1)
     circuit.ryy(0.5, 0, 1)
     circuit.rzz(0.6, 0, 1)
+    circuit.u(0.7, 0.8, 0.9, 1)
 
     assert backend.target.num_qubits >= 2
     assert {"sx", "p", "cp", "rxx", "ryy", "rzz", "u"}.issubset(set(backend.target.operation_names))
@@ -391,6 +393,8 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
 
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.ops == [
+        ("RX", (0,), (np.pi / 2,)),
+        ("RX", (1,), (-np.pi / 2,)),
         ("RZ", (0,), (0.2,)),
         ("RZ", (0,), (0.15,)),
         ("CNOT", (0, 1), ()),
@@ -410,10 +414,11 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
         ("CNOT", (0, 1), ()),
         ("RZ", (1,), (0.6,)),
         ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.9,)),
+        ("RY", (1,), (0.7,)),
+        ("RZ", (1,), (0.8,)),
     ]
-    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
-        ((2, 2), (0,)),
-    ]
+    assert sim.matrices == []
 
 
 def test_qiskit_phase_decomposition_preserves_statevector_global_phase(monkeypatch):
@@ -442,6 +447,36 @@ def test_qiskit_phase_decomposition_preserves_statevector_global_phase(monkeypat
     assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
         ((2, 2), (0,)),
         ((2, 2), (0,)),
+    ]
+
+
+def test_qiskit_single_qubit_decompositions_preserve_statevector_global_phase(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2)
+    circuit.sx(0)
+    circuit.sxdg(1)
+    circuit.u(0.7, 0.8, 0.9, 1)
+
+    backend.run(circuit, sampling=False, statevector=True).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("RX", (0,), (np.pi / 2,)),
+        ("RX", (1,), (-np.pi / 2,)),
+        ("RZ", (1,), (0.9,)),
+        ("RY", (1,), (0.7,)),
+        ("RZ", (1,), (0.8,)),
+    ]
+    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
+        ((2, 2), (0,)),
+        ((2, 2), (1,)),
+        ((2, 2), (1,)),
     ]
 
 

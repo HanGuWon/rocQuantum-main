@@ -67,7 +67,7 @@ MATRIX_FALLBACK_OPS = {
     "ccx", "ccz", "ch", "crx", "cry", "crz", "cswap", "cy",
     "dcx", "ecr", "iswap",
     "rccx", "rcccx",
-    "state_preparation", "sx", "sxdg", "u", "unitary",
+    "state_preparation", "unitary",
 }
 MAX_AUTOMATIC_MATRIX_FALLBACK_QUBITS = 4
 CONTROL_FLOW_OPS = {
@@ -271,6 +271,27 @@ class RocQuantumBackend(BackendV2):
         for qubit in q_indices:
             self._runtime.apply_operation("rx", [qubit], [-cmath.pi / 2])
 
+    def _apply_sx_gate(self, q_indices, *, inverse=False, include_global_phase):
+        if len(q_indices) != 1:
+            raise ValueError("Qiskit sx gate requires exactly one qubit.")
+
+        target = q_indices[0]
+        sign = -1.0 if inverse else 1.0
+        if include_global_phase:
+            self._apply_global_phase_value(sign * cmath.pi / 4, target=target)
+        self._runtime.apply_operation("rx", [target], [sign * cmath.pi / 2])
+
+    def _apply_u_gate(self, q_indices, theta, phi, lam, *, include_global_phase):
+        if len(q_indices) != 1:
+            raise ValueError("Qiskit u gate requires exactly one qubit.")
+
+        target = q_indices[0]
+        if include_global_phase:
+            self._apply_global_phase_value(0.5 * (phi + lam), target=target)
+        self._runtime.apply_operation("rz", [target], [lam])
+        self._runtime.apply_operation("ry", [target], [theta])
+        self._runtime.apply_operation("rz", [target], [phi])
+
     def _apply_circuit(self, circuit, *, include_global_phase: bool = False):
         self._ensure_simulator(circuit.num_qubits)
         if include_global_phase:
@@ -352,6 +373,18 @@ class RocQuantumBackend(BackendV2):
                     self._apply_ryy_gate(q_indices, theta)
                 else:
                     self._apply_rzz_gate(q_indices, theta)
+                touched_qubits.update(q_indices)
+                continue
+
+            if op.name in {"sx", "sxdg", "u"} and self._supports_native_phase_decomposition(include_global_phase):
+                params = normalize_params(op.params)
+                if op.name == "sx":
+                    self._apply_sx_gate(q_indices, inverse=False, include_global_phase=include_global_phase)
+                elif op.name == "sxdg":
+                    self._apply_sx_gate(q_indices, inverse=True, include_global_phase=include_global_phase)
+                else:
+                    theta, phi, lam = params
+                    self._apply_u_gate(q_indices, theta, phi, lam, include_global_phase=include_global_phase)
                 touched_qubits.update(q_indices)
                 continue
 

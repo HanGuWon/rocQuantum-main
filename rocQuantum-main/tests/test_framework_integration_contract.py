@@ -152,6 +152,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _apply_rxx_gate", source)
         self.assertIn("def _apply_ryy_gate", source)
         self.assertIn("def _apply_rzz_gate", source)
+        self.assertIn("def _apply_sx_gate", source)
+        self.assertIn("def _apply_u_gate", source)
         self.assertIn("Operator(op).data", source)
         self.assertIn("statevector=False", source)
         self.assertIn("Target(num_qubits=int(num_qubits))", source)
