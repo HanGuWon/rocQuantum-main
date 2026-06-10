@@ -1276,6 +1276,37 @@ def test_pennylane_controlled_rotations_dispatch_natively(monkeypatch):
     assert sim.matrices == []
 
 
+def test_pennylane_crot_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.CRot(0.7, 0.8, 0.9, wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("RZ", (1,), ((0.7 - 0.9) / 2,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-(0.7 + 0.9) / 2,)),
+        ("RY", (1,), (-0.8 / 2,)),
+        ("CNOT", (0, 1), ()),
+        ("RY", (1,), (0.8 / 2,)),
+        ("RZ", (1,), (0.9,)),
+    ]
+    assert sim.matrices == []
+
+
 def test_pennylane_basis_state_prepares_with_native_x_gates(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -1402,17 +1433,22 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
         ("CNOT", (0, 1), ()),
         ("S", (1,), ()),
         ("H", (0,), ()),
+        ("RZ", (1,), ((0.7 - 0.9) / 2,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-(0.7 + 0.9) / 2,)),
+        ("RY", (1,), (-0.8 / 2,)),
+        ("CNOT", (0, 1), ()),
+        ("RY", (1,), (0.8 / 2,)),
+        ("RZ", (1,), (0.9,)),
         ("MCX", (0, 1, 2), ()),
     ]
     assert [targets for _, targets in sim.matrices] == [
         (0,),
         (0,),
-        (0, 1),
     ]
     assert [matrix.shape for matrix, _ in sim.matrices] == [
         (2, 2),
         (2, 2),
-        (4, 4),
     ]
 
 

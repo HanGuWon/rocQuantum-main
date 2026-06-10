@@ -542,6 +542,20 @@ def _apply_single_excitation_phase_variant(runtime, wire_indices, theta, sign):
     _apply_global_phase(runtime, left, sign * theta / 4)
 
 
+def _apply_crot(runtime, wire_indices, phi, theta, omega):
+    if len(wire_indices) != 2:
+        raise ValueError("CRot requires exactly two wires.")
+
+    control, target = wire_indices
+    runtime.apply_operation("RZ", [target], [(phi - omega) / 2])
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation("RZ", [target], [-(phi + omega) / 2])
+    runtime.apply_operation("RY", [target], [-theta / 2])
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation("RY", [target], [theta / 2])
+    runtime.apply_operation("RZ", [target], [omega])
+
+
 def _apply_double_excitation(runtime, wire_indices, theta):
     if len(wire_indices) != 4:
         raise ValueError("DoubleExcitation requires exactly four wires.")
@@ -957,6 +971,20 @@ class RocQDevice(QubitDevice):
                         raise NotImplementedError
                     sign = 1 if gate_name == "SingleExcitationPlus" else -1
                     _apply_single_excitation_phase_variant(self._runtime, wire_indices, theta, sign)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "CRot":
+                try:
+                    phi, theta, omega = getattr(op, "parameters", [])
+                    if not _supports_native_parametric_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_crot(self._runtime, wire_indices, phi, theta, omega)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
