@@ -40,17 +40,21 @@ class Simulator:
 
 
 class Circuit:
-    def __init__(self, num_qubits: int, simulator: Simulator, multi_gpu: bool = False):
+    def __init__(self, num_qubits: int, simulator: Simulator, multi_gpu: bool = False, batch_size: int = 1):
         if not isinstance(simulator, Simulator):
             raise TypeError("A valid Simulator instance is required.")
         if num_qubits < 0:
             raise ValueError("Number of qubits must be non-negative.")
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer.")
+        if multi_gpu and batch_size != 1:
+            raise NotImplementedError("batch_size > 1 is not supported with multi_gpu=True.")
 
         self.num_qubits = num_qubits
         self.simulator = simulator
         self._sim_handle = simulator._handle_wrapper
         self.is_multi_gpu = multi_gpu
-        self.batch_size = 1
+        self.batch_size = batch_size
         self._d_state_buffer = None
         self._gate_queue = []
         self._is_dirty = False
@@ -66,7 +70,11 @@ class Circuit:
                 except RuntimeError as e:
                     self._reraise_runtime_error("Distributed circuit initialization", e)
             else:
-                self._d_state_buffer = backend.allocate_state_internal(self._sim_handle, self.num_qubits)
+                self._d_state_buffer = backend.allocate_state_internal(
+                    self._sim_handle,
+                    self.num_qubits,
+                    self.batch_size,
+                )
                 status = backend.initialize_state(self._sim_handle, self._d_state_buffer, self.num_qubits)
                 self._raise_for_status("State initialization", status)
 
@@ -400,22 +408,41 @@ class Circuit:
         except RuntimeError as e:
             self._reraise_runtime_error("sample", e)
 
-    def get_statevector(self) -> np.ndarray:
+    def _validate_batch_index(self, batch_index: int):
+        if isinstance(batch_index, bool) or not isinstance(batch_index, int):
+            raise TypeError("batch_index must be an integer.")
+        if batch_index < 0 or batch_index >= self.batch_size:
+            raise ValueError(f"batch_index must be in [0, {self.batch_size}).")
+
+    def get_statevector(self, batch_index: int = 0) -> np.ndarray:
         """
-        Flushes the execution queue and returns the final state vector from the GPU.
+        Flushes the execution queue and returns one final state vector from the GPU.
         Note: This involves a device-to-host memory transfer and can be slow.
         """
         self.flush()
-        if self.batch_size > 1:
-            raise NotImplementedError("get_statevector is not yet supported for batch_size > 1.")
+        self._validate_batch_index(batch_index)
 
         return backend.get_state_vector_slice(
             self._sim_handle,
             self._get_d_state_for_backend(),
             self.num_qubits,
             self.batch_size,
-            0,
+            batch_index,
         )
+
+    def get_statevectors(self) -> np.ndarray:
+        """
+        Flushes the execution queue and returns all batched state vectors as
+        ``(batch_size, 2**num_qubits)``.
+        """
+        self.flush()
+        states = backend.get_state_vector_full(
+            self._sim_handle,
+            self._get_d_state_for_backend(),
+            self.num_qubits,
+            self.batch_size,
+        )
+        return np.asarray(states, dtype=np.complex64).reshape(self.batch_size, 1 << self.num_qubits)
 
     def expval(self, pauli_operator: 'PauliOperator') -> float:
         """

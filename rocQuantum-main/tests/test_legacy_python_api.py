@@ -9,6 +9,8 @@ import types
 import unittest
 from unittest import mock
 
+import numpy as np
+
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LEGACY_ROOT = os.path.join(_PROJECT_ROOT, "python", "rocq")
@@ -39,6 +41,12 @@ def _fake_backend(with_fusion=True):
     backend.get_expectation_value_z = _record("z", 0.75)
     backend.get_expectation_value_pauli_product_z = _record("zz", -1.0)
     backend.get_expectation_pauli_string = _record("pauli", 0.125)
+    backend.allocate_state_internal = _record("allocate_state", "device-state")
+    backend.initialize_state = _record("initialize_state", _Status.SUCCESS)
+    backend.get_state_vector_full = _record(
+        "state_full",
+        np.array([1, 0, 0, 0, 0, 1, 0, 0], dtype=np.complex64),
+    )
 
     for gate_name in ("x", "y", "z", "h", "s", "t", "rx", "ry", "rz", "cnot", "cz", "swap", "crx", "cry", "crz", "mcx", "cswap"):
         setattr(backend, f"apply_{gate_name}", _record(f"apply_{gate_name}", _Status.SUCCESS))
@@ -83,6 +91,13 @@ def _load_legacy_api(backend):
         raise RuntimeError("Unable to load legacy rocq API module.")
     spec.loader.exec_module(module)
     return module
+
+
+def _make_simulator(module):
+    simulator = module.Simulator.__new__(module.Simulator)
+    simulator._handle_wrapper = "handle"
+    simulator._active_circuits = 0
+    return simulator
 
 
 def _make_circuit(module):
@@ -141,6 +156,67 @@ class TestLegacyCircuitGateFusion(unittest.TestCase):
         self.assertNotIn("fusion_init", calls_by_name)
         self.assertNotIn("fusion", calls_by_name)
         self.assertEqual(calls_by_name, ["apply_h", "apply_cnot"])
+
+
+class TestLegacyCircuitBatchState(unittest.TestCase):
+    def test_constructor_allocates_requested_batch_size(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        simulator = _make_simulator(module)
+
+        circuit = module.Circuit(2, simulator, batch_size=3)
+
+        self.assertEqual(circuit.batch_size, 3)
+        self.assertEqual(circuit._d_state_buffer, "device-state")
+        self.assertIn(("allocate_state", ("handle", 2, 3)), backend.calls)
+        self.assertIn(("initialize_state", ("handle", "device-state", 2)), backend.calls)
+
+    def test_constructor_rejects_invalid_batch_size(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        simulator = _make_simulator(module)
+
+        with self.assertRaisesRegex(ValueError, "batch_size must be a positive integer"):
+            module.Circuit(2, simulator, batch_size=0)
+
+        with self.assertRaisesRegex(ValueError, "batch_size must be a positive integer"):
+            module.Circuit(2, simulator, batch_size=True)
+
+        with self.assertRaisesRegex(NotImplementedError, "multi_gpu=True"):
+            module.Circuit(2, simulator, multi_gpu=True, batch_size=2)
+
+    def test_batched_statevector_readback_can_return_slice_or_full_batch(self):
+        backend = _fake_backend()
+        backend.get_state_vector_slice = lambda *args: (
+            backend.calls.append(("state_slice", args)) or np.array([0, 1, 0, 0], dtype=np.complex64)
+        )
+        module = _load_legacy_api(backend)
+        circuit = _make_circuit(module)
+        circuit.num_qubits = 2
+        circuit.batch_size = 2
+
+        state = circuit.get_statevector(batch_index=1)
+        states = circuit.get_statevectors()
+
+        np.testing.assert_array_equal(state, np.array([0, 1, 0, 0], dtype=np.complex64))
+        np.testing.assert_array_equal(
+            states,
+            np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=np.complex64),
+        )
+        self.assertIn(("state_slice", ("handle", "device-state", 2, 2, 1)), backend.calls)
+        self.assertIn(("state_full", ("handle", "device-state", 2, 2)), backend.calls)
+
+    def test_batched_statevector_readback_validates_slice_index(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        circuit = _make_circuit(module)
+        circuit.batch_size = 2
+
+        with self.assertRaisesRegex(ValueError, r"batch_index must be in \[0, 2\)"):
+            circuit.get_statevector(batch_index=2)
+
+        with self.assertRaisesRegex(TypeError, "batch_index must be an integer"):
+            circuit.get_statevector(batch_index=True)
 
 
 class TestLegacyCircuitExpectation(unittest.TestCase):

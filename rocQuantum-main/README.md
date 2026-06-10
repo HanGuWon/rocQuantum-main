@@ -81,7 +81,7 @@ Use those files as the authoritative capability summary for the current codebase
 | `rocqCompiler` | Partial codegen path plus a narrow compile-and-execute MVP for qalloc/H/X/Y/Z/CNOT/RX/RY/RZ |
 | Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring |
 | Higher-level helpers | Experimental VQE objective/gradient, MaxCut-style QAOA helper, and 3-qubit repetition-code single-round helper |
-| `python/rocq` | Top-level CMake-built legacy compatibility surface; Pauli expectations and CNOT-adjacent GateFusion now use native helpers, while broader fusion and runtime unification still need consolidation |
+| `python/rocq` | Top-level CMake-built legacy compatibility surface; Pauli expectations, batched state allocation/readback, and CNOT-adjacent GateFusion now use native helpers, while broader fusion and runtime unification still need consolidation |
 
 ## Important Limitations
 
@@ -93,6 +93,7 @@ Use those files as the authoritative capability summary for the current codebase
 - TensorNet supports the build's compiled complex dtype (`C64` by default, `C128` in `ROCQ_PRECISION_DOUBLE` builds); METIS/KAHYPAR pathfinders and runtime slicing report unsupported unless compiled in.
 - `hipDensityMatApplyChannel` accepts single-qubit Kraus channels only, and density-matrix sampling currently copies diagonal probability information to host before drawing shots.
 - Higher-level CUDA-QX-style helpers are explicitly experimental: VQE supports Pauli-observable objectives through `rocq.observe()`, QAOA is a MaxCut-style ansatz helper, and QEC is limited to a single 3-qubit repetition-code syndrome round.
+- `python/rocq/api.py::Circuit` can allocate `batch_size > 1` local state batches and read either one state slice or the full `(batch_size, 2**num_qubits)` host array, but Qiskit/PennyLane adapters do not yet automatically route broadcasted framework workloads through this legacy batch surface.
 - `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, but the legacy surface remains separate from canonical `rocq`.
 - Qiskit, PennyLane, and Cirq adapters now prefer `QuantumSimulator.measure()` for sampling, but still keep host-side fallback paths where needed for older bindings that do not expose `measure`.
 - Qiskit direct `prepare_state()` and untouched-qubit `initialize()` are mapped to matrix state-preparation fallback; `reset` after prior operations is supported only in `backend.run(..., sampling=True)` through shot-by-shot `QuantumSimulator.reset_qubit()` trajectories. Later `initialize()`, statevector/estimator output for runtime-reset circuits, classically conditioned operations, and Qiskit control-flow ops remain explicit unsupported boundaries.
