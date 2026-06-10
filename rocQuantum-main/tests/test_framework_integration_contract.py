@@ -94,6 +94,24 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("hipMemcpyHostToDevice", implementation)
         self.assertIn(".def(\"set_statevector\"", bindings)
 
+    def test_public_simulator_exposes_controlled_matrix_application(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("void apply_controlled_matrix", header)
+        self.assertIn("void ApplyControlledGate", header)
+        self.assertIn("QuantumSimulator::apply_controlled_matrix", implementation)
+        self.assertIn("rocsvApplyControlledMatrix", implementation)
+        self.assertIn(".def(\"apply_controlled_matrix\"", bindings)
+        self.assertIn(".def(\"ApplyControlledGate\"", bindings)
+        self.assertIn("def apply_controlled_matrix", runtime)
+
     def test_public_simulator_exposes_qubit_reset(self):
         with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
             header = f.read()

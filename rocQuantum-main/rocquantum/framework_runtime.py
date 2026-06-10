@@ -324,6 +324,28 @@ class RocQuantumRuntime:
 
         raise NotImplementedError("The active rocQuantum binding does not expose matrix application.")
 
+    def apply_controlled_matrix(
+        self,
+        matrix: object,
+        controls: Iterable[int],
+        targets: Iterable[int],
+    ) -> None:
+        normalized_controls = normalize_targets(controls)
+        normalized_targets = normalize_targets(targets)
+        normalized_matrix = as_complex_matrix(matrix)
+
+        native = getattr(self.simulator, "apply_controlled_matrix", None)
+        if callable(native):
+            native(normalized_matrix, normalized_controls, normalized_targets)
+            return
+
+        legacy = getattr(self.simulator, "ApplyControlledGate", None)
+        if callable(legacy) and len(normalized_controls) == 1 and len(normalized_targets) == 1:
+            legacy(normalized_matrix, normalized_controls[0], normalized_targets[0])
+            return
+
+        raise NotImplementedError("The active rocQuantum binding does not expose controlled matrix application.")
+
     def set_statevector(self, statevector: object) -> None:
         normalized_state = np.ascontiguousarray(np.asarray(statevector, dtype=np.complex128).reshape(-1))
         setter = getattr(self.simulator, "set_statevector", None)

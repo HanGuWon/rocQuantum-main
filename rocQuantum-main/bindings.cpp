@@ -77,6 +77,38 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("matrix"),
              py::arg("targets"))
+        .def("apply_controlled_matrix",
+             [](rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
+                const std::vector<unsigned>& controls,
+                const std::vector<unsigned>& targets) {
+                 if (controls.empty()) {
+                     throw std::invalid_argument("apply_controlled_matrix requires at least one control qubit.");
+                 }
+                 if (targets.empty()) {
+                     throw std::invalid_argument("apply_controlled_matrix requires at least one target qubit.");
+                 }
+                 if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                     throw std::invalid_argument("apply_controlled_matrix expects a square complex matrix.");
+                 }
+                 if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+                     throw std::invalid_argument("Too many target qubits for apply_controlled_matrix.");
+                 }
+
+                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
+                 if (actual_dim != expected_dim) {
+                     throw std::invalid_argument("apply_controlled_matrix dimension must be 2^len(targets).");
+                 }
+
+                 std::vector<std::complex<double>> host(actual_dim * actual_dim);
+                 std::memcpy(host.data(), matrix.data(), host.size() * sizeof(std::complex<double>));
+                 self.apply_controlled_matrix(host, controls, targets);
+             },
+             py::arg("matrix"),
+             py::arg("controls"),
+             py::arg("targets"),
+             "Apply a target matrix under one or more all-one control qubits.")
         .def("set_statevector",
              [](rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> state) {
@@ -165,6 +197,21 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                  self.ApplyGate(host, target_qubit);
              },
              py::arg("gate_matrix"),
+             py::arg("target_qubit"))
+        .def("ApplyControlledGate",
+             [](rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
+                int control_qubit,
+                int target_qubit) {
+                 if (matrix.ndim() != 2 || matrix.shape(0) != 2 || matrix.shape(1) != 2) {
+                     throw std::invalid_argument("ApplyControlledGate expects a 2x2 complex matrix.");
+                 }
+                 std::vector<std::complex<double>> host(4);
+                 std::memcpy(host.data(), matrix.data(), host.size() * sizeof(std::complex<double>));
+                 self.ApplyControlledGate(host, control_qubit, target_qubit);
+             },
+             py::arg("gate_matrix"),
+             py::arg("control_qubit"),
              py::arg("target_qubit"))
         .def("Execute", &rocquantum::QuantumSimulator::Execute)
         .def("ResetQubit", &rocquantum::QuantumSimulator::ResetQubit, py::arg("target_qubit"))

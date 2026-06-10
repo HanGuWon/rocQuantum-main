@@ -23,6 +23,7 @@ Audit refresh note (2026-06-10):
 - Qiskit `iswap` and PennyLane `qml.ISWAP` / `qml.PSWAP` / `qml.SISWAP` / `qml.SQISW` now use exact native swap/phase decompositions instead of dense two-qubit matrix dispatch.
 - Qiskit `rccx` / `rcccx` now use exact native relative-phase `H` / `RZ` / `CNOT` decompositions instead of dense three- and four-qubit matrix dispatch.
 - Direct Qiskit open-control controlled-X/Y/Z, controlled rotations/phase, and single-control controlled-H operations now use exact `X`-flip plus native `CX` / `MCX` / `CY` / `CZ` / `CCZ` / `CRX` / `CRY` / `CRZ` / phase `RZ` / `CX` / `CH` decomposition instead of dense matrix dispatch.
+- Generic Qiskit controlled base unitaries can now use `QuantumSimulator.apply_controlled_matrix()` through the shared runtime, avoiding full dense controlled-matrix upload when the binding exposes the public controlled-matrix surface.
 - Qiskit `sx` / `sxdg` / `tdg` / `u` now use exact native single-qubit rotation decompositions, including global phase only for statevector-producing runs.
 - Qiskit `p` / `cp` now use exact native `rz` / `cx` decompositions, including global phase only for statevector-producing runs and skipping it on sampling / estimator paths.
 - Qiskit `rxx` / `ryy` / `rzz` and PennyLane `qml.IsingXX` / `qml.IsingYY` / `qml.IsingXY` / `qml.IsingZZ` now use exact native CNOT/rotation decompositions instead of dense two-qubit matrix dispatch.
@@ -72,7 +73,7 @@ What is not real today:
 | `rocquantum/src/hipStateVec` | Real HIP kernels for state-vector simulation, sampling, measurement, expectation values, some distributed scaffolding |
 | `rocquantum/src/hipTensorNet` | Real contraction/SVD core, but pathfinder/slicing/dtype breadth is overstated |
 | `rocquantum/src/hipDensityMat` | Real density-matrix core with limited gate/noise/observable support |
-| `rocquantum/src/simulator.cpp` | Real public C++ simulator wrapper; now exposes `MCX` / `CSWAP` and `reset_qubit`, but generic controlled-unitary breadth remains narrower than backend capability |
+| `rocquantum/src/simulator.cpp` | Real public C++ simulator wrapper; now exposes `MCX` / `CSWAP`, `reset_qubit`, and generic all-one-control `apply_controlled_matrix`, but controlled-unitary breadth remains narrower than full backend capability |
 | `rocqCompiler/*` | Partial MLIR/QIR codegen path; not integrated into a working execution loop |
 | `rocq/*` | Top-level Python surface with direct backend execution and mock fallbacks |
 | `python/rocq/*` | Separate legacy-ish Python surface with top-level CMake-built `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers, but broader runtime behavior remains split |
@@ -117,7 +118,7 @@ What is not real today:
 ### Generic matrix and controlled-unitary support
 
 - Generic matrix application is partially native; larger/general host-side logic still exists in `rocquantum/src/hipStateVec/hipStateVec.cpp` but is no longer the default path.
-- Generic controlled unitary support is also partial and follows the same explicit-fallback policy.
+- Generic controlled unitary support is also partial. `QuantumSimulator::apply_controlled_matrix()` now exposes the backend controlled-matrix path to framework adapters, while unsupported breadth still follows the same explicit-fallback policy.
 - As of the 2026-06-10 fast-path refresh, those host fallbacks are no longer a default performance path. Unsupported cases return `ROCQ_STATUS_NOT_IMPLEMENTED` unless `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` is set for explicit slow/debug fallback.
 
 ### Multi-GPU/distributed
@@ -145,7 +146,7 @@ What is not real today:
 - Compiler-driven execution parity with CUDA-Q is absent.
 - Mid-circuit measurement plus classical control flow is absent as a coherent supported feature.
 - Public `QuantumSimulator` now exposes Pauli expectation helpers through `expectation_value()` and `expectation_pauli_string()`, with root pybind coverage for framework adapters.
-- Public `QuantumSimulator` named APIs now route `MCX` and `CSWAP`; a broad generic controlled-unitary public surface is still absent.
+- Public `QuantumSimulator` named APIs now route `MCX` and `CSWAP`; `apply_controlled_matrix()` exposes a generic controlled-unitary surface, but breadth and native ROCm E2E validation remain partial.
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling is not yet a GPU-fast path; it copies probability information to host before drawing shots.
 - Stabilizer/tableau/Pauli-propagation backends were not found.

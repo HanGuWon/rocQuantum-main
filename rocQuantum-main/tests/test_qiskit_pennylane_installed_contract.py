@@ -27,6 +27,7 @@ class _FakeQuantumSimulator:
         self._measured = False
         self.ops = []
         self.matrices = []
+        self.controlled_matrices = []
         self.statevectors = []
         self.measurements = []
         self.total_measurements = []
@@ -42,6 +43,7 @@ class _FakeQuantumSimulator:
     def reset(self):
         self.ops.clear()
         self.matrices.clear()
+        self.controlled_matrices.clear()
         self.statevectors.clear()
         self.measurements.clear()
         self.expectations.clear()
@@ -60,6 +62,15 @@ class _FakeQuantumSimulator:
     def apply_matrix(self, matrix, targets):
         self.total_matrix_applications += 1
         self.matrices.append((np.asarray(matrix, dtype=np.complex128), tuple(targets)))
+
+    def apply_controlled_matrix(self, matrix, controls, targets):
+        self.controlled_matrices.append(
+            (
+                np.asarray(matrix, dtype=np.complex128),
+                tuple(controls),
+                tuple(targets),
+            )
+        )
 
     def set_statevector(self, statevector):
         self.statevectors.append(np.asarray(statevector, dtype=np.complex128))
@@ -980,6 +991,31 @@ def test_qiskit_backend_runs_direct_unitary_without_parameter_normalization(monk
     matrix, targets = _FakeQuantumSimulator.instances[-1].matrices[0]
     np.testing.assert_allclose(matrix, unitary)
     assert targets == (0,)
+
+
+def test_qiskit_backend_uses_native_controlled_matrix_for_generic_controlled_unitary(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import UnitaryGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    base = np.array([[1.0, 0.0], [0.0, 1.0j]], dtype=np.complex128)
+    controlled = UnitaryGate(base).control(1)
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2)
+    circuit.append(controlled, [0, 1])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.matrices == []
+    assert len(sim.controlled_matrices) == 1
+    matrix, controls, targets = sim.controlled_matrices[0]
+    np.testing.assert_allclose(matrix, base)
+    assert controls == (0,)
+    assert targets == (1,)
 
 
 def test_qiskit_provider_exposes_backend_primitives(monkeypatch):

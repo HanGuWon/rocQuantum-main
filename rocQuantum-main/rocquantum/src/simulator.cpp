@@ -366,6 +366,65 @@ void QuantumSimulator::apply_matrix(const std::vector<std::complex<double>>& mat
     check_hip(hipFree(d_matrix), "matrix free");
 }
 
+void QuantumSimulator::apply_controlled_matrix(const std::vector<std::complex<double>>& matrix,
+                                               const std::vector<unsigned>& controls,
+                                               const std::vector<unsigned>& targets) {
+    if (controls.empty()) {
+        throw std::invalid_argument("apply_controlled_matrix requires at least one control qubit.");
+    }
+    if (targets.empty()) {
+        throw std::invalid_argument("apply_controlled_matrix requires at least one target qubit.");
+    }
+
+    std::unordered_set<unsigned> seen;
+    for (unsigned control : controls) {
+        ensure_valid_qubit(control);
+        if (!seen.insert(control).second) {
+            throw std::invalid_argument("apply_controlled_matrix control qubits must be unique.");
+        }
+    }
+    for (unsigned target : targets) {
+        ensure_valid_qubit(target);
+        if (!seen.insert(target).second) {
+            throw std::invalid_argument("apply_controlled_matrix controls and targets must be unique and disjoint.");
+        }
+    }
+
+    if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+        throw std::invalid_argument("Too many target qubits for controlled matrix application.");
+    }
+    const std::size_t matrix_dim = std::size_t{1} << targets.size();
+    const std::size_t expected_elements = matrix_dim * matrix_dim;
+    if (matrix.size() != expected_elements) {
+        throw std::invalid_argument("Controlled matrix element count does not match target qubit count.");
+    }
+
+    const std::vector<rocComplex> matrix_col_major = row_major_to_column_major(matrix, matrix_dim);
+
+    rocComplex* d_matrix = nullptr;
+    check_hip(hipMalloc(&d_matrix, matrix_col_major.size() * sizeof(rocComplex)), "controlled matrix allocation");
+    try {
+        check_hip(hipMemcpy(d_matrix,
+                            matrix_col_major.data(),
+                            matrix_col_major.size() * sizeof(rocComplex),
+                            hipMemcpyHostToDevice),
+                  "controlled matrix upload");
+        check_status(rocsvApplyControlledMatrix(sim_handle_,
+                                                device_state_vector_,
+                                                num_qubits_,
+                                                controls.data(),
+                                                static_cast<unsigned>(controls.size()),
+                                                targets.data(),
+                                                static_cast<unsigned>(targets.size()),
+                                                d_matrix),
+                     "apply controlled matrix");
+    } catch (...) {
+        hipFree(d_matrix);
+        throw;
+    }
+    check_hip(hipFree(d_matrix), "controlled matrix free");
+}
+
 void QuantumSimulator::set_statevector(const std::vector<std::complex<double>>& state) {
     if (state.size() != state_vec_size_) {
         throw std::invalid_argument("set_statevector input size must equal 2^num_qubits.");
@@ -536,6 +595,17 @@ void QuantumSimulator::ApplyGate(const std::string& gate_name, int control_qubit
 
 void QuantumSimulator::ApplyGate(const std::vector<std::complex<double>>& gate_matrix, int target_qubit) {
     apply_matrix(gate_matrix, {static_cast<unsigned>(target_qubit)});
+}
+
+void QuantumSimulator::ApplyControlledGate(const std::vector<std::complex<double>>& gate_matrix,
+                                           int control_qubit,
+                                           int target_qubit) {
+    if (control_qubit < 0 || target_qubit < 0) {
+        throw std::out_of_range("Qubit index out of bounds for simulator instance.");
+    }
+    apply_controlled_matrix(gate_matrix,
+                            {static_cast<unsigned>(control_qubit)},
+                            {static_cast<unsigned>(target_qubit)});
 }
 
 void QuantumSimulator::Execute() {

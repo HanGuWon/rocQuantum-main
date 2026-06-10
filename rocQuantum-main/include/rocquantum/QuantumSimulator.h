@@ -22,6 +22,9 @@ public:
                     const std::vector<double>& params = {});
     void apply_matrix(const std::vector<std::complex<double>>& matrix,
                       const std::vector<unsigned>& targets);
+    void apply_controlled_matrix(const std::vector<std::complex<double>>& matrix,
+                                 const std::vector<unsigned>& controls,
+                                 const std::vector<unsigned>& targets);
     void set_statevector(const std::vector<std::complex<double>>& state);
     std::vector<std::complex<double>> get_statevector() const;
     std::vector<long long> measure(const std::vector<unsigned>& qubits, int shots);
@@ -40,6 +43,9 @@ public:
     void ApplyGate(const std::string& gate_name, int target_qubit);
     void ApplyGate(const std::string& gate_name, int control_qubit, int target_qubit);
     void ApplyGate(const std::vector<std::complex<double>>& gate_matrix, int target_qubit);
+    void ApplyControlledGate(const std::vector<std::complex<double>>& gate_matrix,
+                             int control_qubit,
+                             int target_qubit);
     void Execute();
     void ResetQubit(int target_qubit);
     std::vector<std::complex<double>> GetStateVector() const;

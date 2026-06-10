@@ -53,8 +53,10 @@ from qiskit.circuit.library import (
 from qiskit.quantum_info import Operator
 
 from rocquantum.framework_runtime import (
+    GATE_ALIASES,
     RocQuantumRuntime,
     counts_from_memory,
+    normalize_gate_name,
     normalize_params,
     qiskit_memory_from_samples,
     qiskit_sample_plan,
@@ -596,6 +598,48 @@ class RocQuantumBackend(BackendV2):
                 self._runtime.apply_operation("x", [control])
         return True
 
+    def _apply_generic_controlled_matrix(self, op, q_indices):
+        controlled_matrix = getattr(self._runtime, "apply_controlled_matrix", None)
+        if not callable(controlled_matrix):
+            return False
+        if normalize_gate_name(getattr(op, "name", "")) in GATE_ALIASES.values():
+            return False
+
+        num_controls = int(getattr(op, "num_ctrl_qubits", 0))
+        base_gate = getattr(op, "base_gate", None)
+        if num_controls < 1 or base_gate is None or len(q_indices) <= num_controls:
+            return False
+
+        target_count = len(q_indices) - num_controls
+        base_matrix = _automatic_operation_matrix(base_gate)
+        if base_matrix is None or getattr(base_matrix, "shape", None) != (1 << target_count, 1 << target_count):
+            return False
+
+        ctrl_state = getattr(op, "ctrl_state", None)
+        ctrl_state = (1 << num_controls) - 1 if ctrl_state is None else int(ctrl_state)
+        controls = list(q_indices[:num_controls])
+        targets = list(q_indices[num_controls:])
+        open_controls = [
+            control
+            for control_index, control in enumerate(controls)
+            if not ((ctrl_state >> control_index) & 1)
+        ]
+
+        flipped = []
+        try:
+            for control in open_controls:
+                self._runtime.apply_operation("x", [control])
+                flipped.append(control)
+            self._runtime.apply_controlled_matrix(base_matrix, controls, targets)
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+            flipped.clear()
+        finally:
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+
+        return True
+
     def _apply_circuit(self, circuit, *, include_global_phase: bool = False, allow_runtime_reset: bool = False):
         self._ensure_simulator(circuit.num_qubits)
         if include_global_phase:
@@ -759,6 +803,13 @@ class RocQuantumBackend(BackendV2):
                         continue
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     pass
+
+            try:
+                if self._apply_generic_controlled_matrix(op, q_indices):
+                    touched_qubits.update(q_indices)
+                    continue
+            except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                pass
 
             if op.name == "state_preparation" and not touched_qubits and len(q_indices) == circuit.num_qubits:
                 statevector = _state_preparation_vector(op)
