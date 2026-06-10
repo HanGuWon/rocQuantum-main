@@ -26,10 +26,11 @@ _DEVICE_PATH = os.path.join(
 
 
 class _FakeOperation:
-    def __init__(self, name, wires, matrix=None):
+    def __init__(self, name, wires, matrix=None, parameters=None):
         self.name = name
         self.wires = list(wires)
         self.matrix = np.asarray(matrix, dtype=np.complex128) if matrix is not None else None
+        self.parameters = list(parameters or [])
 
 
 class _FakeObservable:
@@ -140,7 +141,7 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
         operations = [
             _FakeOperation("Hadamard", [0]),
             _FakeOperation("CNOT", [0, 1]),
-            _FakeOperation("RX", [1], matrix=matrix),
+            _FakeOperation("RX", [1], matrix=matrix, parameters=[0.123]),
         ]
 
         device.apply(operations)

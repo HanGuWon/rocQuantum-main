@@ -169,6 +169,55 @@ def test_pennylane_expval_uses_native_pauli_expectation(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].expectations == [("Z", (0,))]
 
 
+def test_pennylane_rot_dispatches_native_rotation_sequence(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.Rot(0.1, 0.2, 0.3, wires=0)
+        return qml.expval(qml.PauliZ(0))
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("RZ", (0,), (0.1,)),
+        ("RY", (0,), (0.2,)),
+        ("RZ", (0,), (0.3,)),
+    ]
+    assert sim.matrices == []
+
+
+def test_pennylane_parameter_shift_gradient_pipeline_runs(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane import numpy as pnp
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def circuit(theta):
+        qml.RY(theta, wires=0)
+        return qml.expval(qml.PauliZ(0))
+
+    theta = pnp.array(0.123, requires_grad=True)
+
+    assert qml.grad(circuit)(theta) == pytest.approx(0.0)
+
+
 def test_root_package_declares_framework_entry_points():
     toml_reader = tomllib
     if toml_reader is None:

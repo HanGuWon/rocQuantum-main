@@ -26,7 +26,8 @@ PENNYLANE_TO_ROCQ_GATES = {
     "CNOT": "CNOT", "CZ": "CZ", "SWAP": "SWAP",
 }
 
-PARAMETRIC_OR_MATRIX_OPS = {"RX", "RY", "RZ", "QubitUnitary"}
+NATIVE_PARAMETRIC_OPS = {"RX", "RY", "RZ"}
+MATRIX_OPS = {"QubitUnitary"}
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
     "PauliX": "X",
@@ -69,7 +70,7 @@ class RocQDevice(QubitDevice):
     version = "0.1.0"
     pennylane_requires = ">=0.30"
 
-    operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | {"QubitUnitary", "RX", "RY", "RZ"}
+    operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | {"QubitUnitary", "RX", "RY", "RZ", "Rot"}
     observables = {"PauliX", "PauliY", "PauliZ", "Identity", "Counts", "State"}
 
     @classmethod
@@ -108,7 +109,30 @@ class RocQDevice(QubitDevice):
             wire_indices = [self.wire_map[w] for w in op.wires]
             if gate_name in PENNYLANE_TO_ROCQ_GATES:
                 self._runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)
-            elif gate_name in PARAMETRIC_OR_MATRIX_OPS:
+            elif gate_name in NATIVE_PARAMETRIC_OPS:
+                try:
+                    self._runtime.apply_operation(gate_name, wire_indices, getattr(op, "parameters", []))
+                except NotImplementedError:
+                    matrix = qml.matrix(op)
+                    self._runtime.apply_operation(
+                        "QubitUnitary",
+                        wire_indices,
+                        matrix=matrix.astype(np.complex128),
+                    )
+            elif gate_name == "Rot":
+                try:
+                    phi, theta, omega = getattr(op, "parameters", [])
+                    self._runtime.apply_operation("RZ", wire_indices, [phi])
+                    self._runtime.apply_operation("RY", wire_indices, [theta])
+                    self._runtime.apply_operation("RZ", wire_indices, [omega])
+                except NotImplementedError:
+                    matrix = qml.matrix(op)
+                    self._runtime.apply_operation(
+                        "QubitUnitary",
+                        wire_indices,
+                        matrix=matrix.astype(np.complex128),
+                    )
+            elif gate_name in MATRIX_OPS:
                 matrix = qml.matrix(op)
                 self._runtime.apply_operation(
                     gate_name,
