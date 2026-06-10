@@ -15,10 +15,57 @@
 
 struct rocTnStruct {
     rocquantum::TensorNetworkBase* tn_instance = nullptr;
-    rocDataType_t dtype = ROC_DATATYPE_C64;
+    rocDataType_t dtype = ROC_TENSORNET_COMPILED_COMPLEX_DTYPE;
 };
 
 namespace {
+
+inline bool tensor_dtype_supported_by_build(rocDataType_t dtype) {
+    return dtype == ROC_TENSORNET_COMPILED_COMPLEX_DTYPE;
+}
+
+inline size_t tensor_element_size_bytes() {
+    return sizeof(rocComplex);
+}
+
+inline bool pathfinder_algorithm_available(rocPathfinderAlgorithm_t algorithm) {
+    switch (algorithm) {
+        case ROCTN_PATHFINDER_ALGO_GREEDY:
+            return true;
+        case ROCTN_PATHFINDER_ALGO_KAHYPAR:
+#ifdef HAS_KAHYPAR
+            return true;
+#else
+            return false;
+#endif
+        case ROCTN_PATHFINDER_ALGO_METIS:
+#ifdef HAS_METIS
+            return true;
+#else
+            return false;
+#endif
+        default:
+            return false;
+    }
+}
+
+inline rocqStatus_t validate_optimizer_config(const hipTensorNetContractionOptimizerConfig_t& config) {
+    switch (config.pathfinder_algorithm) {
+        case ROCTN_PATHFINDER_ALGO_GREEDY:
+        case ROCTN_PATHFINDER_ALGO_KAHYPAR:
+        case ROCTN_PATHFINDER_ALGO_METIS:
+            break;
+        default:
+            return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!pathfinder_algorithm_available(config.pathfinder_algorithm)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (config.num_slices < 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
 
 inline bool contains_mode_index(const std::vector<std::pair<int, int>>& pairs,
                                 int mode,
@@ -52,7 +99,30 @@ inline size_t estimate_pair_memory_bytes(const rocquantum::util::rocTensor& a,
     const long long b_elems = b.get_element_count();
     const long long r_elems = product_dims(result_dims);
     const long long total_elems = a_elems + b_elems + r_elems;
-    return static_cast<size_t>(total_elems) * sizeof(rocComplex);
+    return static_cast<size_t>(total_elems) * tensor_element_size_bytes();
+}
+
+inline size_t selection_cost_for_algorithm(const hipTensorNetContractionOptimizerConfig_t& config,
+                                           size_t required_bytes,
+                                           size_t contracted_modes) {
+    size_t cost = required_bytes;
+
+    if (config.pathfinder_algorithm == ROCTN_PATHFINDER_ALGO_GREEDY) {
+        cost += contracted_modes;
+    }
+
+    if (config.memory_limit_bytes > 0 && required_bytes > config.memory_limit_bytes) {
+        const size_t automatic_slices =
+            (required_bytes + config.memory_limit_bytes - 1) / config.memory_limit_bytes;
+        const size_t requested_slices =
+            config.num_slices > 0 ? static_cast<size_t>(config.num_slices) : automatic_slices;
+        const size_t effective_slices = std::max<size_t>(1, requested_slices);
+        const size_t sliced_required_bytes =
+            (required_bytes + effective_slices - 1) / effective_slices;
+        cost = sliced_required_bytes + (effective_slices * 1024);
+    }
+
+    return cost;
 }
 
 } // namespace
@@ -142,6 +212,10 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
     if (!blas_handle) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
+    rocqStatus_t config_status = validate_optimizer_config(*config);
+    if (config_status != ROCQ_STATUS_SUCCESS) {
+        return config_status;
+    }
 
     if (rocblas_set_stream(blas_handle, stream) != rocblas_status_success) {
         return ROCQ_STATUS_FAILURE;
@@ -189,11 +263,8 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
 
                 const size_t required_bytes = estimate_pair_memory_bytes(a, b, result_dims);
 
-                size_t selection_cost = required_bytes;
-                if (config->memory_limit_bytes > 0 && required_bytes > config->memory_limit_bytes) {
-                    // Bias toward smaller temporary footprints when over limit.
-                    selection_cost = required_bytes + static_cast<size_t>(1) << 30;
-                }
+                const size_t selection_cost =
+                    selection_cost_for_algorithm(*config, required_bytes, mode_pairs.size());
 
                 if (!found || selection_cost < best_cost) {
                     found = true;
@@ -294,6 +365,28 @@ template class TensorNetwork<rocComplex>;
 
 extern "C" {
 
+rocqStatus_t rocTensorNetworkGetCapabilities(hipTensorNetCapabilities_t* capabilities) {
+    if (!capabilities) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    capabilities->supports_c64 = (ROC_TENSORNET_COMPILED_COMPLEX_DTYPE == ROC_DATATYPE_C64) ? 1 : 0;
+    capabilities->supports_c128 = (ROC_TENSORNET_COMPILED_COMPLEX_DTYPE == ROC_DATATYPE_C128) ? 1 : 0;
+    capabilities->supports_pathfinder_greedy = 1;
+#ifdef HAS_KAHYPAR
+    capabilities->supports_pathfinder_kahypar = 1;
+#else
+    capabilities->supports_pathfinder_kahypar = 0;
+#endif
+#ifdef HAS_METIS
+    capabilities->supports_pathfinder_metis = 1;
+#else
+    capabilities->supports_pathfinder_metis = 0;
+#endif
+    capabilities->supports_memory_limit_planning = 1;
+    capabilities->supports_runtime_slicing = 0;
+    return ROCQ_STATUS_SUCCESS;
+}
+
 rocqStatus_t rocTensorNetworkCreate(rocTensorNetworkHandle_t* handle, rocDataType_t dtype) {
     if (!handle) {
         return ROCQ_STATUS_INVALID_VALUE;
@@ -305,7 +398,7 @@ rocqStatus_t rocTensorNetworkCreate(rocTensorNetworkHandle_t* handle, rocDataTyp
     }
 
     try {
-        if (dtype != ROC_DATATYPE_C64) {
+        if (!tensor_dtype_supported_by_build(dtype)) {
             delete h;
             return ROCQ_STATUS_NOT_IMPLEMENTED;
         }

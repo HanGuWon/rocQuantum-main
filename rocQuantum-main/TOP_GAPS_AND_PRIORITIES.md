@@ -10,7 +10,7 @@ Audit date: 2026-04-05
 4. The repo contains two divergent Python stacks, `rocq` and `python/rocq`, without one canonical runtime/compiler story.
 5. Packaging and build surfaces do not describe one releasable product: `pyproject.toml`, `setup.py`, root CMake, and dormant `_rocq_hip_backend` CMake do not agree.
 6. Gate fusion exists in C++ and is used by the canonical `rocq` backend for narrow CNOT-adjacent spans; unsupported fusion inputs now fail rather than being silently dropped, but legacy `python/rocq` and broader fusion patterns are still unfused.
-7. `hipTensorNet` has real core functionality, but optimizer, slicing, and dtype breadth are overstated relative to what is built and tested.
+7. `hipTensorNet` has real core functionality and now exposes optimizer/dtype/slicing capabilities, but METIS/KAHYPAR pathfinders and runtime slicing remain unsupported unless compiled in.
 8. `hipDensityMat` is real but narrow; generic channel application, density-matrix sampling, and richer observable support are still missing.
 9. Framework integrations are thin adapters with host-side sampling or mock-heavy tests, not strong native ROCm end-to-end proof.
 10. Higher-level CUDA-QX-style libraries are still shells; VQE and QEC are not serious supported workflows yet.
@@ -82,7 +82,7 @@ rg -n "compile_and_execute|multi_gpu|expval|GateFusion|rocquantum_bind|_rocq_hip
 cmake -S . -B build-ci -G Ninja -DBUILD_TESTING=ON -DROCQUANTUM_BUILD_BINDINGS=ON -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc
 cmake --build build-ci --parallel
 ctest --test-dir build-ci --output-on-failure
-python -m unittest tests.test_p0_fixes tests.test_p1_compiler tests.test_p2_packaging tests.test_statevec_fastpath_contract tests.test_rccl_distributed_contract tests.test_cpp_expectation
+python -m unittest tests.test_p0_fixes tests.test_p1_compiler tests.test_p2_packaging tests.test_statevec_fastpath_contract tests.test_rccl_distributed_contract tests.test_tensornet_contract tests.test_cpp_expectation
 ./build-ci/rocquantum/src/hipStateVec/benchmark_hipStateVec_distributed_reductions --output distributed-reductions.json
 ```
 

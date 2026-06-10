@@ -73,6 +73,7 @@ What is not real today:
 ### Tensor networks
 
 - `hipTensorNet` contains real permutation helpers, pairwise contraction, greedy multi-tensor contraction, and complex64 SVD.
+- TensorNet exposes build-time capabilities for C64/C128 dtype availability, pathfinder algorithms, memory-limit planning, and runtime slicing status. GREEDY is the only always-available optimizer; unsupported METIS/KAHYPAR choices fail explicitly.
 - CI contains one real GPU regression target for tensor-network contraction.
 
 ### Direct runtime execution

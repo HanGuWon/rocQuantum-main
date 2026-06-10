@@ -47,4 +47,14 @@ typedef struct hipTensorNetContractionOptimizerConfig_t {
 
 } hipTensorNetContractionOptimizerConfig_t;
 
+typedef struct hipTensorNetCapabilities_t {
+    int supports_c64;
+    int supports_c128;
+    int supports_pathfinder_greedy;
+    int supports_pathfinder_kahypar;
+    int supports_pathfinder_metis;
+    int supports_memory_limit_planning;
+    int supports_runtime_slicing;
+} hipTensorNetCapabilities_t;
+
 #endif // HIP_TENSOR_NET_API_H

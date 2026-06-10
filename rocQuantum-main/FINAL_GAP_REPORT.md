@@ -88,7 +88,7 @@ What it lacks is the integration layer that makes those pieces act like CUDA-Q r
 Compared with the official cuQuantum baseline (`https://docs.nvidia.com/cuda/cuquantum/latest/`), the repo is closest in scope but still incomplete:
 
 - `hipStateVec` is the strongest analogue, but public API exposure, controlled-matrix breadth, and distributed completeness lag behind
-- `hipTensorNet` has a real core, but optimizer/slicing/dtype breadth and validation lag behind cuTensorNet expectations
+- `hipTensorNet` has a real core and now reports optimizer/dtype/slicing capabilities, but true METIS/KAHYPAR pathfinders and runtime sliced execution still lag behind cuTensorNet expectations
 - `hipDensityMat` exists, but generic channels, sampling, and broader observable coverage lag behind cuDensityMat expectations
 
 For state-vector matrix application, unsupported cases now fail clearly unless `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` is set for explicit slow/debug fallback.

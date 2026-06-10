@@ -72,7 +72,7 @@ Use those files as the authoritative capability summary for the current codebase
 | Component | Current State |
 | --- | --- |
 | `hipStateVec` | Real and useful, but not fully surfaced through every public API |
-| `hipTensorNet` | Real contraction core, narrower than a full cuTensorNet analogue |
+| `hipTensorNet` | Real contraction core with explicit optimizer/dtype/slicing capabilities, narrower than a full cuTensorNet analogue |
 | `hipDensityMat` | Real but limited |
 | `rocqCompiler` | Partial codegen path, no real compile-and-execute loop |
 | Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring |
@@ -85,6 +85,7 @@ Use those files as the authoritative capability summary for the current codebase
 - Distributed non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix correctness fallback is explicit slow/debug mode: set `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
 - RCCL-backed distributed expectation and sampling reductions are limited to local-domain qubits; set `ROCQ_DISTRIBUTED_COMM=rccl` or `ROCQ_REQUIRE_RCCL=1` to require RCCL on a ROCm runner.
 - Generic matrix/control-matrix cases outside HIP fast paths return `NOT_IMPLEMENTED` by default; set `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` only for explicit slow/debug host fallback.
+- TensorNet supports the build's compiled complex dtype (`C64` by default, `C128` in `ROCQ_PRECISION_DOUBLE` builds); METIS/KAHYPAR pathfinders and runtime slicing report unsupported unless compiled in.
 - `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, but the legacy surface remains separate from canonical `rocq`.
 - PennyLane and Cirq adapters use host-side sampling paths.
 - Several provider backends remain skeletons or thin clients.

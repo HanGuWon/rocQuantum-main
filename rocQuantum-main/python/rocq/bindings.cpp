@@ -4,7 +4,10 @@
 #include "rocquantum/hipStateVec.h"
 #include "rocquantum/hipTensorNet.h" // Include new header
 #include "rocquantum/hipTensorNet_api.h"
+#include <algorithm>
+#include <cctype>
 #include <complex>                 // For std::complex
+#include <string>
 
 namespace py = pybind11;
 
@@ -647,6 +650,27 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
 
             if (!config_obj.is_none()) {
                 py::dict config_dict = py::cast<py::dict>(config_obj);
+                if (config_dict.contains("pathfinder_algorithm")) {
+                    py::object value = config_dict["pathfinder_algorithm"];
+                    if (py::isinstance<py::str>(value)) {
+                        std::string name = py::cast<std::string>(value);
+                        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) {
+                            return static_cast<char>(std::tolower(ch));
+                        });
+                        if (name == "greedy") {
+                            config.pathfinder_algorithm = ROCTN_PATHFINDER_ALGO_GREEDY;
+                        } else if (name == "kahypar") {
+                            config.pathfinder_algorithm = ROCTN_PATHFINDER_ALGO_KAHYPAR;
+                        } else if (name == "metis") {
+                            config.pathfinder_algorithm = ROCTN_PATHFINDER_ALGO_METIS;
+                        } else {
+                            throw std::invalid_argument("Unknown TensorNet pathfinder_algorithm: " + name);
+                        }
+                    } else {
+                        config.pathfinder_algorithm =
+                            static_cast<rocPathfinderAlgorithm_t>(py::cast<int>(value));
+                    }
+                }
                 if (config_dict.contains("memory_limit_bytes")) {
                     config.memory_limit_bytes = config_dict["memory_limit_bytes"].cast<size_t>();
                 } else if (config_dict.contains("memory_limit")) {
@@ -669,6 +693,23 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                 throw std::runtime_error("rocTensorNetworkContract failed: " + std::to_string(status));
             }
         }, py::arg("optimizer_config"), py::arg("result_tensor").noconvert(), "Contracts the tensor network. Result tensor must be pre-allocated.");
+
+    m.def("get_tensornet_capabilities", []() {
+        hipTensorNetCapabilities_t caps{};
+        rocqStatus_t status = rocTensorNetworkGetCapabilities(&caps);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            throw std::runtime_error("rocTensorNetworkGetCapabilities failed: " + std::to_string(status));
+        }
+        py::dict result;
+        result["supports_c64"] = caps.supports_c64 != 0;
+        result["supports_c128"] = caps.supports_c128 != 0;
+        result["supports_pathfinder_greedy"] = caps.supports_pathfinder_greedy != 0;
+        result["supports_pathfinder_kahypar"] = caps.supports_pathfinder_kahypar != 0;
+        result["supports_pathfinder_metis"] = caps.supports_pathfinder_metis != 0;
+        result["supports_memory_limit_planning"] = caps.supports_memory_limit_planning != 0;
+        result["supports_runtime_slicing"] = caps.supports_runtime_slicing != 0;
+        return result;
+    }, "Reports TensorNet dtype, optimizer, and slicing capabilities for this build.");
 
     // --- NEW SVD BINDING ---
     m.def("tensor_svd",
