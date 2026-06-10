@@ -47,26 +47,6 @@ def _samples_for_register(raw_samples, items, width):
     return np.asarray(rows, dtype=bool)
 
 
-def _samples_from_probabilities(probabilities, shots):
-    probabilities = np.asarray(probabilities, dtype=float).reshape(-1)
-    if probabilities.size == 0:
-        raise ValueError("Sampler probabilities cannot be empty.")
-    if np.any(probabilities < -1.0e-12):
-        raise ValueError("Sampler probabilities must be non-negative.")
-    probabilities = np.clip(probabilities, 0.0, None)
-    total = float(np.sum(probabilities))
-    if total <= 0.0:
-        raise ValueError("Sampler probabilities sum to zero.")
-    probabilities = probabilities / total
-    shots = int(shots)
-    if shots <= 0:
-        return np.asarray([], dtype=np.int64)
-    cumulative = np.cumsum(probabilities)
-    cumulative[-1] = 1.0
-    quantiles = (np.arange(shots, dtype=float) + 0.5) / shots
-    return np.searchsorted(cumulative, quantiles, side="right").astype(np.int64)
-
-
 class RocQuantumSampler(BaseSamplerV2):
     """Native Qiskit SamplerV2 backed by rocQuantum sampling."""
 
@@ -137,17 +117,17 @@ class RocQuantumSampler(BaseSamplerV2):
         try:
             measured_bits = self._backend._apply_circuit_batch(circuits)
             sample_qubits, registers = _measurement_plan(circuits[0], measured_bits)
-            probabilities = self._backend._runtime.probabilities_batch(sample_qubits)
+            raw_samples_batch = self._backend._runtime.measure_batch(sample_qubits, int(pub.shots))
         except (NotImplementedError, RuntimeError, TypeError, ValueError):
             return None
 
-        probabilities = np.asarray(probabilities, dtype=float)
-        if probabilities.shape[0] != len(parameter_indices):
+        raw_samples_batch = np.asarray(raw_samples_batch, dtype=np.int64)
+        if raw_samples_batch.shape != (len(parameter_indices), int(pub.shots)):
             return None
 
         data = {}
         for batch_index, _ in enumerate(parameter_indices):
-            raw_samples = _samples_from_probabilities(probabilities[batch_index], int(pub.shots))
+            raw_samples = raw_samples_batch[batch_index]
             for register_name, items, width in registers:
                 register_samples = _samples_for_register(raw_samples, items, width)
                 if register_name in data:

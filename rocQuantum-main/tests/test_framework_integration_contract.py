@@ -95,6 +95,9 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def probabilities_from_statevector", source)
         self.assertIn("def probabilities(self, qubits", source)
         self.assertIn("def probabilities_batch(self, qubits", source)
+        self.assertIn("def measure_batch(self, qubits", source)
+        self.assertIn("def sample_indices_from_probabilities", source)
+        self.assertIn("def sample_indices_batch_from_probabilities", source)
         self.assertIn("def expectation_pauli_string_batch", source)
         self.assertIn("def apply_operation_batch", source)
         self.assertIn("def expectation_matrix(self, matrix", source)
@@ -490,7 +493,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("self._backend._runtime.measure", source)
         self.assertIn("def _try_run_pub_batched_parameters", source)
         self.assertIn("self._backend._apply_circuit_batch", source)
-        self.assertIn("self._backend._runtime.probabilities_batch", source)
+        self.assertIn("self._backend._runtime.measure_batch", source)
         self.assertIn("\"batched_parameters\": True", source)
         self.assertIn("BitArray.from_bool_array", source)
 

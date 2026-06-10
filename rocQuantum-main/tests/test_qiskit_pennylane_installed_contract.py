@@ -1177,10 +1177,9 @@ def test_qiskit_native_sampler_binds_parameter_values(monkeypatch):
 
     assert result.data.c.shape == (2,)
     assert result.data.c.num_shots == 3
-    assert [result.data.c[idx].get_counts() for idx in range(2)] == [
-        {"0": 1, "1": 2},
-        {"0": 1, "1": 2},
-    ]
+    counts = [result.data.c[idx].get_counts() for idx in range(2)]
+    assert [sum(row.values()) for row in counts] == [3, 3]
+    assert all(set(row).issubset({"0", "1"}) for row in counts)
     assert result.metadata["batched_parameters"] is True
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
@@ -1209,10 +1208,9 @@ def test_qiskit_native_sampler_batches_controlled_parameter_values(monkeypatch):
     ).result()[0]
 
     assert result.data.c.shape == (2,)
-    assert [result.data.c[idx].get_counts() for idx in range(2)] == [
-        {"0": 1, "1": 2},
-        {"0": 1, "1": 2},
-    ]
+    counts = [result.data.c[idx].get_counts() for idx in range(2)]
+    assert [sum(row.values()) for row in counts] == [3, 3]
+    assert all(set(row).issubset({"0", "1"}) for row in counts)
     assert result.metadata["batched_parameters"] is True
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
@@ -1220,6 +1218,29 @@ def test_qiskit_native_sampler_batches_controlled_parameter_values(monkeypatch):
     assert sim.batch_ops == [("CRX", (0, 1), (0.1, 0.2))]
     assert sim.measurements == []
     assert sim.probability_requests == [(1,)]
+
+
+def test_runtime_measure_batch_falls_back_to_batch_probabilities():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _BatchProbabilitySimulator:
+        def __init__(self):
+            self.probability_requests = []
+
+        def batch_size(self):
+            return 2
+
+        def probabilities_batch(self, qubits):
+            self.probability_requests.append(tuple(qubits))
+            return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=float)
+
+    sim = _BatchProbabilitySimulator()
+    runtime = RocQuantumRuntime(sim)
+
+    samples = runtime.measure_batch([0], 4)
+
+    np.testing.assert_array_equal(samples, np.array([[0, 0, 0, 0], [1, 1, 1, 1]], dtype=np.int64))
+    assert sim.probability_requests == [(0,)]
 
 
 def test_qiskit_native_estimator_binds_parameter_values(monkeypatch):

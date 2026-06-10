@@ -129,6 +129,36 @@ def sample_rows_from_statevector(statevector: Sequence[complex], shots: int, rng
     return samples_to_binary_rows(sample_indices, num_wires)
 
 
+def sample_indices_from_probabilities(probabilities: Sequence[float], shots: int, rng=None) -> np.ndarray:
+    probabilities = np.asarray(probabilities, dtype=float).reshape(-1)
+    if probabilities.size == 0:
+        raise ValueError("Sampler probabilities cannot be empty.")
+    if np.any(probabilities < -1.0e-12):
+        raise ValueError("Sampler probabilities must be non-negative.")
+    probabilities = np.clip(probabilities, 0.0, None)
+    total = float(np.sum(probabilities))
+    if total <= 0.0:
+        raise ValueError("Sampler probabilities sum to zero.")
+    probabilities = probabilities / total
+
+    if rng is None:
+        rng = np.random
+    counts = rng.multinomial(int(shots), probabilities)
+    return np.repeat(np.arange(probabilities.size, dtype=np.int64), counts)
+
+
+def sample_indices_batch_from_probabilities(probabilities: Sequence[Sequence[float]], shots: int, rng=None) -> np.ndarray:
+    probabilities = np.asarray(probabilities, dtype=float)
+    if probabilities.ndim != 2:
+        raise ValueError("Batched sampler probabilities must be a two-dimensional array.")
+    shots = int(shots)
+    if probabilities.shape[0] == 0:
+        return np.empty((0, shots), dtype=np.int64)
+    return np.vstack(
+        [sample_indices_from_probabilities(row, shots, rng=rng) for row in probabilities]
+    ).astype(np.int64, copy=False)
+
+
 def probabilities_from_statevector(
     statevector: Sequence[complex],
     qubits: Iterable[int] | None = None,
@@ -482,6 +512,26 @@ class RocQuantumRuntime:
         if not callable(measure):
             raise NotImplementedError("The active rocQuantum binding does not expose native sampling.")
         return [int(sample) for sample in measure(normalize_targets(qubits), int(shots))]
+
+    def measure_batch(self, qubits: Iterable[int], shots: int) -> np.ndarray:
+        normalized_qubits = normalize_targets(qubits)
+        shots = int(shots)
+
+        native = getattr(self.simulator, "measure_batch", None)
+        if not callable(native):
+            native = getattr(self.simulator, "MeasureBatch", None)
+        if callable(native):
+            samples = np.asarray(native(normalized_qubits, shots), dtype=np.int64)
+            return samples.reshape(self.batch_size(), shots)
+
+        if self.batch_size() == 1:
+            try:
+                return np.asarray([self.measure(normalized_qubits, shots)], dtype=np.int64)
+            except NotImplementedError:
+                pass
+
+        probabilities = self.probabilities_batch(normalized_qubits)
+        return sample_indices_batch_from_probabilities(probabilities, shots)
 
     def probabilities(self, qubits: Iterable[int] | None = None) -> np.ndarray:
         normalized_qubits = None if qubits is None else normalize_targets(qubits)
