@@ -72,6 +72,15 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("matrix"),
              py::arg("targets"))
+        .def("set_statevector",
+             [](rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> state) {
+                 std::vector<std::complex<double>> host(static_cast<std::size_t>(state.size()));
+                 std::memcpy(host.data(), state.data(), host.size() * sizeof(std::complex<double>));
+                 self.set_statevector(host);
+             },
+             py::arg("state"),
+             "Upload a full host statevector into the simulator state.")
         .def("get_statevector",
              [](const rocquantum::QuantumSimulator& self) {
                  auto state = self.get_statevector();

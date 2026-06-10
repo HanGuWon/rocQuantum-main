@@ -26,6 +26,7 @@ class _FakeQuantumSimulator:
         self._measured = False
         self.ops = []
         self.matrices = []
+        self.statevectors = []
         self.measurements = []
         self.expectations = []
         self.statevector_reads = 0
@@ -36,6 +37,7 @@ class _FakeQuantumSimulator:
     def reset(self):
         self.ops.clear()
         self.matrices.clear()
+        self.statevectors.clear()
         self.measurements.clear()
         self.expectations.clear()
         self.statevector_reads = 0
@@ -51,6 +53,9 @@ class _FakeQuantumSimulator:
     def apply_matrix(self, matrix, targets):
         self.total_matrix_applications += 1
         self.matrices.append((np.asarray(matrix, dtype=np.complex128), tuple(targets)))
+
+    def set_statevector(self, statevector):
+        self.statevectors.append(np.asarray(statevector, dtype=np.complex128))
 
     def measure(self, qubits, shots):
         self.measurements.append((tuple(qubits), int(shots)))
@@ -229,6 +234,17 @@ def test_qiskit_backend_can_skip_sampling_for_statevector_only(monkeypatch):
     assert result.results[0].shots == 0
     assert _FakeQuantumSimulator.instances[-1].measurements == []
     assert _FakeQuantumSimulator.instances[-1].statevector_reads == 1
+
+
+def test_framework_runtime_converts_full_statevectors_to_little_endian_order():
+    from rocquantum.framework_runtime import statevector_to_little_endian_wires
+
+    state = np.array([0, 1, 2, 3], dtype=np.complex128)
+
+    np.testing.assert_allclose(
+        statevector_to_little_endian_wires(state),
+        np.array([0, 2, 1, 3], dtype=np.complex128),
+    )
 
 
 def test_qiskit_backend_rejects_mid_circuit_measurement(monkeypatch):
@@ -664,10 +680,30 @@ def test_qiskit_backend_runs_direct_state_preparation(monkeypatch):
 
     backend.run(circuit, sampling=False).result()
 
-    matrix, targets = _FakeQuantumSimulator.instances[-1].matrices[0]
-    np.testing.assert_allclose(matrix, np.array([[0, -1], [1, 0]], dtype=np.complex128))
-    assert targets == (0,)
-    assert _FakeQuantumSimulator.instances[-1].ops == []
+    sim = _FakeQuantumSimulator.instances[-1]
+    np.testing.assert_allclose(sim.statevectors[0], np.array([0.0, 1.0], dtype=np.complex128))
+    assert sim.ops == []
+    assert sim.matrices == []
+
+
+def test_qiskit_state_preparation_after_operation_stays_matrix(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+    circuit.prepare_state([0.0, 1.0], 0)
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.statevectors == []
+    assert sim.ops == [("H", (0,), ())]
+    assert [targets for _, targets in sim.matrices] == [(0,)]
 
 
 def test_qiskit_backend_runs_initial_initialize_as_state_preparation(monkeypatch):
@@ -683,10 +719,10 @@ def test_qiskit_backend_runs_initial_initialize_as_state_preparation(monkeypatch
 
     backend.run(circuit, sampling=False).result()
 
-    matrix, targets = _FakeQuantumSimulator.instances[-1].matrices[0]
-    np.testing.assert_allclose(matrix, np.array([[0, -1], [1, 0]], dtype=np.complex128))
-    assert targets == (0,)
-    assert _FakeQuantumSimulator.instances[-1].ops == []
+    sim = _FakeQuantumSimulator.instances[-1]
+    np.testing.assert_allclose(sim.statevectors[0], np.array([0.0, 1.0], dtype=np.complex128))
+    assert sim.ops == []
+    assert sim.matrices == []
 
 
 def test_qiskit_backend_rejects_initialize_after_operation(monkeypatch):
@@ -1219,9 +1255,8 @@ def test_pennylane_stateprep_dispatches_initial_matrix(monkeypatch):
     sim = _FakeQuantumSimulator.instances[-1]
 
     assert sim.ops == []
-    matrix, targets = sim.matrices[0]
-    assert targets == (0,)
-    np.testing.assert_allclose(matrix, qml.matrix(qml.StatePrep(state, wires=[0])))
+    assert sim.matrices == []
+    np.testing.assert_allclose(sim.statevectors[0], state)
 
 
 def test_pennylane_stateprep_after_operation_is_rejected(monkeypatch):

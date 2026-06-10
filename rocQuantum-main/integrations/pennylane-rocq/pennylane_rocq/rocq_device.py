@@ -13,6 +13,7 @@ from rocquantum.framework_runtime import (
     matrix_to_little_endian_wires,
     sample_rows_from_statevector,
     samples_to_binary_rows,
+    statevector_to_little_endian_wires,
 )
 
 try:
@@ -705,12 +706,26 @@ class RocQDevice(QubitDevice):
             elif gate_name == "StatePrep":
                 if operation_applied:
                     raise ValueError("StatePrep is only supported as an initial state preparation.")
-                matrix = matrix_to_little_endian_wires(qml.matrix(op))
-                self._runtime.apply_operation(
-                    "QubitUnitary",
-                    wire_indices,
-                    matrix=matrix,
-                )
+                statevector = getattr(op, "parameters", [None])[0]
+                if len(wire_indices) == self.num_wires and statevector is not None:
+                    try:
+                        self._runtime.set_statevector(
+                            statevector_to_little_endian_wires(statevector)
+                        )
+                    except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                        matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                        self._runtime.apply_operation(
+                            "QubitUnitary",
+                            wire_indices,
+                            matrix=matrix,
+                        )
+                else:
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        "QubitUnitary",
+                        wire_indices,
+                        matrix=matrix,
+                    )
                 operation_applied = True
             elif gate_name in PENNYLANE_TO_ROCQ_GATES:
                 self._runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)

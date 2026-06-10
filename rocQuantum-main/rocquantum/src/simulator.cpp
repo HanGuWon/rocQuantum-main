@@ -349,6 +349,23 @@ void QuantumSimulator::apply_matrix(const std::vector<std::complex<double>>& mat
     check_hip(hipFree(d_matrix), "matrix free");
 }
 
+void QuantumSimulator::set_statevector(const std::vector<std::complex<double>>& state) {
+    if (state.size() != state_vec_size_) {
+        throw std::invalid_argument("set_statevector input size must equal 2^num_qubits.");
+    }
+
+    std::vector<rocComplex> raw(state.size());
+    for (std::size_t i = 0; i < state.size(); ++i) {
+        raw[i] = to_roc_complex(state[i]);
+    }
+
+    check_hip(hipMemcpy(device_state_vector_,
+                        raw.data(),
+                        raw.size() * sizeof(rocComplex),
+                        hipMemcpyHostToDevice),
+              "statevector upload");
+}
+
 std::vector<std::complex<double>> QuantumSimulator::get_statevector() const {
     std::vector<rocComplex> raw(state_vec_size_);
     check_status(rocsvGetStateVectorFull(sim_handle_, device_state_vector_, raw.data()), "state readback");

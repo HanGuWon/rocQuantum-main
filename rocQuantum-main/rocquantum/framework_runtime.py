@@ -91,6 +91,21 @@ def matrix_to_little_endian_wires(matrix: object) -> np.ndarray:
     return np.ascontiguousarray(normalized[np.ix_(permutation, permutation)])
 
 
+def statevector_to_little_endian_wires(statevector: object) -> np.ndarray:
+    """Convert a full wire-ordered statevector to rocQuantum's little-endian basis."""
+    normalized = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    dimension = normalized.shape[0]
+    if dimension == 0 or dimension & (dimension - 1):
+        raise ValueError("Statevector length must be a power of two.")
+
+    num_wires = int(np.log2(dimension))
+    if num_wires <= 1:
+        return np.ascontiguousarray(normalized)
+
+    permutation = np.array([_reverse_bits(index, num_wires) for index in range(dimension)])
+    return np.ascontiguousarray(normalized[permutation])
+
+
 def samples_to_binary_rows(raw_samples: Sequence[int], num_wires: int) -> np.ndarray:
     return np.array(
         [[(int(sample) >> bit) & 1 for bit in range(num_wires)] for sample in raw_samples],
@@ -295,6 +310,20 @@ class RocQuantumRuntime:
             return
 
         raise NotImplementedError("The active rocQuantum binding does not expose matrix application.")
+
+    def set_statevector(self, statevector: object) -> None:
+        normalized_state = np.ascontiguousarray(np.asarray(statevector, dtype=np.complex128).reshape(-1))
+        setter = getattr(self.simulator, "set_statevector", None)
+        if callable(setter):
+            setter(normalized_state)
+            return
+
+        legacy_setter = getattr(self.simulator, "SetStateVector", None)
+        if callable(legacy_setter):
+            legacy_setter(normalized_state)
+            return
+
+        raise NotImplementedError("The active rocQuantum binding does not expose statevector upload.")
 
     def statevector(self) -> np.ndarray:
         getter = getattr(self.simulator, "get_statevector", None)

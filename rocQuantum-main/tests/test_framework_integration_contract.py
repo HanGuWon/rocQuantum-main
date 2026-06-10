@@ -49,6 +49,13 @@ _QUANTUM_SIMULATOR_CPP = os.path.join(
     "src",
     "simulator.cpp",
 )
+_QUANTUM_SIMULATOR_HEADER = os.path.join(
+    _PROJECT_ROOT,
+    "include",
+    "rocquantum",
+    "QuantumSimulator.h",
+)
+_BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "bindings.cpp")
 
 
 class TestFrameworkIntegrationContract(unittest.TestCase):
@@ -62,6 +69,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"CCX\": \"MCX\"", source)
         self.assertIn("\"TOFFOLI\": \"MCX\"", source)
         self.assertIn("\"CSWAP\": \"CSWAP\"", source)
+        self.assertIn("def statevector_to_little_endian_wires", source)
+        self.assertIn("def set_statevector", source)
 
     def test_public_simulator_dispatches_native_multi_control_gates(self):
         with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
@@ -71,6 +80,19 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("normalized == \"CSWAP\"", source)
         self.assertIn("rocsvApplyMultiControlledX", source)
         self.assertIn("rocsvApplyCSWAP", source)
+
+    def test_public_simulator_exposes_statevector_upload(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+
+        self.assertIn("void set_statevector", header)
+        self.assertIn("QuantumSimulator::set_statevector", implementation)
+        self.assertIn("hipMemcpyHostToDevice", implementation)
+        self.assertIn(".def(\"set_statevector\"", bindings)
 
     def test_pennylane_sampling_prefers_native_measure(self):
         with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
@@ -85,6 +107,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"SingleExcitation\", \"SingleExcitationPlus\", \"SingleExcitationMinus\"", source)
         self.assertIn("\"BasisState\", \"StatePrep\", \"Rot\"", source)
         self.assertIn("StatePrep is only supported as an initial state preparation", source)
+        self.assertIn("statevector_to_little_endian_wires", source)
+        self.assertIn("self._runtime.set_statevector", source)
         self.assertIn("_native_mcx_wire_indices", source)
         self.assertIn("def _apply_mcx_with_control_values", source)
         self.assertIn("control_values", source)
@@ -193,6 +217,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _apply_rccx_gate", source)
         self.assertIn("def _apply_rcccx_gate", source)
         self.assertIn("def _apply_controlled_base_gate", source)
+        self.assertIn("statevector_to_little_endian_wires", source)
+        self.assertIn("self._runtime.set_statevector", source)
         self.assertIn("Operator(op).data", source)
         self.assertIn("statevector=False", source)
         self.assertIn("Target(num_qubits=int(num_qubits))", source)

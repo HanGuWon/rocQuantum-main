@@ -58,6 +58,7 @@ from rocquantum.framework_runtime import (
     normalize_params,
     qiskit_memory_from_samples,
     qiskit_sample_plan,
+    statevector_to_little_endian_wires,
 )
 
 from .estimator import estimate_pauli_observable
@@ -85,6 +86,12 @@ def _state_preparation_matrix(op):
     if op.name == "initialize":
         return Operator(StatePreparation(op.params)).data
     return Operator(op).data
+
+
+def _state_preparation_vector(op):
+    if op.name == "initialize":
+        return StatePreparation(op.params).params
+    return getattr(op, "params", None)
 
 
 def _automatic_operation_matrix(op):
@@ -488,11 +495,24 @@ class RocQuantumBackend(BackendV2):
                         "RocQuantumBackend only supports initialize before a qubit has been operated on. "
                         "Later initialize instructions require non-unitary reset support."
                     )
-                self._runtime.apply_operation(
-                    "state_preparation",
-                    q_indices,
-                    matrix=_state_preparation_matrix(op),
-                )
+                statevector = _state_preparation_vector(op)
+                if statevector is not None and len(q_indices) == circuit.num_qubits:
+                    try:
+                        self._runtime.set_statevector(
+                            statevector_to_little_endian_wires(statevector)
+                        )
+                    except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                        self._runtime.apply_operation(
+                            "state_preparation",
+                            q_indices,
+                            matrix=_state_preparation_matrix(op),
+                        )
+                else:
+                    self._runtime.apply_operation(
+                        "state_preparation",
+                        q_indices,
+                        matrix=_state_preparation_matrix(op),
+                    )
                 touched_qubits.update(q_indices)
                 continue
 
@@ -578,6 +598,18 @@ class RocQuantumBackend(BackendV2):
                         continue
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     pass
+
+            if op.name == "state_preparation" and not touched_qubits and len(q_indices) == circuit.num_qubits:
+                statevector = _state_preparation_vector(op)
+                if statevector is not None:
+                    try:
+                        self._runtime.set_statevector(
+                            statevector_to_little_endian_wires(statevector)
+                        )
+                        touched_qubits.update(q_indices)
+                        continue
+                    except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                        pass
 
             matrix = _operation_matrix(op)
             if matrix is not None and op.name in {"state_preparation", "unitary"}:

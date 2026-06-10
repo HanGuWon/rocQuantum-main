@@ -20,6 +20,7 @@ public:
                     const std::vector<double>& params = {});
     void apply_matrix(const std::vector<std::complex<double>>& matrix,
                       const std::vector<unsigned>& targets);
+    void set_statevector(const std::vector<std::complex<double>>& state);
     std::vector<std::complex<double>> get_statevector() const;
     std::vector<long long> measure(const std::vector<unsigned>& qubits, int shots);
     double expectation_value(const std::string& pauli, unsigned target);
