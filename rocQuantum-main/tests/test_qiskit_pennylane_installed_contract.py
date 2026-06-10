@@ -2881,6 +2881,10 @@ def test_runtime_can_create_and_read_batched_bindings():
             dtype=float,
         ),
     )
+    np.testing.assert_allclose(
+        runtime.expectation_pauli_string_batch("Z", [0]),
+        np.array([-1.0, -1.0, -1.0], dtype=float),
+    )
 
 
 def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):

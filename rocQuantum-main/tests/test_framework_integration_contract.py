@@ -87,6 +87,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def statevector_to_little_endian_wires", source)
         self.assertIn("def probabilities_from_statevector", source)
         self.assertIn("def probabilities(self, qubits", source)
+        self.assertIn("def probabilities_batch(self, qubits", source)
+        self.assertIn("def expectation_pauli_string_batch", source)
         self.assertIn("def expectation_matrix(self, matrix", source)
         self.assertIn("def set_statevector", source)
 
@@ -208,6 +210,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             header = f.read()
         with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
             implementation = f.read()
+        with open(_HIPSTATEVEC_HEADER, "r", encoding="utf-8") as f:
+            hip_header = f.read()
         with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
             hipstatevec = f.read()
         with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
@@ -217,8 +221,15 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("SparseHamiltonianMoments", header)
         self.assertIn("expectation_matrix", header)
         self.assertIn("ExpectationMatrix", header)
+        self.assertIn("expectation_pauli_string_batch", header)
+        self.assertIn("GetExpectationPauliStringBatch", header)
         self.assertIn("QuantumSimulator::sparse_hamiltonian_moments", implementation)
         self.assertIn("QuantumSimulator::expectation_matrix", implementation)
+        self.assertIn("QuantumSimulator::expectation_pauli_string_batch", implementation)
+        self.assertIn("rocsvGetExpectationPauliStringBatch", implementation)
+        self.assertIn("rocsvGetExpectationPauliStringBatch", hip_header)
+        self.assertIn("reduce_expectation_pauli_string_batch_kernel", hipstatevec)
+        self.assertIn("compute_local_expectation_pauli_string_batch", hipstatevec)
         self.assertIn("rocsvGetExpectationMatrix", implementation)
         self.assertIn("rocsvGetSparseMatrixMoments", implementation)
         self.assertIn("rocsvGetSparseMatrixMoments", hipstatevec)
@@ -232,6 +243,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertNotIn("h_state", sparse_body)
         self.assertIn(".def(\"expectation_matrix\"", bindings)
         self.assertIn(".def(\"ExpectationMatrix\"", bindings)
+        self.assertIn(".def(\"expectation_pauli_string_batch\"", bindings)
+        self.assertIn(".def(\"GetExpectationPauliStringBatch\"", bindings)
         self.assertIn(".def(\"sparse_hamiltonian_moments\"", bindings)
         self.assertIn(".def(\"SparseHamiltonianMoments\"", bindings)
 

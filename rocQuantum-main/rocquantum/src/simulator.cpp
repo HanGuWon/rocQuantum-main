@@ -580,11 +580,21 @@ double QuantumSimulator::expectation_value(const std::string& pauli, unsigned ta
 
 double QuantumSimulator::expectation_pauli_string(const std::string& pauli_string,
                                                   const std::vector<unsigned>& targets) {
+    if (batch_size_ != 1) {
+        throw std::invalid_argument(
+            "expectation_pauli_string is only valid when batch_size is 1; use expectation_pauli_string_batch.");
+    }
+    std::vector<double> out = expectation_pauli_string_batch(pauli_string, targets);
+    return out.front();
+}
+
+std::vector<double> QuantumSimulator::expectation_pauli_string_batch(const std::string& pauli_string,
+                                                                     const std::vector<unsigned>& targets) {
     if (pauli_string.size() != targets.size()) {
         throw std::invalid_argument("Pauli string length must match target qubit count.");
     }
     if (targets.empty()) {
-        return 1.0;
+        return std::vector<double>(batch_size_, 1.0);
     }
 
     std::string normalized;
@@ -603,16 +613,16 @@ double QuantumSimulator::expectation_pauli_string(const std::string& pauli_strin
         normalized.push_back(pauli);
     }
 
-    double result = 0.0;
-    check_status(rocsvGetExpectationPauliString(sim_handle_,
-                                                device_state_vector_,
-                                                num_qubits_,
-                                                normalized.c_str(),
-                                                targets.data(),
-                                                static_cast<unsigned>(targets.size()),
-                                                &result),
-                 "Pauli-string expectation");
-    return result;
+    std::vector<double> out(batch_size_, 0.0);
+    check_status(rocsvGetExpectationPauliStringBatch(sim_handle_,
+                                                     device_state_vector_,
+                                                     num_qubits_,
+                                                     normalized.c_str(),
+                                                     targets.data(),
+                                                     static_cast<unsigned>(targets.size()),
+                                                     out.data()),
+                 "batch Pauli-string expectation");
+    return out;
 }
 
 std::complex<double> QuantumSimulator::expectation_matrix(
@@ -850,6 +860,12 @@ double QuantumSimulator::GetExpectationValue(const std::string& pauli, int targe
 double QuantumSimulator::GetExpectationPauliString(const std::string& pauli_string,
                                                    const std::vector<unsigned>& targets) {
     return expectation_pauli_string(pauli_string, targets);
+}
+
+std::vector<double> QuantumSimulator::GetExpectationPauliStringBatch(
+    const std::string& pauli_string,
+    const std::vector<unsigned>& targets) {
+    return expectation_pauli_string_batch(pauli_string, targets);
 }
 
 std::complex<double> QuantumSimulator::ExpectationMatrix(

@@ -35,6 +35,8 @@ public:
     double expectation_value(const std::string& pauli, unsigned target);
     double expectation_pauli_string(const std::string& pauli_string,
                                     const std::vector<unsigned>& targets);
+    std::vector<double> expectation_pauli_string_batch(const std::string& pauli_string,
+                                                       const std::vector<unsigned>& targets);
     std::complex<double> expectation_matrix(const std::vector<std::complex<double>>& matrix,
                                             const std::vector<unsigned>& targets) const;
     std::pair<std::complex<double>, std::complex<double>> sparse_hamiltonian_moments(
@@ -62,6 +64,8 @@ public:
     double GetExpectationValue(const std::string& pauli, int target_qubit);
     double GetExpectationPauliString(const std::string& pauli_string,
                                      const std::vector<unsigned>& targets);
+    std::vector<double> GetExpectationPauliStringBatch(const std::string& pauli_string,
+                                                       const std::vector<unsigned>& targets);
     std::complex<double> ExpectationMatrix(const std::vector<std::complex<double>>& matrix,
                                            const std::vector<unsigned>& targets) const;
     std::pair<std::complex<double>, std::complex<double>> SparseHamiltonianMoments(

@@ -499,6 +499,26 @@ rocqStatus_t rocsvGetExpectationPauliString(rocsvHandle_t handle,
                                             double* result);
 
 /**
+ * @brief Calculates a generic Pauli-string expectation value for every local batch state.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector batch.
+ * @param[in] numQubits Total number of qubits per state.
+ * @param[in] pauliString A null-terminated string representing the Pauli product (e.g., "IXYZ").
+ * @param[in] targetQubits Array of global qubit indices the Pauli operators act upon.
+ * @param[in] numTargetPaulis Number of operators in the product (must match strlen(pauliString)).
+ * @param[out] results Host pointer to batchSize expectation values.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetExpectationPauliStringBatch(rocsvHandle_t handle,
+                                                 rocComplex* d_state,
+                                                 unsigned numQubits,
+                                                 const char* pauliString,
+                                                 const unsigned* targetQubits,
+                                                 unsigned numTargetPaulis,
+                                                 double* results);
+
+/**
  * @brief Computes <psi|M|psi> for a dense matrix acting on target qubits.
  *
  * @param[in] handle The hipStateVec handle.

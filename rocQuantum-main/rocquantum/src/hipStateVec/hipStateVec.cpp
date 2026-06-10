@@ -1539,6 +1539,78 @@ __global__ void reduce_expectation_pauli_string_kernel(const rocComplex* state,
     }
 }
 
+__global__ void reduce_expectation_pauli_string_batch_kernel(const rocComplex* state,
+                                                             size_t elementsPerState,
+                                                             const char* pauliString,
+                                                             const unsigned* targetQubits,
+                                                             unsigned numTargetQubits,
+                                                             double* blockSums) {
+    extern __shared__ double ssum[];
+    const unsigned tid = threadIdx.x;
+    const size_t block = blockIdx.x;
+    const size_t batch = blockIdx.y;
+    const size_t gid = block * blockDim.x + tid;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+    const rocComplex* batch_state = state + batch * elementsPerState;
+
+    double local = 0.0;
+    for (size_t idx = gid; idx < elementsPerState; idx += stride) {
+        size_t transformed = idx;
+        double phaseRe = 1.0;
+        double phaseIm = 0.0;
+
+        for (unsigned k = 0; k < numTargetQubits; ++k) {
+            const unsigned q = targetQubits[k];
+            const bool bit = ((idx >> q) & 1ULL) != 0ULL;
+            const char p = pauliString[k];
+            const size_t mask = size_t{1} << q;
+            if (p == 'X' || p == 'x') {
+                transformed ^= mask;
+            } else if (p == 'Y' || p == 'y') {
+                transformed ^= mask;
+                const double yRe = 0.0;
+                const double yIm = bit ? -1.0 : 1.0;
+                const double nextRe = phaseRe * yRe - phaseIm * yIm;
+                const double nextIm = phaseRe * yIm + phaseIm * yRe;
+                phaseRe = nextRe;
+                phaseIm = nextIm;
+            } else if (p == 'Z' || p == 'z') {
+                if (bit) {
+                    phaseRe = -phaseRe;
+                    phaseIm = -phaseIm;
+                }
+            } else if (p == 'I' || p == 'i') {
+                // no-op
+            } else {
+                phaseRe = 0.0;
+                phaseIm = 0.0;
+            }
+        }
+
+        const rocComplex a = batch_state[idx];
+        const rocComplex b = batch_state[transformed];
+        const double cbRe = static_cast<double>(a.x) * static_cast<double>(b.x) +
+                            static_cast<double>(a.y) * static_cast<double>(b.y);
+        const double cbIm = static_cast<double>(a.x) * static_cast<double>(b.y) -
+                            static_cast<double>(a.y) * static_cast<double>(b.x);
+        local += cbRe * phaseRe - cbIm * phaseIm;
+    }
+
+    ssum[tid] = local;
+    __syncthreads();
+
+    for (unsigned s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            ssum[tid] += ssum[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        blockSums[batch * static_cast<size_t>(gridDim.x) + block] = ssum[0];
+    }
+}
+
 __global__ void reduce_expectation_matrix_kernel(const rocComplex* state,
                                                  size_t numElements,
                                                  const unsigned* targetQubits,
@@ -2948,6 +3020,113 @@ inline rocqStatus_t compute_local_sample_probabilities_batch(rocsvInternalHandle
         }
     }
     return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t compute_local_expectation_pauli_string_batch(rocsvInternalHandle* handle,
+                                                                 rocComplex* state,
+                                                                 unsigned numQubits,
+                                                                 const std::vector<unsigned>& targets,
+                                                                 const std::string& pauli,
+                                                                 double* h_results) {
+    if (!handle || !state || !h_results || targets.empty() || pauli.size() != targets.size()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t elements_per_state = 0;
+    if (!compute_power_of_two(numQubits, &elements_per_state)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (batch_size > 65535) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(elements_per_state, threads_per_block);
+    if (batch_size > std::numeric_limits<size_t>::max() / static_cast<size_t>(blocks)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    void* d_targets_void = nullptr;
+    rocqStatus_t status = device_malloc(handle, &d_targets_void, targets.size() * sizeof(unsigned));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    unsigned* d_targets = static_cast<unsigned*>(d_targets_void);
+    status = copy_host_to_device(d_targets,
+                                 targets.data(),
+                                 targets.size() * sizeof(unsigned),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    void* d_pauli_void = nullptr;
+    status = device_malloc(handle, &d_pauli_void, pauli.size() * sizeof(char));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+    char* d_pauli = static_cast<char*>(d_pauli_void);
+    status = copy_host_to_device(d_pauli,
+                                 pauli.data(),
+                                 pauli.size() * sizeof(char),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_pauli);
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    void* d_block_sums_void = nullptr;
+    const size_t total_blocks = batch_size * static_cast<size_t>(blocks);
+    status = device_malloc(handle, &d_block_sums_void, total_blocks * sizeof(double));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_pauli);
+        device_free(handle, d_targets);
+        return status;
+    }
+    double* d_block_sums = static_cast<double*>(d_block_sums_void);
+
+    hipLaunchKernelGGL(reduce_expectation_pauli_string_batch_kernel,
+                       dim3(blocks, static_cast<unsigned>(batch_size)),
+                       dim3(threads_per_block),
+                       threads_per_block * sizeof(double),
+                       handle->streams[0],
+                       state,
+                       elements_per_state,
+                       d_pauli,
+                       d_targets,
+                       static_cast<unsigned>(targets.size()),
+                       d_block_sums);
+    status = check_last_hip_error();
+    if (status == ROCQ_STATUS_SUCCESS) {
+        for (size_t batch = 0; batch < batch_size; ++batch) {
+            status = reduce_blocks_to_scalar(handle,
+                                             d_block_sums + batch * static_cast<size_t>(blocks),
+                                             blocks,
+                                             h_results + batch);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                break;
+            }
+        }
+    }
+
+    rocqStatus_t block_free_status = device_free(handle, d_block_sums);
+    rocqStatus_t pauli_free_status = device_free(handle, d_pauli);
+    rocqStatus_t targets_free_status = device_free(handle, d_targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    if (block_free_status != ROCQ_STATUS_SUCCESS) {
+        return block_free_status;
+    }
+    if (pauli_free_status != ROCQ_STATUS_SUCCESS) {
+        return pauli_free_status;
+    }
+    return targets_free_status;
 }
 
 inline rocqStatus_t compute_distributed_sample_probabilities(rocsvInternalHandle* handle,
@@ -5046,6 +5225,56 @@ rocqStatus_t rocsvGetExpectationPauliString(rocsvHandle_t handle,
     device_free(handle, d_pauli);
     device_free(handle, d_targets);
     return status;
+}
+
+rocqStatus_t rocsvGetExpectationPauliStringBatch(rocsvHandle_t handle,
+                                                 rocComplex* d_state,
+                                                 unsigned numQubits,
+                                                 const char* pauliString,
+                                                 const unsigned* targetQubits,
+                                                 unsigned numTargetPaulis,
+                                                 double* results) {
+    if (!handle || !pauliString || !results) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (numTargetPaulis == 0) {
+        const size_t batch_size = effective_batch_size(handle, state);
+        std::fill_n(results, batch_size, 1.0);
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    std::vector<unsigned> targets;
+    rocqStatus_t status = validate_unique_qubits(targetQubits, numTargetPaulis, numQubits, &targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    const std::string pauli(pauliString);
+    if (pauli.size() != numTargetPaulis) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    for (char c : pauli) {
+        const char u = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        if (u != 'I' && u != 'X' && u != 'Y' && u != 'Z') {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+
+    if (uses_distributed_state(handle, d_state)) {
+        return distributed_expectation_with_fallback(handle,
+                                                     numQubits,
+                                                     targets,
+                                                     DistributedExpectationKind::PauliString,
+                                                     pauli,
+                                                     results);
+    }
+
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    return compute_local_expectation_pauli_string_batch(handle, state, numQubits, targets, pauli, results);
 }
 
 rocqStatus_t rocsvGetExpectationMatrix(rocsvHandle_t handle,

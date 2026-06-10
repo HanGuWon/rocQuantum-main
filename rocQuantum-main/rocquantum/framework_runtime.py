@@ -531,6 +531,40 @@ class RocQuantumRuntime:
 
         return expectation_from_statevector(self.statevector(), str(pauli_string), normalized_targets)
 
+    def expectation_pauli_string_batch(self, pauli_string: str, targets: Iterable[int]) -> np.ndarray:
+        normalized_targets = normalize_targets(targets)
+
+        def _native_expectation_unavailable(exc: Exception) -> bool:
+            message = str(exc)
+            return isinstance(exc, NotImplementedError) or "status 5" in message
+
+        native = getattr(self.simulator, "expectation_pauli_string_batch", None)
+        if callable(native):
+            try:
+                return np.asarray(native(str(pauli_string), normalized_targets), dtype=float).reshape(self.batch_size())
+            except Exception as exc:
+                if not _native_expectation_unavailable(exc):
+                    raise
+
+        legacy = getattr(self.simulator, "GetExpectationPauliStringBatch", None)
+        if callable(legacy):
+            try:
+                return np.asarray(legacy(str(pauli_string), normalized_targets), dtype=float).reshape(self.batch_size())
+            except Exception as exc:
+                if not _native_expectation_unavailable(exc):
+                    raise
+
+        if self.batch_size() == 1:
+            return np.asarray([self.expectation_pauli_string(pauli_string, normalized_targets)], dtype=float)
+
+        return np.asarray(
+            [
+                expectation_from_statevector(state, str(pauli_string), normalized_targets)
+                for state in self.statevectors()
+            ],
+            dtype=float,
+        )
+
     def expectation_matrix(self, matrix: object, targets: Iterable[int]) -> complex:
         normalized_targets = normalize_targets(targets)
         normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))

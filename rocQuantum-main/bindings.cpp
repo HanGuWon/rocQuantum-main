@@ -178,6 +178,18 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("pauli_string"),
              py::arg("targets"),
              "Return a non-destructive Pauli-string expectation value.")
+        .def("expectation_pauli_string_batch",
+             [](const rocquantum::QuantumSimulator& self,
+                const std::string& pauli_string,
+                const std::vector<unsigned>& targets) {
+                 auto expectations = self.expectation_pauli_string_batch(pauli_string, targets);
+                 py::array_t<double> result(expectations.size());
+                 std::memcpy(result.mutable_data(), expectations.data(), expectations.size() * sizeof(double));
+                 return result;
+             },
+             py::arg("pauli_string"),
+             py::arg("targets"),
+             "Return batch-major Pauli-string expectation values.")
         .def("expectation_matrix",
              [](const rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
@@ -328,6 +340,17 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("target_qubit"))
         .def("GetExpectationPauliString",
              &rocquantum::QuantumSimulator::GetExpectationPauliString,
+             py::arg("pauli_string"),
+             py::arg("targets"))
+        .def("GetExpectationPauliStringBatch",
+             [](const rocquantum::QuantumSimulator& self,
+                const std::string& pauli_string,
+                const std::vector<unsigned>& targets) {
+                 auto expectations = self.GetExpectationPauliStringBatch(pauli_string, targets);
+                 py::array_t<double> result(expectations.size());
+                 std::memcpy(result.mutable_data(), expectations.data(), expectations.size() * sizeof(double));
+                 return result;
+             },
              py::arg("pauli_string"),
              py::arg("targets"))
         .def("ExpectationMatrix",
