@@ -15,6 +15,7 @@ Audit refresh note (2026-06-10):
 - Previous rows that described canonical `rocq.operator.get_expectation_value()` as unimplemented are stale; the current gap is split API behavior between canonical `rocq` and legacy `python/rocq`.
 - GateFusion is wired opportunistically into canonical `rocq.backends.StateVectorBackend`, but the legacy `python/rocq` queue flush path still replays gates one by one.
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is no longer a hard stub for the current MVP subset: qalloc, H/X/Y/Z, CNOT, RX/RY/RZ.
+- Qiskit and PennyLane adapters now avoid several avoidable full statevector readbacks: Qiskit `backend.run()` defaults to sampling without state output, PennyLane finite-shot measurements use native `measure()` where available, and PennyLane analytic Pauli/Hadamard/Hamiltonian expectations skip diagonalizing rotations and use native Pauli-string expectations.
 
 The detailed findings below still describe the original audit snapshot; use them together with the runtime update above.
 
@@ -145,7 +146,7 @@ What is not real today:
 | Expectations | Native `hipStateVec` helpers exist; canonical `rocq.observe()` and legacy `Circuit.expval()` are wired for supported Pauli operators | Hermitian/broader operator coverage remains limited |
 | Tensor-network contraction | Native HIP/rocBLAS/rocSOLVER path | Pathfinder/slicing breadth not fully wired |
 | Density matrix | Native limited kernel set | Generic single-qubit Kraus channels and sampling use correctness-first paths; multi-qubit channels and GPU-fast density sampling remain absent |
-| Framework adapters | Use native simulator for core operations; PennyLane/Cirq/Qiskit sampling paths now prefer `QuantumSimulator.measure()` | PennyLane/Cirq keep host sampling fallback for legacy bindings; many tests are mock/source-contract only |
+| Framework adapters | Use native simulator for core operations; PennyLane/Cirq/Qiskit sampling paths now prefer `QuantumSimulator.measure()`; PennyLane analytic Pauli/Hadamard/Hamiltonian expectations and Qiskit estimator expectations use native Pauli-string helpers without mandatory statevector readback | PennyLane/Cirq keep host sampling fallback for legacy bindings; Qiskit and PennyLane broad non-Pauli/dynamic/non-unitary coverage remains partial; many tests are mock/source-contract only |
 | Top-level `rocq` backend selection | Can hit native bindings | Falls back to mock state objects when compiled backend is missing |
 
 ## Comparison Baselines Used

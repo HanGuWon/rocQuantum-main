@@ -12,7 +12,7 @@ Audit date: 2026-04-05
 6. Gate fusion exists in C++ and is used by the canonical `rocq` backend for narrow CNOT-adjacent spans; unsupported fusion inputs now fail rather than being silently dropped, but legacy `python/rocq` and broader fusion patterns are still unfused.
 7. `hipTensorNet` has real core functionality and now exposes optimizer/dtype/slicing capabilities, but METIS/KAHYPAR pathfinders and runtime slicing remain unsupported unless compiled in.
 8. `hipDensityMat` is real but narrow; single-qubit Kraus channels and host-side density sampling now exist, while multi-qubit channels, GPU-fast sampling, and richer observable support are still missing.
-9. Framework integrations are thin adapters with native sampling preferred in PennyLane/Cirq/Qiskit, but still rely on mock-heavy tests rather than strong native ROCm end-to-end proof.
+9. Framework integrations now cover native sampling and native Pauli-observable paths for PennyLane/Qiskit more directly, but still rely on mock-heavy tests rather than strong native ROCm end-to-end proof.
 10. Higher-level CUDA-QX-style libraries now have an experimental VQE/QAOA/repetition-code subset, but this is still far from a serious supported CUDA-QX analogue.
 
 ## Priority Framework
