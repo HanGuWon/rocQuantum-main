@@ -384,6 +384,33 @@ def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch)
     assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 4)]
 
 
+def test_pennylane_probs_returns_full_and_marginal_probabilities(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def full_probs():
+        qml.Hadamard(wires=0)
+        qml.CNOT(wires=[0, 1])
+        return qml.probs(wires=[0, 1])
+
+    @qml.qnode(dev)
+    def marginal_probs():
+        qml.Hadamard(wires=0)
+        qml.CNOT(wires=[0, 1])
+        return qml.probs(wires=[0])
+
+    np.testing.assert_allclose(full_probs(), np.array([0.5, 0.0, 0.0, 0.5]))
+    np.testing.assert_allclose(marginal_probs(), np.array([0.5, 0.5]))
+
+
 def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

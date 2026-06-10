@@ -39,6 +39,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("raw_samples = self._runtime.measure(all_wires, int(self.shots))", source)
         self.assertIn("samples_to_binary_rows", source)
         self.assertIn("sample_rows_from_statevector", source, "legacy fallback should remain explicit")
+        self.assertIn("def analytic_probability", source)
+        self.assertIn("if not wires_to_trace: return all_probs", source)
         self.assertIn("def expval", source)
         self.assertIn("def var", source)
         self.assertIn("_pauli_square_terms", source)

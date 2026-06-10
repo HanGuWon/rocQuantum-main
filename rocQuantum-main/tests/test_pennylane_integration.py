@@ -193,6 +193,9 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
         amp = 1.0 / np.sqrt(2.0)
         device._state = np.array([0.0, amp, amp, 0.0], dtype=np.complex128)
 
+        full_probs = device.analytic_probability(wires=[0, 1])
+        np.testing.assert_allclose(full_probs, np.array([0.0, 0.5, 0.5, 0.0]))
+
         subset_probs = device.analytic_probability(wires=[0])
         self.assertEqual(len(subset_probs), 2)
         self.assertAlmostEqual(float(np.sum(subset_probs)), 1.0)

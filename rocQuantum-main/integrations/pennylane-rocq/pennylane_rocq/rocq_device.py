@@ -294,6 +294,8 @@ class RocQDevice(QubitDevice):
     def analytic_probability(self, wires=None):
         if self._state is None: return None
         all_probs = np.abs(self._state) ** 2
-        if wires is None: return all_probs
-        wires_to_trace = [i for i, w in enumerate(self.wires) if w not in wires]
+        if wires is None or len(wires) == 0: return all_probs
+        requested_wires = set(getattr(wires, "labels", wires))
+        wires_to_trace = [i for i, w in enumerate(self.wires) if w not in requested_wires]
+        if not wires_to_trace: return all_probs
         return self.marginal_prob(all_probs, wires_to_trace)

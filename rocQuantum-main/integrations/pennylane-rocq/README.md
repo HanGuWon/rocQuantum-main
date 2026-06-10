@@ -7,7 +7,7 @@ This package provides a PennyLane device that uses the [rocQuantum-1](https://gi
 ## Features
 
 - **High-performance statevector simulation**: Leverages the rocQuantum C++ backend for fast and efficient calculations.
-- **Full PennyLane Integration**: Supports core PennyLane measurement types, including `qml.state()`, `qml.counts()`, Pauli `qml.expval()`, and Pauli `qml.var()`.
+- **Full PennyLane Integration**: Supports core PennyLane measurement types, including `qml.state()`, `qml.probs()`, `qml.counts()`, Pauli `qml.expval()`, and Pauli `qml.var()`.
 - **Hardware-like Sampling**: Simulates measurement shots to provide realistic count dictionaries.
 - **Lightning-style Plugin Aliases**: Registers `lightning.rocq` and `lightning.rocm` in addition to `rocquantum.qpu` and the historical `rocq.pennylane` alias.
 
@@ -32,7 +32,7 @@ PennyLane will automatically discover the `lightning.rocq`, `lightning.rocm`, `r
 - Verified in adapter tests against PennyLane `0.45.0`.
 - The package can be imported before `rocquantum_bind` is present; device creation raises a clear binding-install error.
 - `lightning.rocq` / `lightning.rocm` are compatibility entry points intended to mirror the user experience of PennyLane Lightning devices on AMD GPUs. They currently share the rocQuantum `QubitDevice` adapter; full Lightning.GPU parity still requires native adjoint differentiation, batching, and ROCm E2E performance validation.
-- The current device is a legacy `QubitDevice` adapter behind PennyLane's compatibility facade. It exposes `qml.state()`, finite-shot `qml.sample()` / `qml.counts()` through `QuantumSimulator.measure()`, native analytic Pauli and Pauli-Hamiltonian expectation / variance through `QuantumSimulator.expectation_pauli_string()`, direct native dispatch for `RX` / `RY` / `RZ` and `Rot` decomposition, and statevector fallbacks for older bindings.
+- The current device is a legacy `QubitDevice` adapter behind PennyLane's compatibility facade. It exposes `qml.state()`, full-wire and marginal `qml.probs()`, finite-shot `qml.sample()` / `qml.counts()` through `QuantumSimulator.measure()`, native analytic Pauli and Pauli-Hamiltonian expectation / variance through `QuantumSimulator.expectation_pauli_string()`, direct native dispatch for `RX` / `RY` / `RZ` and `Rot` decomposition, and statevector fallbacks for older bindings.
 - PennyLane parameter-shift gradients can run through the plugin for supported parametric gates and Pauli expectations. This is not yet equivalent to Lightning.GPU's native adjoint differentiation path.
 
 ## Usage Example
