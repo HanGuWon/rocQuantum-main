@@ -480,6 +480,19 @@ def _apply_ecr(runtime, wire_indices):
     runtime.apply_operation("RX", [control], [np.pi / 2])
 
 
+def _apply_single_excitation(runtime, wire_indices, theta):
+    if len(wire_indices) != 2:
+        raise ValueError("SingleExcitation requires exactly two wires.")
+
+    left, right = wire_indices
+    runtime.apply_operation("H", [left])
+    runtime.apply_operation("CNOT", [left, right])
+    runtime.apply_operation("RY", [left], [-theta / 2])
+    runtime.apply_operation("RY", [right], [-theta / 2])
+    runtime.apply_operation("CNOT", [left, right])
+    runtime.apply_operation("H", [left])
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -770,6 +783,20 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_phase_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_ecr(self._runtime, wire_indices)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "SingleExcitation":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_parametric_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_single_excitation(self._runtime, wire_indices, theta)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
