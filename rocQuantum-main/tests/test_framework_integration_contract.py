@@ -177,6 +177,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"Hadamard\"", source)
         self.assertIn("\"SparseHamiltonian\"", source)
         self.assertIn("observable.name == \"Hadamard\"", source)
+        self.assertIn("_native_sparse_hamiltonian_moments", source)
+        self.assertIn("runtime.sparse_hamiltonian_moments", source)
         self.assertIn("_sparse_hamiltonian_moments", source)
         self.assertIn("sparse_matrix(wire_order=wire_order, format=\"csr\")", source)
         self.assertIn("rotation_ops = list(rotations or [])", source)

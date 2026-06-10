@@ -20,6 +20,7 @@ if _PROJECT_ROOT not in sys.path:
 
 class _FakeQuantumSimulator:
     instances = []
+    enable_sparse_moments = False
 
     def __init__(self, num_qubits):
         self._num_qubits = int(num_qubits)
@@ -29,6 +30,7 @@ class _FakeQuantumSimulator:
         self.statevectors = []
         self.measurements = []
         self.expectations = []
+        self.sparse_moments = []
         self.statevector_reads = 0
         self.total_gate_applications = 0
         self.total_matrix_applications = 0
@@ -40,6 +42,7 @@ class _FakeQuantumSimulator:
         self.statevectors.clear()
         self.measurements.clear()
         self.expectations.clear()
+        self.sparse_moments.clear()
         self.statevector_reads = 0
         self._measured = False
 
@@ -90,6 +93,19 @@ class _FakeQuantumSimulator:
             return 0.25
         return 0.0
 
+    def sparse_hamiltonian_moments(self, data, indices, indptr, shape):
+        if not self.enable_sparse_moments:
+            raise NotImplementedError("native sparse Hamiltonian moments disabled")
+        self.sparse_moments.append(
+            (
+                np.asarray(data, dtype=np.complex128),
+                np.asarray(indices, dtype=np.int64),
+                np.asarray(indptr, dtype=np.int64),
+                tuple(shape),
+            )
+        )
+        return 1.0 + 0.0j, 1.0 + 0.0j
+
     def ApplyGate(self, *args):
         self.ops.append(("legacy", args, ()))
 
@@ -106,6 +122,7 @@ def _install_fake_binding(monkeypatch):
     fake.QSim = _FakeQuantumSimulator
     monkeypatch.setitem(sys.modules, "rocquantum_bind", fake)
     _FakeQuantumSimulator.instances.clear()
+    _FakeQuantumSimulator.enable_sparse_moments = False
     return fake
 
 
@@ -1196,6 +1213,46 @@ def test_pennylane_sparse_hamiltonian_uses_sparse_statevector_fallback(monkeypat
     var_sim = _FakeQuantumSimulator.instances[-1]
     assert var_sim.expectations == []
     assert var_sim.statevector_reads == 1
+
+
+def test_pennylane_sparse_hamiltonian_prefers_native_csr_moments(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_sparse_moments", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def expval_circuit():
+        return qml.expval(observable)
+
+    @qml.qnode(dev)
+    def var_circuit():
+        return qml.var(observable)
+
+    assert expval_circuit() == pytest.approx(1.0)
+    expval_sim = _FakeQuantumSimulator.instances[-1]
+    assert expval_sim.statevector_reads == 0
+    assert len(expval_sim.sparse_moments) == 1
+
+    assert var_circuit() == pytest.approx(0.0)
+    var_sim = _FakeQuantumSimulator.instances[-1]
+    assert var_sim.statevector_reads == 0
+    assert len(var_sim.sparse_moments) == 1
+
+    data, indices, indptr, shape = var_sim.sparse_moments[0]
+    np.testing.assert_allclose(data, np.array([1.0, -1.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+    assert shape == (2, 2)
 
 
 def test_pennylane_hadamard_observable_uses_native_pauli_terms(monkeypatch):

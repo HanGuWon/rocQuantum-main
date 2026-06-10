@@ -362,3 +362,37 @@ class RocQuantumRuntime:
             return float(legacy(str(pauli_string), normalized_targets))
 
         return expectation_from_statevector(self.statevector(), str(pauli_string), normalized_targets)
+
+    def sparse_hamiltonian_moments(
+        self,
+        data: object,
+        indices: object,
+        indptr: object,
+        shape: Iterable[int],
+    ) -> tuple[complex, complex]:
+        normalized_data = np.ascontiguousarray(np.asarray(data, dtype=np.complex128).reshape(-1))
+        normalized_indices = np.ascontiguousarray(np.asarray(indices, dtype=np.int64).reshape(-1))
+        normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
+        normalized_shape = tuple(int(dim) for dim in shape)
+
+        native = getattr(self.simulator, "sparse_hamiltonian_moments", None)
+        if callable(native):
+            mean, second_moment = native(
+                normalized_data,
+                normalized_indices,
+                normalized_indptr,
+                normalized_shape,
+            )
+            return complex(mean), complex(second_moment)
+
+        legacy = getattr(self.simulator, "SparseHamiltonianMoments", None)
+        if callable(legacy):
+            mean, second_moment = legacy(
+                normalized_data,
+                normalized_indices,
+                normalized_indptr,
+                normalized_shape,
+            )
+            return complex(mean), complex(second_moment)
+
+        raise NotImplementedError("The active rocQuantum binding does not expose sparse Hamiltonian moments.")

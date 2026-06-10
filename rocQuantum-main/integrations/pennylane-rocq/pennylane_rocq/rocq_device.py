@@ -222,6 +222,16 @@ def _sparse_hamiltonian_moments(state, observable, wire_order):
     return mean, second_moment
 
 
+def _native_sparse_hamiltonian_moments(runtime, observable, wire_order):
+    sparse_matrix = observable.sparse_matrix(wire_order=wire_order, format="csr")
+    return runtime.sparse_hamiltonian_moments(
+        sparse_matrix.data,
+        sparse_matrix.indices,
+        sparse_matrix.indptr,
+        sparse_matrix.shape,
+    )
+
+
 def _shot_count(shots):
     total_shots = getattr(shots, "total_shots", None)
     if total_shots is not None:
@@ -1173,7 +1183,10 @@ class RocQDevice(QubitDevice):
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
         if observable.name == "SparseHamiltonian":
-            mean, _ = _sparse_hamiltonian_moments(self._ensure_state(), observable, self.wires)
+            try:
+                mean, _ = _native_sparse_hamiltonian_moments(self._runtime, observable, self.wires)
+            except NotImplementedError:
+                mean, _ = _sparse_hamiltonian_moments(self._ensure_state(), observable, self.wires)
             return _real_measurement_result(mean, "Expectation value")
 
         terms = _pauli_terms_from_observable(observable, self.wire_map)
@@ -1189,7 +1202,14 @@ class RocQDevice(QubitDevice):
             return super().var(observable, shot_range=shot_range, bin_size=bin_size)
 
         if observable.name == "SparseHamiltonian":
-            mean, second_moment = _sparse_hamiltonian_moments(self._ensure_state(), observable, self.wires)
+            try:
+                mean, second_moment = _native_sparse_hamiltonian_moments(
+                    self._runtime,
+                    observable,
+                    self.wires,
+                )
+            except NotImplementedError:
+                mean, second_moment = _sparse_hamiltonian_moments(self._ensure_state(), observable, self.wires)
             return _real_measurement_result(second_moment - mean * mean, "Variance")
 
         terms = _pauli_terms_from_observable(observable, self.wire_map)
