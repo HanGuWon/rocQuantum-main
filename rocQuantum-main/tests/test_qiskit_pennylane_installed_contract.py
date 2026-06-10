@@ -1213,7 +1213,8 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
         qml.IsingXX(0.3, wires=[0, 1])
         qml.IsingYY(0.4, wires=[0, 1])
         qml.IsingZZ(0.5, wires=[0, 1])
-        qml.CRot(0.6, 0.7, 0.8, wires=[0, 1])
+        qml.IsingXY(0.6, wires=[0, 1])
+        qml.CRot(0.7, 0.8, 0.9, wires=[0, 1])
         qml.Toffoli(wires=[0, 1, 2])
         return qml.state()
 
@@ -1240,6 +1241,16 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
         ("CNOT", (0, 1), ()),
         ("RZ", (1,), (0.5,)),
         ("CNOT", (0, 1), ()),
+        ("H", (0,), ()),
+        ("SDG", (1,), ()),
+        ("CNOT", (0, 1), ()),
+        ("S", (1,), ()),
+        ("RY", (0,), (0.3,)),
+        ("RX", (1,), (-0.3,)),
+        ("SDG", (1,), ()),
+        ("CNOT", (0, 1), ()),
+        ("S", (1,), ()),
+        ("H", (0,), ()),
         ("MCX", (0, 1, 2), ()),
     ]
     assert [targets for _, targets in sim.matrices] == [

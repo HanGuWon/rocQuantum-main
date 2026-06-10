@@ -381,6 +381,19 @@ def _apply_isingyy(runtime, wire_indices, theta):
         runtime.apply_operation("RX", [wire_index], [-np.pi / 2])
 
 
+def _apply_isingxy(runtime, wire_indices, theta):
+    if len(wire_indices) != 2:
+        raise ValueError("IsingXY requires exactly two wires.")
+
+    left, right = wire_indices
+    runtime.apply_operation("H", [left])
+    _apply_cy(runtime, wire_indices)
+    runtime.apply_operation("RY", [left], [theta / 2])
+    runtime.apply_operation("RX", [right], [-theta / 2])
+    _apply_cy(runtime, wire_indices)
+    runtime.apply_operation("H", [left])
+
+
 def _apply_cy(runtime, wire_indices):
     if len(wire_indices) != 2:
         raise ValueError("CY requires exactly two wires.")
@@ -664,6 +677,20 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_parametric_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_isingyy(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "IsingXY":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_parametric_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_isingxy(self._runtime, wire_indices, theta)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
