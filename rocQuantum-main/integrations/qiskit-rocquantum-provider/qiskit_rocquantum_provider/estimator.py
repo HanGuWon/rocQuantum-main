@@ -141,13 +141,23 @@ class RocQuantumEstimator(BaseEstimatorV2):
         evs = np.empty(pub.shape, dtype=float)
         stds = np.zeros(pub.shape, dtype=float)
         bound_circuits = np.asarray(pub.parameter_values.bind_all(pub.circuit), dtype=object)
+        indices_by_parameter = {}
 
         for index in np.ndindex(pub.shape):
-            observable_index = _index_for_shape(index, pub.observables.shape)
             parameter_index = _index_for_shape(index, pub.parameter_values.shape)
+            indices_by_parameter.setdefault(parameter_index, []).append(index)
+
+        for parameter_index, indices in indices_by_parameter.items():
             circuit = bound_circuits[parameter_index]
-            observable = pub.observables[observable_index]
-            evs[index] = self._backend.estimate_expectation(circuit, observable)
+            self._backend._apply_circuit(circuit, include_global_phase=False)
+            for index in indices:
+                observable_index = _index_for_shape(index, pub.observables.shape)
+                observable = pub.observables[observable_index]
+                evs[index] = estimate_pauli_observable(
+                    self._backend._runtime,
+                    observable,
+                    circuit.num_qubits,
+                )
 
         if pub.shape == ():
             evs = evs[()]

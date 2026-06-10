@@ -29,6 +29,8 @@ class _FakeQuantumSimulator:
         self.measurements = []
         self.expectations = []
         self.statevector_reads = 0
+        self.total_gate_applications = 0
+        self.total_matrix_applications = 0
         _FakeQuantumSimulator.instances.append(self)
 
     def reset(self):
@@ -43,9 +45,11 @@ class _FakeQuantumSimulator:
         return self._num_qubits
 
     def apply_gate(self, name, targets, params=None):
+        self.total_gate_applications += 1
         self.ops.append((name, tuple(targets), tuple(params or ())))
 
     def apply_matrix(self, matrix, targets):
+        self.total_matrix_applications += 1
         self.matrices.append((np.asarray(matrix, dtype=np.complex128), tuple(targets)))
 
     def measure(self, qubits, shots):
@@ -611,6 +615,32 @@ def test_qiskit_native_estimator_binds_parameter_values(monkeypatch):
     np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
     np.testing.assert_allclose(result.data.stds, np.array([0.0, 0.0]))
     assert _FakeQuantumSimulator.instances[-1].ops == [("RY", (0,), (0.2,))]
+
+
+def test_qiskit_native_estimator_reuses_bound_circuit_for_observable_batch(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+    observables = [
+        SparsePauliOp.from_list([("Z", 1.0)]),
+        SparsePauliOp.from_list([("X", 1.0)]),
+    ]
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observables)],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("H", (0,), ())]
+    assert sim.total_gate_applications == 1
+    assert sim.expectations == [("Z", (0,)), ("X", (0,))]
 
 
 def test_qiskit_provider_estimates_sparse_pauli_observable_natively(monkeypatch):

@@ -16,6 +16,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Modern Job Contract**: `backend.run()` returns a synchronous Qiskit `Job` object whose `result()` method returns the `Result`.
 - **Primitive Factories**: `RocQuantumProvider.get_sampler()` and `get_estimator()` return native rocQuantum `SamplerV2` / `EstimatorV2` implementations that avoid generic backend wrapper overhead on the default path.
 - **Native Pauli Expectations**: `RocQuantumProvider.estimate_expectation()` evaluates Qiskit `SparsePauliOp`/`Pauli` observables through the rocQuantum Pauli-string expectation path.
+- **Estimator Observable Batching**: `RocQuantumEstimator` applies each bound circuit once per parameter point and evaluates all broadcasted observables on that state, reducing redundant GPU kernel work for VQE-style observable batches.
 
 ## Installation
 
@@ -44,6 +45,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 - `reset` is target-visible and accepted only before the target qubit has been operated on, where it is a no-op from the all-zero initial state. Mid-circuit `reset` and later `initialize()` are rejected with explicit diagnostics.
 - Qiskit control-flow operations (`if_else`, `for_loop`, `while_loop`, `switch_case`, break/continue) and classically conditioned operations are rejected explicitly. Dynamic-circuit support needs runtime-level non-unitary/classical-control semantics first.
 - Qiskit sampler support defaults to `RocQuantumSampler`, a native `SamplerV2` over `QuantumSimulator.measure()`; estimator support defaults to `RocQuantumEstimator`, a native deterministic `EstimatorV2` over `QuantumSimulator.expectation_pauli_string()`. Pass `native=False` to `get_sampler()` / `get_estimator()` to request Qiskit's generic backend wrappers.
+- `RocQuantumEstimator` groups broadcast entries by parameter index, so a pub with one bound circuit and many observables reuses the prepared simulator state instead of reapplying the circuit for each observable.
 - Direct Pauli expectation support accepts `SparsePauliOp`, `Pauli`, Pauli label strings, and `(label, coeff)` term lists.
 - `backend.run()` defaults to sampling without pre-measurement statevector readback, avoiding a full host transfer on larger GPU simulations. Pass `statevector=True` or include a `save_statevector` marker when state output is needed.
 - `backend.run(..., sampling=False)` skips measurement and counts formatting for statevector-only workloads.

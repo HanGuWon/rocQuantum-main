@@ -119,7 +119,9 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("EstimatorPub.coerce", source)
         self.assertIn("_canonical_observable_label", source)
         self.assertIn("_combine_observable_terms", source)
-        self.assertIn("estimate_expectation", source)
+        self.assertIn("indices_by_parameter", source)
+        self.assertIn("self._backend._apply_circuit", source)
+        self.assertIn("estimate_pauli_observable", source)
         self.assertIn("shots\": 0", source)
 
     def test_qiskit_sampler_uses_native_sampling(self):
