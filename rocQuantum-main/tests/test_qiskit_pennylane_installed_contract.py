@@ -586,6 +586,39 @@ def test_pennylane_common_gates_use_matrix_fallback_without_decomposition(monkey
     ]
 
 
+def test_pennylane_matrix_fallback_converts_wire_order_for_rocquantum(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    pennylane_cnot_matrix = qml.matrix(qml.CNOT(wires=[0, 1]))
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.QubitUnitary(pennylane_cnot_matrix, wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    matrix, targets = _FakeQuantumSimulator.instances[-1].matrices[0]
+
+    expected_local_little_endian = np.array(
+        [
+            [1, 0, 0, 0],
+            [0, 0, 0, 1],
+            [0, 0, 1, 0],
+            [0, 1, 0, 0],
+        ],
+        dtype=np.complex128,
+    )
+    assert targets == (0, 1)
+    np.testing.assert_allclose(matrix, expected_local_little_endian)
+
+
 def test_pennylane_extended_gates_use_matrix_fallback(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

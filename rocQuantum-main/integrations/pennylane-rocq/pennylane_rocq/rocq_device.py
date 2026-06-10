@@ -10,6 +10,7 @@ except ImportError:
 
 from rocquantum.framework_runtime import (
     RocQuantumRuntime,
+    matrix_to_little_endian_wires,
     sample_rows_from_statevector,
     samples_to_binary_rows,
 )
@@ -234,11 +235,11 @@ class RocQDevice(QubitDevice):
                 try:
                     self._runtime.apply_operation(gate_name, wire_indices, getattr(op, "parameters", []))
                 except NotImplementedError:
-                    matrix = qml.matrix(op)
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
                         "QubitUnitary",
                         wire_indices,
-                        matrix=matrix.astype(np.complex128),
+                        matrix=matrix,
                     )
             elif gate_name == "Rot":
                 try:
@@ -247,18 +248,18 @@ class RocQDevice(QubitDevice):
                     self._runtime.apply_operation("RY", wire_indices, [theta])
                     self._runtime.apply_operation("RZ", wire_indices, [omega])
                 except NotImplementedError:
-                    matrix = qml.matrix(op)
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
                         "QubitUnitary",
                         wire_indices,
-                        matrix=matrix.astype(np.complex128),
+                        matrix=matrix,
                     )
             elif gate_name in MATRIX_OPS:
-                matrix = qml.matrix(op)
+                matrix = matrix_to_little_endian_wires(qml.matrix(op))
                 self._runtime.apply_operation(
                     gate_name,
                     wire_indices,
-                    matrix=matrix.astype(np.complex128),
+                    matrix=matrix,
                 )
             else:
                 raise NotImplementedError(f"Operation {gate_name} not supported.")

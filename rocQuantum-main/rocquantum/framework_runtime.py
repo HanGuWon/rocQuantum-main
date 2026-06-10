@@ -63,6 +63,29 @@ def as_complex_matrix(matrix: object) -> np.ndarray:
     return np.ascontiguousarray(out)
 
 
+def _reverse_bits(value: int, width: int) -> int:
+    out = 0
+    for bit in range(width):
+        if (int(value) >> bit) & 1:
+            out |= 1 << (width - 1 - bit)
+    return out
+
+
+def matrix_to_little_endian_wires(matrix: object) -> np.ndarray:
+    """Convert a wire-ordered matrix to rocQuantum's local little-endian basis."""
+    normalized = as_complex_matrix(matrix)
+    dimension = normalized.shape[0]
+    if dimension == 0 or dimension & (dimension - 1):
+        raise ValueError("Operation matrix dimension must be a power of two.")
+
+    num_wires = int(np.log2(dimension))
+    if num_wires <= 1:
+        return normalized
+
+    permutation = np.array([_reverse_bits(index, num_wires) for index in range(dimension)])
+    return np.ascontiguousarray(normalized[np.ix_(permutation, permutation)])
+
+
 def samples_to_binary_rows(raw_samples: Sequence[int], num_wires: int) -> np.ndarray:
     return np.array(
         [[(int(sample) >> bit) & 1 for bit in range(num_wires)] for sample in raw_samples],
