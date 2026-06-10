@@ -14,13 +14,14 @@ from abc import ABC, abstractmethod
 # --- rocQuantum Imports ---
 try:
     import rocq
-    from rocq.operator import PauliOperator
+    from rocq.operator import PauliOperator, QuantumOperator
     from rocq.kernel import QuantumKernel, observe
 except ImportError:
     # Fallback: allow module to be imported for inspection even if rocq
     # is not installed in the current environment.
     rocq = None  # type: ignore
     PauliOperator = None  # type: ignore
+    QuantumOperator = None  # type: ignore
     QuantumKernel = None  # type: ignore
     observe = None  # type: ignore
 
@@ -137,7 +138,7 @@ class VQE_Solver:
     def _objective_function(
         self,
         params: np.ndarray,
-        hamiltonian: PauliOperator,
+        hamiltonian: QuantumOperator,
         ansatz_kernel: AnsatzKernel,
         num_qubits: int
     ) -> float:
@@ -165,7 +166,7 @@ class VQE_Solver:
     def estimate_gradient(
         self,
         params: np.ndarray,
-        hamiltonian: PauliOperator,
+        hamiltonian: QuantumOperator,
         ansatz_kernel: AnsatzKernel,
         num_qubits: int,
         method: str = "parameter_shift",
@@ -197,7 +198,7 @@ class VQE_Solver:
 
     def solve(
         self,
-        hamiltonian: PauliOperator,
+        hamiltonian: QuantumOperator,
         ansatz_kernel: AnsatzKernel,
         num_qubits: int,
         initial_params: np.ndarray

@@ -5,7 +5,7 @@ This package is an experimental, minimal higher-level layer over the canonical
 
 Current supported subset:
 
-- `VQE_Solver` evaluates Pauli-observable objectives through `rocq.observe()`.
+- `VQE_Solver` evaluates canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, and full-state CSR sparse observables on the state-vector backend.
 - `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`.
 - `make_maxcut_qaoa_kernel()` builds a MaxCut-style QAOA ansatz using H, CNOT,
   RZ, and RX gates.
@@ -36,5 +36,6 @@ energy = solver._objective_function(
 gradient = solver.estimate_gradient(np.array([0.25]), PauliOperator("Z0"), ansatz, 1)
 ```
 
-For production-grade workflows, this layer still needs richer operators,
-optimizer integration tests on ROCm runners, and broader algorithm coverage.
+For production-grade workflows, this layer still needs richer operator algebra,
+native adjoint differentiation, optimizer integration tests on ROCm runners,
+and broader algorithm coverage.

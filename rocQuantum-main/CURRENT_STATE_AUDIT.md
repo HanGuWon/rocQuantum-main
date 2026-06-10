@@ -154,7 +154,7 @@ What is not real today:
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling is not yet a GPU-fast path; it copies probability information to host before drawing shots.
 - Stabilizer/tableau/Pauli-propagation backends were not found.
-- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient, MaxCut-style QAOA helper, and one 3-qubit repetition-code syndrome round.
+- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, MaxCut-style QAOA helper, and one 3-qubit repetition-code syndrome round.
 
 ## Highest-Risk Overclaims Before This Audit
 

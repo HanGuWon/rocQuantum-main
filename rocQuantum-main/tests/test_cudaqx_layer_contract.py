@@ -35,6 +35,29 @@ class TestVqeSolverContract(unittest.TestCase):
         patched_observe.assert_called_once_with(ansatz, hamiltonian, 0.125, backend="state_vector")
         self.assertEqual(len(solver._intermediate_results), 1)
 
+    def test_objective_accepts_canonical_sparse_operator(self):
+        import rocq
+        from rocq.operator import SparseHamiltonianOperator
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        @rocq.kernel
+        def ansatz(theta):
+            q = rocq.qvec(1)
+            rocq.rx(theta, q[0])
+
+        solver = VQE_Solver(backend="state_vector")
+        hamiltonian = SparseHamiltonianOperator(
+            data=np.array([1.0, -1.0], dtype=np.complex128),
+            indices=np.array([0, 1], dtype=np.int64),
+            indptr=np.array([0, 1, 2], dtype=np.int64),
+            shape=(2, 2),
+        )
+        with mock.patch("rocquantum.solvers.vqe_solver.observe", return_value=-0.5) as patched_observe:
+            energy = solver._objective_function(np.array([0.125]), hamiltonian, ansatz, 1)
+
+        self.assertEqual(energy, -0.5)
+        patched_observe.assert_called_once_with(ansatz, hamiltonian, 0.125, backend="state_vector")
+
     def test_parameter_shift_gradient_is_available(self):
         import rocq
         from rocq.operator import PauliOperator
