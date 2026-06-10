@@ -38,6 +38,7 @@ from qiskit.circuit.library import (
     SXGate,
     SXdgGate,
     SwapGate,
+    StatePreparation,
     TGate,
     PhaseGate,
     UGate,
@@ -47,6 +48,7 @@ from qiskit.circuit.library import (
     ZGate,
     iSwapGate,
 )
+from qiskit.quantum_info import Operator
 
 from rocquantum.framework_runtime import (
     RocQuantumRuntime,
@@ -64,7 +66,7 @@ MATRIX_FALLBACK_OPS = {
     "ccx", "ccz", "ch", "cp", "crx", "cry", "crz", "cswap", "cy",
     "dcx", "ecr", "iswap",
     "p", "rccx", "rcccx", "rxx", "ryy", "rzz",
-    "sx", "sxdg", "u", "unitary",
+    "state_preparation", "sx", "sxdg", "u", "unitary",
 }
 CONTROL_FLOW_OPS = {
     "break_loop", "continue_loop", "for_loop", "if_else", "switch_case", "while_loop",
@@ -76,6 +78,20 @@ def _instruction_condition(instruction):
     if operation_condition is not None:
         return operation_condition
     return getattr(instruction, "condition", None)
+
+
+def _state_preparation_matrix(op):
+    if op.name == "initialize":
+        return Operator(StatePreparation(op.params)).data
+    return Operator(op).data
+
+
+def _operation_matrix(op):
+    if op.name == "state_preparation":
+        return _state_preparation_matrix(op)
+    if op.name in MATRIX_FALLBACK_OPS:
+        return op.to_matrix()
+    return None
 
 
 def _instruction_target(num_qubits):
@@ -209,6 +225,21 @@ class RocQuantumBackend(BackendV2):
                     f"Operation {op.name!r} appears after a measurement."
                 )
 
+            if op.name == "initialize":
+                reset_targets = set(q_indices)
+                if touched_qubits & reset_targets:
+                    raise ValueError(
+                        "RocQuantumBackend only supports initialize before a qubit has been operated on. "
+                        "Later initialize instructions require non-unitary reset support."
+                    )
+                self._runtime.apply_operation(
+                    "state_preparation",
+                    q_indices,
+                    matrix=_state_preparation_matrix(op),
+                )
+                touched_qubits.update(q_indices)
+                continue
+
             if op.name == "reset":
                 reset_targets = set(q_indices)
                 if touched_qubits & reset_targets:
@@ -225,11 +256,15 @@ class RocQuantumBackend(BackendV2):
                 measured_bits[c_index] = q_indices[0]
                 continue
 
-            matrix = op.to_matrix() if op.name in MATRIX_FALLBACK_OPS else None
+            matrix = _operation_matrix(op)
+            if matrix is not None and op.name in {"state_preparation", "unitary"}:
+                params = []
+            else:
+                params = normalize_params(op.params)
             self._runtime.apply_operation(
                 op.name,
                 q_indices,
-                normalize_params(op.params),
+                params,
                 matrix=matrix,
             )
             touched_qubits.update(q_indices)

@@ -425,6 +425,79 @@ def test_qiskit_matrix_fallback_covers_controlled_and_multi_qubit_gates(monkeypa
     assert len(_FakeQuantumSimulator.instances[-1].matrices) == 10
 
 
+def test_qiskit_backend_runs_direct_state_preparation(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1)
+    circuit.prepare_state([0.0, 1.0], 0)
+
+    backend.run(circuit, sampling=False).result()
+
+    matrix, targets = _FakeQuantumSimulator.instances[-1].matrices[0]
+    np.testing.assert_allclose(matrix, np.array([[0, -1], [1, 0]], dtype=np.complex128))
+    assert targets == (0,)
+    assert _FakeQuantumSimulator.instances[-1].ops == []
+
+
+def test_qiskit_backend_runs_initial_initialize_as_state_preparation(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1)
+    circuit.initialize([0.0, 1.0], 0)
+
+    backend.run(circuit, sampling=False).result()
+
+    matrix, targets = _FakeQuantumSimulator.instances[-1].matrices[0]
+    np.testing.assert_allclose(matrix, np.array([[0, -1], [1, 0]], dtype=np.complex128))
+    assert targets == (0,)
+    assert _FakeQuantumSimulator.instances[-1].ops == []
+
+
+def test_qiskit_backend_rejects_initialize_after_operation(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1)
+    circuit.x(0)
+    circuit.initialize([1.0, 0.0], 0)
+
+    with pytest.raises(ValueError, match="initialize before a qubit has been operated on"):
+        backend.run(circuit).result()
+
+
+def test_qiskit_backend_runs_direct_unitary_without_parameter_normalization(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    unitary = np.array([[0, 1], [1, 0]], dtype=np.complex128)
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1)
+    circuit.unitary(unitary, [0])
+
+    backend.run(circuit, sampling=False).result()
+
+    matrix, targets = _FakeQuantumSimulator.instances[-1].matrices[0]
+    np.testing.assert_allclose(matrix, unitary)
+    assert targets == (0,)
+
+
 def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
