@@ -458,6 +458,115 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
     assert sim.matrices == []
 
 
+def test_qiskit_pauli_evolution_decomposes_single_pauli_string_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import PauliEvolutionGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(3)
+    circuit.append(
+        PauliEvolutionGate(SparsePauliOp.from_list([("XYZ", 1.0)]), time=0.2),
+        [0, 1, 2],
+    )
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("RX", (1,), (np.pi / 2,)),
+        ("H", (2,), ()),
+        ("CNOT", (0, 2), ()),
+        ("CNOT", (1, 2), ()),
+        ("RZ", (2,), (0.4,)),
+        ("CNOT", (1, 2), ()),
+        ("CNOT", (0, 2), ()),
+        ("RX", (1,), (-np.pi / 2,)),
+        ("H", (2,), ()),
+    ]
+    assert sim.matrices == []
+
+
+def test_qiskit_pauli_evolution_single_pauli_uses_direct_rotation(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import PauliEvolutionGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(3)
+    circuit.append(PauliEvolutionGate(SparsePauliOp.from_list([("XII", 0.5)]), time=0.2), [0, 1, 2])
+    circuit.append(PauliEvolutionGate(SparsePauliOp.from_list([("IYI", -1.5)]), time=0.2), [0, 1, 2])
+    circuit.append(PauliEvolutionGate(SparsePauliOp.from_list([("IIZ", 2.0)]), time=0.2), [0, 1, 2])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("RX", (2,), (0.2,)),
+        ("RY", (1,), (-0.6000000000000001,)),
+        ("RZ", (0,), (0.8,)),
+    ]
+    assert sim.matrices == []
+
+
+def test_qiskit_pauli_evolution_decomposes_commuting_sum_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import PauliEvolutionGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2)
+    circuit.append(
+        PauliEvolutionGate(
+            SparsePauliOp.from_list([("ZI", 0.5), ("IZ", -1.5)]),
+            time=0.2,
+        ),
+        [0, 1],
+    )
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("RZ", (1,), (0.2,)),
+        ("RZ", (0,), (-0.6000000000000001,)),
+    ]
+    assert sim.matrices == []
+
+
+def test_qiskit_pauli_evolution_preserves_identity_global_phase_for_statevector(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import PauliEvolutionGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1)
+    circuit.append(PauliEvolutionGate(SparsePauliOp.from_list([("I", 2.0)]), time=0.3), [0])
+
+    backend.run(circuit, sampling=False, statevector=True).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == []
+    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [((2, 2), (0,))]
+    np.testing.assert_allclose(sim.matrices[0][0], np.eye(2) * np.exp(-0.6j))
+
+
 def test_qiskit_phase_decomposition_preserves_statevector_global_phase(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

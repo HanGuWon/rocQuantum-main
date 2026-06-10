@@ -26,6 +26,7 @@ Audit refresh note (2026-06-10):
 - Qiskit `sx` / `sxdg` / `tdg` / `u` now use exact native single-qubit rotation decompositions, including global phase only for statevector-producing runs.
 - Qiskit `p` / `cp` now use exact native `rz` / `cx` decompositions, including global phase only for statevector-producing runs and skipping it on sampling / estimator paths.
 - Qiskit `rxx` / `ryy` / `rzz` and PennyLane `qml.IsingXX` / `qml.IsingYY` / `qml.IsingXY` / `qml.IsingZZ` now use exact native CNOT/rotation decompositions instead of dense two-qubit matrix dispatch.
+- Direct Qiskit `PauliEvolutionGate` operations for single Pauli strings and commuting Pauli sums now use exact native rotation / `MultiRZ` decompositions instead of dense matrix dispatch.
 - PennyLane `qml.SingleExcitation` and `qml.DoubleExcitation` now use exact native `H` / `CNOT` / `RY` decompositions instead of dense two- and four-qubit matrix dispatch.
 - PennyLane `qml.SingleExcitationPlus` / `qml.SingleExcitationMinus` now use exact native decompositions with one-qubit global-phase matrices instead of dense two-qubit matrix dispatch.
 - PennyLane `qml.DoubleExcitationPlus` / `qml.DoubleExcitationMinus` now use exact global-phase plus Z-string `MultiRZ` phase corrections and native `DoubleExcitation` decomposition instead of dense four-qubit matrix dispatch.

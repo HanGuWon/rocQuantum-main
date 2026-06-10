@@ -114,6 +114,44 @@ def _operation_matrix(op):
     return _automatic_operation_matrix(op)
 
 
+def _pauli_labels_commute(left, right):
+    anti_commuting_positions = 0
+    for left_pauli, right_pauli in zip(str(left).upper(), str(right).upper()):
+        if left_pauli == "I" or right_pauli == "I" or left_pauli == right_pauli:
+            continue
+        anti_commuting_positions += 1
+    return anti_commuting_positions % 2 == 0
+
+
+def _pauli_evolution_terms(op):
+    operator = getattr(op, "operator", None)
+    if operator is None or isinstance(operator, list):
+        return None
+
+    if hasattr(operator, "to_list"):
+        terms = [(str(label).upper(), complex(coeff)) for label, coeff in operator.to_list()]
+    elif hasattr(operator, "to_label"):
+        terms = [(str(operator.to_label()).upper(), 1.0 + 0.0j)]
+    else:
+        return None
+
+    if not terms:
+        return []
+
+    label_length = len(terms[0][0])
+    if any(len(label) != label_length for label, _ in terms):
+        return None
+    if any(abs(complex(coeff).imag) > 1e-12 for _, coeff in terms):
+        return None
+
+    for index, (left_label, _) in enumerate(terms):
+        for right_label, _ in terms[index + 1:]:
+            if not _pauli_labels_commute(left_label, right_label):
+                return None
+
+    return terms
+
+
 def _instruction_target(num_qubits):
     target = Target(num_qubits=int(num_qubits))
     target.add_instruction(CCXGate(), name="ccx")
@@ -259,6 +297,61 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("rz", [target], [theta])
         self._runtime.apply_operation("cx", [control, target])
 
+    def _apply_multirz_gate(self, q_indices, theta):
+        if not q_indices:
+            raise ValueError("Qiskit MultiRZ decomposition requires at least one active qubit.")
+        if len(q_indices) == 1:
+            self._runtime.apply_operation("rz", [q_indices[0]], [theta])
+            return
+
+        target = q_indices[-1]
+        for control in q_indices[:-1]:
+            self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation("rz", [target], [theta])
+        for control in reversed(q_indices[:-1]):
+            self._runtime.apply_operation("cx", [control, target])
+
+    def _apply_pauli_rotation_gate(self, q_indices, label, theta):
+        if len(label) != len(q_indices):
+            raise ValueError("PauliEvolution label length must match the target qubits.")
+
+        active = [
+            (q_indices[local_index], pauli)
+            for local_index, pauli in enumerate(reversed(str(label).upper()))
+            if pauli != "I"
+        ]
+        if not active:
+            return False
+        if len(active) == 1:
+            qubit, pauli = active[0]
+            if pauli == "X":
+                self._runtime.apply_operation("rx", [qubit], [theta])
+            elif pauli == "Y":
+                self._runtime.apply_operation("ry", [qubit], [theta])
+            elif pauli == "Z":
+                self._runtime.apply_operation("rz", [qubit], [theta])
+            else:
+                raise ValueError("PauliEvolution labels may only contain I, X, Y, or Z.")
+            return True
+
+        for qubit, pauli in active:
+            if pauli == "X":
+                self._runtime.apply_operation("h", [qubit])
+            elif pauli == "Y":
+                self._runtime.apply_operation("rx", [qubit], [cmath.pi / 2])
+            elif pauli != "Z":
+                raise ValueError("PauliEvolution labels may only contain I, X, Y, or Z.")
+
+        self._apply_multirz_gate([qubit for qubit, _ in active], theta)
+
+        for qubit, pauli in active:
+            if pauli == "X":
+                self._runtime.apply_operation("h", [qubit])
+            elif pauli == "Y":
+                self._runtime.apply_operation("rx", [qubit], [-cmath.pi / 2])
+
+        return True
+
     def _apply_rxx_gate(self, q_indices, theta):
         if len(q_indices) != 2:
             raise ValueError("Qiskit rxx gate requires exactly two qubits.")
@@ -277,6 +370,26 @@ class RocQuantumBackend(BackendV2):
         self._apply_rzz_gate(q_indices, theta)
         for qubit in q_indices:
             self._runtime.apply_operation("rx", [qubit], [-cmath.pi / 2])
+
+    def _apply_pauli_evolution_gate(self, op, q_indices, *, include_global_phase):
+        terms = _pauli_evolution_terms(op)
+        if terms is None:
+            return False
+
+        (time,) = normalize_params(op.params)
+        applied = False
+        for label, coeff in terms:
+            coeff = complex(coeff).real
+            if set(str(label).upper()) <= {"I"}:
+                if include_global_phase:
+                    self._apply_global_phase_value(-float(time) * coeff)
+                applied = True
+                continue
+
+            theta = 2.0 * float(time) * coeff
+            applied = self._apply_pauli_rotation_gate(q_indices, label, theta) or applied
+
+        return applied
 
     def _apply_sx_gate(self, q_indices, *, inverse=False, include_global_phase):
         if len(q_indices) != 1:
@@ -566,6 +679,18 @@ class RocQuantumBackend(BackendV2):
                     self._apply_rzz_gate(q_indices, theta)
                 touched_qubits.update(q_indices)
                 continue
+
+            if op.name == "PauliEvolution" and self._supports_native_parametric_decomposition():
+                try:
+                    if self._apply_pauli_evolution_gate(
+                        op,
+                        q_indices,
+                        include_global_phase=include_global_phase,
+                    ):
+                        touched_qubits.update(q_indices)
+                        continue
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    pass
 
             if op.name in {"sx", "sxdg", "u"} and self._supports_native_phase_decomposition(include_global_phase):
                 params = normalize_params(op.params)
