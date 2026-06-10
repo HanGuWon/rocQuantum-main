@@ -51,6 +51,17 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("gate_name"),
              py::arg("targets"),
              py::arg("params") = std::vector<double>{})
+        .def("apply_gate_batch",
+             [](rocquantum::QuantumSimulator& self,
+                const std::string& gate_name,
+                const std::vector<unsigned>& targets,
+                const std::vector<double>& params_by_batch) {
+                 self.apply_gate_batch(gate_name, targets, params_by_batch);
+             },
+             py::arg("gate_name"),
+             py::arg("targets"),
+             py::arg("params_by_batch"),
+             "Apply one RX/RY/RZ angle per simulator batch state.")
         .def("apply_matrix",
              [](rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
@@ -280,6 +291,16 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("gate_matrix"),
              py::arg("target_qubit"))
+        .def("ApplyGateBatch",
+             [](rocquantum::QuantumSimulator& self,
+                const std::string& gate_name,
+                const std::vector<unsigned>& targets,
+                const std::vector<double>& params_by_batch) {
+                 self.ApplyGateBatch(gate_name, targets, params_by_batch);
+             },
+             py::arg("gate_name"),
+             py::arg("targets"),
+             py::arg("params_by_batch"))
         .def("ApplyControlledGate",
              [](rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,

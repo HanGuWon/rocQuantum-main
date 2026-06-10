@@ -37,6 +37,12 @@ __global__ void apply_single_qubit_matrix_kernel(rocComplex* state,
                                                  rocComplex m11,
                                                  size_t batchSize);
 
+__global__ void apply_single_qubit_matrix_batch_kernel(rocComplex* state,
+                                                       unsigned numQubits,
+                                                       unsigned targetQubit,
+                                                       const rocComplex* matrices,
+                                                       size_t batchSize);
+
 __global__ void apply_controlled_single_qubit_matrix_kernel(rocComplex* state,
                                                             unsigned numQubits,
                                                             unsigned controlQubit,
@@ -956,6 +962,87 @@ rocqStatus_t launch_single_qubit_matrix(rocsvInternalHandle* handle,
                        m11,
                        handle->batchSize);
     return check_last_hip_error();
+}
+
+rocqStatus_t launch_single_qubit_matrix_batch(rocsvInternalHandle* handle,
+                                              rocComplex* state,
+                                              unsigned numQubits,
+                                              unsigned targetQubit,
+                                              const std::vector<rocComplex>& matrices) {
+    if (!handle || !state || !validate_qubit_index(targetQubit, numQubits)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (matrices.size() != batch_size * 4ULL) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    if (handle->distributedMode && state == handle->d_state) {
+        if (batch_size != 1 || matrices.size() != 4ULL) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+        return launch_single_qubit_matrix(handle,
+                                          state,
+                                          numQubits,
+                                          targetQubit,
+                                          matrices[0],
+                                          matrices[1],
+                                          matrices[2],
+                                          matrices[3]);
+    }
+
+    size_t elements_per_state = 0;
+    if (!compute_power_of_two(numQubits, &elements_per_state)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (elements_per_state < 2) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    const size_t pairs_per_state = elements_per_state >> 1;
+    if (batch_size > std::numeric_limits<size_t>::max() / pairs_per_state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t total_pairs = batch_size * pairs_per_state;
+    if (total_pairs == 0) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    void* d_matrices_void = nullptr;
+    rocqStatus_t status = device_malloc(handle, &d_matrices_void, matrices.size() * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    rocComplex* d_matrices = static_cast<rocComplex*>(d_matrices_void);
+    status = copy_host_to_device(d_matrices,
+                                 matrices.data(),
+                                 matrices.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_matrices);
+        return status;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = static_cast<int>((total_pairs + threads_per_block - 1) / threads_per_block);
+
+    hipLaunchKernelGGL(apply_single_qubit_matrix_batch_kernel,
+                       dim3(blocks > 0 ? blocks : 1),
+                       dim3(threads_per_block),
+                       0,
+                       handle->streams[0],
+                       state,
+                       numQubits,
+                       targetQubit,
+                       d_matrices,
+                       batch_size);
+    status = check_last_hip_error();
+    rocqStatus_t free_status = device_free(handle, d_matrices);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    return free_status;
 }
 
 rocqStatus_t launch_controlled_single_qubit_matrix(rocsvInternalHandle* handle,
@@ -3750,6 +3837,62 @@ rocqStatus_t rocsvApplyT(rocsvHandle_t handle,
 
 // --- Parametrised single-qubit rotations ------------------------------------
 
+enum class RotationAxis {
+    X,
+    Y,
+    Z,
+};
+
+inline rocqStatus_t rocsvApplyRotationBatch(rocsvHandle_t handle,
+                                            rocComplex* d_state,
+                                            unsigned numQubits,
+                                            unsigned targetQubit,
+                                            const double* h_thetas,
+                                            size_t thetaCount,
+                                            RotationAxis axis) {
+    if (!handle || !h_thetas || thetaCount == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (thetaCount != batch_size) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> matrices;
+    matrices.reserve(batch_size * 4ULL);
+    for (size_t batch = 0; batch < batch_size; ++batch) {
+        const double half = h_thetas[batch] / 2.0;
+        const double c = std::cos(half);
+        const double s = std::sin(half);
+        if (axis == RotationAxis::X) {
+            const rocComplex cval = make_complex(c, 0.0);
+            const rocComplex minus_i_s = make_complex(0.0, -s);
+            matrices.push_back(cval);
+            matrices.push_back(minus_i_s);
+            matrices.push_back(minus_i_s);
+            matrices.push_back(cval);
+        } else if (axis == RotationAxis::Y) {
+            matrices.push_back(make_complex(c, 0.0));
+            matrices.push_back(make_complex(-s, 0.0));
+            matrices.push_back(make_complex(s, 0.0));
+            matrices.push_back(make_complex(c, 0.0));
+        } else {
+            matrices.push_back(make_complex(c, -s));
+            matrices.push_back(make_complex(0.0, 0.0));
+            matrices.push_back(make_complex(0.0, 0.0));
+            matrices.push_back(make_complex(c, s));
+        }
+    }
+
+    return launch_single_qubit_matrix_batch(handle, state, numQubits, targetQubit, matrices);
+}
+
 rocqStatus_t rocsvApplyRx(rocsvHandle_t handle,
                           rocComplex* d_state,
                           unsigned numQubits,
@@ -3798,6 +3941,33 @@ rocqStatus_t rocsvApplyRz(rocsvHandle_t handle,
     const rocComplex zero = make_complex(0.0, 0.0);
     return launch_single_qubit_matrix(handle, state, numQubits, targetQubit,
                                       phase_neg, zero, zero, phase_pos);
+}
+
+rocqStatus_t rocsvApplyRxBatch(rocsvHandle_t handle,
+                               rocComplex* d_state,
+                               unsigned numQubits,
+                               unsigned targetQubit,
+                               const double* h_thetas,
+                               size_t thetaCount) {
+    return rocsvApplyRotationBatch(handle, d_state, numQubits, targetQubit, h_thetas, thetaCount, RotationAxis::X);
+}
+
+rocqStatus_t rocsvApplyRyBatch(rocsvHandle_t handle,
+                               rocComplex* d_state,
+                               unsigned numQubits,
+                               unsigned targetQubit,
+                               const double* h_thetas,
+                               size_t thetaCount) {
+    return rocsvApplyRotationBatch(handle, d_state, numQubits, targetQubit, h_thetas, thetaCount, RotationAxis::Y);
+}
+
+rocqStatus_t rocsvApplyRzBatch(rocsvHandle_t handle,
+                               rocComplex* d_state,
+                               unsigned numQubits,
+                               unsigned targetQubit,
+                               const double* h_thetas,
+                               size_t thetaCount) {
+    return rocsvApplyRotationBatch(handle, d_state, numQubits, targetQubit, h_thetas, thetaCount, RotationAxis::Z);
 }
 
 // --- Two-qubit named gates ---------------------------------------------------

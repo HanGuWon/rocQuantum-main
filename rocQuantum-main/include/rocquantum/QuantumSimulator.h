@@ -20,6 +20,9 @@ public:
     void apply_gate(const std::string& gate_name,
                     const std::vector<unsigned>& targets,
                     const std::vector<double>& params = {});
+    void apply_gate_batch(const std::string& gate_name,
+                          const std::vector<unsigned>& targets,
+                          const std::vector<double>& params_by_batch);
     void apply_matrix(const std::vector<std::complex<double>>& matrix,
                       const std::vector<unsigned>& targets);
     void apply_controlled_matrix(const std::vector<std::complex<double>>& matrix,
@@ -52,6 +55,9 @@ public:
     void ApplyGate(const std::string& gate_name, int target_qubit);
     void ApplyGate(const std::string& gate_name, int control_qubit, int target_qubit);
     void ApplyGate(const std::vector<std::complex<double>>& gate_matrix, int target_qubit);
+    void ApplyGateBatch(const std::string& gate_name,
+                        const std::vector<unsigned>& targets,
+                        const std::vector<double>& params_by_batch);
     void ApplyControlledGate(const std::vector<std::complex<double>>& gate_matrix,
                              int control_qubit,
                              int target_qubit);

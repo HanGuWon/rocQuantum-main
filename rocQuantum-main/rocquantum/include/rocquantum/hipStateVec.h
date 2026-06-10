@@ -307,6 +307,27 @@ rocqStatus_t rocsvApplyRy(rocsvHandle_t handle, rocComplex* d_state, unsigned nu
  */
 rocqStatus_t rocsvApplyRz(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, double theta); // theta stays double for API
 
+/**
+ * @brief Applies one Rx rotation per local batch state to the target qubit.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyRxBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one Ry rotation per local batch state to the target qubit.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyRyBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one Rz rotation per local batch state to the target qubit.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyRzBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
 // --- Two Qubit Specific Gates ---
 
 /**

@@ -69,6 +69,13 @@ _HIPSTATEVEC_SOURCE = os.path.join(
     "hipStateVec",
     "hipStateVec.cpp",
 )
+_HIPSTATEVEC_SINGLE_QUBIT_KERNELS = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "single_qubit_kernels.hip",
+)
 _BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "bindings.cpp")
 _LOW_LEVEL_BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
 
@@ -89,6 +96,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def probabilities(self, qubits", source)
         self.assertIn("def probabilities_batch(self, qubits", source)
         self.assertIn("def expectation_pauli_string_batch", source)
+        self.assertIn("def apply_operation_batch", source)
         self.assertIn("def expectation_matrix(self, matrix", source)
         self.assertIn("def set_statevector", source)
 
@@ -125,6 +133,37 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn(".def(\"set_statevectors\"", bindings)
         self.assertIn(".def(\"get_statevectors\"", bindings)
         self.assertIn(".def(\"batch_size\"", bindings)
+
+    def test_public_simulator_exposes_batched_parametric_gates(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_HIPSTATEVEC_HEADER, "r", encoding="utf-8") as f:
+            hip_header = f.read()
+        with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            hip_source = f.read()
+        with open(_HIPSTATEVEC_SINGLE_QUBIT_KERNELS, "r", encoding="utf-8") as f:
+            single_qubit_kernels = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("void apply_gate_batch", header)
+        self.assertIn("void ApplyGateBatch", header)
+        self.assertIn("QuantumSimulator::apply_gate_batch", implementation)
+        self.assertIn("rocsvApplyRxBatch", implementation)
+        self.assertIn("rocsvApplyRyBatch", implementation)
+        self.assertIn("rocsvApplyRzBatch", implementation)
+        self.assertIn("rocsvApplyRxBatch", hip_header)
+        self.assertIn("rocsvApplyRyBatch", hip_header)
+        self.assertIn("rocsvApplyRzBatch", hip_header)
+        self.assertIn("launch_single_qubit_matrix_batch", hip_source)
+        self.assertIn("apply_single_qubit_matrix_batch_kernel", single_qubit_kernels)
+        self.assertIn(".def(\"apply_gate_batch\"", bindings)
+        self.assertIn(".def(\"ApplyGateBatch\"", bindings)
+        self.assertIn("def apply_operation_batch", runtime)
 
     def test_public_simulator_exposes_native_probabilities(self):
         with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:

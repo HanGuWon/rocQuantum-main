@@ -354,6 +354,39 @@ class RocQuantumRuntime:
 
         raise NotImplementedError(f"Operation {name!r} is not supported by rocQuantum bindings.")
 
+    def apply_operation_batch(
+        self,
+        name: str,
+        targets: Iterable[int],
+        params_by_batch: Iterable[object],
+    ) -> None:
+        normalized_targets = normalize_targets(targets)
+        normalized_params = normalize_params(params_by_batch)
+        normalized_name = normalize_gate_name(name)
+        if len(normalized_params) != self.batch_size():
+            raise ValueError("Batch parameter count must equal the simulator batch size.")
+
+        apply_gate_batch = getattr(self.simulator, "apply_gate_batch", None)
+        if callable(apply_gate_batch) and normalized_name in {"RX", "RY", "RZ"}:
+            apply_gate_batch(normalized_name, normalized_targets, normalized_params)
+            return
+
+        legacy_apply_gate_batch = getattr(self.simulator, "ApplyGateBatch", None)
+        if callable(legacy_apply_gate_batch) and normalized_name in {"RX", "RY", "RZ"}:
+            legacy_apply_gate_batch(normalized_name, normalized_targets, normalized_params)
+            return
+
+        if self.batch_size() == 1:
+            self.apply_operation(normalized_name, normalized_targets, [normalized_params[0]])
+            return
+
+        first_param = normalized_params[0]
+        if all(param == first_param for param in normalized_params):
+            self.apply_operation(normalized_name, normalized_targets, [first_param])
+            return
+
+        raise NotImplementedError("The active rocQuantum binding does not expose batched parameter gates.")
+
     def apply_matrix(self, matrix: object, targets: Iterable[int]) -> None:
         normalized_targets = normalize_targets(targets)
         normalized_matrix = as_complex_matrix(matrix)

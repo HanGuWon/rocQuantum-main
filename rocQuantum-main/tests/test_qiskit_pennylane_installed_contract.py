@@ -2914,6 +2914,9 @@ def test_runtime_can_create_and_read_batched_bindings():
                 1 << self._num_qubits,
             )
 
+        def apply_gate_batch(self, name, targets, params_by_batch):
+            self.batch_ops = [(str(name), tuple(targets), tuple(float(param) for param in params_by_batch))]
+
     fake = types.ModuleType("rocquantum_bind")
     fake.QuantumSimulator = _BatchedBindingSimulator
 
@@ -2953,6 +2956,29 @@ def test_runtime_can_create_and_read_batched_bindings():
         runtime.expectation_pauli_string_batch("Z", [0]),
         np.array([-1.0, -1.0, -1.0], dtype=float),
     )
+    runtime.apply_operation_batch("ry", [0], [0.1, 0.2, 0.3])
+    assert runtime.simulator.batch_ops == [("RY", (0,), (0.1, 0.2, 0.3))]
+
+
+def test_runtime_batch_parametric_gate_falls_back_for_equal_angles():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _EqualAngleSimulator:
+        def __init__(self):
+            self.ops = []
+
+        def batch_size(self):
+            return 3
+
+        def apply_gate(self, name, targets, params):
+            self.ops.append((str(name), tuple(targets), tuple(params)))
+
+    sim = _EqualAngleSimulator()
+    runtime = RocQuantumRuntime(sim)
+
+    runtime.apply_operation_batch("rz", [1], [0.25, 0.25, 0.25])
+
+    assert sim.ops == [("RZ", (1,), (0.25,))]
 
 
 def test_pennylane_hamiltonian_expval_sums_native_pauli_terms(monkeypatch):

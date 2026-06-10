@@ -328,6 +328,52 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
     throw std::runtime_error("Gate '" + gate_name + "' is not supported.");
 }
 
+void QuantumSimulator::apply_gate_batch(const std::string& gate_name,
+                                        const std::vector<unsigned>& targets,
+                                        const std::vector<double>& params_by_batch) {
+    const std::string normalized = normalize_gate_name(gate_name);
+    if (targets.size() != 1) {
+        throw std::invalid_argument("Batched RX/RY/RZ gates require exactly 1 target qubit.");
+    }
+    ensure_valid_qubit(targets[0]);
+    if (params_by_batch.size() != batch_size_) {
+        throw std::invalid_argument("Batched gate parameter count must equal batch_size.");
+    }
+
+    if (normalized == "RX") {
+        check_status(rocsvApplyRxBatch(sim_handle_,
+                                       device_state_vector_,
+                                       num_qubits_,
+                                       targets[0],
+                                       params_by_batch.data(),
+                                       params_by_batch.size()),
+                     "apply batched RX");
+        return;
+    }
+    if (normalized == "RY") {
+        check_status(rocsvApplyRyBatch(sim_handle_,
+                                       device_state_vector_,
+                                       num_qubits_,
+                                       targets[0],
+                                       params_by_batch.data(),
+                                       params_by_batch.size()),
+                     "apply batched RY");
+        return;
+    }
+    if (normalized == "RZ") {
+        check_status(rocsvApplyRzBatch(sim_handle_,
+                                       device_state_vector_,
+                                       num_qubits_,
+                                       targets[0],
+                                       params_by_batch.data(),
+                                       params_by_batch.size()),
+                     "apply batched RZ");
+        return;
+    }
+
+    throw std::runtime_error("Gate '" + gate_name + "' is not supported for batched parameters.");
+}
+
 void QuantumSimulator::apply_matrix(const std::vector<std::complex<double>>& matrix,
                                     const std::vector<unsigned>& targets) {
     if (targets.empty()) {
@@ -810,6 +856,12 @@ void QuantumSimulator::ApplyGate(const std::string& gate_name, int control_qubit
 
 void QuantumSimulator::ApplyGate(const std::vector<std::complex<double>>& gate_matrix, int target_qubit) {
     apply_matrix(gate_matrix, {static_cast<unsigned>(target_qubit)});
+}
+
+void QuantumSimulator::ApplyGateBatch(const std::string& gate_name,
+                                      const std::vector<unsigned>& targets,
+                                      const std::vector<double>& params_by_batch) {
+    apply_gate_batch(gate_name, targets, params_by_batch);
 }
 
 void QuantumSimulator::ApplyControlledGate(const std::vector<std::complex<double>>& gate_matrix,
