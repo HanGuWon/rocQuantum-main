@@ -30,6 +30,7 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
             "rocsvGetExpectationValueSinglePauliY",
             "rocsvGetExpectationValuePauliProductZ",
             "rocsvGetExpectationPauliString",
+            "rocsvGetExpectationMatrix",
             "rocsvGetExpectationWorkspaceSize",
         ]
         for symbol in symbols:
@@ -43,6 +44,7 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
             "rocsvGetExpectationValueSinglePauliY",
             "rocsvGetExpectationValuePauliProductZ",
             "rocsvGetExpectationPauliString",
+            "rocsvGetExpectationMatrix",
             "rocsvGetExpectationWorkspaceSize",
         ]
         for symbol in symbols:
@@ -66,8 +68,11 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
         self.assertIn("accumulate_local_sample_probabilities", source)
         self.assertIn("accumulate_distributed_sample_probabilities_rccl", source)
         self.assertIn("compute_distributed_sample_probabilities", source)
+        self.assertIn("reduce_expectation_matrix_kernel", source)
         self.assertIn("std::vector<double> probabilities", simulator_header)
+        self.assertIn("expectation_matrix", simulator_header)
         self.assertIn(".def(\"probabilities\"", bindings)
+        self.assertIn(".def(\"expectation_matrix\"", bindings)
 
 
 if __name__ == "__main__":

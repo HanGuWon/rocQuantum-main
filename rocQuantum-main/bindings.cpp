@@ -145,6 +145,33 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("pauli_string"),
              py::arg("targets"),
              "Return a non-destructive Pauli-string expectation value.")
+        .def("expectation_matrix",
+             [](const rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
+                const std::vector<unsigned>& targets) {
+                 if (targets.empty()) {
+                     throw std::invalid_argument("expectation_matrix requires at least one target qubit.");
+                 }
+                 if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                     throw std::invalid_argument("expectation_matrix expects a square complex matrix.");
+                 }
+                 if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+                     throw std::invalid_argument("Too many target qubits for expectation_matrix.");
+                 }
+
+                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
+                 if (actual_dim != expected_dim) {
+                     throw std::invalid_argument("expectation_matrix dimension must be 2^len(targets).");
+                 }
+
+                 std::vector<std::complex<double>> host(actual_dim * actual_dim);
+                 std::memcpy(host.data(), matrix.data(), host.size() * sizeof(std::complex<double>));
+                 return self.expectation_matrix(host, targets);
+             },
+             py::arg("matrix"),
+             py::arg("targets"),
+             "Return <M_targets> for a dense matrix observable.")
         .def("sparse_hamiltonian_moments",
              [](const rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> data,
@@ -246,6 +273,32 @@ PYBIND11_MODULE(rocquantum_bind, m) {
         .def("GetExpectationPauliString",
              &rocquantum::QuantumSimulator::GetExpectationPauliString,
              py::arg("pauli_string"),
+             py::arg("targets"))
+        .def("ExpectationMatrix",
+             [](const rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
+                const std::vector<unsigned>& targets) {
+                 if (targets.empty()) {
+                     throw std::invalid_argument("ExpectationMatrix requires at least one target qubit.");
+                 }
+                 if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                     throw std::invalid_argument("ExpectationMatrix expects a square complex matrix.");
+                 }
+                 if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+                     throw std::invalid_argument("Too many target qubits for ExpectationMatrix.");
+                 }
+
+                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
+                 if (actual_dim != expected_dim) {
+                     throw std::invalid_argument("ExpectationMatrix dimension must be 2^len(targets).");
+                 }
+
+                 std::vector<std::complex<double>> host(actual_dim * actual_dim);
+                 std::memcpy(host.data(), matrix.data(), host.size() * sizeof(std::complex<double>));
+                 return self.ExpectationMatrix(host, targets);
+             },
+             py::arg("matrix"),
              py::arg("targets"))
         .def("SparseHamiltonianMoments",
              [](const rocquantum::QuantumSimulator& self,

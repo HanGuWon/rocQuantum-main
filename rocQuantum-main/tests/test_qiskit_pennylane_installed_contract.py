@@ -22,6 +22,7 @@ class _FakeQuantumSimulator:
     instances = []
     enable_sparse_moments = False
     enable_probabilities = False
+    enable_matrix_expectation = False
 
     def __init__(self, num_qubits):
         self._num_qubits = int(num_qubits)
@@ -33,6 +34,7 @@ class _FakeQuantumSimulator:
         self.measurements = []
         self.total_measurements = []
         self.expectations = []
+        self.matrix_expectations = []
         self.probability_requests = []
         self.sparse_moments = []
         self.reset_qubits = []
@@ -49,6 +51,7 @@ class _FakeQuantumSimulator:
         self.statevectors.clear()
         self.measurements.clear()
         self.expectations.clear()
+        self.matrix_expectations.clear()
         self.probability_requests.clear()
         self.sparse_moments.clear()
         self.reset_qubits.clear()
@@ -93,6 +96,9 @@ class _FakeQuantumSimulator:
 
     def get_statevector(self):
         self.statevector_reads += 1
+        return self._peek_statevector()
+
+    def _peek_statevector(self):
         state = np.zeros(1 << self._num_qubits, dtype=np.complex128)
         if self._measured:
             state[0] = 1.0
@@ -103,6 +109,32 @@ class _FakeQuantumSimulator:
         else:
             state[0] = 1.0
         return state
+
+    def expectation_matrix(self, matrix, targets):
+        if not self.enable_matrix_expectation:
+            raise NotImplementedError("native matrix expectation disabled")
+        matrix = np.asarray(matrix, dtype=np.complex128)
+        targets = tuple(int(target) for target in targets)
+        self.matrix_expectations.append((matrix, targets))
+
+        state = self._peek_statevector()
+        dimension = 1 << len(targets)
+        result = 0.0 + 0.0j
+        for row_index, amplitude in enumerate(state):
+            row_target = 0
+            base_index = int(row_index)
+            for output_bit, target in enumerate(targets):
+                mask = 1 << target
+                if row_index & mask:
+                    row_target |= 1 << output_bit
+                base_index &= ~mask
+            for col_target in range(dimension):
+                col_index = base_index
+                for output_bit, target in enumerate(targets):
+                    if (col_target >> output_bit) & 1:
+                        col_index |= 1 << target
+                result += np.conj(amplitude) * matrix[row_target, col_target] * state[col_index]
+        return result
 
     def probabilities(self, qubits):
         if not self.enable_probabilities:
@@ -156,6 +188,7 @@ def _install_fake_binding(monkeypatch):
     _FakeQuantumSimulator.instances.clear()
     _FakeQuantumSimulator.enable_sparse_moments = False
     _FakeQuantumSimulator.enable_probabilities = False
+    _FakeQuantumSimulator.enable_matrix_expectation = False
     return fake
 
 
@@ -1392,6 +1425,58 @@ def test_pennylane_hermitian_observable_uses_statevector_fallback(monkeypatch):
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.expectations == []
     assert sim.statevector_reads == 1
+
+
+def test_pennylane_hermitian_expval_prefers_native_matrix_expectation(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.Hermitian(np.diag([1.0, -1.0]).astype(np.complex128), wires=0)
+
+    @qml.qnode(dev)
+    def hermitian_circuit():
+        return qml.expval(observable)
+
+    assert hermitian_circuit() == pytest.approx(1.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+    assert len(sim.matrix_expectations) == 1
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], np.diag([1.0, -1.0]))
+    assert sim.matrix_expectations[0][1] == (0,)
+
+
+def test_pennylane_hermitian_var_prefers_native_matrix_expectation(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.Hermitian(np.diag([1.0, -1.0]).astype(np.complex128), wires=0)
+
+    @qml.qnode(dev)
+    def hermitian_circuit():
+        return qml.var(observable)
+
+    assert hermitian_circuit() == pytest.approx(0.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+    assert len(sim.matrix_expectations) == 2
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], np.diag([1.0, -1.0]))
+    np.testing.assert_allclose(sim.matrix_expectations[1][0], np.eye(2))
 
 
 def test_pennylane_projector_expval_uses_native_z_projector_terms(monkeypatch):

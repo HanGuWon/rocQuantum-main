@@ -499,6 +499,28 @@ rocqStatus_t rocsvGetExpectationPauliString(rocsvHandle_t handle,
                                             double* result);
 
 /**
+ * @brief Computes <psi|M|psi> for a dense matrix acting on target qubits.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector.
+ * @param[in] numQubits Total number of qubits.
+ * @param[in] targetQubits Array of target qubit indices.
+ * @param[in] numTargetQubits Number of target qubits.
+ * @param[in] d_matrix Device pointer to the dense matrix in column-major order.
+ * @param[in] matrixDim Matrix dimension. Must equal 2^numTargetQubits.
+ * @param[out] result Host pointer to store the complex expectation value.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetExpectationMatrix(rocsvHandle_t handle,
+                                       rocComplex* d_state,
+                                       unsigned numQubits,
+                                       const unsigned* targetQubits,
+                                       unsigned numTargetQubits,
+                                       const rocComplex* d_matrix,
+                                       size_t matrixDim,
+                                       rocComplex* result);
+
+/**
  * @brief Reports temporary workspace size required by expectation APIs.
  *
  * Current implementation requires no extra workspace and reports 0.

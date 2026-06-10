@@ -87,6 +87,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def statevector_to_little_endian_wires", source)
         self.assertIn("def probabilities_from_statevector", source)
         self.assertIn("def probabilities(self, qubits", source)
+        self.assertIn("def expectation_matrix(self, matrix", source)
         self.assertIn("def set_statevector", source)
 
     def test_public_simulator_dispatches_native_multi_control_gates(self):
@@ -189,9 +190,15 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
 
         self.assertIn("sparse_hamiltonian_moments", header)
         self.assertIn("SparseHamiltonianMoments", header)
+        self.assertIn("expectation_matrix", header)
+        self.assertIn("ExpectationMatrix", header)
         self.assertIn("QuantumSimulator::sparse_hamiltonian_moments", implementation)
+        self.assertIn("QuantumSimulator::expectation_matrix", implementation)
+        self.assertIn("rocsvGetExpectationMatrix", implementation)
         self.assertIn("Sparse Hamiltonian CSR indptr", implementation)
         self.assertIn("h_state", implementation)
+        self.assertIn(".def(\"expectation_matrix\"", bindings)
+        self.assertIn(".def(\"ExpectationMatrix\"", bindings)
         self.assertIn(".def(\"sparse_hamiltonian_moments\"", bindings)
         self.assertIn(".def(\"SparseHamiltonianMoments\"", bindings)
 
@@ -284,6 +291,9 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"Hadamard\"", source)
         self.assertIn("\"SparseHamiltonian\"", source)
         self.assertIn("observable.name == \"Hadamard\"", source)
+        self.assertIn("observable.name == \"Hermitian\"", source)
+        self.assertIn("def _native_hermitian_expectation", source)
+        self.assertIn("runtime.expectation_matrix", source)
         self.assertIn("def _projector_terms_from_observable", source)
         self.assertIn("observable.name != \"Projector\"", source)
         self.assertIn("_native_sparse_hamiltonian_moments", source)

@@ -62,7 +62,7 @@ Scope: broaden scope only after truth and core execution are stable.
 | --- | --- | --- |
 | Unify Python runtime surfaces | Current duplication causes product confusion | One primary surface owns execution and expectation APIs |
 | Wire gate fusion into active execution path | Native code already exists | Queue flush path can enable fusion and is tested |
-| Expand canonical expectation breadth | Pauli expectations are wired, but broader observables are not | Top-level public API keeps Pauli native paths and clearly gates Hermitian/operator gaps |
+| Expand canonical expectation breadth | Pauli and supported PennyLane Hermitian expectations are wired, but broader observables are not | Top-level public API keeps Pauli/dense-matrix native paths and clearly gates remaining arbitrary-operator gaps |
 | Repair package/export/install tree | Release engineering is not yet credible | Install tree has config/version files and working headers |
 | Expand runtime CI | Current runtime proof is too narrow | Statevector, density matrix, and expectation tests run on ROCm CI |
 

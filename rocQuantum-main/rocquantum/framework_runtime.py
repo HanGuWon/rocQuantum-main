@@ -458,6 +458,20 @@ class RocQuantumRuntime:
 
         return expectation_from_statevector(self.statevector(), str(pauli_string), normalized_targets)
 
+    def expectation_matrix(self, matrix: object, targets: Iterable[int]) -> complex:
+        normalized_targets = normalize_targets(targets)
+        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+
+        native = getattr(self.simulator, "expectation_matrix", None)
+        if callable(native):
+            return complex(native(normalized_matrix, normalized_targets))
+
+        legacy = getattr(self.simulator, "ExpectationMatrix", None)
+        if callable(legacy):
+            return complex(legacy(normalized_matrix, normalized_targets))
+
+        raise NotImplementedError("The active rocQuantum binding does not expose dense matrix expectations.")
+
     def sparse_hamiltonian_moments(
         self,
         data: object,

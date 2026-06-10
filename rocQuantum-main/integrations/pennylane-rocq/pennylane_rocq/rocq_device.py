@@ -259,6 +259,22 @@ def _native_sparse_hamiltonian_moments(runtime, observable, wire_order):
     )
 
 
+def _hermitian_matrix_and_targets(observable, wire_map):
+    if observable.name != "Hermitian":
+        return None
+    matrix = matrix_to_little_endian_wires(qml.matrix(observable))
+    targets = [wire_map[wire] for wire in observable.wires]
+    return matrix, targets
+
+
+def _native_hermitian_expectation(runtime, observable, wire_map):
+    components = _hermitian_matrix_and_targets(observable, wire_map)
+    if components is None:
+        raise NotImplementedError
+    matrix, targets = components
+    return runtime.expectation_matrix(matrix, targets)
+
+
 def _shot_count(shots):
     total_shots = getattr(shots, "total_shots", None)
     if total_shots is not None:
@@ -809,7 +825,11 @@ class RocQDevice(QubitDevice):
             if measurement.__class__.__name__ not in {"ExpectationMP", "VarianceMP"}:
                 return False
             observable = getattr(measurement, "obs", None)
-            if observable is None or _pauli_terms_from_observable(observable, self.wire_map) is None:
+            if observable is None:
+                return False
+            if observable.name == "Hermitian":
+                continue
+            if _pauli_terms_from_observable(observable, self.wire_map) is None:
                 return False
         return True
 
@@ -1315,6 +1335,13 @@ class RocQDevice(QubitDevice):
                 mean, _ = _sparse_hamiltonian_moments(self._ensure_state(), observable, self.wires)
             return _real_measurement_result(mean, "Expectation value")
 
+        if observable.name == "Hermitian":
+            try:
+                mean = _native_hermitian_expectation(self._runtime, observable, self.wire_map)
+            except (NotImplementedError, RuntimeError):
+                return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
+            return _real_measurement_result(mean, "Expectation value")
+
         terms = _pauli_terms_from_observable(observable, self.wire_map)
         if terms is None:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
@@ -1336,6 +1363,15 @@ class RocQDevice(QubitDevice):
                 )
             except NotImplementedError:
                 mean, second_moment = _sparse_hamiltonian_moments(self._ensure_state(), observable, self.wires)
+            return _real_measurement_result(second_moment - mean * mean, "Variance")
+
+        if observable.name == "Hermitian":
+            try:
+                matrix, targets = _hermitian_matrix_and_targets(observable, self.wire_map)
+                mean = self._runtime.expectation_matrix(matrix, targets)
+                second_moment = self._runtime.expectation_matrix(matrix @ matrix, targets)
+            except (NotImplementedError, RuntimeError):
+                return super().var(observable, shot_range=shot_range, bin_size=bin_size)
             return _real_measurement_result(second_moment - mean * mean, "Variance")
 
         terms = _pauli_terms_from_observable(observable, self.wire_map)
