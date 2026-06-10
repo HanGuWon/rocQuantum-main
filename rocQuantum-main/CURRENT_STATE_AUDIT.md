@@ -9,6 +9,12 @@ Runtime update note (2026-04-06):
 - Native state-vector sampling and Pauli expectation paths are wired into the canonical `rocq` surface.
 - Packaging has moved to a CMake-first `scikit-build-core` path.
 
+Audit refresh note (2026-06-10):
+
+- Official AMD production ROCm documentation now points to ROCm `7.2.4`, released 2026-05-29.
+- Previous rows that described canonical `rocq.operator.get_expectation_value()` as unimplemented are stale; the current gap is split API behavior, especially the legacy `python/rocq` host-side expectation fallback.
+- GateFusion is wired opportunistically into canonical `rocq.backends.StateVectorBackend`, but the legacy `python/rocq` queue flush path still replays gates one by one.
+
 The detailed findings below still describe the original audit snapshot; use them together with the runtime update above.
 
 ## Scope
@@ -96,7 +102,7 @@ What is not real today:
 ### High-level expectations
 
 - Native expectation helpers exist in `hipStateVec` and are bound in `python/rocq/bindings.cpp`.
-- The canonical top-level `rocq.operator.get_expectation_value()` is still intentionally unimplemented.
+- The canonical top-level `rocq.operator.get_expectation_value()` delegates to `rocq.observe()` for supported Pauli operators.
 - `python/rocq/api.py::Circuit.expval()` computes host-side NumPy expectations after copying the statevector back to the host.
 
 ### Packaging and CI
@@ -129,7 +135,7 @@ What is not real today:
 | --- | --- | --- |
 | State-vector gates | HIP kernels in `hipStateVec` | None for core named gates |
 | Generic matrix/control matrix | Partial HIP path | Host-side fallback in `hipStateVec.cpp` for broader cases |
-| Expectations | Native `hipStateVec` helpers exist | Canonical `rocq` operator API still not wired; `python/rocq` has NumPy fallback path |
+| Expectations | Native `hipStateVec` helpers exist and canonical `rocq.observe()` is wired for Pauli operators | `python/rocq` still has a NumPy statevector fallback path |
 | Tensor-network contraction | Native HIP/rocBLAS/rocSOLVER path | Pathfinder/slicing breadth not fully wired |
 | Density matrix | Native limited kernel set | Generic channels absent |
 | Framework adapters | Use native simulator for some operations | PennyLane/Cirq sample on host with NumPy; many tests are mock-only |
@@ -149,9 +155,9 @@ The current repo is closest to a partial ROCm analogue of cuStateVec plus parts 
 - ROCm compatibility matrix: `https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html`
 - ROCm Linux install/system requirements: `https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html`
 
-As of 2026-04-05, the official AMD docs inspected during this audit showed ROCm `7.2.0` as the latest stable release. I did not find official AMD evidence for a `7.2.1` release in this pass, so earlier `7.2.1` planning assumptions were downgraded to `7.2.0` for the compatibility plan.
+As of 2026-06-10, the official AMD ROCm release history and production documentation show ROCm `7.2.4` as the current production target. The earlier 2026-04-05 audit snapshot used `7.2.0`; compatibility guidance is now updated to `7.2.4` while retaining `6.2.2` as the conservative non-experimental CI baseline until runner/container availability is proven.
 
 ## Verification Limits
 
-- This shell does not currently expose `python`, `py`, `hipcc`, `ninja`, or a local ROCm install.
-- Runtime validation therefore remains a source audit plus CI/ROCm-Linux execution task.
+- This shell exposes Python, but it does not expose `hipcc`, `cmake`, `ninja`, or a local ROCm runtime.
+- Native ROCm runtime validation therefore remains a CI/ROCm-Linux execution task.

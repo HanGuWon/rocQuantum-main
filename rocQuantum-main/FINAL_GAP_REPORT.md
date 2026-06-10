@@ -8,6 +8,11 @@ Runtime update note (2026-04-06):
 - Native state-vector Pauli expectation helpers are now reachable through `rocq.observe()` and `rocq.operator.get_expectation_value()`.
 - Packaging has moved to a CMake-first `scikit-build-core` path and root CMake now builds `_rocq_hip_backend`, `rocq_hip`, and `rocquantum_bind`.
 
+Audit refresh note (2026-06-10):
+
+- AMD production ROCm documentation now identifies ROCm `7.2.4` as the production release; `7.2.0` remains historical audit context.
+- Canonical `rocq` expectation and narrow GateFusion wiring have moved ahead of the original 2026-04-05 text.
+
 Compiler/runtime execution parity, distributed execution maturity, and higher-level CUDA-QX-style libraries remain outstanding.
 
 ## Executive Summary
@@ -48,13 +53,13 @@ Overall ROCm maturity: `PARTIAL`
 Current truth:
 
 - Non-experimental CI ROCm lane: `6.2.2`
-- Experimental CI ROCm lane: `7.2.0`
-- Latest stable ROCm verified from official AMD docs during this audit: `7.2.0`
+- Experimental CI ROCm lane: `7.2.4`
+- Latest production ROCm verified from official AMD docs during this refresh: `7.2.4`
 - Newest AMD GPU target verified during this audit: `MI355X` / `gfx950`
 
 Recommended compatibility plan:
 
-- Tier 1: ROCm `7.2.0`, `gfx950`, `gfx942`, `gfx90a`, Linux x86_64, Python `3.10`-`3.12`
+- Tier 1: ROCm `7.2.4`, `gfx950`, `gfx942`, `gfx90a`, Linux x86_64, Python `3.10`-`3.12`
 - Tier 2 best-effort: ROCm `6.4.0`, `gfx908`, selected workstation targets such as `gfx1100`, `gfx1101`, `gfx1030`
 - Recommended minimum release-grade GPU target: `gfx90a`
 
@@ -65,7 +70,7 @@ Compared with the official CUDA-Q baseline (`https://nvidia.github.io/cuda-quant
 - no real compile-and-execute loop
 - no unified compiler/runtime/kernel story
 - no credible mid-circuit measurement and classical-control story
-- no clean `observe`-style native expectation API at the canonical public surface
+- no broad Hermitian/operator expectation coverage beyond the canonical Pauli-oriented `observe` path
 - no bounded, tested `mqpu`-style distributed story
 
 What the repo does have:
@@ -105,7 +110,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 3. Native expectations exist but the public API story is split and misleading.
 4. Two divergent Python stacks exist without one canonical answer.
 5. Packaging/install/export does not describe one releasable artifact.
-6. Gate fusion exists but is not wired into the active Python execution path.
+6. Gate fusion exists and is wired for narrow canonical `rocq` spans, but legacy `python/rocq` and broader patterns remain unfused.
 7. `hipTensorNet` breadth is overstated relative to what is built and tested.
 8. `hipDensityMat` is real but too narrow for broad noisy-simulation claims.
 9. Integrations are mostly thin adapters, not proof of a strong platform story.
@@ -139,7 +144,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 
 | Tier | ROCm | Architectures | Status |
 | --- | --- | --- | --- |
-| Tier 1 | `7.2.0` | `gfx950`, `gfx942`, `gfx90a` | Recommended target |
+| Tier 1 | `7.2.4` | `gfx950`, `gfx942`, `gfx90a` | Recommended target |
 | Tier 2 | `6.4.0` | `gfx908`, `gfx1100`, `gfx1101`, `gfx1030` | Best-effort |
 | Legacy not recommended | older pre-`gfx90a` targets | including `gfx906` | Do not advertise as supported in this pass |
 
@@ -170,8 +175,8 @@ External baselines:
 
 - CUDA-Q: `https://nvidia.github.io/cuda-quantum/latest/`
 - cuQuantum: `https://docs.nvidia.com/cuda/cuquantum/latest/`
-- CUDA-QX: `https://github.com/NVIDIA/cudaqx`
-- ROCm release history: `https://rocm.docs.amd.com/en/latest/about/release-history.html`
+- CUDA-QX: `https://nvidia.github.io/cudaqx`
+- ROCm release history: `https://rocm.docs.amd.com/en/latest/release/versions.html`
 - ROCm compatibility matrix: `https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html`
 - ROCm Linux requirements: `https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html`
 
@@ -181,4 +186,4 @@ Fork note:
 
 Verification limit:
 
-- No local ROCm runtime or Python interpreter was available in this shell, so runtime validation remains a ROCm-Linux CI or container task.
+- No local ROCm runtime, CMake, Ninja, or HIP compiler was available in this shell, so native runtime validation remains a ROCm-Linux CI or container task.

@@ -6,10 +6,10 @@ Audit date: 2026-04-05
 
 1. `compile_and_execute()` is a stub while bindings and surrounding docs still made compiler/runtime parity easy to overread.
 2. Multi-GPU support is partial and ambiguous: real scaffolding exists, but many distributed paths still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
-3. Native expectation kernels exist in `hipStateVec`, but the high-level user-facing API story is split between unimplemented top-level APIs and host-side NumPy fallbacks.
+3. Native expectation kernels exist in `hipStateVec`, and canonical `rocq.observe()` / `rocq.operator.get_expectation_value()` reach supported Pauli paths, but the user-facing API story is still split because legacy `python/rocq` keeps a host-side NumPy fallback.
 4. The repo contains two divergent Python stacks, `rocq` and `python/rocq`, without one canonical runtime/compiler story.
 5. Packaging and build surfaces do not describe one releasable product: `pyproject.toml`, `setup.py`, root CMake, and dormant `_rocq_hip_backend` CMake do not agree.
-6. Gate fusion exists in C++ but is not wired into the main Python execution path that claims to flush fused queues.
+6. Gate fusion exists in C++ and is used by the canonical `rocq` backend for narrow CNOT-adjacent spans, but legacy `python/rocq` and broader fusion patterns are still unfused.
 7. `hipTensorNet` has real core functionality, but optimizer, slicing, and dtype breadth are overstated relative to what is built and tested.
 8. `hipDensityMat` is real but narrow; generic channel application, density-matrix sampling, and richer observable support are still missing.
 9. Framework integrations are thin adapters with host-side sampling or mock-heavy tests, not strong native ROCm end-to-end proof.
@@ -54,7 +54,7 @@ Scope: broaden scope only after truth and core execution are stable.
 | Truth-fix multi-GPU docs and Python errors | Largest ambiguity in advertised capability | `multi_gpu=True` unsupported paths raise explicit partial-support errors |
 | Truth-fix expectation-value story | VQE/hybrid workflows depend on it | High-level docs distinguish native expectation helpers from host-side fallback |
 | Truth-fix packaging/install story | Users cannot infer one supported install path today | README and audit docs explain the active build path and current limitations |
-| Normalize ROCm support policy | Repo needs a current AMD-targeted compatibility statement | Linux-first, ROCm `7.2.0` target, `gfx950/gfx942/gfx90a` plan, and `gfx90a` minimum are documented |
+| Normalize ROCm support policy | Repo needs a current AMD-targeted compatibility statement | Linux-first, ROCm `7.2.4` target, `gfx950/gfx942/gfx90a` plan, and `gfx90a` minimum are documented |
 
 ## P1 Backlog
 
@@ -62,7 +62,7 @@ Scope: broaden scope only after truth and core execution are stable.
 | --- | --- | --- |
 | Unify Python runtime surfaces | Current duplication causes product confusion | One primary surface owns execution and expectation APIs |
 | Wire gate fusion into active execution path | Native code already exists | Queue flush path can enable fusion and is tested |
-| Expose native expectations in canonical API | Backend capability is currently hidden | Top-level public API can call native helpers for supported cases |
+| Expand canonical expectation breadth | Pauli expectations are wired, but broader observables are not | Top-level public API keeps Pauli native paths and clearly gates Hermitian/operator gaps |
 | Repair package/export/install tree | Release engineering is not yet credible | Install tree has config/version files and working headers |
 | Expand runtime CI | Current runtime proof is too narrow | Statevector, density matrix, and expectation tests run on ROCm CI |
 

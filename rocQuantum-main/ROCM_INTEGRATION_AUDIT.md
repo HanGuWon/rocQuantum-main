@@ -1,20 +1,19 @@
 # ROCm Integration Audit
 
 Audit date: 2026-04-05
+Refresh date: 2026-06-10
 
 ## External ROCm Ground Truth
 
 Official sources checked:
 
-- ROCm release history: `https://rocm.docs.amd.com/en/latest/about/release-history.html`
+- ROCm release history: `https://rocm.docs.amd.com/en/latest/release/versions.html`
 - ROCm compatibility matrix: `https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html`
 - ROCm Linux install and system requirements: `https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html`
 
-### Latest Stable ROCm At Audit Time
+### Latest Production ROCm At Refresh Time
 
-The official AMD docs inspected in this pass showed ROCm `7.2.0` as the latest stable release, with release date `2026-01-21`.
-
-I did not find official AMD evidence for ROCm `7.2.1` on 2026-04-05, so the earlier planning assumption of `7.2.1` was downgraded. All compatibility recommendations in this audit therefore use `7.2.0` as the latest stable target.
+The official AMD docs inspected on 2026-06-10 showed ROCm `7.2.4` as the production release, with release date `2026-05-29`. The earlier 2026-04-05 snapshot used ROCm `7.2.0`; this refresh updates policy and CI recommendations to `7.2.4`.
 
 ### Latest AMD GPU Target At Audit Time
 
@@ -49,7 +48,7 @@ This section is about what the repo can defend today from code and CI, not what 
 | Primary OS | Linux x86_64 |
 | Windows | Development helper scripts exist, but Windows is not a release-grade path |
 | Non-experimental ROCm in CI | `6.2.2` |
-| Experimental ROCm in CI | `7.2.0` |
+| Experimental ROCm in CI | `7.2.4` |
 | GPU architecture policy | Not explicitly encoded in the repo before this audit |
 | Runtime GPU proof | Only `HipTensorNetContractionRegression` in CI |
 | Multi-GPU proof | No release-grade multi-GPU CI proof |
@@ -60,7 +59,7 @@ This is the proposed release policy after the audit, not a claim that the repo a
 
 ### Tier 1 Target
 
-- ROCm: `7.2.0`
+- ROCm: `7.2.4`
 - GPU architectures: `gfx950`, `gfx942`, `gfx90a`
 - OS: Linux x86_64
 - Python: `3.10`, `3.11`, `3.12`
@@ -122,7 +121,7 @@ Rationale:
 
 ### Native ROCm lane
 
-- ROCm `7.2.0`
+- ROCm `7.2.4`
 - `CMAKE_HIP_ARCHITECTURES="gfx950;gfx942;gfx90a"`
 - build native libraries and bindings
 - run statevector, density-matrix, tensor-network, and expectation tests
@@ -135,7 +134,7 @@ Rationale:
 
 ### Multi-GPU lane
 
-- ROCm `7.2.0`
+- ROCm `7.2.4`
 - at least 2 GPUs
 - distributed allocation, local-domain gates, local-domain measurement smoke
 - explicit skip/fail for currently unsupported distributed operations

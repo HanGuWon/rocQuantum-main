@@ -1,13 +1,13 @@
 ﻿# PR Plan - ROCm Validation Handoff Integration
 
 ## Input Discovery And Assumptions
-- Local repo path: `C:/Users/<redacted>/Desktop/rocQuantum-main` (discovered from workspace).
-- Baseline commit: `dbfd6816d4307b2f869487d0bf36f1c2ad324b3a` (provided).
+- Local clean working clone: `C:/Users/user/Desktop/rocQuantum-main-main/codex-work/rocQuantum-main`.
+- Baseline commit: `5aaba9d35e783814a6abf4f6057556a4b8d8e3ac`.
 - GitHub remote: `origin=https://github.com/HanGuWon/rocQuantum-main.git` (discovered).
-- Target branch: `main` (assumed; user placeholder `<TARGET_BRANCH>` was not provided).
+- Target branch: `main`.
 
 ## Current State Snapshot
-- `origin/main` = `dbfd6816d4307b2f869487d0bf36f1c2ad324b3a`.
+- `origin/main` = `5aaba9d35e783814a6abf4f6057556a4b8d8e3ac`.
 - Implementation-pack detached commit = `895b5daeab35a8b199575b84c4bb040753978187`.
 - Divergence from baseline: `origin/main...895b5dae` = `0 1`.
 - Pack consistency checks:
@@ -73,7 +73,7 @@
 - `ROCm CI / Fast Checks (CPU)` must pass.
 - `ROCm CI / ROCm Runtime (Self-hosted GPU)` must pass on labeled `gfx90a` runner.
 - `ROCm Linux Build / Build ROCm 6.2.2` must pass.
-- `ROCm Linux Build / Build ROCm 7.2.0` should pass (currently experimental lane in workflow).
+- `ROCm Linux Build / Build ROCm 7.2.4` should pass (currently experimental lane in workflow).
 
 ## Risks
 1. ROCm runtime outcomes remain unverified in this local Windows session.

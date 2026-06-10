@@ -59,11 +59,12 @@ Use those files as the authoritative capability summary for the current codebase
 ## Support Policy For This Audit Pass
 
 - Primary release target: Linux x86_64
-- Latest stable ROCm target at audit time: `7.2.0`
+- Latest production ROCm target verified on 2026-06-10: `7.2.4`
 - Recommended Tier 1 GPU targets: `gfx950`, `gfx942`, `gfx90a`
 - Recommended future minimum release-grade GPU target: `gfx90a`
 - Recommended future minimum ROCm target: `6.4.0`
 - Current non-experimental CI baseline: ROCm `6.2.2`
+- Current experimental/latest CI lane: ROCm `7.2.4`
 - Windows helper scripts are kept for development convenience but are not treated as release-grade support
 
 ## Native Component Snapshot
@@ -107,6 +108,6 @@ For a release-grade Linux ROCm build, set explicit GPU targets:
 
 - CUDA-Q: `https://nvidia.github.io/cuda-quantum/latest/`
 - cuQuantum: `https://docs.nvidia.com/cuda/cuquantum/latest/`
-- CUDA-QX: `https://github.com/NVIDIA/cudaqx`
+- CUDA-QX: `https://nvidia.github.io/cudaqx`
 
 This repo is currently closest to a ROCm-native simulator project with partial higher-level surfaces, not to a finished CUDA-Q/CUDA-QX equivalent.
