@@ -201,6 +201,17 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
         np.testing.assert_array_equal(samples[2], np.array([1, 1], dtype=int))
         self.assertTrue(set(np.unique(samples)).issubset({0, 1}))
 
+    def test_generate_samples_accepts_shots_objects(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0, 1], shots=4)
+        device.shots = types.SimpleNamespace(total_shots=4)
+
+        samples = device.generate_samples()
+        qsim = _FakeQSim.instances[-1]
+
+        self.assertEqual(samples.shape, (4, 2))
+        self.assertEqual(qsim.measured, [((0, 1), 4)])
+
     def test_generate_samples_falls_back_to_statevector_sampling_for_legacy_bindings(self):
         module = _load_device_module()
         device = module.RocQDevice(wires=[0, 1], shots=4)

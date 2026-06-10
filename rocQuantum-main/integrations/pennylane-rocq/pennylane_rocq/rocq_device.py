@@ -206,6 +206,13 @@ def _real_measurement_result(value, measurement_name):
     return float(real_value)
 
 
+def _shot_count(shots):
+    total_shots = getattr(shots, "total_shots", None)
+    if total_shots is not None:
+        return int(total_shots)
+    return int(shots)
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -303,12 +310,13 @@ class RocQDevice(QubitDevice):
             raise ValueError("shots must be set before generating samples.")
 
         all_wires = list(range(len(self.wires)))
+        shots = _shot_count(self.shots)
         measure = getattr(self.sim, "measure", None)
         if callable(measure):
-            raw_samples = self._runtime.measure(all_wires, int(self.shots))
+            raw_samples = self._runtime.measure(all_wires, shots)
             return samples_to_binary_rows(raw_samples, len(all_wires))
 
-        return sample_rows_from_statevector(self._state, int(self.shots))
+        return sample_rows_from_statevector(self._state, shots)
 
     def expval(self, observable, shot_range=None, bin_size=None):
         if self.shots is not None or shot_range is not None or bin_size is not None:

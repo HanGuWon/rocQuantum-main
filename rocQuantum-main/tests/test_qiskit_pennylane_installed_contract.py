@@ -898,6 +898,30 @@ def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch)
     assert _FakeQuantumSimulator.instances[-1].measurements == [((0, 1), 4)]
 
 
+def test_pennylane_shot_vector_uses_total_native_measure(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane.exceptions import PennyLaneDeprecationWarning
+
+    with pytest.warns(PennyLaneDeprecationWarning):
+        dev = qml.device("lightning.rocq", wires=1, shots=(2, 3))
+
+    @qml.qnode(dev)
+    def circuit():
+        return qml.sample(wires=[0])
+
+    first, second = circuit()
+
+    np.testing.assert_array_equal(first, np.array([0, 0], dtype=int))
+    np.testing.assert_array_equal(second, np.array([0, 0, 0], dtype=int))
+    assert _FakeQuantumSimulator.instances[-1].measurements == [((0,), 5)]
+
+
 def test_pennylane_probs_returns_full_and_marginal_probabilities(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
