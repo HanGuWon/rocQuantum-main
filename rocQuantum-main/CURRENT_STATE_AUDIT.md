@@ -17,6 +17,7 @@ Audit refresh note (2026-06-10):
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is no longer a hard stub for the current MVP subset: qalloc, H/X/Y/Z, CNOT, RX/RY/RZ.
 - Qiskit and PennyLane adapters now avoid several avoidable full statevector readbacks: Qiskit `backend.run()` defaults to sampling without state output, Qiskit Estimator reuses a bound circuit across observable batches, PennyLane finite-shot measurements use native `measure()` where available, and PennyLane analytic Pauli/Hadamard/Hamiltonian expectations skip diagonalizing rotations and use native Pauli-string expectations.
 - Public simulator and framework paths now expose native `MCX` / `CSWAP` dispatch for Qiskit `ccx` / `mcx` / `cswap` and PennyLane all-one-control `MultiControlledX` / `Toffoli` / `CSWAP`, while non-default PennyLane control values remain on the matrix fallback path.
+- PennyLane `qml.PhaseShift`, `qml.ControlledPhaseShift`, and open-control `qml.CPhaseShift00/01/10` now use exact global-phase plus native `RZ` / `CNOT` decompositions, avoiding dense controlled-phase matrix upload in QFT-style circuits.
 - PennyLane `qml.SparseHamiltonian` analytic expectation / variance is now supported through a statevector CSR fallback, not a native sparse-observable GPU kernel.
 
 The detailed findings below still describe the original audit snapshot; use them together with the runtime update above.

@@ -290,6 +290,59 @@ def _apply_multirz(runtime, wire_indices, theta):
         runtime.apply_operation("CNOT", [control, target])
 
 
+def _supports_native_phase_decomposition(runtime):
+    simulator = runtime.simulator
+    has_gate_dispatch = callable(getattr(simulator, "apply_gate", None))
+    has_matrix_dispatch = callable(getattr(simulator, "apply_matrix", None)) or callable(
+        getattr(simulator, "ApplyGate", None)
+    )
+    return has_gate_dispatch and has_matrix_dispatch
+
+
+def _apply_global_phase(runtime, wire_index, phase):
+    factor = np.exp(1j * phase)
+    matrix = np.array([[factor, 0.0], [0.0, factor]], dtype=np.complex128)
+    runtime.apply_operation("QubitUnitary", [wire_index], matrix=matrix)
+
+
+def _apply_phase_shift(runtime, wire_indices, theta):
+    if len(wire_indices) != 1:
+        raise ValueError("PhaseShift requires exactly one wire.")
+
+    wire_index = wire_indices[0]
+    _apply_global_phase(runtime, wire_index, 0.5 * theta)
+    runtime.apply_operation("RZ", [wire_index], [theta])
+
+
+def _apply_controlled_phase_shift(runtime, wire_indices, theta):
+    if len(wire_indices) != 2:
+        raise ValueError("ControlledPhaseShift requires exactly two wires.")
+
+    control, target = wire_indices
+    _apply_global_phase(runtime, control, 0.25 * theta)
+    runtime.apply_operation("RZ", [control], [0.5 * theta])
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation("RZ", [target], [-0.5 * theta])
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation("RZ", [target], [0.5 * theta])
+
+
+def _apply_controlled_phase_variant(runtime, wire_indices, theta, control_state):
+    if len(control_state) != len(wire_indices):
+        raise ValueError("Controlled phase control_state must match the wire count.")
+
+    flipped_wires = [
+        wire_index
+        for wire_index, state_bit in zip(wire_indices, control_state)
+        if state_bit == "0"
+    ]
+    for wire_index in flipped_wires:
+        runtime.apply_operation("X", [wire_index])
+    _apply_controlled_phase_shift(runtime, wire_indices, theta)
+    for wire_index in reversed(flipped_wires):
+        runtime.apply_operation("X", [wire_index])
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -443,6 +496,49 @@ class RocQDevice(QubitDevice):
                 try:
                     (theta,) = getattr(op, "parameters", [])
                     _apply_multirz(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "PhaseShift":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_phase_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_phase_shift(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "ControlledPhaseShift":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_phase_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_controlled_phase_shift(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name in {"CPhaseShift00", "CPhaseShift01", "CPhaseShift10"}:
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_phase_decomposition(self._runtime):
+                        raise NotImplementedError
+                    control_state = gate_name[len("CPhaseShift"):]
+                    _apply_controlled_phase_variant(self._runtime, wire_indices, theta, control_state)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(

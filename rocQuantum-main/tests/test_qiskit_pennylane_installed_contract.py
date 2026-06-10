@@ -1106,10 +1106,18 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
     circuit()
     sim = _FakeQuantumSimulator.instances[-1]
 
-    assert sim.ops == [("MCX", (0, 1, 2), ())]
+    assert sim.ops == [
+        ("RZ", (0,), (0.1,)),
+        ("RZ", (0,), (0.1,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-0.1,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.1,)),
+        ("MCX", (0, 1, 2), ()),
+    ]
     assert [targets for _, targets in sim.matrices] == [
         (0,),
-        (0, 1),
+        (0,),
         (0, 1),
         (0, 1),
         (0, 1),
@@ -1117,7 +1125,7 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
     ]
     assert [matrix.shape for matrix, _ in sim.matrices] == [
         (2, 2),
-        (4, 4),
+        (2, 2),
         (4, 4),
         (4, 4),
         (4, 4),
@@ -1196,6 +1204,29 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
     sim = _FakeQuantumSimulator.instances[-1]
 
     assert sim.ops == [
+        ("X", (0,), ()),
+        ("X", (1,), ()),
+        ("RZ", (0,), (0.05,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-0.05,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.05,)),
+        ("X", (1,), ()),
+        ("X", (0,), ()),
+        ("X", (0,), ()),
+        ("RZ", (0,), (0.1,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-0.1,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.1,)),
+        ("X", (0,), ()),
+        ("X", (1,), ()),
+        ("RZ", (0,), (0.15,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (-0.15,)),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.15,)),
+        ("X", (1,), ()),
         ("MCX", (0, 1, 2), ()),
         ("MCX", (0, 1, 2), ()),
         ("CSWAP", (0, 1, 2), ()),
@@ -1209,9 +1240,9 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         (0, 1),
         (0, 1),
         (0, 1, 2),
-        (0, 1),
-        (0, 1),
-        (0, 1),
+        (0,),
+        (0,),
+        (0,),
         (0, 1),
         (0, 1),
         (0, 1),
@@ -1221,6 +1252,40 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         (0, 1, 2, 3),
         (0, 1, 2, 3),
         (0, 1),
+    ]
+
+
+def test_pennylane_qft_uses_native_controlled_phase_decomposition(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.QFT(wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("H", (0,), ()),
+        ("RZ", (1,), (np.pi / 4,)),
+        ("CNOT", (1, 0), ()),
+        ("RZ", (0,), (-np.pi / 4,)),
+        ("CNOT", (1, 0), ()),
+        ("RZ", (0,), (np.pi / 4,)),
+        ("H", (1,), ()),
+        ("SWAP", (0, 1), ()),
+    ]
+    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
+        ((2, 2), (1,)),
     ]
 
 
