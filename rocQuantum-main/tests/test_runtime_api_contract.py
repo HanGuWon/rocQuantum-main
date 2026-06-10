@@ -15,7 +15,7 @@ if _PROJECT_ROOT not in sys.path:
 
 import rocq
 from rocq.kernel import kernel
-from rocq.operator import HermitianOperator, PauliOperator, get_expectation_value
+from rocq.operator import HermitianOperator, PauliOperator, SparseHamiltonianOperator, get_expectation_value
 
 
 class _FakeBackend:
@@ -139,6 +139,50 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(calls[0][2], 1)
         self.assertEqual(calls[0][3], [0])
         self.assertEqual(calls[0][4], np.dtype("complex64"))
+
+    def test_mock_statevector_backend_evaluates_sparse_hamiltonian_operator(self):
+        from rocq.backends import StateVectorBackend
+
+        with mock.patch("rocq.backends.hip_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                backend = StateVectorBackend(1)
+
+        operator = SparseHamiltonianOperator(
+            data=np.array([1.0, -1.0], dtype=np.complex128),
+            indices=np.array([0, 1], dtype=np.int64),
+            indptr=np.array([0, 1, 2], dtype=np.int64),
+            shape=(2, 2),
+        )
+
+        self.assertEqual(backend.expectation(operator), 1.0)
+
+    def test_hip_statevector_backend_prefers_native_sparse_moments(self):
+        from rocq.backends import _HipStateVectorState
+
+        calls = []
+
+        class _FakeHipBackend:
+            def get_sparse_matrix_moments(self, handle, d_state, num_qubits, data, indices, indptr, rows, cols):
+                calls.append((num_qubits, data.dtype, list(indices), list(indptr), rows, cols))
+                return 0.25 + 0.0j, 0.5 + 0.0j
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+        operator = SparseHamiltonianOperator(
+            data=np.array([1.0, -1.0], dtype=np.complex128),
+            indices=np.array([0, 1], dtype=np.int64),
+            indptr=np.array([0, 1, 2], dtype=np.int64),
+            shape=(2, 2),
+            coefficient=2.0,
+        )
+
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
+            result = state.expectation(operator)
+
+        self.assertEqual(result, 0.5)
+        self.assertEqual(calls[0], (1, np.dtype("complex64"), [0, 1], [0, 1, 2], 2, 2))
 
 
 if __name__ == "__main__":

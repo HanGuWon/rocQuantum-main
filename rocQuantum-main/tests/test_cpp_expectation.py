@@ -79,6 +79,8 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
         self.assertIn(".def(\"expectation_matrix\"", bindings)
         self.assertIn("get_expectation_matrix", legacy_bindings)
         self.assertIn("rocsvGetExpectationMatrix", legacy_bindings)
+        self.assertIn("get_sparse_matrix_moments", legacy_bindings)
+        self.assertIn("rocsvGetSparseMatrixMoments", legacy_bindings)
 
 
 if __name__ == "__main__":

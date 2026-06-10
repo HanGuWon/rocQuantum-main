@@ -30,6 +30,7 @@ from rocq.operator import (
     QuantumOperator,
     PauliOperator,
     HermitianOperator,
+    SparseHamiltonianOperator,
     SumOperator,
     get_expectation_value,
 )

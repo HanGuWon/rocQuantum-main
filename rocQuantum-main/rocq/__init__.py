@@ -6,6 +6,7 @@ from .operator import (
     HermitianOperator,
     PauliOperator,
     QuantumOperator,
+    SparseHamiltonianOperator,
     SumOperator,
     get_expectation_value,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "QuantumOperator",
     "PauliOperator",
     "HermitianOperator",
+    "SparseHamiltonianOperator",
     "SumOperator",
     "kernel",
     "execute",

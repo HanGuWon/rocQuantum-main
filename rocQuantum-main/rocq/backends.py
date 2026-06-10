@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .operator import HermitianOperator, SumOperator, iter_pauli_terms
+from .operator import HermitianOperator, SparseHamiltonianOperator, SumOperator, iter_pauli_terms
 
 try:
     import _rocq_hip_backend as hip_backend
@@ -110,6 +110,43 @@ def _statevector_expectation_matrix(statevector, matrix, targets: Sequence[int],
     return total
 
 
+def _normalize_sparse_hamiltonian(operator: SparseHamiltonianOperator, num_qubits: int):
+    data = np.asarray(operator.data, dtype=np.complex128).reshape(-1)
+    indices = np.asarray(operator.indices, dtype=np.int64).reshape(-1)
+    indptr = np.asarray(operator.indptr, dtype=np.int64).reshape(-1)
+    rows, cols = (int(operator.shape[0]), int(operator.shape[1]))
+    state_dim = 1 << int(num_qubits)
+
+    if rows != state_dim or cols != state_dim:
+        raise ValueError("SparseHamiltonianOperator shape must match the backend state dimension.")
+    if data.size != indices.size:
+        raise ValueError("SparseHamiltonianOperator CSR data and indices lengths must match.")
+    if indptr.size != rows + 1:
+        raise ValueError("SparseHamiltonianOperator CSR indptr length must equal rows + 1.")
+    if indptr.size == 0 or int(indptr[0]) != 0 or int(indptr[-1]) != data.size:
+        raise ValueError("SparseHamiltonianOperator CSR indptr must start at 0 and end at nnz.")
+    if np.any(indptr[:-1] > indptr[1:]):
+        raise ValueError("SparseHamiltonianOperator CSR indptr must be monotonic.")
+    if np.any(indices < 0) or np.any(indices >= cols):
+        raise ValueError("SparseHamiltonianOperator CSR column index is out of bounds.")
+
+    return data, indices.astype(np.uintp), indptr.astype(np.uintp), (rows, cols)
+
+
+def _statevector_sparse_hamiltonian_moments(statevector, data, indices, indptr):
+    state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    h_state = np.zeros_like(state)
+    for row in range(state.size):
+        accum = 0.0 + 0.0j
+        for offset in range(int(indptr[row]), int(indptr[row + 1])):
+            accum += data[offset] * state[int(indices[offset])]
+        h_state[row] = accum
+
+    mean = np.vdot(state, h_state)
+    second_moment = np.vdot(h_state, h_state)
+    return mean, second_moment
+
+
 class _MockStateVectorState:
     def __init__(self, n_qubits: int):
         self._num_qubits = n_qubits
@@ -142,6 +179,11 @@ class _MockStateVectorState:
             matrix, targets = _normalize_matrix_targets(operator.matrix, operator.targets, self._num_qubits)
             value = _statevector_expectation_matrix(self._state, matrix, targets, self._num_qubits)
             return _finalize_expectation(operator.coefficient * value)
+
+        if isinstance(operator, SparseHamiltonianOperator):
+            data, indices, indptr, _ = _normalize_sparse_hamiltonian(operator, self._num_qubits)
+            mean, _ = _statevector_sparse_hamiltonian_moments(self._state, data, indices, indptr)
+            return _finalize_expectation(operator.coefficient * mean)
 
         total = 0.0 + 0.0j
         for coefficient, paulis in iter_pauli_terms(operator):
@@ -369,6 +411,26 @@ class _HipStateVectorState:
             value = _statevector_expectation_matrix(self.get_state_vector(), matrix, targets, self._num_qubits)
         return _finalize_expectation(operator.coefficient * value)
 
+    def _sparse_hamiltonian_moments(self, operator: SparseHamiltonianOperator):
+        data, indices, indptr, shape = _normalize_sparse_hamiltonian(operator, self._num_qubits)
+        native = getattr(hip_backend, "get_sparse_matrix_moments", None)
+        if native is not None:
+            mean, second_moment = native(
+                self._handle,
+                self._d_state,
+                self._num_qubits,
+                np.asarray(data, dtype=np.complex64, order="C"),
+                [int(index) for index in indices],
+                [int(offset) for offset in indptr],
+                shape[0],
+                shape[1],
+            )
+        else:
+            mean, second_moment = _statevector_sparse_hamiltonian_moments(
+                self.get_state_vector(), data, indices, indptr
+            )
+        return mean, second_moment
+
     def expectation(self, operator):
         if isinstance(operator, SumOperator):
             total = 0.0 + 0.0j
@@ -378,6 +440,10 @@ class _HipStateVectorState:
 
         if isinstance(operator, HermitianOperator):
             return self._expectation_matrix(operator)
+
+        if isinstance(operator, SparseHamiltonianOperator):
+            mean, _ = self._sparse_hamiltonian_moments(operator)
+            return _finalize_expectation(operator.coefficient * mean)
 
         total = 0.0 + 0.0j
         for coefficient, paulis in iter_pauli_terms(operator):

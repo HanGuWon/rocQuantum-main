@@ -467,6 +467,96 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
            "Calculates <psi|M|psi> for a dense matrix acting on target qubits.");
 
+    m.def("get_sparse_matrix_moments",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> data,
+           const std::vector<size_t>& indices_vec,
+           const std::vector<size_t>& indptr_vec,
+           size_t rows,
+           size_t cols) {
+            if (data.ndim() != 1) {
+                throw std::runtime_error("CSR data must be a 1D array for get_sparse_matrix_moments.");
+            }
+            const size_t nnz = static_cast<size_t>(data.size());
+            if (indices_vec.size() != nnz) {
+                throw std::runtime_error("CSR indices length must match data length.");
+            }
+            if (rows == 0 || cols == 0 || rows != cols) {
+                throw std::runtime_error("CSR shape must be square and non-empty.");
+            }
+            if (numQubits >= sizeof(size_t) * 8 || rows != (size_t{1} << numQubits)) {
+                throw std::runtime_error("CSR shape must match 2^num_qubits.");
+            }
+            if (indptr_vec.size() != rows + 1 || indptr_vec.empty() ||
+                indptr_vec.front() != 0 || indptr_vec.back() != nnz) {
+                throw std::runtime_error("CSR indptr must start at 0, end at nnz, and have rows + 1 entries.");
+            }
+            for (size_t row = 0; row < rows; ++row) {
+                if (indptr_vec[row] > indptr_vec[row + 1]) {
+                    throw std::runtime_error("CSR indptr must be monotonic.");
+                }
+            }
+            for (const size_t col : indices_vec) {
+                if (col >= cols) {
+                    throw std::runtime_error("CSR column index is out of bounds.");
+                }
+            }
+
+            DeviceBuffer data_device;
+            if (nnz > 0) {
+                data_device = DeviceBuffer(nnz, sizeof(rocComplex));
+                if (hipMemcpy(data_device.get_ptr<rocComplex>(),
+                              data.data(),
+                              nnz * sizeof(rocComplex),
+                              hipMemcpyHostToDevice) != hipSuccess) {
+                    throw std::runtime_error("Failed to copy CSR data to device");
+                }
+            }
+
+            DeviceBuffer indices_device;
+            if (!indices_vec.empty()) {
+                indices_device = DeviceBuffer(indices_vec.size(), sizeof(size_t));
+                if (hipMemcpy(indices_device.get_ptr<size_t>(),
+                              indices_vec.data(),
+                              indices_vec.size() * sizeof(size_t),
+                              hipMemcpyHostToDevice) != hipSuccess) {
+                    throw std::runtime_error("Failed to copy CSR indices to device");
+                }
+            }
+
+            DeviceBuffer indptr_device(indptr_vec.size(), sizeof(size_t));
+            if (hipMemcpy(indptr_device.get_ptr<size_t>(),
+                          indptr_vec.data(),
+                          indptr_vec.size() * sizeof(size_t),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy CSR indptr to device");
+            }
+
+            rocComplex mean{};
+            rocComplex second_moment{};
+            rocqStatus_t status = rocsvGetSparseMatrixMoments(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                nnz > 0 ? data_device.get_ptr<rocComplex>() : nullptr,
+                !indices_vec.empty() ? indices_device.get_ptr<size_t>() : nullptr,
+                indptr_device.get_ptr<size_t>(),
+                rows,
+                cols,
+                nnz,
+                &mean,
+                &second_moment);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetSparseMatrixMoments failed: " + std::to_string(status));
+            }
+
+            return py::make_tuple(
+                std::complex<double>(static_cast<double>(mean.x), static_cast<double>(mean.y)),
+                std::complex<double>(static_cast<double>(second_moment.x), static_cast<double>(second_moment.y)));
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("data"),
+           py::arg("indices"), py::arg("indptr"), py::arg("rows"), py::arg("cols"),
+           "Calculates sparse CSR <psi|H|psi> and <psi|H^2|psi> moments.");
+
     m.def("sample",
         [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
            const std::vector<unsigned>& measuredQubits_vec, unsigned numShots) {

@@ -27,8 +27,9 @@ class TestCanonicalImports(unittest.TestCase):
         self.assertIsNotNone(sample)
 
     def test_import_rocq_operator(self):
-        from rocq.operator import PauliOperator, SumOperator, get_expectation_value
+        from rocq.operator import PauliOperator, SparseHamiltonianOperator, SumOperator, get_expectation_value
         self.assertIsNotNone(PauliOperator)
+        self.assertIsNotNone(SparseHamiltonianOperator)
 
     def test_import_rocq_gates(self):
         from rocq.gates import h, x, y, z, cnot, rx, ry, rz

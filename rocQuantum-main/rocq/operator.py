@@ -63,6 +63,22 @@ class HermitianOperator(QuantumOperator):
         return f"{self.coefficient} * Hermitian(matrix)"
 
 
+class SparseHamiltonianOperator(QuantumOperator):
+    """Represents a full-state sparse Hamiltonian in CSR form."""
+
+    def __init__(self, data, indices, indptr, shape, coefficient: Number = 1.0):
+        super().__init__(coefficient)
+        self.data = data
+        self.indices = indices
+        self.indptr = indptr
+        if len(shape) != 2:
+            raise ValueError("SparseHamiltonianOperator shape must have two dimensions.")
+        self.shape = (int(shape[0]), int(shape[1]))
+
+    def to_string(self) -> str:
+        return f"{self.coefficient} * SparseHamiltonian(CSR, shape={self.shape})"
+
+
 class SumOperator(QuantumOperator):
     """Represents a sum of quantum operators."""
 
@@ -129,9 +145,9 @@ def iter_pauli_terms(operator: QuantumOperator) -> List[Tuple[complex, List[Tupl
                 terms.append((operator.coefficient * coefficient, paulis))
         return terms
 
-    if isinstance(operator, HermitianOperator):
+    if isinstance(operator, (HermitianOperator, SparseHamiltonianOperator)):
         raise NotImplementedError(
-            "HermitianOperator cannot be expanded by iter_pauli_terms(). "
+            f"{operator.__class__.__name__} cannot be expanded by iter_pauli_terms(). "
             "Use rocq.observe() or get_expectation_value() to evaluate matrix observables."
         )
 
