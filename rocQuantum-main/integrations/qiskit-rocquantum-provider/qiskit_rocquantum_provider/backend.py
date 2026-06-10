@@ -8,7 +8,7 @@ try:
     from qiskit.result import ExperimentResult, ExperimentResultData
 except ImportError:
     from qiskit.result.models import ExperimentResult, ExperimentResultData
-from qiskit.circuit import Measure
+from qiskit.circuit import Measure, Reset
 from qiskit.circuit.library import (
     CCXGate,
     CCZGate,
@@ -92,6 +92,7 @@ def _instruction_target(num_qubits):
     target.add_instruction(RXGate(0.0), name="rx")
     target.add_instruction(RYGate(0.0), name="ry")
     target.add_instruction(RZGate(0.0), name="rz")
+    target.add_instruction(Reset(), name="reset")
     target.add_instruction(RXXGate(0.0), name="rxx")
     target.add_instruction(RYYGate(0.0), name="ryy")
     target.add_instruction(RZZGate(0.0), name="rzz")
@@ -172,12 +173,28 @@ class RocQuantumBackend(BackendV2):
 
         measured_bits = {}  # Map classical bit index to qubit index
         measurement_started = False
+        touched_qubits = set()
         for instruction in circuit.data:
             op = instruction.operation
             if op.name in {"barrier", "delay", "save_statevector"}:
                 continue
 
             q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
+
+            if measurement_started and op.name != "measure":
+                raise ValueError(
+                    "RocQuantumBackend only supports terminal measurements. "
+                    f"Operation {op.name!r} appears after a measurement."
+                )
+
+            if op.name == "reset":
+                reset_targets = set(q_indices)
+                if touched_qubits & reset_targets:
+                    raise ValueError(
+                        "RocQuantumBackend only supports reset before a qubit has been operated on. "
+                        "Mid-circuit reset requires non-unitary state reinitialization support."
+                    )
+                continue
 
             if op.name == 'measure':
                 measurement_started = True
@@ -186,12 +203,6 @@ class RocQuantumBackend(BackendV2):
                 measured_bits[c_index] = q_indices[0]
                 continue
 
-            if measurement_started:
-                raise ValueError(
-                    "RocQuantumBackend only supports terminal measurements. "
-                    f"Operation {op.name!r} appears after a measurement."
-                )
-
             matrix = op.to_matrix() if op.name in MATRIX_FALLBACK_OPS else None
             self._runtime.apply_operation(
                 op.name,
@@ -199,6 +210,7 @@ class RocQuantumBackend(BackendV2):
                 normalize_params(op.params),
                 matrix=matrix,
             )
+            touched_qubits.update(q_indices)
 
         return measured_bits
 

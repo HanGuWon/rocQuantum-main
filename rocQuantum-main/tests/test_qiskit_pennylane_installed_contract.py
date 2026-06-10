@@ -240,6 +240,41 @@ def test_qiskit_backend_rejects_mid_circuit_measurement(monkeypatch):
         backend.run(circuit).result()
 
 
+def test_qiskit_backend_allows_initial_reset_as_noop(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1)
+    circuit.reset(0)
+    circuit.x(0)
+
+    assert "reset" in set(backend.target.operation_names)
+
+    backend.run(circuit, sampling=False).result()
+
+    assert _FakeQuantumSimulator.instances[-1].ops == [("X", (0,), ())]
+
+
+def test_qiskit_backend_rejects_reset_after_operation(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+    circuit.reset(0)
+
+    with pytest.raises(ValueError, match="reset before a qubit has been operated on"):
+        backend.run(circuit).result()
+
+
 def test_qiskit_backend_applies_global_phase_for_statevector(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
