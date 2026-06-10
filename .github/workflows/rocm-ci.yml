@@ -56,6 +56,7 @@ jobs:
             tests/test_cirq_integration.py \
             tests/test_pennylane_integration.py \
             tests/test_benchmark_release_contract.py \
+            tests/test_rocm_compatibility_contract.py \
             --junitxml "${ARTIFACT_DIR}/junit-fast-checks.xml" \
             2>&1 | tee "${ARTIFACT_DIR}/pytest-fast-checks.log"
 

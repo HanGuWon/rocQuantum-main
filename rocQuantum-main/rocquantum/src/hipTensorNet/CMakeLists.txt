@@ -28,7 +28,7 @@ target_include_directories(rocqsim_tensornet
 
 target_link_libraries(rocqsim_tensornet
     PUBLIC
-        HIP::hip_runtime
+        hip::host
         roc::rocblas
         roc::rocsolver
 )

@@ -54,6 +54,7 @@ jobs:
           python -m unittest tests.test_pennylane_integration -v
           python -m unittest tests.test_cpp_expectation -v
           python -m unittest tests.test_benchmark_release_contract -v
+          python -m unittest tests.test_rocm_compatibility_contract -v
 
   build:
     name: Build ROCm ${{ matrix.rocm_label }}

@@ -61,11 +61,13 @@ Use those files as the authoritative capability summary for the current codebase
 
 - Primary release target: Linux x86_64
 - Latest production ROCm target verified on 2026-06-10: `7.2.4`
+- Native ROCm CMake minimum: CMake `3.21`
 - Recommended Tier 1 GPU targets: `gfx950`, `gfx942`, `gfx90a`
 - Recommended future minimum release-grade GPU target: `gfx90a`
 - Recommended future minimum ROCm target: `6.4.0`
 - Current non-experimental CI baseline: ROCm `6.2.2`
 - Current experimental/latest CI lane: ROCm `7.2.4`
+- ROCm CMake packages are consumed through official config targets such as `hip` / `hip::host`, `roc::rocblas`, `roc::rocsolver`, and optional RCCL target `rccl`
 - Windows helper scripts are kept for development convenience but are not treated as release-grade support
 
 ## Native Component Snapshot

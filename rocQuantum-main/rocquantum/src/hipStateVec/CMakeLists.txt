@@ -32,7 +32,7 @@ target_include_directories(hipStateVec
 
 target_link_libraries(hipStateVec
     PUBLIC
-        HIP::hip_runtime
+        hip::host
         roc::rocblas
         hiprand::hiprand
 )
@@ -42,7 +42,10 @@ if(ROCQUANTUM_ENABLE_SYNC_DEBUG)
 endif()
 
 find_package(rccl QUIET)
-if(rccl_FOUND AND TARGET rccl::rccl)
+if(rccl_FOUND AND TARGET rccl)
+    target_compile_definitions(hipStateVec PRIVATE ROCQ_HAVE_RCCL=1)
+    target_link_libraries(hipStateVec PUBLIC rccl)
+elseif(rccl_FOUND AND TARGET rccl::rccl)
     target_compile_definitions(hipStateVec PRIVATE ROCQ_HAVE_RCCL=1)
     target_link_libraries(hipStateVec PUBLIC rccl::rccl)
 elseif(rccl_FOUND AND DEFINED rccl_LIBRARIES)
@@ -63,7 +66,7 @@ install(
 
 if(BUILD_TESTING)
     add_executable(test_hipStateVec_multi_gpu test_hipStateVec_multi_gpu.cpp)
-    target_link_libraries(test_hipStateVec_multi_gpu PRIVATE hipStateVec HIP::hip_runtime)
+    target_link_libraries(test_hipStateVec_multi_gpu PRIVATE hipStateVec hip::host)
     add_test(NAME MultiGPUTests COMMAND test_hipStateVec_multi_gpu)
 
     add_executable(
@@ -72,7 +75,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(
         benchmark_hipStateVec_distributed_reductions
-        PRIVATE hipStateVec HIP::hip_runtime
+        PRIVATE hipStateVec hip::host
     )
 
     add_executable(
@@ -81,6 +84,6 @@ if(BUILD_TESTING)
     )
     target_link_libraries(
         benchmark_hipStateVec_core_paths
-        PRIVATE hipStateVec HIP::hip_runtime
+        PRIVATE hipStateVec hip::host
     )
 endif()

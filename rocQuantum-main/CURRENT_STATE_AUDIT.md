@@ -114,7 +114,7 @@ What is not real today:
 
 ### Packaging and CI
 
-- Native CMake build exists, but Python packaging is split between `pyproject.toml`, `setup.py`, `rocquantum_bind`, and `_rocq_hip_backend`.
+- Native CMake build exists and now follows the ROCm HIP-language floor of CMake `3.21` plus official config-package targets such as `hip` / `hip::host`, `roc::rocblas`, and `roc::rocsolver`. Python packaging is still split between `pyproject.toml`, `setup.py`, `rocquantum_bind`, and `_rocq_hip_backend`.
 - CI covers Python import/package contracts, one GPU runtime regression, and a release benchmark artifact registry. The registry records statevec, distributed reduction, TensorNet, and DensityMat benchmark JSON when native ROCm binaries are available, or explicit skipped JSON when they are not.
 
 ## What Is Stubbed Or Absent

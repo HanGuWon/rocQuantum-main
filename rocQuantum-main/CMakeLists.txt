@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.21)
 project(rocQuantum VERSION 0.1.0 LANGUAGES CXX HIP)
 
 include(GNUInstallDirs)
@@ -27,7 +27,7 @@ else()
 endif()
 set(ROCQUANTUM_EXPORT_SET_NAME rocQuantumTargets)
 
-find_package(HIP REQUIRED)
+find_package(hip CONFIG REQUIRED)
 find_package(hiprand REQUIRED)
 find_package(rocblas REQUIRED)
 find_package(rocsolver REQUIRED)

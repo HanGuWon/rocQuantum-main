@@ -23,7 +23,7 @@ target_include_directories(rocq_hip_density_mat
 
 target_link_libraries(rocq_hip_density_mat
     PUBLIC
-        HIP::hip_runtime
+        hip::host
 )
 
 install(
@@ -47,6 +47,6 @@ if(BUILD_TESTING)
     )
     target_link_libraries(
         benchmark_hipDensityMat_channel_sampling
-        PRIVATE rocq_hip_density_mat HIP::hip_runtime
+        PRIVATE rocq_hip_density_mat hip::host
     )
 endif()
