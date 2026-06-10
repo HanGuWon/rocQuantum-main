@@ -69,6 +69,7 @@ MATRIX_FALLBACK_OPS = {
     "p", "rccx", "rcccx", "rxx", "ryy", "rzz",
     "state_preparation", "sx", "sxdg", "u", "unitary",
 }
+MAX_AUTOMATIC_MATRIX_FALLBACK_QUBITS = 4
 CONTROL_FLOW_OPS = {
     "break_loop", "continue_loop", "for_loop", "if_else", "switch_case", "while_loop",
 }
@@ -87,12 +88,24 @@ def _state_preparation_matrix(op):
     return Operator(op).data
 
 
+def _automatic_operation_matrix(op):
+    if int(getattr(op, "num_qubits", 0)) > MAX_AUTOMATIC_MATRIX_FALLBACK_QUBITS:
+        return None
+    try:
+        return op.to_matrix()
+    except Exception:
+        try:
+            return Operator(op).data
+        except Exception:
+            return None
+
+
 def _operation_matrix(op):
     if op.name == "state_preparation":
         return _state_preparation_matrix(op)
     if op.name in MATRIX_FALLBACK_OPS:
         return op.to_matrix()
-    return None
+    return _automatic_operation_matrix(op)
 
 
 def _instruction_target(num_qubits):

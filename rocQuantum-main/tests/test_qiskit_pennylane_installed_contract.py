@@ -457,6 +457,36 @@ def test_qiskit_backend_dispatches_general_mcx_natively(monkeypatch):
     assert sim.matrices == []
 
 
+def test_qiskit_backend_matrix_fallback_covers_open_control_unitaries(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import HGate, XGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(4)
+    circuit.append(XGate().control(2, ctrl_state="01"), [0, 1, 2])
+    circuit.append(HGate().control(1, ctrl_state="0"), [0, 1])
+    circuit.append(XGate().control(3, ctrl_state="101"), [0, 1, 2, 3])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == []
+    assert [targets for _, targets in sim.matrices] == [
+        (0, 1, 2),
+        (0, 1),
+        (0, 1, 2, 3),
+    ]
+    assert [matrix.shape for matrix, _ in sim.matrices] == [
+        (8, 8),
+        (4, 4),
+        (16, 16),
+    ]
+
+
 def test_qiskit_backend_runs_direct_state_preparation(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

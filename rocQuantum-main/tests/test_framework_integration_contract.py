@@ -128,6 +128,9 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
 
         self.assertIn("qiskit_memory_from_samples", source)
         self.assertIn("MATRIX_FALLBACK_OPS", source)
+        self.assertIn("MAX_AUTOMATIC_MATRIX_FALLBACK_QUBITS = 4", source)
+        self.assertIn("_automatic_operation_matrix", source)
+        self.assertIn("Operator(op).data", source)
         self.assertIn("statevector=False", source)
         self.assertIn("Target(num_qubits=int(num_qubits))", source)
         self.assertIn("MCXGate(3)", source)

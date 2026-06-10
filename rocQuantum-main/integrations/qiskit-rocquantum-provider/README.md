@@ -12,6 +12,7 @@ This package provides a Qiskit Provider that allows users to run quantum circuit
 - **Native Controlled Rotations**: Exposes Qiskit `crx`, `cry`, and `crz` target operations and dispatches them to rocQuantum native gates when the binding supports them.
 - **Native Multi-control Gates**: Dispatches Qiskit `ccx`, `mcx`, and `cswap` through rocQuantum native `MCX` / `CSWAP` gate aliases when the binding supports them, while preserving matrix fallback where Qiskit exposes a dense matrix.
 - **Matrix Fallback Gates**: Exposes common Qiskit matrix gates including `sx`, `sxdg`, `p`, `cp`, `rxx`, `ryy`, `rzz`, and `u` through rocQuantum matrix application.
+- **Direct Unitary Fallbacks**: For direct `backend.run()` execution, small Qiskit unitary instructions outside the advertised target can fall back through `to_matrix()` / `Operator` when Qiskit can produce a dense matrix.
 - **State Preparation Boundary**: Runs direct `QuantumCircuit.prepare_state()` through a `StatePreparation` matrix fallback and supports initial `initialize()` on untouched qubits; later `initialize()` is rejected because it requires non-unitary reset support.
 - **Automatic Discovery**: Once installed, Qiskit can automatically discover and list this provider's backends.
 - **Modern Job Contract**: `backend.run()` returns a synchronous Qiskit `Job` object whose `result()` method returns the `Result`.
@@ -43,6 +44,7 @@ After installation, Qiskit will automatically discover the `rocq_simulator` back
 - The target includes `crx`, `cry`, and `crz`; older bindings can still fall back through matrix application when available.
 - `ccx`, general all-one-control `mcx`, and `cswap` are routed to native multi-control public simulator gates when available. Other relative-phase controlled gates such as `rccx` / `rcccx` remain matrix fallbacks.
 - Common one- and two-qubit matrix gates (`sx`, `sxdg`, `p`, `cp`, `rxx`, `ryy`, `rzz`, `u`) are target-visible and execute through `apply_matrix()`.
+- Direct execution can also matrix-dispatch non-target unitary instructions with up to four qubits when Qiskit can provide a dense matrix, including open-control variants such as `ccx_o1` / `ch_o0`. Larger or non-unitary instructions remain unsupported unless added explicitly.
 - Direct `unitary` and `state_preparation` operations execute through `apply_matrix()` without attempting to normalize matrix/vector parameters as scalar gate angles.
 - `reset` is target-visible and accepted only before the target qubit has been operated on, where it is a no-op from the all-zero initial state. Mid-circuit `reset` and later `initialize()` are rejected with explicit diagnostics.
 - Qiskit control-flow operations (`if_else`, `for_loop`, `while_loop`, `switch_case`, break/continue) and classically conditioned operations are rejected explicitly. Dynamic-circuit support needs runtime-level non-unitary/classical-control semantics first.
