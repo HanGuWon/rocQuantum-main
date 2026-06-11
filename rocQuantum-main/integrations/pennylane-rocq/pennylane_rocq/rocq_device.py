@@ -827,6 +827,33 @@ def _apply_crot(runtime, wire_indices, phi, theta, omega):
     runtime.apply_operation("RZ", [target], [omega])
 
 
+def _apply_rot_batch(runtime, wire_indices, params_by_op):
+    if len(wire_indices) != 1:
+        raise ValueError("Rot requires exactly one wire.")
+
+    target = wire_indices[0]
+    runtime.apply_operation_batch("RZ", [target], [params[0] for params in params_by_op])
+    runtime.apply_operation_batch("RY", [target], [params[1] for params in params_by_op])
+    runtime.apply_operation_batch("RZ", [target], [params[2] for params in params_by_op])
+
+
+def _apply_crot_batch(runtime, wire_indices, params_by_op):
+    if len(wire_indices) != 2:
+        raise ValueError("CRot requires exactly two wires.")
+
+    control, target = wire_indices
+    phis = [params[0] for params in params_by_op]
+    thetas = [params[1] for params in params_by_op]
+    omegas = [params[2] for params in params_by_op]
+    runtime.apply_operation_batch("RZ", [target], [(phi - omega) / 2 for phi, omega in zip(phis, omegas)])
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation_batch("RZ", [target], [-(phi + omega) / 2 for phi, omega in zip(phis, omegas)])
+    runtime.apply_operation_batch("RY", [target], [-theta / 2 for theta in thetas])
+    runtime.apply_operation("CNOT", [control, target])
+    runtime.apply_operation_batch("RY", [target], [theta / 2 for theta in thetas])
+    runtime.apply_operation_batch("RZ", [target], omegas)
+
+
 def _apply_double_excitation(runtime, wire_indices, theta):
     if len(wire_indices) != 4:
         raise ValueError("DoubleExcitation requires exactly four wires.")
@@ -1139,6 +1166,14 @@ class RocQDevice(QubitDevice):
                     _apply_isingyy_batch(self._runtime, wire_indices, thetas)
                 else:
                     _apply_multirz_batch(self._runtime, wire_indices, thetas)
+                continue
+
+            if gate_name == "Rot" and all(len(params) == 3 for params in params_by_op):
+                _apply_rot_batch(self._runtime, wire_indices, params_by_op)
+                continue
+
+            if gate_name == "CRot" and all(len(params) == 3 for params in params_by_op):
+                _apply_crot_batch(self._runtime, wire_indices, params_by_op)
                 continue
 
             if any(params != params_by_op[0] for params in params_by_op[1:]):

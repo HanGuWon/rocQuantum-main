@@ -580,6 +580,15 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("ry", [target], [theta])
         self._runtime.apply_operation("rz", [target], [phi])
 
+    def _apply_u_gate_batch(self, q_indices, thetas, phis, lams):
+        if len(q_indices) != 1:
+            raise ValueError("Qiskit u gate requires exactly one qubit.")
+
+        target = q_indices[0]
+        self._runtime.apply_operation_batch("rz", [target], lams)
+        self._runtime.apply_operation_batch("ry", [target], thetas)
+        self._runtime.apply_operation_batch("rz", [target], phis)
+
     def _apply_cy_gate(self, q_indices):
         if len(q_indices) != 2:
             raise ValueError("Qiskit cy gate requires exactly two qubits.")
@@ -1094,11 +1103,18 @@ class RocQuantumBackend(BackendV2):
                     self._apply_rzz_gate_batch(q_indices, thetas)
                 continue
 
+            if reference_op.name == "u" and all(len(params) == 3 for params in params_by_circuit):
+                thetas = [params[0] for params in params_by_circuit]
+                phis = [params[1] for params in params_by_circuit]
+                lams = [params[2] for params in params_by_circuit]
+                self._apply_u_gate_batch(q_indices, thetas, phis, lams)
+                continue
+
             first_params = params_by_circuit[0]
             if any(params != first_params for params in params_by_circuit[1:]):
                 raise NotImplementedError(
                     "Batched Qiskit execution only supports varying RX/RY/RZ, CRX/CRY/CRZ, "
-                    f"and decomposed p/cp/rxx/ryy/rzz parameters, got {reference_op.name!r}."
+                    f"p/cp, u, and decomposed rxx/ryy/rzz parameters, got {reference_op.name!r}."
                 )
 
             matrix = _operation_matrix(reference_op)
