@@ -403,6 +403,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             header = f.read()
         with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
             implementation = f.read()
+        with open(_HIPSTATEVEC_HEADER, "r", encoding="utf-8") as f:
+            hip_header = f.read()
+        with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            hipstatevec = f.read()
         with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
             bindings = f.read()
         with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
@@ -414,9 +418,13 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("QuantumSimulator::ApplySparseMatrix", implementation)
         self.assertIn("validate_sparse_operation_csr", implementation)
         self.assertIn("apply_sparse_operation_to_state_slice", implementation)
+        self.assertIn("rocsvApplySparseMatrix", implementation)
+        self.assertIn("sparse_status == ROCQ_STATUS_NOT_IMPLEMENTED", implementation)
+        self.assertIn("rocsvApplySparseMatrix", hip_header)
+        self.assertIn("rocsvApplySparseMatrix", hipstatevec)
+        self.assertIn("apply_sparse_matrix_kernel", hipstatevec)
+        self.assertIn("hipMemcpyDeviceToDevice", hipstatevec)
         self.assertIn("Sparse operation CSR indptr", implementation)
-        self.assertIn("get_statevectors()", implementation)
-        self.assertIn("set_statevectors(out)", implementation)
         self.assertIn(".def(\"apply_sparse_matrix\"", bindings)
         self.assertIn(".def(\"ApplySparseMatrix\"", bindings)
         self.assertIn("copy_nonnegative_indices", bindings)

@@ -629,19 +629,104 @@ void QuantumSimulator::apply_sparse_matrix(const std::vector<std::complex<double
     const std::size_t local_dimension = std::size_t{1} << targets.size();
     validate_sparse_operation_csr(data, indices, indptr, rows, cols, local_dimension);
 
-    const std::vector<std::complex<double>> states = get_statevectors();
-    std::vector<std::complex<double>> out(states.size(), std::complex<double>{0.0, 0.0});
-    for (std::size_t batch = 0; batch < batch_size_; ++batch) {
-        const std::size_t offset = batch * state_vec_size_;
-        apply_sparse_operation_to_state_slice(data,
-                                              indices,
-                                              indptr,
-                                              targets,
-                                              state_vec_size_,
-                                              states.data() + offset,
-                                              out.data() + offset);
+    auto host_fallback = [&]() {
+        const std::vector<std::complex<double>> states = get_statevectors();
+        std::vector<std::complex<double>> out(states.size(), std::complex<double>{0.0, 0.0});
+        for (std::size_t batch = 0; batch < batch_size_; ++batch) {
+            const std::size_t offset = batch * state_vec_size_;
+            apply_sparse_operation_to_state_slice(data,
+                                                  indices,
+                                                  indptr,
+                                                  targets,
+                                                  state_vec_size_,
+                                                  states.data() + offset,
+                                                  out.data() + offset);
+        }
+        set_statevectors(out);
+    };
+
+    std::vector<rocComplex> raw_data;
+    raw_data.reserve(data.size());
+    for (const std::complex<double>& value : data) {
+        raw_data.push_back(to_roc_complex(value));
     }
-    set_statevectors(out);
+
+    rocComplex* d_data = nullptr;
+    std::size_t* d_indices = nullptr;
+    std::size_t* d_indptr = nullptr;
+    auto free_sparse_buffers = [&]() {
+        if (d_data) {
+            check_hip(hipFree(d_data), "sparse operation data free");
+        }
+        if (d_indices) {
+            check_hip(hipFree(d_indices), "sparse operation indices free");
+        }
+        if (d_indptr) {
+            check_hip(hipFree(d_indptr), "sparse operation indptr free");
+        }
+    };
+    auto cleanup_after_error = [&]() {
+        if (d_data) {
+            hipFree(d_data);
+        }
+        if (d_indices) {
+            hipFree(d_indices);
+        }
+        if (d_indptr) {
+            hipFree(d_indptr);
+        }
+    };
+
+    rocqStatus_t sparse_status = ROCQ_STATUS_SUCCESS;
+    try {
+        if (!raw_data.empty()) {
+            check_hip(hipMalloc(&d_data, raw_data.size() * sizeof(rocComplex)),
+                      "sparse operation data allocation");
+            check_hip(hipMemcpy(d_data,
+                                raw_data.data(),
+                                raw_data.size() * sizeof(rocComplex),
+                                hipMemcpyHostToDevice),
+                      "sparse operation data upload");
+        }
+        if (!indices.empty()) {
+            check_hip(hipMalloc(&d_indices, indices.size() * sizeof(std::size_t)),
+                      "sparse operation indices allocation");
+            check_hip(hipMemcpy(d_indices,
+                                indices.data(),
+                                indices.size() * sizeof(std::size_t),
+                                hipMemcpyHostToDevice),
+                      "sparse operation indices upload");
+        }
+        check_hip(hipMalloc(&d_indptr, indptr.size() * sizeof(std::size_t)),
+                  "sparse operation indptr allocation");
+        check_hip(hipMemcpy(d_indptr,
+                            indptr.data(),
+                            indptr.size() * sizeof(std::size_t),
+                            hipMemcpyHostToDevice),
+                  "sparse operation indptr upload");
+
+        sparse_status = rocsvApplySparseMatrix(sim_handle_,
+                                               device_state_vector_,
+                                               num_qubits_,
+                                               targets.data(),
+                                               static_cast<unsigned>(targets.size()),
+                                               d_data,
+                                               d_indices,
+                                               d_indptr,
+                                               rows,
+                                               cols,
+                                               raw_data.size());
+    } catch (...) {
+        cleanup_after_error();
+        throw;
+    }
+    free_sparse_buffers();
+
+    if (sparse_status == ROCQ_STATUS_NOT_IMPLEMENTED) {
+        host_fallback();
+        return;
+    }
+    check_status(sparse_status, "apply sparse matrix");
 }
 
 void QuantumSimulator::apply_controlled_matrix(const std::vector<std::complex<double>>& matrix,

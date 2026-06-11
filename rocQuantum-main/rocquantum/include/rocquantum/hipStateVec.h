@@ -223,6 +223,38 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
                               unsigned matrixDim);
 
 /**
+ * @brief Applies a CSR sparse matrix to the specified target qubits in the state vector.
+ *
+ * The CSR matrix acts on the local target-qubit subspace and must have
+ * dimension 2^numTargetQubits by 2^numTargetQubits. CSR buffers are device
+ * pointers. Distributed states are currently unsupported.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector.
+ * @param[in] numQubits Total number of qubits in the state vector.
+ * @param[in] targetQubits Array of qubit indices the sparse operation acts upon.
+ * @param[in] numTargetQubits Number of target qubits.
+ * @param[in] d_data Device pointer to CSR non-zero values.
+ * @param[in] d_indices Device pointer to CSR column indices.
+ * @param[in] d_indptr Device pointer to CSR row offsets with rows + 1 entries.
+ * @param[in] rows Number of sparse matrix rows. Must equal 2^numTargetQubits.
+ * @param[in] cols Number of sparse matrix columns. Must equal rows.
+ * @param[in] nnz Number of sparse matrix non-zero entries.
+ * @return rocqStatus_t Status of the operation.
+ */
+rocqStatus_t rocsvApplySparseMatrix(rocsvHandle_t handle,
+                                    rocComplex* d_state,
+                                    unsigned numQubits,
+                                    const unsigned* targetQubits,
+                                    unsigned numTargetQubits,
+                                    const rocComplex* d_data,
+                                    const size_t* d_indices,
+                                    const size_t* d_indptr,
+                                    size_t rows,
+                                    size_t cols,
+                                    size_t nnz);
+
+/**
  * @brief Reports temporary workspace size required by rocsvApplyMatrix.
  *
  * Current implementation requires no extra workspace and reports 0.
