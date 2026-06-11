@@ -35,7 +35,7 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | Area | Status | Summary |
 | --- | --- | --- |
 | Native HIP simulator core | IMPLEMENTED | Core statevector, tensor-network, and limited density-matrix primitives are real |
-| Compiler-driven execution | PARTIAL | `compile_and_execute()` now executes a narrow qalloc/H/X/Y/Z/CNOT/RX/RY/RZ MLIR subset; broad compiler/runtime parity is still absent |
+| Compiler-driven execution | PARTIAL | `compile_and_execute()` now executes a narrow qalloc/H/X/Y/Z/S/Sdg/T/CNOT/CZ/SWAP/RX/RY/RZ/CRX/CRY/CRZ MLIR subset; broad compiler/runtime parity is still absent |
 | High-level expectation APIs | PARTIAL | Native kernels exist, but public API coverage is split and inconsistent |
 | Multi-GPU / distributed | PARTIAL | Real scaffolding exists, but many paths remain `NOT_IMPLEMENTED` |
 | Packaging / install / export | PARTIAL | Native build exists, but releasable packaging is not coherent |

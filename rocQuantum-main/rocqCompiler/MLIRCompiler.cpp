@@ -2,6 +2,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 // MLIR Core & Passes
@@ -44,8 +45,8 @@ struct ExecutableOp {
 };
 
 std::string supported_compile_execute_subset() {
-    return "supported subset: quantum.qalloc, quantum.h, quantum.x, quantum.y, "
-           "quantum.z, quantum.cnot, quantum.rx, quantum.ry, quantum.rz";
+    return "supported subset: quantum.qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP, "
+           "RX/RY/RZ, CRX/CRY/CRZ";
 }
 
 [[noreturn]] void throw_compile_diagnostic(const std::string& message) {
@@ -91,11 +92,17 @@ std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned
         "quantum.x",
         "quantum.y",
         "quantum.z",
+        "quantum.s",
+        "quantum.sdg",
+        "quantum.t",
     };
-    static const std::unordered_set<std::string> parametrized_gates = {
-        "quantum.rx",
-        "quantum.ry",
-        "quantum.rz",
+    static const std::unordered_map<std::string, unsigned> parametrized_gate_arities = {
+        {"quantum.rx", 1},
+        {"quantum.ry", 1},
+        {"quantum.rz", 1},
+        {"quantum.crx", 2},
+        {"quantum.cry", 2},
+        {"quantum.crz", 2},
     };
 
     module.walk([&](mlir::Operation* op) {
@@ -147,13 +154,20 @@ std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned
             return;
         }
 
-        if (parametrized_gates.count(op_name) != 0) {
+        if (op_name == "quantum.cz" || op_name == "quantum.swap") {
+            executable_ops.push_back({op_name.substr(std::string("quantum.").size()),
+                                      resolve_targets(op, qubit_indices, 2)});
+            return;
+        }
+
+        auto param_it = parametrized_gate_arities.find(op_name);
+        if (param_it != parametrized_gate_arities.end()) {
             auto angle_attr = op->getAttrOfType<mlir::FloatAttr>("angle");
             if (!angle_attr) {
                 throw_compile_diagnostic("operation '" + op_name + "' is missing the required 'angle' attribute.");
             }
             executable_ops.push_back({op_name.substr(std::string("quantum.").size()),
-                                      resolve_targets(op, qubit_indices, 1),
+                                      resolve_targets(op, qubit_indices, param_it->second),
                                       angle_attr.getValueAsDouble(),
                                       true});
             return;

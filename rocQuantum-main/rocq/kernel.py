@@ -74,13 +74,21 @@ class QuantumKernel:
         "x": ("quantum.x", 1),
         "y": ("quantum.y", 1),
         "z": ("quantum.z", 1),
+        "s": ("quantum.s", 1),
+        "sdg": ("quantum.sdg", 1),
+        "t": ("quantum.t", 1),
         "cnot": ("quantum.cnot", 2),
         "cx": ("quantum.cnot", 2),
+        "cz": ("quantum.cz", 2),
+        "swap": ("quantum.swap", 2),
     }
     _PARAM_GATE_TO_MLIR = {
-        "rx": "quantum.rx",
-        "ry": "quantum.ry",
-        "rz": "quantum.rz",
+        "rx": ("quantum.rx", 1),
+        "ry": ("quantum.ry", 1),
+        "rz": ("quantum.rz", 1),
+        "crx": ("quantum.crx", 2),
+        "cry": ("quantum.cry", 2),
+        "crz": ("quantum.crz", 2),
     }
 
     def mlir(self, *args, **kwargs) -> str:
@@ -134,9 +142,10 @@ class QuantumKernel:
                 )
             elif gate in self._PARAM_GATE_TO_MLIR:
                 refs = _resolve_target_refs(op.targets)
-                if len(refs) != 1:
+                mlir_name, arity = self._PARAM_GATE_TO_MLIR[gate]
+                if len(refs) != arity:
                     raise ValueError(
-                        f"Gate '{op.name}' expects exactly one target, got {len(refs)}."
+                        f"Gate '{op.name}' expects {arity} target(s), got {len(refs)}."
                     )
                 angle = op.params.get("theta")
                 if angle is None:
@@ -147,9 +156,11 @@ class QuantumKernel:
                     raise ValueError(
                         f"Gate '{op.name}' requires a numeric parameter."
                     )
+                targets = ", ".join(refs)
+                operand_types = ", ".join("!quantum.qubit" for _ in range(arity))
                 body_lines.append(
-                    f'    "{self._PARAM_GATE_TO_MLIR[gate]}"({refs[0]}) '
-                    f'{{angle = {float(angle):.17g} : f64}} : (!quantum.qubit) -> ()'
+                    f'    "{mlir_name}"({targets}) '
+                    f'{{angle = {float(angle):.17g} : f64}} : ({operand_types}) -> ()'
                 )
             else:
                 raise NotImplementedError(

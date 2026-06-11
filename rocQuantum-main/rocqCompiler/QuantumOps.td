@@ -42,8 +42,23 @@ def YOp : Quantum_Op<"y", [NoSideEffect]> {
 def ZOp : Quantum_Op<"z", [NoSideEffect]> {
   let arguments = (ins QubitType:$target);
 }
+def SOp : Quantum_Op<"s", [NoSideEffect]> {
+  let arguments = (ins QubitType:$target);
+}
+def SdgOp : Quantum_Op<"sdg", [NoSideEffect]> {
+  let arguments = (ins QubitType:$target);
+}
+def TOp : Quantum_Op<"t", [NoSideEffect]> {
+  let arguments = (ins QubitType:$target);
+}
 def CnotOp : Quantum_Op<"cnot", [NoSideEffect]> {
   let arguments = (ins QubitType:$control, QubitType:$target);
+}
+def CzOp : Quantum_Op<"cz", [NoSideEffect]> {
+  let arguments = (ins QubitType:$control, QubitType:$target);
+}
+def SwapOp : Quantum_Op<"swap", [NoSideEffect]> {
+  let arguments = (ins QubitType:$lhs, QubitType:$rhs);
 }
 def RxOp : Quantum_Op<"rx", [NoSideEffect]> {
   let arguments = (ins F64Attr:$angle, QubitType:$target);
@@ -53,6 +68,15 @@ def RyOp : Quantum_Op<"ry", [NoSideEffect]> {
 }
 def RzOp : Quantum_Op<"rz", [NoSideEffect]> {
   let arguments = (ins F64Attr:$angle, QubitType:$target);
+}
+def CrxOp : Quantum_Op<"crx", [NoSideEffect]> {
+  let arguments = (ins F64Attr:$angle, QubitType:$control, QubitType:$target);
+}
+def CryOp : Quantum_Op<"cry", [NoSideEffect]> {
+  let arguments = (ins F64Attr:$angle, QubitType:$control, QubitType:$target);
+}
+def CrzOp : Quantum_Op<"crz", [NoSideEffect]> {
+  let arguments = (ins F64Attr:$angle, QubitType:$control, QubitType:$target);
 }
 
 // New conditional operation

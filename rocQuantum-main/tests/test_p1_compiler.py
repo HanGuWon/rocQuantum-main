@@ -54,7 +54,17 @@ class TestLoweringCoverage(unittest.TestCase):
         self.assertIn("RxOp", src)
         self.assertIn("RyOp", src)
         self.assertIn("RzOp", src)
+        self.assertIn("CrxOp", src)
+        self.assertIn("CryOp", src)
+        self.assertIn("CrzOp", src)
         self.assertIn("ApplyParamGateOp", src)
+
+    def test_extended_core_gate_lowering_present(self):
+        path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "passes", "QuantumToSimulatorPass.cpp")
+        with open(path, "r", encoding="utf-8") as f:
+            src = f.read()
+        for token in ["SOp", "SdgOp", "TOp", "CzOp", "SwapOp"]:
+            self.assertIn(token, src)
 
 
 class TestCompileAndExecuteContract(unittest.TestCase):
@@ -74,6 +84,11 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("quantum.rx", src)
         self.assertIn("quantum.ry", src)
         self.assertIn("quantum.rz", src)
+        self.assertIn("quantum.crx", src)
+        self.assertIn("quantum.cry", src)
+        self.assertIn("quantum.crz", src)
+        self.assertIn("quantum.cz", src)
+        self.assertIn("quantum.swap", src)
         self.assertIn("quantum.cnot", src)
 
     def test_binding_documents_compile_and_execute_mvp(self):
@@ -81,7 +96,7 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         with open(path, "r", encoding="utf-8") as f:
             src = f.read()
 
-        self.assertIn("qalloc, H/X/Y/Z, CNOT, RX/RY/RZ", src)
+        self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP, RX/RY/RZ, CRX/CRY/CRZ", src)
         self.assertIn("Unsupported ops raise actionable diagnostics", src)
         self.assertNotIn("Stub API", src)
 
@@ -122,7 +137,7 @@ class TestKernelMlirEmission(unittest.TestCase):
     def test_param_gates_emit_angle_attributes(self):
         from rocq.kernel import QuantumKernel
         from rocq.qvec import qvec
-        from rocq.gates import rx, ry, rz
+        from rocq.gates import crx, cry, crz, rx, ry, rz
 
         @QuantumKernel
         def param_program():
@@ -130,11 +145,38 @@ class TestKernelMlirEmission(unittest.TestCase):
             rx(0.125, q[0])
             ry(-0.5, q[1])
             rz(1.25, q[2])
+            crx(0.25, q[0], q[1])
+            cry(-0.75, q[1], q[2])
+            crz(1.5, q[2], q[0])
 
         mlir_str = param_program.mlir()
         self.assertIn('"quantum.rx"(%q0) {angle = 0.125 : f64}', mlir_str)
         self.assertIn('"quantum.ry"(%q1) {angle = -0.5 : f64}', mlir_str)
         self.assertIn('"quantum.rz"(%q2) {angle = 1.25 : f64}', mlir_str)
+        self.assertIn('"quantum.crx"(%q0, %q1) {angle = 0.25 : f64}', mlir_str)
+        self.assertIn('"quantum.cry"(%q1, %q2) {angle = -0.75 : f64}', mlir_str)
+        self.assertIn('"quantum.crz"(%q2, %q0) {angle = 1.5 : f64}', mlir_str)
+
+    def test_extended_core_gates_emit_mlir(self):
+        from rocq.kernel import QuantumKernel
+        from rocq.qvec import qvec
+        from rocq.gates import cz, s, sdg, swap, t
+
+        @QuantumKernel
+        def extended_core_program():
+            q = qvec(2)
+            s(q[0])
+            sdg(q[1])
+            t(q[0])
+            cz(q[0], q[1])
+            swap(q[0], q[1])
+
+        mlir_str = extended_core_program.mlir()
+        self.assertIn('"quantum.s"(%q0)', mlir_str)
+        self.assertIn('"quantum.sdg"(%q1)', mlir_str)
+        self.assertIn('"quantum.t"(%q0)', mlir_str)
+        self.assertIn('"quantum.cz"(%q0, %q1)', mlir_str)
+        self.assertIn('"quantum.swap"(%q0, %q1)', mlir_str)
 
     def test_emitted_ops_exist_in_quantum_dialect(self):
         from rocq.kernel import QuantumKernel
@@ -160,18 +202,17 @@ class TestKernelMlirEmission(unittest.TestCase):
         self.assertTrue(emitted_ops.issubset(defined_ops))
 
     def test_unsupported_gate_fails(self):
-        from rocq.kernel import QuantumKernel
+        from rocq.kernel import QuantumKernel, _KernelBuildContext
         from rocq.qvec import qvec
-        from rocq.gates import sdg
 
         @QuantumKernel
         def bad_gate():
             q = qvec(1)
-            sdg(q[0])
+            _KernelBuildContext.add_gate("unsupported_gate", [q[0]])
 
         with self.assertRaises(NotImplementedError) as ctx:
             bad_gate.mlir()
-        self.assertIn("sdg", str(ctx.exception))
+        self.assertIn("unsupported_gate", str(ctx.exception))
 
 
 if __name__ == "__main__":
