@@ -498,6 +498,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("self._runtime.apply_operation_batch", source)
         self.assertIn("gate_name == \"BasisState\"", source)
         self.assertIn("_basis_state_bits(op, len(wire_indices))", source)
+        self.assertIn("gate_name == \"StatePrep\"", source)
+        self.assertIn("self._runtime.set_statevectors(statevectors)", source)
         self.assertIn("\"PhaseShift\", \"ControlledPhaseShift\", \"MultiRZ\", \"IsingXX\", \"IsingYY\", \"IsingZZ\"", source)
         self.assertIn("gate_name == \"SingleExcitation\"", source)
         self.assertIn("gate_name == \"FermionicSWAP\"", source)

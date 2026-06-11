@@ -1364,6 +1364,18 @@ class RocQDevice(QubitDevice):
                         self._runtime.apply_operation("X", [wire_index])
                 continue
 
+            if gate_name == "StatePrep":
+                if op_index != 0 or len(wire_indices) != self.num_wires:
+                    return None
+                statevectors = []
+                for op in ops:
+                    params = list(getattr(op, "parameters", []))
+                    if len(params) != 1:
+                        return None
+                    statevectors.append(statevector_to_little_endian_wires(params[0]))
+                self._runtime.set_statevectors(statevectors)
+                continue
+
             params_by_op = [list(getattr(op, "parameters", [])) for op in ops]
             if gate_name in {"RX", "RY", "RZ", "CRX", "CRY", "CRZ"} and all(
                 len(params) == 1 for params in params_by_op

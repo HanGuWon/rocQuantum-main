@@ -2314,6 +2314,39 @@ def test_pennylane_batch_execute_uses_batched_basis_state_sweep(monkeypatch):
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_uses_batched_stateprep_sweep(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.StatePrep(np.array([0.0, 1.0], dtype=np.complex128), wires=[0]), qml.RY(0.1, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [qml.StatePrep(np.array([0.0, 1.0], dtype=np.complex128), wires=[0]), qml.RY(0.2, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    np.testing.assert_allclose(
+        sim.statevectors[0],
+        np.array([[0.0, 1.0], [0.0, 1.0]], dtype=np.complex128),
+    )
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_keeps_static_native_decompositions_batched(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
