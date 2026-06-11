@@ -31,6 +31,7 @@ from qiskit.circuit.library import (
     RXGate,
     RYGate,
     RZGate,
+    RZXGate,
     RXXGate,
     RYYGate,
     RZZGate,
@@ -285,6 +286,7 @@ def _instruction_target(num_qubits):
     target.add_instruction(RXGate(0.0), name="rx")
     target.add_instruction(RYGate(0.0), name="ry")
     target.add_instruction(RZGate(0.0), name="rz")
+    target.add_instruction(RZXGate(0.0), name="rzx")
     target.add_instruction(Reset(), name="reset")
     target.add_instruction(RXXGate(0.0), name="rxx")
     target.add_instruction(RYYGate(0.0), name="ryy")
@@ -477,6 +479,24 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("cx", [control, target])
         self._runtime.apply_operation_batch("rz", [target], thetas)
         self._runtime.apply_operation("cx", [control, target])
+
+    def _apply_rzx_gate(self, q_indices, theta):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit rzx gate requires exactly two qubits.")
+
+        control, target = q_indices
+        self._runtime.apply_operation("h", [target])
+        self._apply_rzz_gate([control, target], theta)
+        self._runtime.apply_operation("h", [target])
+
+    def _apply_rzx_gate_batch(self, q_indices, thetas):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit rzx gate requires exactly two qubits.")
+
+        control, target = q_indices
+        self._runtime.apply_operation("h", [target])
+        self._apply_rzz_gate_batch([control, target], thetas)
+        self._runtime.apply_operation("h", [target])
 
     def _apply_multirz_gate(self, q_indices, theta):
         if not q_indices:
@@ -964,14 +984,16 @@ class RocQuantumBackend(BackendV2):
             touched_qubits.update(q_indices)
             return
 
-        if op.name in {"rxx", "ryy", "rzz"} and self._supports_native_parametric_decomposition():
+        if op.name in {"rxx", "ryy", "rzz", "rzx"} and self._supports_native_parametric_decomposition():
             (theta,) = normalize_params(op.params)
             if op.name == "rxx":
                 self._apply_rxx_gate(q_indices, theta)
             elif op.name == "ryy":
                 self._apply_ryy_gate(q_indices, theta)
-            else:
+            elif op.name == "rzz":
                 self._apply_rzz_gate(q_indices, theta)
+            else:
+                self._apply_rzx_gate(q_indices, theta)
             touched_qubits.update(q_indices)
             return
 
@@ -1265,7 +1287,9 @@ class RocQuantumBackend(BackendV2):
                 )
                 continue
 
-            if normalized_params_by_circuit is not None and reference_op.name in {"p", "cp", "rxx", "ryy", "rzz"} and all(
+            if normalized_params_by_circuit is not None and reference_op.name in {
+                "p", "cp", "rxx", "ryy", "rzz", "rzx"
+            } and all(
                 len(params) == 1 for params in normalized_params_by_circuit
             ):
                 thetas = [params[0] for params in normalized_params_by_circuit]
@@ -1277,8 +1301,10 @@ class RocQuantumBackend(BackendV2):
                     self._apply_rxx_gate_batch(q_indices, thetas)
                 elif reference_op.name == "ryy":
                     self._apply_ryy_gate_batch(q_indices, thetas)
-                else:
+                elif reference_op.name == "rzz":
                     self._apply_rzz_gate_batch(q_indices, thetas)
+                else:
+                    self._apply_rzx_gate_batch(q_indices, thetas)
                 continue
 
             if normalized_params_by_circuit is not None and reference_op.name == "PauliEvolution" and all(
@@ -1304,7 +1330,7 @@ class RocQuantumBackend(BackendV2):
                 raise NotImplementedError(
                     "Batched Qiskit execution only supports varying RX/RY/RZ, CRX/CRY/CRZ, "
                     f"fixed unitary/controlled-unitary operations, open-control controlled rotations/phase, "
-                    f"p/cp, u, decomposed rxx/ryy/rzz, and PauliEvolution parameters, "
+                    f"p/cp, u, decomposed rxx/ryy/rzz/rzx, and PauliEvolution parameters, "
                     f"got {reference_op.name!r}."
                 )
 

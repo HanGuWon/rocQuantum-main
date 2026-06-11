@@ -854,10 +854,11 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
     circuit.rxx(0.4, 0, 1)
     circuit.ryy(0.5, 0, 1)
     circuit.rzz(0.6, 0, 1)
+    circuit.rzx(0.65, 0, 1)
     circuit.u(0.7, 0.8, 0.9, 1)
 
     assert backend.target.num_qubits >= 2
-    assert {"sx", "tdg", "p", "cp", "rxx", "ryy", "rzz", "u"}.issubset(
+    assert {"sx", "tdg", "p", "cp", "rxx", "ryy", "rzz", "rzx", "u"}.issubset(
         set(backend.target.operation_names)
     )
 
@@ -886,6 +887,11 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
         ("CNOT", (0, 1), ()),
         ("RZ", (1,), (0.6,)),
         ("CNOT", (0, 1), ()),
+        ("H", (1,), ()),
+        ("CNOT", (0, 1), ()),
+        ("RZ", (1,), (0.65,)),
+        ("CNOT", (0, 1), ()),
+        ("H", (1,), ()),
         ("RZ", (1,), (0.9,)),
         ("RY", (1,), (0.7,)),
         ("RZ", (1,), (0.8,)),
@@ -1932,6 +1938,7 @@ def test_qiskit_native_estimator_batches_parametric_values(monkeypatch):
     circuit.rxx(theta, 0, 1)
     circuit.ryy(theta, 0, 1)
     circuit.rzz(theta, 0, 1)
+    circuit.rzx(theta, 0, 1)
     observable = SparsePauliOp.from_list([("IZ", 1.0)])
 
     result = RocQuantumProvider().get_estimator().run(
@@ -1945,7 +1952,7 @@ def test_qiskit_native_estimator_batches_parametric_values(monkeypatch):
     assert ("P", (0,), (0.1, 0.2)) in sim.batch_ops
     assert ("CP", (0, 1), (0.1, 0.2)) in sim.batch_ops
     assert ("RX", (0,), (0.1, 0.2)) in sim.batch_ops
-    assert sim.batch_ops.count(("RZ", (1,), (0.1, 0.2))) == 2
+    assert sim.batch_ops.count(("RZ", (1,), (0.1, 0.2))) == 3
     assert sim.matrices == []
     assert sim.batch_expectations == [("Z", (0,))]
 

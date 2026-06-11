@@ -583,6 +583,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _apply_ryy_gate_batch", source)
         self.assertIn("def _apply_rzz_gate", source)
         self.assertIn("def _apply_rzz_gate_batch", source)
+        self.assertIn("def _apply_rzx_gate", source)
+        self.assertIn("def _apply_rzx_gate_batch", source)
         self.assertIn("def _apply_multirz_gate", source)
         self.assertIn("def _apply_multirz_gate_batch", source)
         self.assertIn("def _apply_pauli_evolution_gate", source)
