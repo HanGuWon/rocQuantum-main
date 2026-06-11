@@ -606,6 +606,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("fixed unitary/controlled-unitary operations, open-control controlled rotations/phase", source)
         self.assertIn("def _apply_sx_gate", source)
         self.assertIn("def _apply_u_gate", source)
+        self.assertIn("def _apply_r_gate", source)
+        self.assertIn("def _apply_r_gate_batch", source)
         self.assertIn("def _apply_cy_gate", source)
         self.assertIn("def _apply_ccz_gate", source)
         self.assertIn("def _apply_ch_gate", source)
