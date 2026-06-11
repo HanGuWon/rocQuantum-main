@@ -75,6 +75,7 @@ MAX_AUTOMATIC_MATRIX_FALLBACK_QUBITS = 4
 CONTROL_FLOW_OPS = {
     "break_loop", "continue_loop", "for_loop", "if_else", "switch_case", "while_loop",
 }
+DEFAULT_MAX_DYNAMIC_LOOP_ITERATIONS = 1024
 
 
 def _instruction_condition(instruction):
@@ -291,7 +292,13 @@ class RocQuantumBackend(BackendV2):
 
     @classmethod
     def _default_options(cls):
-        return Options(shots=1024, memory=True, statevector=False, sampling=True)
+        return Options(
+            shots=1024,
+            memory=True,
+            statevector=False,
+            sampling=True,
+            max_dynamic_loop_iterations=DEFAULT_MAX_DYNAMIC_LOOP_ITERATIONS,
+        )
 
     @property
     def target(self):
@@ -1115,6 +1122,7 @@ class RocQuantumBackend(BackendV2):
         touched_qubits,
         *,
         include_global_phase=False,
+        max_dynamic_loop_iterations=DEFAULT_MAX_DYNAMIC_LOOP_ITERATIONS,
     ):
         for block_instruction in block.data:
             mapped_qargs = [
@@ -1133,6 +1141,7 @@ class RocQuantumBackend(BackendV2):
                 measured_bits,
                 touched_qubits,
                 include_global_phase=include_global_phase,
+                max_dynamic_loop_iterations=max_dynamic_loop_iterations,
             )
 
     def _apply_trajectory_instruction(
@@ -1144,6 +1153,7 @@ class RocQuantumBackend(BackendV2):
         touched_qubits,
         *,
         include_global_phase=False,
+        max_dynamic_loop_iterations=DEFAULT_MAX_DYNAMIC_LOOP_ITERATIONS,
     ):
         op = instruction.operation
         if op.name in {"barrier", "delay", "save_statevector"}:
@@ -1169,6 +1179,7 @@ class RocQuantumBackend(BackendV2):
                 measured_bits,
                 touched_qubits,
                 include_global_phase=include_global_phase,
+                max_dynamic_loop_iterations=max_dynamic_loop_iterations,
             )
             return
 
@@ -1187,6 +1198,7 @@ class RocQuantumBackend(BackendV2):
                     measured_bits,
                     touched_qubits,
                     include_global_phase=include_global_phase,
+                    max_dynamic_loop_iterations=max_dynamic_loop_iterations,
                 )
             return
 
@@ -1214,7 +1226,31 @@ class RocQuantumBackend(BackendV2):
                 measured_bits,
                 touched_qubits,
                 include_global_phase=include_global_phase,
+                max_dynamic_loop_iterations=max_dynamic_loop_iterations,
             )
+            return
+
+        if op.name == "while_loop" and getattr(op, "blocks", None) is not None:
+            blocks = tuple(op.blocks)
+            if len(blocks) != 1:
+                raise NotImplementedError("RocQuantumBackend supports while_loop with exactly one body block.")
+            iterations = 0
+            while _condition_matches(op.condition, circuit, classical_bits):
+                if iterations >= int(max_dynamic_loop_iterations):
+                    raise RuntimeError(
+                        "RocQuantumBackend while_loop exceeded max_dynamic_loop_iterations."
+                    )
+                iterations += 1
+                self._apply_control_flow_block(
+                    blocks[0],
+                    instruction,
+                    circuit,
+                    classical_bits,
+                    measured_bits,
+                    touched_qubits,
+                    include_global_phase=include_global_phase,
+                    max_dynamic_loop_iterations=max_dynamic_loop_iterations,
+                )
             return
 
         if op.name in CONTROL_FLOW_OPS or getattr(op, "blocks", None) is not None:
@@ -1277,7 +1313,7 @@ class RocQuantumBackend(BackendV2):
             circuit_num_qubits=circuit.num_qubits,
         )
 
-    def _apply_circuit_trajectory(self, circuit):
+    def _apply_circuit_trajectory(self, circuit, *, max_dynamic_loop_iterations=DEFAULT_MAX_DYNAMIC_LOOP_ITERATIONS):
         self._ensure_simulator(circuit.num_qubits)
         classical_bits = {}
         measured_bits = {}
@@ -1289,6 +1325,7 @@ class RocQuantumBackend(BackendV2):
                 classical_bits,
                 measured_bits,
                 touched_qubits,
+                max_dynamic_loop_iterations=max_dynamic_loop_iterations,
             )
         return measured_bits, classical_bits
 
@@ -1332,13 +1369,16 @@ class RocQuantumBackend(BackendV2):
             "memory": memory if memory_enabled else None,
         }
 
-    def _run_dynamic_sampling(self, circuit, shots, memory_enabled):
+    def _run_dynamic_sampling(self, circuit, shots, memory_enabled, max_dynamic_loop_iterations):
         memory = []
         measured_items = None
         memory_width = getattr(circuit, "num_clbits", 0)
 
         for _ in range(int(shots)):
-            measured_bits, classical_bits = self._apply_circuit_trajectory(circuit)
+            measured_bits, classical_bits = self._apply_circuit_trajectory(
+                circuit,
+                max_dynamic_loop_iterations=max_dynamic_loop_iterations,
+            )
             current_items = (
                 sorted(measured_bits.items())
                 if measured_bits
@@ -1390,6 +1430,10 @@ class RocQuantumBackend(BackendV2):
                     circuit,
                     shots,
                     bool(options.get("memory", self.options.memory)),
+                    int(options.get(
+                        "max_dynamic_loop_iterations",
+                        self.options.max_dynamic_loop_iterations,
+                    )),
                 )
                 exp_data = ExperimentResultData(**data)
                 results.append(

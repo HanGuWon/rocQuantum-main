@@ -40,7 +40,7 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | Multi-GPU / distributed | PARTIAL | Real scaffolding exists, but many paths remain `NOT_IMPLEMENTED` |
 | Packaging / install / export | PARTIAL | Native build exists, but releasable packaging is not coherent |
 | Python surfaces | PARTIAL | Two divergent stacks exist, one with mock fallbacks |
-| Integrations | PARTIAL | Thin adapters exist, but PennyLane/Cirq/Qiskit sampling now prefers native `measure()` where available; Qiskit simple `if_test` / `if_else`, finite `for_loop`, and `switch_case` sampling can use state-collapsing `measure_qubit()` trajectories; Qiskit/PennyLane Pauli-observable paths avoid mandatory statevector readback; PennyLane `qml.Hermitian` and supported Qiskit dense `Operator` observables can use native dense-matrix single/batch expectation paths for supported targets; default multi-control gates route to native `MCX` / `CSWAP`; PennyLane `SparseHamiltonian` can use native CSR moments, including local batch readouts, with a correctness-first CSR statevector fallback |
+| Integrations | PARTIAL | Thin adapters exist, but PennyLane/Cirq/Qiskit sampling now prefers native `measure()` where available; Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, and `switch_case` sampling can use state-collapsing `measure_qubit()` trajectories; Qiskit/PennyLane Pauli-observable paths avoid mandatory statevector readback; PennyLane `qml.Hermitian` and supported Qiskit dense `Operator` observables can use native dense-matrix single/batch expectation paths for supported targets; default multi-control gates route to native `MCX` / `CSWAP`; PennyLane `SparseHamiltonian` can use native CSR moments, including local batch readouts, with a correctness-first CSR statevector fallback |
 | Higher-level libraries | PARTIAL | Experimental VQE/QAOA/repetition-code helpers exist, but they are not robust CUDA-QX analogues |
 
 ## ROCm Integration Maturity
@@ -71,7 +71,7 @@ Compared with the official CUDA-Q baseline (`https://nvidia.github.io/cuda-quant
 
 - no real compile-and-execute loop
 - no unified compiler/runtime/kernel story
-- only a narrow mid-circuit measurement and classical-control story: Qiskit simple `if_test` / `if_else`, finite `for_loop`, and `switch_case` sampling trajectories work, but while-loop/estimator/statevector dynamic semantics remain open
+- only a narrow mid-circuit measurement and classical-control story: Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, and `switch_case` sampling trajectories work, but estimator/statevector dynamic semantics remain open
 - no broad arbitrary-operator expectation coverage beyond the supported Pauli, dense Hermitian / Qiskit dense Operator, and full-state CSR sparse paths
 - no bounded, tested `mqpu`-style distributed story
 
@@ -118,7 +118,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 6. Gate fusion exists and is wired for narrow canonical `rocq` spans; unsupported fusion queue entries fail instead of being silently dropped, but legacy `python/rocq` and broader patterns remain unfused.
 7. `hipTensorNet` breadth is overstated relative to what is built and tested.
 8. `hipDensityMat` is real but still too narrow for broad noisy-simulation claims: generic single-qubit Kraus channels and host-side density sampling exist, while multi-qubit channels and GPU-fast shot workflows remain incomplete.
-9. Integrations are still thin adapters, though PennyLane/Cirq/Qiskit sampling now prefers the native simulator `measure()` path where available, Qiskit simple `if_test` / `if_else`, finite `for_loop`, and `switch_case` sampling can use state-collapsing `measure_qubit()` trajectories, PennyLane/Qiskit Pauli-observable paths use native expectation helpers where possible, PennyLane `qml.Hermitian` and supported Qiskit dense `Operator` observables can use native dense-matrix single/batch expectation paths for supported targets, Qiskit/PennyLane default multi-control gates reach native `MCX` / `CSWAP`, and PennyLane `SparseHamiltonian` can use native CSR moments, including local batch readouts, with a CSR statevector fallback.
+9. Integrations are still thin adapters, though PennyLane/Cirq/Qiskit sampling now prefers the native simulator `measure()` path where available, Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, and `switch_case` sampling can use state-collapsing `measure_qubit()` trajectories, PennyLane/Qiskit Pauli-observable paths use native expectation helpers where possible, PennyLane `qml.Hermitian` and supported Qiskit dense `Operator` observables can use native dense-matrix single/batch expectation paths for supported targets, Qiskit/PennyLane default multi-control gates reach native `MCX` / `CSWAP`, and PennyLane `SparseHamiltonian` can use native CSR moments, including local batch readouts, with a CSR statevector fallback.
 10. CUDA-QX-style libraries are still shells.
 
 ## P0 / P1 / P2 Roadmap
