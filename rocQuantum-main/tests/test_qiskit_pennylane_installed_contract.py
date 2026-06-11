@@ -5386,6 +5386,85 @@ def test_pennylane_parameter_shift_gradient_pipeline_runs(monkeypatch):
     assert qml.grad(circuit)(theta) == pytest.approx(0.0)
 
 
+def test_pennylane_device_jacobian_batches_parameter_shift_tapes(monkeypatch):
+    pytest.importorskip("pennylane")
+
+    class _RYBatchSimulator(_FakeQuantumSimulator):
+        def __init__(self, num_qubits, batch_size=1):
+            super().__init__(num_qubits, batch_size=batch_size)
+            self._states = np.zeros((self._batch_size, 1 << self._num_qubits), dtype=np.complex128)
+            self._states[:, 0] = 1.0
+
+        def apply_gate(self, name, targets, params=None):
+            super().apply_gate(name, targets, params)
+            if name == "RY" and tuple(targets) == (0,):
+                self._apply_ry_to_batch([float((params or ())[0])])
+
+        def apply_gate_batch(self, name, targets, params_by_batch):
+            super().apply_gate_batch(name, targets, params_by_batch)
+            if name == "RY" and tuple(targets) == (0,):
+                self._apply_ry_to_batch([float(theta) for theta in params_by_batch])
+
+        def _apply_ry_to_batch(self, angles):
+            if len(angles) == 1:
+                angles = angles * self._batch_size
+            for batch_index, theta in enumerate(angles):
+                c = math.cos(theta / 2.0)
+                s = math.sin(theta / 2.0)
+                old_state = self._states[batch_index].copy()
+                self._states[batch_index, 0] = c * old_state[0] - s * old_state[1]
+                self._states[batch_index, 1] = s * old_state[0] + c * old_state[1]
+
+        def expectation_pauli_string(self, pauli_string, targets):
+            self.expectations.append((pauli_string, tuple(targets)))
+            if pauli_string == "Z" and tuple(targets) == (0,):
+                state = self._states[0]
+                return float(abs(state[0]) ** 2 - abs(state[1]) ** 2)
+            return super().expectation_pauli_string(pauli_string, targets)
+
+        def expectation_pauli_string_batch(self, pauli_string, targets):
+            self.batch_expectations.append((pauli_string, tuple(targets)))
+            if pauli_string == "Z" and tuple(targets) == (0,):
+                return np.asarray(
+                    [abs(state[0]) ** 2 - abs(state[1]) ** 2 for state in self._states],
+                    dtype=float,
+                )
+            return super().expectation_pauli_string_batch(pauli_string, targets)
+
+    fake = _install_fake_binding(monkeypatch)
+    fake.QuantumSimulator = _RYBatchSimulator
+    fake.QSim = _RYBatchSimulator
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane import numpy as pnp
+    from pennylane.devices import ExecutionConfig
+
+    dev = qml.device("lightning.rocq", wires=1)
+    assert dev.supports_derivatives(ExecutionConfig(gradient_method="device"))
+
+    @qml.qnode(dev, diff_method="device")
+    def circuit(theta):
+        qml.RY(theta, wires=0)
+        return qml.expval(qml.PauliZ(0))
+
+    theta = pnp.array(0.321, requires_grad=True)
+
+    assert circuit(theta) == pytest.approx(math.cos(float(theta)))
+    assert qml.grad(circuit)(theta) == pytest.approx(-math.sin(float(theta)))
+
+    batched_sims = [sim for sim in _RYBatchSimulator.instances if sim.batch_size() == 2]
+    assert batched_sims
+    sim = batched_sims[-1]
+    assert len(sim.batch_ops) == 1
+    assert sim.batch_ops[0][:2] == ("RY", (0,))
+    np.testing.assert_allclose(sim.batch_ops[0][2], (float(theta) + np.pi / 2, float(theta) - np.pi / 2))
+    assert sim.batch_expectations == [("Z", (0,))]
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
     pytest.importorskip("pennylane")
 
@@ -5433,7 +5512,7 @@ def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
 
     dev = qml.device("lightning.rocq", wires=1)
     assert dev.supports_derivatives(ExecutionConfig(gradient_method="adjoint"))
-    assert not dev.supports_derivatives(ExecutionConfig(gradient_method="device"))
+    assert dev.supports_derivatives(ExecutionConfig(gradient_method="device"))
 
     @qml.qnode(dev, diff_method="adjoint")
     def circuit(theta):

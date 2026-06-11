@@ -2366,6 +2366,7 @@ class RocQDevice(QubitDevice):
                 "returns_state": True,
                 "returns_probs": True,
                 "supports_finite_shots": True,
+                "provides_jacobian": True,
             }
         )
         return capabilities
@@ -2445,6 +2446,12 @@ class RocQDevice(QubitDevice):
             return super().execute_and_gradients(circuits, method=method, **kwargs)
         finally:
             self._capture_pre_rotated_state = previous
+
+    def jacobian(self, circuit, **kwargs):
+        gradient_tapes, processing_fn = qml.gradients.param_shift(circuit, **kwargs)
+        if not gradient_tapes:
+            return processing_fn([])
+        return processing_fn(self.batch_execute(gradient_tapes))
 
     def execute(self, circuit, **kwargs):
         skip_rotations = self._analytic_measurements_use_native_pauli(circuit)
