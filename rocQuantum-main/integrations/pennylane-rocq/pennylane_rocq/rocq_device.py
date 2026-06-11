@@ -53,6 +53,7 @@ DECOMPOSED_OPS = {
     "QFT",
     "QubitCarry",
     "QubitSum",
+    "Select",
     "SelectPauliRot",
 }
 PENNYLANE_PAULI_TO_CHAR = {
@@ -1059,6 +1060,232 @@ def _apply_controlled_sequence_batch(runtime, reference_op, wire_map, params_by_
     return True
 
 
+def _select_ops(op):
+    return tuple(getattr(op, "hyperparameters", {}).get("ops", ()))
+
+
+def _select_control_wires(op):
+    return list(getattr(op, "hyperparameters", {}).get("control", ()))
+
+
+def _select_is_partial(op):
+    return bool(getattr(op, "hyperparameters", {}).get("partial", False))
+
+
+def _select_signature(op):
+    if _select_is_partial(op):
+        return None
+    ops = _select_ops(op)
+    return (
+        tuple(_select_control_wires(op)),
+        tuple((selected.name, tuple(selected.wires), len(getattr(selected, "parameters", ()))) for selected in ops),
+    )
+
+
+def _select_control_values(index, control_count):
+    return [
+        bool((index >> (control_count - bit_index - 1)) & 1)
+        for bit_index in range(control_count)
+    ]
+
+
+def _apply_single_controlled_native_op(runtime, base_name, control, target, control_value, params):
+    flipped = False
+    try:
+        if not _control_value_is_one(control_value):
+            runtime.apply_operation("X", [control])
+            flipped = True
+
+        if base_name in {"RX", "RY", "RZ", "PhaseShift"} and len(params) == 1:
+            theta = params[0]
+            if base_name == "RX":
+                runtime.apply_operation("CRX", [control, target], [theta])
+            elif base_name == "RY":
+                runtime.apply_operation("CRY", [control, target], [theta])
+            elif base_name == "RZ":
+                runtime.apply_operation("CRZ", [control, target], [theta])
+            else:
+                _apply_controlled_phase_shift(runtime, [control, target], theta)
+            return True
+
+        if params:
+            return False
+
+        if base_name == "PauliX":
+            runtime.apply_operation("CNOT", [control, target])
+            return True
+        if base_name == "PauliY":
+            _apply_cy(runtime, [control, target])
+            return True
+        if base_name == "PauliZ":
+            runtime.apply_operation("CZ", [control, target])
+            return True
+        if base_name == "Hadamard":
+            _apply_ch(runtime, [control, target])
+            return True
+        if base_name == "S":
+            _apply_controlled_phase_shift(runtime, [control, target], np.pi / 2)
+            return True
+        if base_name == "T":
+            _apply_controlled_phase_shift(runtime, [control, target], np.pi / 4)
+            return True
+
+        return False
+    finally:
+        if flipped:
+            runtime.apply_operation("X", [control])
+
+
+def _apply_single_controlled_native_op_batch(runtime, base_name, control, target, control_value, params_by_op):
+    flipped = False
+    try:
+        if not _control_value_is_one(control_value):
+            runtime.apply_operation("X", [control])
+            flipped = True
+
+        if base_name in {"RX", "RY", "RZ", "PhaseShift"} and all(len(params) == 1 for params in params_by_op):
+            thetas = [params[0] for params in params_by_op]
+            if base_name == "RX":
+                runtime.apply_operation_batch("CRX", [control, target], thetas)
+            elif base_name == "RY":
+                runtime.apply_operation_batch("CRY", [control, target], thetas)
+            elif base_name == "RZ":
+                runtime.apply_operation_batch("CRZ", [control, target], thetas)
+            else:
+                _apply_controlled_phase_shift_batch(runtime, [control, target], thetas)
+            return True
+
+        if any(params for params in params_by_op):
+            return False
+
+        return _apply_single_controlled_native_op(runtime, base_name, control, target, True, [])
+    finally:
+        if flipped:
+            runtime.apply_operation("X", [control])
+
+
+def _apply_controlled_selected_op(runtime, selected_op, controls, control_values, wire_map, params=None):
+    target_indices = [wire_map[wire] for wire in selected_op.wires]
+    selected_params = list(getattr(selected_op, "parameters", [])) if params is None else list(params)
+    if len(controls) == 1 and len(target_indices) == 1:
+        if _apply_single_controlled_native_op(
+            runtime,
+            selected_op.name,
+            controls[0],
+            target_indices[0],
+            control_values[0],
+            selected_params,
+        ):
+            return True
+
+    if selected_params:
+        return False
+
+    if selected_op.name == "PauliX" and len(target_indices) == 1:
+        _apply_mcx_with_control_values(runtime, controls + target_indices, control_values)
+        return True
+
+    if selected_op.name == "SWAP" and len(controls) == 1 and len(target_indices) == 2 and not selected_params:
+        flipped = False
+        try:
+            if not _control_value_is_one(control_values[0]):
+                runtime.apply_operation("X", [controls[0]])
+                flipped = True
+            runtime.apply_operation("CSWAP", [controls[0], *target_indices])
+            return True
+        finally:
+            if flipped:
+                runtime.apply_operation("X", [controls[0]])
+
+    try:
+        matrix = matrix_to_little_endian_wires(qml.matrix(selected_op))
+    except (TypeError, ValueError, RuntimeError):
+        return False
+    expected_dimension = 1 << len(target_indices)
+    if matrix.shape != (expected_dimension, expected_dimension):
+        return False
+    _apply_controlled_qubit_unitary(runtime, matrix, controls, target_indices, control_values)
+    return True
+
+
+def _select_param_slices(selected_ops):
+    offsets = []
+    offset = 0
+    for selected_op in selected_ops:
+        count = len(getattr(selected_op, "parameters", ()))
+        offsets.append((offset, offset + count))
+        offset += count
+    return offsets
+
+
+def _apply_select(runtime, op, wire_map, params=None):
+    if _select_is_partial(op):
+        return False
+    selected_ops = _select_ops(op)
+    controls = [wire_map[wire] for wire in _select_control_wires(op)]
+    if not selected_ops or not controls or len(selected_ops) != (1 << len(controls)):
+        return False
+
+    params = list(getattr(op, "parameters", [])) if params is None else list(params)
+    slices = _select_param_slices(selected_ops)
+    if slices and slices[-1][1] != len(params):
+        return False
+
+    for index, selected_op in enumerate(selected_ops):
+        start, end = slices[index]
+        if not _apply_controlled_selected_op(
+            runtime,
+            selected_op,
+            controls,
+            _select_control_values(index, len(controls)),
+            wire_map,
+            params=params[start:end],
+        ):
+            return False
+    return True
+
+
+def _apply_select_batch(runtime, reference_op, wire_map, params_by_op):
+    if _select_is_partial(reference_op):
+        return False
+    selected_ops = _select_ops(reference_op)
+    controls = [wire_map[wire] for wire in _select_control_wires(reference_op)]
+    if not selected_ops or not controls or len(selected_ops) != (1 << len(controls)):
+        return False
+
+    slices = _select_param_slices(selected_ops)
+    if slices and any(slices[-1][1] != len(params) for params in params_by_op):
+        return False
+
+    for index, selected_op in enumerate(selected_ops):
+        start, end = slices[index]
+        op_params_by_batch = [params[start:end] for params in params_by_op]
+        control_values = _select_control_values(index, len(controls))
+        target_indices = [wire_map[wire] for wire in selected_op.wires]
+        if len(controls) == 1 and len(target_indices) == 1:
+            if _apply_single_controlled_native_op_batch(
+                runtime,
+                selected_op.name,
+                controls[0],
+                target_indices[0],
+                control_values[0],
+                op_params_by_batch,
+            ):
+                continue
+        if any(params for params in op_params_by_batch):
+            return False
+        if not _apply_controlled_selected_op(
+            runtime,
+            selected_op,
+            controls,
+            control_values,
+            wire_map,
+            params=[],
+        ):
+            return False
+    return True
+
+
 def _apply_qft(runtime, wire_indices):
     if not wire_indices:
         raise ValueError("QFT requires at least one wire.")
@@ -1639,6 +1866,9 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
     if gate_name == "ControlledSequence" and op is not None and wire_map is not None:
         return _apply_controlled_sequence(runtime, op, wire_map, params=params)
 
+    if gate_name == "Select" and op is not None and wire_map is not None:
+        return _apply_select(runtime, op, wire_map, params=params)
+
     if gate_name == "QubitSum" and not params:
         _apply_qubit_sum(runtime, wire_indices)
         return True
@@ -1982,6 +2212,11 @@ class RocQDevice(QubitDevice):
             ):
                 return None
 
+            if gate_name == "Select" and any(
+                _select_signature(op) != _select_signature(reference_op) for op in ops[1:]
+            ):
+                return None
+
             if gate_name == "BasisState":
                 if op_index != 0:
                     return None
@@ -2038,6 +2273,11 @@ class RocQDevice(QubitDevice):
                     self.wire_map,
                     params_by_op,
                 ):
+                    continue
+                return None
+
+            if gate_name == "Select":
+                if _apply_select_batch(self._runtime, reference_op, self.wire_map, params_by_op):
                     continue
                 return None
 
@@ -2735,6 +2975,18 @@ class RocQDevice(QubitDevice):
             elif gate_name == "ControlledSequence":
                 try:
                     if not _apply_controlled_sequence(self._runtime, op, self.wire_map):
+                        raise NotImplementedError
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "Select":
+                try:
+                    if not _apply_select(self._runtime, op, self.wire_map):
                         raise NotImplementedError
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))

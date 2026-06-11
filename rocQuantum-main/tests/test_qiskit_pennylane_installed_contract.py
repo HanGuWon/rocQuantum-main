@@ -2885,6 +2885,39 @@ def test_pennylane_batch_execute_batches_controlled_sequence_sweeps(monkeypatch)
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_batches_select_sweeps(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.Select([qml.RX(0.2, wires=1), qml.RY(0.3, wires=1)], control=[0])],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [qml.Select([qml.RX(0.8, wires=1), qml.RY(0.9, wires=1)], control=[0])],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == [("X", (0,), ()), ("X", (0,), ())]
+    assert sim.batch_ops == [
+        ("CRX", (0, 1), (0.2, 0.8)),
+        ("CRY", (0, 1), (0.3, 0.9)),
+    ]
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_keeps_arithmetic_templates_batched(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -4207,6 +4240,40 @@ def test_pennylane_controlled_sequence_decomposes_natively(monkeypatch):
         ("RY", (2,), (-np.pi / 4,)),
     ]
     assert sim.matrices == []
+
+
+def test_pennylane_select_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.Select([qml.PauliX(wires=1), qml.PauliZ(wires=1)], control=[0])
+        qml.Select([qml.SWAP(wires=[1, 2]), qml.SWAP(wires=[1, 2])], control=[0])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("X", (0,), ()),
+        ("CNOT", (0, 1), ()),
+        ("X", (0,), ()),
+        ("CZ", (0, 1), ()),
+        ("X", (0,), ()),
+        ("CSWAP", (0, 1, 2), ()),
+        ("X", (0,), ()),
+        ("CSWAP", (0, 1, 2), ()),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
 
 
 def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypatch):
