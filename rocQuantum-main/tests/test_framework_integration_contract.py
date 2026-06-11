@@ -752,6 +752,12 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _try_run_pub_batched_parameters", source)
         self.assertIn("self._backend._apply_circuit_batch", source)
         self.assertIn("self._backend._runtime.measure_batch", source)
+        self.assertIn("def _try_run_trajectory_samples", source)
+        self.assertIn("def _sample_runtime_reset_circuit", source)
+        self.assertIn("def _sample_dynamic_circuit", source)
+        self.assertIn("allow_runtime_reset=True", source)
+        self.assertIn("_apply_circuit_trajectory", source)
+        self.assertIn("metadata[\"shot_trajectory\"] = True", source)
         self.assertIn("\"batched_parameters\": True", source)
         self.assertIn("BitArray.from_bool_array", source)
 

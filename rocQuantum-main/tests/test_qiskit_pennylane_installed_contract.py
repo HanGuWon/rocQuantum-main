@@ -1540,6 +1540,56 @@ def test_qiskit_native_sampler_deduplicates_repeated_terminal_measurements(monke
     assert _FakeQuantumSimulator.instances[-1].measurements == [((0,), 6)]
 
 
+def test_qiskit_native_sampler_samples_runtime_reset_shot_by_shot(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(2, 2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    circuit.reset(0)
+    circuit.measure([0, 1], [0, 1])
+
+    result = RocQuantumProvider().get_sampler().run([circuit], shots=4).result()[0]
+
+    assert result.data.c.num_shots == 4
+    assert sum(result.data.c.get_counts().values()) == 4
+    assert result.metadata["shot_trajectory"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.total_reset_qubits == [0, 0, 0, 0]
+    assert sim.total_measurements == [((0, 1), 1)] * 4
+
+
+def test_qiskit_native_sampler_samples_if_else_conditioned_gate(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.measure_qubit_results = [1, 1]
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(2, 2)
+    if not hasattr(circuit, "if_test"):
+        pytest.skip("Qiskit version does not expose QuantumCircuit.if_test")
+
+    circuit.measure(0, 0)
+    with circuit.if_test((circuit.clbits[0], True)):
+        circuit.x(1)
+    circuit.measure(1, 1)
+
+    result = RocQuantumProvider().get_sampler().run([circuit], shots=1).result()[0]
+
+    assert result.data.c.get_counts() == {"11": 1}
+    assert result.metadata["shot_trajectory"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("X", (1,), ())]
+    assert sim.measure_qubits == [0, 1]
+    assert sim.measurements == []
+
+
 def test_qiskit_native_sampler_binds_parameter_values(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
