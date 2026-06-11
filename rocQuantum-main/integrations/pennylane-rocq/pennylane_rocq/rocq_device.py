@@ -696,6 +696,20 @@ def _apply_isingxy(runtime, wire_indices, theta):
     runtime.apply_operation("H", [left])
 
 
+def _apply_isingxy_batch(runtime, wire_indices, thetas):
+    if len(wire_indices) != 2:
+        raise ValueError("IsingXY requires exactly two wires.")
+
+    left, right = wire_indices
+    half_thetas = [theta / 2 for theta in thetas]
+    runtime.apply_operation("H", [left])
+    _apply_cy(runtime, wire_indices)
+    runtime.apply_operation_batch("RY", [left], half_thetas)
+    runtime.apply_operation_batch("RX", [right], [-theta for theta in half_thetas])
+    _apply_cy(runtime, wire_indices)
+    runtime.apply_operation("H", [left])
+
+
 def _apply_cy(runtime, wire_indices):
     if len(wire_indices) != 2:
         raise ValueError("CY requires exactly two wires.")
@@ -795,6 +809,20 @@ def _apply_single_excitation(runtime, wire_indices, theta):
     runtime.apply_operation("H", [left])
 
 
+def _apply_single_excitation_batch(runtime, wire_indices, thetas):
+    if len(wire_indices) != 2:
+        raise ValueError("SingleExcitation requires exactly two wires.")
+
+    left, right = wire_indices
+    half_thetas = [-theta / 2 for theta in thetas]
+    runtime.apply_operation("H", [left])
+    runtime.apply_operation("CNOT", [left, right])
+    runtime.apply_operation_batch("RY", [left], half_thetas)
+    runtime.apply_operation_batch("RY", [right], half_thetas)
+    runtime.apply_operation("CNOT", [left, right])
+    runtime.apply_operation("H", [left])
+
+
 def _apply_single_excitation_phase_variant(runtime, wire_indices, theta, sign):
     if len(wire_indices) != 2:
         raise ValueError("SingleExcitation phase variants require exactly two wires.")
@@ -890,6 +918,43 @@ def _apply_double_excitation(runtime, wire_indices, theta):
     runtime.apply_operation("CNOT", [third, fourth])
 
 
+def _apply_double_excitation_batch(runtime, wire_indices, thetas):
+    if len(wire_indices) != 4:
+        raise ValueError("DoubleExcitation requires exactly four wires.")
+
+    first, second, third, fourth = wire_indices
+    angles = [theta / 8 for theta in thetas]
+    negative_angles = [-angle for angle in angles]
+    runtime.apply_operation("CNOT", [third, fourth])
+    runtime.apply_operation("CNOT", [first, third])
+    runtime.apply_operation("H", [fourth])
+    runtime.apply_operation("H", [first])
+    runtime.apply_operation("CNOT", [third, fourth])
+    runtime.apply_operation("CNOT", [first, second])
+    runtime.apply_operation_batch("RY", [second], angles)
+    runtime.apply_operation_batch("RY", [first], negative_angles)
+    runtime.apply_operation("CNOT", [first, fourth])
+    runtime.apply_operation("H", [fourth])
+    runtime.apply_operation("CNOT", [fourth, second])
+    runtime.apply_operation_batch("RY", [second], angles)
+    runtime.apply_operation_batch("RY", [first], negative_angles)
+    runtime.apply_operation("CNOT", [third, second])
+    runtime.apply_operation("CNOT", [third, first])
+    runtime.apply_operation_batch("RY", [second], negative_angles)
+    runtime.apply_operation_batch("RY", [first], angles)
+    runtime.apply_operation("CNOT", [fourth, second])
+    runtime.apply_operation("H", [fourth])
+    runtime.apply_operation("CNOT", [first, fourth])
+    runtime.apply_operation_batch("RY", [second], negative_angles)
+    runtime.apply_operation_batch("RY", [first], angles)
+    runtime.apply_operation("CNOT", [first, second])
+    runtime.apply_operation("CNOT", [third, first])
+    runtime.apply_operation("H", [first])
+    runtime.apply_operation("H", [fourth])
+    runtime.apply_operation("CNOT", [first, third])
+    runtime.apply_operation("CNOT", [third, fourth])
+
+
 def _apply_double_excitation_phase_variant(runtime, wire_indices, theta, sign):
     if len(wire_indices) != 4:
         raise ValueError("DoubleExcitation phase variants require exactly four wires.")
@@ -934,6 +999,26 @@ def _apply_fermionic_swap(runtime, wire_indices, theta):
     _apply_global_phase(runtime, left, half_theta)
 
 
+def _apply_fermionic_swap_batch(runtime, wire_indices, thetas):
+    if len(wire_indices) != 2:
+        raise ValueError("FermionicSWAP requires exactly two wires.")
+
+    left, right = wire_indices
+    half_thetas = [theta / 2 for theta in thetas]
+    runtime.apply_operation("H", [left])
+    runtime.apply_operation("H", [right])
+    _apply_multirz_batch(runtime, wire_indices, half_thetas)
+    runtime.apply_operation("H", [left])
+    runtime.apply_operation("H", [right])
+    runtime.apply_operation("RX", [left], [np.pi / 2])
+    runtime.apply_operation("RX", [right], [np.pi / 2])
+    _apply_multirz_batch(runtime, wire_indices, half_thetas)
+    runtime.apply_operation("RX", [left], [-np.pi / 2])
+    runtime.apply_operation("RX", [right], [-np.pi / 2])
+    runtime.apply_operation_batch("RZ", [left], half_thetas)
+    runtime.apply_operation_batch("RZ", [right], half_thetas)
+
+
 def _apply_orbital_rotation(runtime, wire_indices, theta):
     if len(wire_indices) != 4:
         raise ValueError("OrbitalRotation requires exactly four wires.")
@@ -942,6 +1027,17 @@ def _apply_orbital_rotation(runtime, wire_indices, theta):
     _apply_fermionic_swap(runtime, [second, third], np.pi)
     _apply_single_excitation(runtime, [first, second], theta)
     _apply_single_excitation(runtime, [third, fourth], theta)
+    _apply_fermionic_swap(runtime, [second, third], np.pi)
+
+
+def _apply_orbital_rotation_batch(runtime, wire_indices, thetas):
+    if len(wire_indices) != 4:
+        raise ValueError("OrbitalRotation requires exactly four wires.")
+
+    first, second, third, fourth = wire_indices
+    _apply_fermionic_swap(runtime, [second, third], np.pi)
+    _apply_single_excitation_batch(runtime, [first, second], thetas)
+    _apply_single_excitation_batch(runtime, [third, fourth], thetas)
     _apply_fermionic_swap(runtime, [second, third], np.pi)
 
 
@@ -1261,7 +1357,10 @@ class RocQDevice(QubitDevice):
                 self._runtime.apply_operation_batch(gate_name, wire_indices, [params[0] for params in params_by_op])
                 continue
 
-            if gate_name in {"PhaseShift", "ControlledPhaseShift", "IsingXX", "IsingYY", "IsingZZ"} and all(
+            if gate_name in {
+                "PhaseShift", "ControlledPhaseShift", "MultiRZ", "IsingXX", "IsingYY", "IsingZZ",
+                "IsingXY", "SingleExcitation", "DoubleExcitation", "FermionicSWAP", "OrbitalRotation",
+            } and all(
                 len(params) == 1 for params in params_by_op
             ):
                 thetas = [params[0] for params in params_by_op]
@@ -1269,12 +1368,24 @@ class RocQDevice(QubitDevice):
                     _apply_phase_shift_batch(self._runtime, wire_indices, thetas)
                 elif gate_name == "ControlledPhaseShift":
                     _apply_controlled_phase_shift_batch(self._runtime, wire_indices, thetas)
+                elif gate_name == "MultiRZ":
+                    _apply_multirz_batch(self._runtime, wire_indices, thetas)
                 elif gate_name == "IsingXX":
                     _apply_isingxx_batch(self._runtime, wire_indices, thetas)
                 elif gate_name == "IsingYY":
                     _apply_isingyy_batch(self._runtime, wire_indices, thetas)
-                else:
+                elif gate_name == "IsingZZ":
                     _apply_multirz_batch(self._runtime, wire_indices, thetas)
+                elif gate_name == "IsingXY":
+                    _apply_isingxy_batch(self._runtime, wire_indices, thetas)
+                elif gate_name == "SingleExcitation":
+                    _apply_single_excitation_batch(self._runtime, wire_indices, thetas)
+                elif gate_name == "DoubleExcitation":
+                    _apply_double_excitation_batch(self._runtime, wire_indices, thetas)
+                elif gate_name == "FermionicSWAP":
+                    _apply_fermionic_swap_batch(self._runtime, wire_indices, thetas)
+                else:
+                    _apply_orbital_rotation_batch(self._runtime, wire_indices, thetas)
                 continue
 
             if gate_name == "Rot" and all(len(params) == 3 for params in params_by_op):
