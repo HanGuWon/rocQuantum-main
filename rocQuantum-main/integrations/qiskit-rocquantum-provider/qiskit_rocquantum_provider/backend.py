@@ -832,6 +832,33 @@ class RocQuantumBackend(BackendV2):
                 self._runtime.apply_operation("x", [control])
         return True
 
+    def _apply_controlled_base_gate_batch(self, op, q_indices, thetas):
+        num_controls = int(getattr(op, "num_ctrl_qubits", 0))
+        base_gate = getattr(op, "base_gate", None)
+        base_name = getattr(base_gate, "name", None)
+        if num_controls != 1 or len(q_indices) != 2 or base_name not in {"rx", "ry", "rz", "p"}:
+            return False
+
+        ctrl_state = getattr(op, "ctrl_state", None)
+        ctrl_state = 1 if ctrl_state is None else int(ctrl_state)
+        control, target = q_indices
+        flipped = False
+        try:
+            if ctrl_state == 0:
+                self._runtime.apply_operation("x", [control])
+                flipped = True
+            elif ctrl_state != 1:
+                return False
+
+            if base_name in {"rx", "ry", "rz"}:
+                self._runtime.apply_operation_batch(f"c{base_name}", [control, target], thetas)
+            else:
+                self._apply_controlled_phase_gate_batch([control, target], thetas)
+            return True
+        finally:
+            if flipped:
+                self._runtime.apply_operation("x", [control])
+
     def _apply_generic_controlled_matrix(self, op, q_indices):
         controlled_matrix = getattr(self._runtime, "apply_controlled_matrix", None)
         if not callable(controlled_matrix):
@@ -1166,6 +1193,11 @@ class RocQuantumBackend(BackendV2):
 
             params_by_circuit = [normalize_params(op.params) for op in ops]
 
+            if all(len(params) == 1 for params in params_by_circuit):
+                thetas = [params[0] for params in params_by_circuit]
+                if self._apply_controlled_base_gate_batch(reference_op, q_indices, thetas):
+                    continue
+
             if reference_op.name in {"rx", "ry", "rz", "crx", "cry", "crz"} and all(
                 len(params) == 1 for params in params_by_circuit
             ):
@@ -1210,7 +1242,7 @@ class RocQuantumBackend(BackendV2):
             if any(params != first_params for params in params_by_circuit[1:]):
                 raise NotImplementedError(
                     "Batched Qiskit execution only supports varying RX/RY/RZ, CRX/CRY/CRZ, "
-                    f"p/cp, u, decomposed rxx/ryy/rzz, and PauliEvolution parameters, "
+                    f"open-control controlled rotations/phase, p/cp, u, decomposed rxx/ryy/rzz, and PauliEvolution parameters, "
                     f"got {reference_op.name!r}."
                 )
 
