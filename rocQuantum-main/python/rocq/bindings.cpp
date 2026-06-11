@@ -266,6 +266,8 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         return rocsvApplyRy(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ, angle); }, "Applies Ry gate");
     m.def("apply_rz", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned tQ, double angle) {
         return rocsvApplyRz(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ, angle); }, "Applies Rz gate");
+    m.def("apply_p", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned tQ, double angle) {
+        return rocsvApplyP(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ, angle); }, "Applies phase gate");
 
     // Specific two-qubit gates
     m.def("apply_cnot", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned ctrlQ, unsigned tgtQ) {
@@ -285,6 +287,9 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
     m.def("apply_crz", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned cQ, unsigned tQ, double angle) {
         return rocsvApplyCRZ(h.get(), d_state.get_ptr<rocComplex>(), nQ, cQ, tQ, angle);
     }, "Applies CRZ gate");
+    m.def("apply_cp", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned cQ, unsigned tQ, double angle) {
+        return rocsvApplyCP(h.get(), d_state.get_ptr<rocComplex>(), nQ, cQ, tQ, angle);
+    }, "Applies controlled phase gate");
     m.def("apply_mcx", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, const std::vector<unsigned>& cQs, unsigned tQ) {
         return rocsvApplyMultiControlledX(h.get(), d_state.get_ptr<rocComplex>(), nQ, cQs.data(), cQs.size(), tQ);
     }, "Applies multi-controlled X gate");

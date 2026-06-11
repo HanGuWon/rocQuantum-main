@@ -81,6 +81,9 @@ def RyOp : Quantum_Op<"ry", [NoSideEffect]> {
 def RzOp : Quantum_Op<"rz", [NoSideEffect]> {
   let arguments = (ins F64Attr:$angle, QubitType:$target);
 }
+def POp : Quantum_Op<"p", [NoSideEffect]> {
+  let arguments = (ins F64Attr:$angle, QubitType:$target);
+}
 def CrxOp : Quantum_Op<"crx", [NoSideEffect]> {
   let arguments = (ins F64Attr:$angle, QubitType:$control, QubitType:$target);
 }
@@ -88,6 +91,9 @@ def CryOp : Quantum_Op<"cry", [NoSideEffect]> {
   let arguments = (ins F64Attr:$angle, QubitType:$control, QubitType:$target);
 }
 def CrzOp : Quantum_Op<"crz", [NoSideEffect]> {
+  let arguments = (ins F64Attr:$angle, QubitType:$control, QubitType:$target);
+}
+def CpOp : Quantum_Op<"cp", [NoSideEffect]> {
   let arguments = (ins F64Attr:$angle, QubitType:$control, QubitType:$target);
 }
 

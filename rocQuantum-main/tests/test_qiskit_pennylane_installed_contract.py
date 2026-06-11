@@ -865,13 +865,9 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
     assert sim.ops == [
         ("RX", (0,), (np.pi / 2,)),
         ("RX", (1,), (-np.pi / 2,)),
-        ("RZ", (0,), (0.2,)),
-        ("RZ", (0,), (-np.pi / 4,)),
-        ("RZ", (0,), (0.15,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (-0.15,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.15,)),
+        ("P", (0,), (0.2,)),
+        ("TDG", (0,), ()),
+        ("CP", (0, 1), (0.3,)),
         ("CNOT", (0, 1), ()),
         ("RX", (0,), (0.4,)),
         ("CNOT", (0, 1), ()),
@@ -1018,19 +1014,11 @@ def test_qiskit_phase_decomposition_preserves_statevector_global_phase(monkeypat
 
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.ops == [
-        ("RZ", (0,), (0.2,)),
-        ("RZ", (1,), (-np.pi / 4,)),
-        ("RZ", (0,), (0.15,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (-0.15,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.15,)),
+        ("P", (0,), (0.2,)),
+        ("TDG", (1,), ()),
+        ("CP", (0, 1), (0.3,)),
     ]
-    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
-        ((2, 2), (0,)),
-        ((2, 2), (1,)),
-        ((2, 2), (0,)),
-    ]
+    assert sim.matrices == []
 
 
 def test_qiskit_single_qubit_decompositions_preserve_statevector_global_phase(monkeypatch):
@@ -1256,11 +1244,7 @@ def test_qiskit_backend_decomposes_open_control_parametric_gates_natively(monkey
         ("CRZ", (0, 1), (0.4,)),
         ("X", (0,), ()),
         ("X", (0,), ()),
-        ("RZ", (0,), (0.25,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (-0.25,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.25,)),
+        ("CP", (0, 1), (0.5,)),
         ("X", (0,), ()),
     ]
     assert sim.matrices == []
@@ -1283,14 +1267,10 @@ def test_qiskit_open_control_phase_preserves_statevector_global_phase(monkeypatc
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.ops == [
         ("X", (0,), ()),
-        ("RZ", (0,), (0.25,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (-0.25,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.25,)),
+        ("CP", (0, 1), (0.5,)),
         ("X", (0,), ()),
     ]
-    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [((2, 2), (0,))]
+    assert sim.matrices == []
 
 
 def test_qiskit_backend_runs_direct_state_preparation(monkeypatch):
@@ -2853,12 +2833,8 @@ def test_pennylane_expval_skips_unobservable_global_phase_matrices(monkeypatch):
     sim = _FakeQuantumSimulator.instances[-1]
 
     assert sim.ops == [
-        ("RZ", (0,), (0.1,)),
-        ("RZ", (0,), (0.1,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (-0.1,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.1,)),
+        ("P", (0,), (0.1,)),
+        ("CP", (0, 1), (0.2,)),
     ]
     assert sim.matrices == []
     assert sim.statevector_reads == 0
@@ -3021,12 +2997,8 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
     sim = _FakeQuantumSimulator.instances[-1]
 
     assert sim.ops == [
-        ("RZ", (0,), (0.1,)),
-        ("RZ", (0,), (0.1,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (-0.1,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.1,)),
+        ("P", (0,), (0.1,)),
+        ("CP", (0, 1), (0.2,)),
         ("CNOT", (0, 1), ()),
         ("RX", (0,), (0.3,)),
         ("CNOT", (0, 1), ()),
@@ -3059,14 +3031,7 @@ def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypat
         ("RZ", (1,), (0.9,)),
         ("MCX", (0, 1, 2), ()),
     ]
-    assert [targets for _, targets in sim.matrices] == [
-        (0,),
-        (0,),
-    ]
-    assert [matrix.shape for matrix, _ in sim.matrices] == [
-        (2, 2),
-        (2, 2),
-    ]
+    assert sim.matrices == []
 
 
 def test_pennylane_matrix_fallback_converts_wire_order_for_rocquantum(monkeypatch):
@@ -3208,26 +3173,14 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         ("H", (2,), ()),
         ("X", (0,), ()),
         ("X", (1,), ()),
-        ("RZ", (0,), (0.05,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (-0.05,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.05,)),
+        ("CP", (0, 1), (0.1,)),
         ("X", (1,), ()),
         ("X", (0,), ()),
         ("X", (0,), ()),
-        ("RZ", (0,), (0.1,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (-0.1,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.1,)),
+        ("CP", (0, 1), (0.2,)),
         ("X", (0,), ()),
         ("X", (1,), ()),
-        ("RZ", (0,), (0.15,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (-0.15,)),
-        ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.15,)),
+        ("CP", (0, 1), (0.3,)),
         ("X", (1,), ()),
         ("MCX", (0, 1, 2), ()),
         ("MCX", (0, 1, 2), ()),
@@ -3239,7 +3192,7 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         ("CNOT", (0, 2), ()),
         ("SWAP", (0, 1), ()),
         ("CNOT", (0, 1), ()),
-        ("RZ", (1,), (0.5,)),
+        ("P", (1,), (0.5,)),
         ("CNOT", (0, 1), ()),
         ("S", (0,), ()),
         ("S", (1,), ()),
@@ -3373,10 +3326,6 @@ def test_pennylane_extended_gates_use_native_multi_control_and_matrix_fallback(m
         ("RZ", (1,), (0.45,)),
     ]
     assert [targets for _, targets in sim.matrices] == [
-        (0,),
-        (0,),
-        (0,),
-        (1,),
         (0,),
         (0,),
         (0,),
@@ -3537,17 +3486,11 @@ def test_pennylane_qft_uses_native_controlled_phase_decomposition(monkeypatch):
 
     assert sim.ops == [
         ("H", (0,), ()),
-        ("RZ", (1,), (np.pi / 4,)),
-        ("CNOT", (1, 0), ()),
-        ("RZ", (0,), (-np.pi / 4,)),
-        ("CNOT", (1, 0), ()),
-        ("RZ", (0,), (np.pi / 4,)),
+        ("CP", (1, 0), (np.pi / 2,)),
         ("H", (1,), ()),
         ("SWAP", (0, 1), ()),
     ]
-    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [
-        ((2, 2), (1,)),
-    ]
+    assert sim.matrices == []
 
 
 def test_pennylane_isingzz_dispatches_native_cnot_chain(monkeypatch):

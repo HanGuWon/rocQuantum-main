@@ -4124,6 +4124,22 @@ rocqStatus_t rocsvApplyRz(rocsvHandle_t handle,
                                       phase_neg, zero, zero, phase_pos);
 }
 
+rocqStatus_t rocsvApplyP(rocsvHandle_t handle,
+                         rocComplex* d_state,
+                         unsigned numQubits,
+                         unsigned targetQubit,
+                         double theta) {
+    if (!handle) return ROCQ_STATUS_INVALID_VALUE;
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) return ROCQ_STATUS_INVALID_VALUE;
+
+    const rocComplex one = make_complex(1.0, 0.0);
+    const rocComplex zero = make_complex(0.0, 0.0);
+    const rocComplex phase = make_complex(std::cos(theta), std::sin(theta));
+    return launch_single_qubit_matrix(handle, state, numQubits, targetQubit,
+                                      one, zero, zero, phase);
+}
+
 rocqStatus_t rocsvApplyRxBatch(rocsvHandle_t handle,
                                rocComplex* d_state,
                                unsigned numQubits,
@@ -4416,6 +4432,23 @@ rocqStatus_t rocsvApplyCRZ(rocsvHandle_t handle,
     const rocComplex zero = make_complex(0.0, 0.0);
     return launch_controlled_single_qubit_matrix(handle, state, numQubits, controlQubit, targetQubit,
                                                  phase_neg, zero, zero, phase_pos);
+}
+
+rocqStatus_t rocsvApplyCP(rocsvHandle_t handle,
+                          rocComplex* d_state,
+                          unsigned numQubits,
+                          unsigned controlQubit,
+                          unsigned targetQubit,
+                          double theta) {
+    if (!handle) return ROCQ_STATUS_INVALID_VALUE;
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) return ROCQ_STATUS_INVALID_VALUE;
+
+    const rocComplex one = make_complex(1.0, 0.0);
+    const rocComplex zero = make_complex(0.0, 0.0);
+    const rocComplex phase = make_complex(std::cos(theta), std::sin(theta));
+    return launch_controlled_single_qubit_matrix(handle, state, numQubits, controlQubit, targetQubit,
+                                                 one, zero, zero, phase);
 }
 
 inline rocqStatus_t rocsvApplyControlledRotationBatch(rocsvHandle_t handle,

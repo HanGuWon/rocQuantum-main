@@ -289,6 +289,10 @@ class Circuit:
         self._validate_qubit_index(target_qubit)
         self._enqueue_gate("RZ", targets=[target_qubit], params=[angle])
 
+    def p(self, angle: float, target_qubit: int):
+        self._validate_qubit_index(target_qubit)
+        self._enqueue_gate("P", targets=[target_qubit], params=[angle])
+
     def cx(self, control_qubit: int, target_qubit: int): # CNOT
         self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CNOT", targets=[target_qubit], controls=[control_qubit])
@@ -312,6 +316,10 @@ class Circuit:
     def crz(self, angle: float, control_qubit: int, target_qubit: int):
         self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CRZ", targets=[target_qubit], controls=[control_qubit], params=[angle])
+
+    def cp(self, angle: float, control_qubit: int, target_qubit: int):
+        self._validate_control_target(control_qubit, target_qubit)
+        self._enqueue_gate("CP", targets=[target_qubit], controls=[control_qubit], params=[angle])
 
     def ccx(self, control_qubit1: int, control_qubit2: int, target_qubit: int):
         self._validate_qubit_index(target_qubit)

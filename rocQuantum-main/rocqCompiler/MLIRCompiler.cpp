@@ -46,7 +46,7 @@ struct ExecutableOp {
 
 std::string supported_compile_execute_subset() {
     return "supported subset: quantum.qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, "
-           "RX/RY/RZ, CRX/CRY/CRZ";
+           "RX/RY/RZ/P, CRX/CRY/CRZ/CP";
 }
 
 [[noreturn]] void throw_compile_diagnostic(const std::string& message) {
@@ -119,9 +119,11 @@ std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned
         {"quantum.rx", 1},
         {"quantum.ry", 1},
         {"quantum.rz", 1},
+        {"quantum.p", 1},
         {"quantum.crx", 2},
         {"quantum.cry", 2},
         {"quantum.crz", 2},
+        {"quantum.cp", 2},
     };
     static const std::unordered_map<std::string, unsigned> fixed_arity_gates = {
         {"quantum.cnot", 2},

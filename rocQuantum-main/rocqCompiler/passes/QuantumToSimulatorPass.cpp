@@ -83,9 +83,11 @@ struct QuantumToSimulatorPass : public mlir::PassWrapper<QuantumToSimulatorPass,
         patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RxOp>>(&getContext(), "rx");
         patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RyOp>>(&getContext(), "ry");
         patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RzOp>>(&getContext(), "rz");
+        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::POp>>(&getContext(), "p");
         patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::CrxOp>>(&getContext(), "crx");
         patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::CryOp>>(&getContext(), "cry");
         patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::CrzOp>>(&getContext(), "crz");
+        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::CpOp>>(&getContext(), "cp");
 
         if (failed(applyPartialConversion(getOperation(), target, std::move(patterns)))) {
             signalPassFailure();

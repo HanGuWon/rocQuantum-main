@@ -313,6 +313,12 @@ rocqStatus_t rocsvApplyRy(rocsvHandle_t handle, rocComplex* d_state, unsigned nu
 rocqStatus_t rocsvApplyRz(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, double theta); // theta stays double for API
 
 /**
+ * @brief Applies a phase gate diag(1, exp(i theta)) to the target qubit.
+ * @param theta Phase angle in radians.
+ */
+rocqStatus_t rocsvApplyP(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, double theta);
+
+/**
  * @brief Applies one Rx rotation per local batch state to the target qubit.
  * @param h_thetas Host pointer to batchSize rotation angles in radians.
  * @param thetaCount Number of host angles; must equal the effective batch size.
@@ -371,6 +377,11 @@ rocqStatus_t rocsvApplyCRY(rocsvHandle_t handle, rocComplex* d_state, unsigned n
  * @brief Applies a Controlled-RZ gate.
  */
 rocqStatus_t rocsvApplyCRZ(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, double theta);
+
+/**
+ * @brief Applies a controlled phase gate diag(1, 1, 1, exp(i theta)).
+ */
+rocqStatus_t rocsvApplyCP(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, double theta);
 
 /**
  * @brief Applies one Controlled-RX rotation per local batch state.

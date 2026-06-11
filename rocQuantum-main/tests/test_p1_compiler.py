@@ -54,9 +54,11 @@ class TestLoweringCoverage(unittest.TestCase):
         self.assertIn("RxOp", src)
         self.assertIn("RyOp", src)
         self.assertIn("RzOp", src)
+        self.assertIn("POp", src)
         self.assertIn("CrxOp", src)
         self.assertIn("CryOp", src)
         self.assertIn("CrzOp", src)
+        self.assertIn("CpOp", src)
         self.assertIn("ApplyParamGateOp", src)
 
     def test_extended_core_gate_lowering_present(self):
@@ -84,9 +86,11 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("quantum.rx", src)
         self.assertIn("quantum.ry", src)
         self.assertIn("quantum.rz", src)
+        self.assertIn("quantum.p", src)
         self.assertIn("quantum.crx", src)
         self.assertIn("quantum.cry", src)
         self.assertIn("quantum.crz", src)
+        self.assertIn("quantum.cp", src)
         self.assertIn("quantum.cz", src)
         self.assertIn("quantum.swap", src)
         self.assertIn("quantum.cnot", src)
@@ -100,7 +104,7 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         with open(path, "r", encoding="utf-8") as f:
             src = f.read()
 
-        self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ", src)
+        self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP", src)
         self.assertIn("Unsupported ops raise actionable diagnostics", src)
         self.assertNotIn("Stub API", src)
 
@@ -133,6 +137,43 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("phase = -pi / 4.0", hipstatevec_src)
         self.assertIn("apply_tdg", binding_src)
         self.assertIn("def tdg", legacy_api_src)
+
+    def test_phase_gates_reach_native_statevec_dispatch(self):
+        backend_path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "HipStateVecBackend.cpp")
+        simulator_path = os.path.join(_PROJECT_ROOT, "rocquantum", "src", "simulator.cpp")
+        hipstatevec_path = os.path.join(_PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "hipStateVec.cpp")
+        header_path = os.path.join(_PROJECT_ROOT, "rocquantum", "include", "rocquantum", "hipStateVec.h")
+        legacy_binding_path = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
+        legacy_api_path = os.path.join(_PROJECT_ROOT, "python", "rocq", "api.py")
+
+        with open(backend_path, "r", encoding="utf-8") as f:
+            backend_src = f.read()
+        with open(simulator_path, "r", encoding="utf-8") as f:
+            simulator_src = f.read()
+        with open(hipstatevec_path, "r", encoding="utf-8") as f:
+            hipstatevec_src = f.read()
+        with open(header_path, "r", encoding="utf-8") as f:
+            header_src = f.read()
+        with open(legacy_binding_path, "r", encoding="utf-8") as f:
+            binding_src = f.read()
+        with open(legacy_api_path, "r", encoding="utf-8") as f:
+            legacy_api_src = f.read()
+
+        self.assertIn("emplace_alias(\"p\"", backend_src)
+        self.assertIn("emplace_alias(\"cp\"", backend_src)
+        self.assertIn("rocsvApplyP", backend_src)
+        self.assertIn("rocsvApplyCP", backend_src)
+        self.assertIn("normalized == \"P\"", simulator_src)
+        self.assertIn("normalized == \"CP\"", simulator_src)
+        self.assertIn("rocqStatus_t rocsvApplyP", header_src)
+        self.assertIn("rocqStatus_t rocsvApplyCP", header_src)
+        self.assertIn("rocqStatus_t rocsvApplyP", hipstatevec_src)
+        self.assertIn("rocqStatus_t rocsvApplyCP", hipstatevec_src)
+        self.assertIn("make_complex(std::cos(theta), std::sin(theta))", hipstatevec_src)
+        self.assertIn("apply_p", binding_src)
+        self.assertIn("apply_cp", binding_src)
+        self.assertIn("def p", legacy_api_src)
+        self.assertIn("def cp", legacy_api_src)
 
 
 class TestKernelMlirEmission(unittest.TestCase):
@@ -171,7 +212,7 @@ class TestKernelMlirEmission(unittest.TestCase):
     def test_param_gates_emit_angle_attributes(self):
         from rocq.kernel import QuantumKernel
         from rocq.qvec import qvec
-        from rocq.gates import crx, cry, crz, rx, ry, rz
+        from rocq.gates import cp, crx, cry, crz, p, rx, ry, rz
 
         @QuantumKernel
         def param_program():
@@ -179,17 +220,21 @@ class TestKernelMlirEmission(unittest.TestCase):
             rx(0.125, q[0])
             ry(-0.5, q[1])
             rz(1.25, q[2])
+            p(-0.125, q[2])
             crx(0.25, q[0], q[1])
             cry(-0.75, q[1], q[2])
             crz(1.5, q[2], q[0])
+            cp(-1.25, q[0], q[2])
 
         mlir_str = param_program.mlir()
         self.assertIn('"quantum.rx"(%q0) {angle = 0.125 : f64}', mlir_str)
         self.assertIn('"quantum.ry"(%q1) {angle = -0.5 : f64}', mlir_str)
         self.assertIn('"quantum.rz"(%q2) {angle = 1.25 : f64}', mlir_str)
+        self.assertIn('"quantum.p"(%q2) {angle = -0.125 : f64}', mlir_str)
         self.assertIn('"quantum.crx"(%q0, %q1) {angle = 0.25 : f64}', mlir_str)
         self.assertIn('"quantum.cry"(%q1, %q2) {angle = -0.75 : f64}', mlir_str)
         self.assertIn('"quantum.crz"(%q2, %q0) {angle = 1.5 : f64}', mlir_str)
+        self.assertIn('"quantum.cp"(%q0, %q2) {angle = -1.25 : f64}', mlir_str)
 
     def test_extended_core_gates_emit_mlir(self):
         from rocq.kernel import QuantumKernel
@@ -252,7 +297,7 @@ class TestKernelMlirEmission(unittest.TestCase):
     def test_emitted_ops_exist_in_quantum_dialect(self):
         from rocq.kernel import QuantumKernel
         from rocq.qvec import qvec
-        from rocq.gates import ccx, cnot, cswap, h, mcx, rx, tdg, z
+        from rocq.gates import ccx, cnot, cp, cswap, h, mcx, p, rx, tdg, z
 
         @QuantumKernel
         def dialect_covered():
@@ -260,7 +305,9 @@ class TestKernelMlirEmission(unittest.TestCase):
             h(q[0])
             tdg(q[0])
             z(q[1])
+            p(0.25, q[1])
             cnot(q[0], q[1])
+            cp(0.5, q[0], q[1])
             ccx(q[0], q[1], q[2])
             cswap(q[0], q[2], q[3])
             mcx([q[0], q[1], q[2]], q[4])

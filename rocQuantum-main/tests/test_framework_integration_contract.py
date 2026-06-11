@@ -88,6 +88,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"CRX\": \"CRX\"", source)
         self.assertIn("\"CRY\": \"CRY\"", source)
         self.assertIn("\"CRZ\": \"CRZ\"", source)
+        self.assertIn("\"CP\": \"CP\"", source)
+        self.assertIn("\"P\": \"P\"", source)
+        self.assertIn("\"PHASE\": \"P\"", source)
+        self.assertIn("\"TDG\": \"TDG\"", source)
         self.assertIn("\"CCX\": \"MCX\"", source)
         self.assertIn("\"TOFFOLI\": \"MCX\"", source)
         self.assertIn("\"CSWAP\": \"CSWAP\"", source)
@@ -111,6 +115,36 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("normalized == \"CSWAP\"", source)
         self.assertIn("rocsvApplyMultiControlledX", source)
         self.assertIn("rocsvApplyCSWAP", source)
+
+    def test_public_simulator_exposes_native_phase_gates(self):
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            simulator = f.read()
+        with open(_HIPSTATEVEC_HEADER, "r", encoding="utf-8") as f:
+            hip_header = f.read()
+        with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            hip_source = f.read()
+        with open(_LOW_LEVEL_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            low_level_bindings = f.read()
+        with open(_QISKIT_BACKEND, "r", encoding="utf-8") as f:
+            qiskit_backend = f.read()
+        with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
+            pennylane_adapter = f.read()
+
+        self.assertIn("normalized == \"P\"", simulator)
+        self.assertIn("normalized == \"CP\"", simulator)
+        self.assertIn("rocsvApplyP", simulator)
+        self.assertIn("rocsvApplyCP", simulator)
+        self.assertIn("rocqStatus_t rocsvApplyP", hip_header)
+        self.assertIn("rocqStatus_t rocsvApplyCP", hip_header)
+        self.assertIn("rocqStatus_t rocsvApplyP", hip_source)
+        self.assertIn("rocqStatus_t rocsvApplyCP", hip_source)
+        self.assertIn("make_complex(std::cos(theta), std::sin(theta))", hip_source)
+        self.assertIn("m.def(\"apply_p\"", low_level_bindings)
+        self.assertIn("m.def(\"apply_cp\"", low_level_bindings)
+        self.assertIn("self._runtime.apply_operation(\"p\"", qiskit_backend)
+        self.assertIn("self._runtime.apply_operation(\"cp\"", qiskit_backend)
+        self.assertIn("runtime.apply_operation(\"P\"", pennylane_adapter)
+        self.assertIn("runtime.apply_operation(\"CP\"", pennylane_adapter)
 
     def test_public_simulator_exposes_statevector_upload(self):
         with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:

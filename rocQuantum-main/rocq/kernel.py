@@ -95,9 +95,13 @@ class QuantumKernel:
         "rx": ("quantum.rx", 1),
         "ry": ("quantum.ry", 1),
         "rz": ("quantum.rz", 1),
+        "p": ("quantum.p", 1),
+        "phase": ("quantum.p", 1),
         "crx": ("quantum.crx", 2),
         "cry": ("quantum.cry", 2),
         "crz": ("quantum.crz", 2),
+        "cp": ("quantum.cp", 2),
+        "cphase": ("quantum.cp", 2),
     }
 
     def mlir(self, *args, **kwargs) -> str:

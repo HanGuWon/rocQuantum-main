@@ -41,6 +41,12 @@ def ry(angle, target):
 def rz(angle, target):
     _KernelBuildContext.add_gate("rz", [target], params={"phi": angle})
 
+def p(angle, target):
+    _KernelBuildContext.add_gate("p", [target], params={"phi": angle})
+
+def phase(angle, target):
+    _KernelBuildContext.add_gate("p", [target], params={"phi": angle})
+
 def cnot(control, target):
     _KernelBuildContext.add_gate("cnot", [control, target])
 
@@ -80,3 +86,9 @@ def cry(angle, control, target):
 
 def crz(angle, control, target):
     _KernelBuildContext.add_gate("crz", [control, target], params={"phi": angle})
+
+def cp(angle, control, target):
+    _KernelBuildContext.add_gate("cp", [control, target], params={"phi": angle})
+
+def cphase(angle, control, target):
+    _KernelBuildContext.add_gate("cp", [control, target], params={"phi": angle})

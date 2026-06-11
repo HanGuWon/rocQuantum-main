@@ -263,6 +263,17 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
                      "apply RZ");
         return;
     }
+    if (normalized == "P" || normalized == "PHASE") {
+        if (targets.size() != 1) {
+            throw std::invalid_argument("P requires exactly 1 target qubit.");
+        }
+        if (params.empty()) {
+            throw std::invalid_argument("P requires one angle parameter.");
+        }
+        check_status(rocsvApplyP(sim_handle_, device_state_vector_, num_qubits_, targets[0], params[0]),
+                     "apply P");
+        return;
+    }
     if (normalized == "CRX") {
         if (targets.size() != 2) {
             throw std::invalid_argument("CRX requires control and target qubits.");
@@ -294,6 +305,17 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
         }
         check_status(rocsvApplyCRZ(sim_handle_, device_state_vector_, num_qubits_, targets[0], targets[1], params[0]),
                      "apply CRZ");
+        return;
+    }
+    if (normalized == "CP" || normalized == "CPHASE" || normalized == "CONTROLLEDPHASE") {
+        if (targets.size() != 2) {
+            throw std::invalid_argument("CP requires control and target qubits.");
+        }
+        if (params.empty()) {
+            throw std::invalid_argument("CP requires one angle parameter.");
+        }
+        check_status(rocsvApplyCP(sim_handle_, device_state_vector_, num_qubits_, targets[0], targets[1], params[0]),
+                     "apply CP");
         return;
     }
     if (normalized == "MCX" || normalized == "CCX" || normalized == "TOFFOLI") {

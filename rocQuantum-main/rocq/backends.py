@@ -324,6 +324,9 @@ class _HipStateVectorState:
         if op == "rz":
             angle = self._angle(op_name, params, "phi", "theta")
             return self._call(op_name, hip_backend.apply_rz, self._handle, self._d_state, self._num_qubits, targets[0], angle)
+        if op in {"p", "phase"}:
+            angle = self._angle(op_name, params, "phi", "theta")
+            return self._call(op_name, hip_backend.apply_p, self._handle, self._d_state, self._num_qubits, targets[0], angle)
         if op == "cnot":
             return self._call(op_name, hip_backend.apply_cnot, self._handle, self._d_state, self._num_qubits, targets[0], targets[1])
         if op == "cz":
@@ -339,6 +342,9 @@ class _HipStateVectorState:
         if op == "crz":
             angle = self._angle(op_name, params, "phi", "theta")
             return self._call(op_name, hip_backend.apply_crz, self._handle, self._d_state, self._num_qubits, targets[0], targets[1], angle)
+        if op in {"cp", "cphase"}:
+            angle = self._angle(op_name, params, "phi", "theta")
+            return self._call(op_name, hip_backend.apply_cp, self._handle, self._d_state, self._num_qubits, targets[0], targets[1], angle)
         if op in {"mcx", "ccx", "toffoli"}:
             controls = targets[:-1]
             if not controls:
@@ -703,6 +709,8 @@ class DensityMatrixBackend(_BaseBackend):
         if op in {"tdg", "tdag"}:
             phase = -math.pi / 4.0
             return np.array([[1, 0], [0, math.cos(phase) + 1j * math.sin(phase)]], dtype=np.complex64)
+        if op in {"p", "phase"} and param is not None:
+            return np.array([[1, 0], [0, math.cos(param) + 1j * math.sin(param)]], dtype=np.complex64)
         if op in {"rx", "ry", "rz"} and param is not None:
             c = math.cos(param / 2.0)
             s = math.sin(param / 2.0)
@@ -735,7 +743,7 @@ class DensityMatrixBackend(_BaseBackend):
             self._state.apply_cnot(target, control)
             self._state.apply_cnot(control, target)
             return
-        if name in {"cz", "crx", "cry", "crz"}:
+        if name in {"cz", "crx", "cry", "crz", "cp"}:
             controlled_name = "z" if name == "cz" else name[1:]
             matrix = self._gate_matrix(controlled_name, self._angle(params))
             self._state.apply_controlled_gate(matrix, op.targets[0], op.targets[1])

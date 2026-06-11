@@ -373,6 +373,11 @@ class RocQuantumBackend(BackendV2):
             raise ValueError("Qiskit p gate requires exactly one qubit.")
 
         target = q_indices[0]
+        try:
+            self._runtime.apply_operation("p", [target], [theta])
+            return
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            pass
         if include_global_phase:
             self._apply_global_phase_value(0.5 * theta, target=target)
         self._runtime.apply_operation("rz", [target], [theta])
@@ -388,6 +393,11 @@ class RocQuantumBackend(BackendV2):
             raise ValueError("Qiskit cp gate requires exactly two qubits.")
 
         control, target = q_indices
+        try:
+            self._runtime.apply_operation("cp", [control, target], [theta])
+            return
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            pass
         if include_global_phase:
             self._apply_global_phase_value(0.25 * theta, target=control)
         self._runtime.apply_operation("rz", [control], [0.5 * theta])
@@ -622,6 +632,11 @@ class RocQuantumBackend(BackendV2):
             raise ValueError("Qiskit tdg gate requires exactly one qubit.")
 
         target = q_indices[0]
+        try:
+            self._runtime.apply_operation("tdg", [target])
+            return
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            pass
         if include_global_phase:
             self._apply_global_phase_value(-cmath.pi / 8, target=target)
         self._runtime.apply_operation("rz", [target], [-cmath.pi / 4])
@@ -769,7 +784,7 @@ class RocQuantumBackend(BackendV2):
         return True
 
     def _apply_quantum_operation(self, op, q_indices, *, include_global_phase, touched_qubits, circuit_num_qubits):
-        if op.name in {"p", "cp"} and self._supports_native_phase_decomposition(include_global_phase):
+        if op.name in {"p", "cp"} and self._supports_native_parametric_decomposition():
             (theta,) = normalize_params(op.params)
             if op.name == "p":
                 self._apply_phase_gate(q_indices, theta, include_global_phase=include_global_phase)

@@ -138,6 +138,10 @@ const std::unordered_map<std::string, ParamGateSpec>& param_gate_table() {
         const ParamGateSpec rz_spec{1, 1, &HipStateVecBackend::apply_rz_gate};
         emplace_alias("rz", rz_spec);
 
+        const ParamGateSpec p_spec{1, 1, &HipStateVecBackend::apply_p_gate};
+        emplace_alias("p", p_spec);
+        emplace_alias("phase", p_spec);
+
         const ParamGateSpec crx_spec{2, 2, &HipStateVecBackend::apply_crx_gate};
         emplace_alias("crx", crx_spec);
 
@@ -146,6 +150,10 @@ const std::unordered_map<std::string, ParamGateSpec>& param_gate_table() {
 
         const ParamGateSpec crz_spec{2, 2, &HipStateVecBackend::apply_crz_gate};
         emplace_alias("crz", crz_spec);
+
+        const ParamGateSpec cp_spec{2, 2, &HipStateVecBackend::apply_cp_gate};
+        emplace_alias("cp", cp_spec);
+        emplace_alias("cphase", cp_spec);
 
         return map;
     }();
@@ -341,6 +349,10 @@ void HipStateVecBackend::apply_rz_gate(double parameter, const std::vector<unsig
     check_status(rocsvApplyRz(sim_handle, device_state, num_qubits, targets[0], parameter), "apply RZ");
 }
 
+void HipStateVecBackend::apply_p_gate(double parameter, const std::vector<unsigned>& targets) {
+    check_status(rocsvApplyP(sim_handle, device_state, num_qubits, targets[0], parameter), "apply P");
+}
+
 void HipStateVecBackend::apply_crx_gate(double parameter, const std::vector<unsigned>& targets) {
     check_status(rocsvApplyCRX(sim_handle, device_state, num_qubits, targets[0], targets[1], parameter),
                  "apply CRX");
@@ -354,6 +366,11 @@ void HipStateVecBackend::apply_cry_gate(double parameter, const std::vector<unsi
 void HipStateVecBackend::apply_crz_gate(double parameter, const std::vector<unsigned>& targets) {
     check_status(rocsvApplyCRZ(sim_handle, device_state, num_qubits, targets[0], targets[1], parameter),
                  "apply CRZ");
+}
+
+void HipStateVecBackend::apply_cp_gate(double parameter, const std::vector<unsigned>& targets) {
+    check_status(rocsvApplyCP(sim_handle, device_state, num_qubits, targets[0], targets[1], parameter),
+                 "apply CP");
 }
 
 } // namespace rocq

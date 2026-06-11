@@ -48,9 +48,11 @@ private:
     void apply_rx_gate(double parameter, const std::vector<unsigned>& targets);
     void apply_ry_gate(double parameter, const std::vector<unsigned>& targets);
     void apply_rz_gate(double parameter, const std::vector<unsigned>& targets);
+    void apply_p_gate(double parameter, const std::vector<unsigned>& targets);
     void apply_crx_gate(double parameter, const std::vector<unsigned>& targets);
     void apply_cry_gate(double parameter, const std::vector<unsigned>& targets);
     void apply_crz_gate(double parameter, const std::vector<unsigned>& targets);
+    void apply_cp_gate(double parameter, const std::vector<unsigned>& targets);
 };
 
 } // namespace rocq
