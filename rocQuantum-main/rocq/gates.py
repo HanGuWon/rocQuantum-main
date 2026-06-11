@@ -47,6 +47,13 @@ def cz(control, target):
 def swap(qubit_a, qubit_b):
     _KernelBuildContext.add_gate("swap", [qubit_a, qubit_b])
 
+def mcx(controls, target):
+    try:
+        control_list = list(controls)
+    except TypeError:
+        control_list = [controls]
+    _KernelBuildContext.add_gate("mcx", control_list + [target])
+
 def ccx(control_a, control_b, target):
     _KernelBuildContext.add_gate("ccx", [control_a, control_b, target])
 

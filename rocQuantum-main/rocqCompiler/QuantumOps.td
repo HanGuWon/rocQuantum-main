@@ -63,6 +63,9 @@ def SwapOp : Quantum_Op<"swap", [NoSideEffect]> {
 def CcxOp : Quantum_Op<"ccx", [NoSideEffect]> {
   let arguments = (ins QubitType:$control0, QubitType:$control1, QubitType:$target);
 }
+def McxOp : Quantum_Op<"mcx", [NoSideEffect]> {
+  let arguments = (ins Variadic<QubitType>:$qubits);
+}
 def CswapOp : Quantum_Op<"cswap", [NoSideEffect]> {
   let arguments = (ins QubitType:$control, QubitType:$lhs, QubitType:$rhs);
 }

@@ -45,7 +45,7 @@ struct ExecutableOp {
 };
 
 std::string supported_compile_execute_subset() {
-    return "supported subset: quantum.qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/CSWAP, "
+    return "supported subset: quantum.qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/MCX/CSWAP, "
            "RX/RY/RZ, CRX/CRY/CRZ";
 }
 
@@ -82,6 +82,24 @@ std::vector<unsigned> resolve_targets(mlir::Operation* op,
     return targets;
 }
 
+std::vector<unsigned> resolve_targets_at_least(mlir::Operation* op,
+                                               const llvm::DenseMap<mlir::Value, unsigned>& qubit_indices,
+                                               unsigned min_operands) {
+    const std::string op_name = op->getName().getStringRef().str();
+    if (op->getNumOperands() < min_operands) {
+        throw_compile_diagnostic(
+            "operation '" + op_name + "' expected at least " + std::to_string(min_operands) +
+            " qubit operands but received " + std::to_string(op->getNumOperands()) + ".");
+    }
+
+    std::vector<unsigned> targets;
+    targets.reserve(op->getNumOperands());
+    for (mlir::Value operand : op->getOperands()) {
+        targets.push_back(resolve_qubit_index(operand, qubit_indices, op_name));
+    }
+    return targets;
+}
+
 std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned expected_num_qubits) {
     llvm::DenseMap<mlir::Value, unsigned> qubit_indices;
     std::vector<ExecutableOp> executable_ops;
@@ -110,6 +128,9 @@ std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned
         {"quantum.swap", 2},
         {"quantum.ccx", 3},
         {"quantum.cswap", 3},
+    };
+    static const std::unordered_map<std::string, unsigned> variadic_min_arity_gates = {
+        {"quantum.mcx", 2},
     };
 
     module.walk([&](mlir::Operation* op) {
@@ -160,6 +181,13 @@ std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned
         if (fixed_it != fixed_arity_gates.end()) {
             executable_ops.push_back({op_name.substr(std::string("quantum.").size()),
                                       resolve_targets(op, qubit_indices, fixed_it->second)});
+            return;
+        }
+
+        auto variadic_it = variadic_min_arity_gates.find(op_name);
+        if (variadic_it != variadic_min_arity_gates.end()) {
+            executable_ops.push_back({op_name.substr(std::string("quantum.").size()),
+                                      resolve_targets_at_least(op, qubit_indices, variadic_it->second)});
             return;
         }
 

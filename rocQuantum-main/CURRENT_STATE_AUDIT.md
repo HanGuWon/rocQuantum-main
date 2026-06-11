@@ -14,7 +14,7 @@ Audit refresh note (2026-06-10):
 - Official AMD production ROCm documentation now points to ROCm `7.2.4`, released 2026-05-29.
 - Previous rows that described canonical `rocq.operator.get_expectation_value()` as unimplemented are stale; the current gap is split API behavior between canonical `rocq` and legacy `python/rocq`.
 - GateFusion is wired opportunistically into canonical `rocq.backends.StateVectorBackend` and legacy `python/rocq.Circuit.flush()` for supported CNOT-adjacent spans; broader fusion patterns remain missing.
-- `rocqCompiler::MLIRCompiler::compile_and_execute()` is no longer a hard stub for the current MVP subset: qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ.
+- `rocqCompiler::MLIRCompiler::compile_and_execute()` is no longer a hard stub for the current MVP subset: qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ.
 - Qiskit and PennyLane adapters now avoid several avoidable full statevector readbacks: Qiskit `backend.run()` defaults to sampling without state output, Qiskit Estimator reuses a bound circuit across Qiskit-supported Pauli observable batches and caches canonical duplicates, Qiskit `RocQuantumProvider.estimate_expectation()` can evaluate supported full-circuit and low-index partial dense `Operator` observables through native dense-matrix expectation, PennyLane finite-shot measurements use native `measure()` where available, PennyLane `batch_execute` can batch Pauli/probability/Hermitian analytic readouts for simple parameter sweeps, and PennyLane analytic Pauli/Hadamard/Projector/Hamiltonian expectations skip diagonalizing rotations and use native Pauli-string expectations where they can be represented as Pauli terms.
 - PennyLane analytic `qml.probs()` now reaches a shared `QuantumSimulator.probabilities()` runtime hook backed by `rocsvProbabilities` when native bindings are available, while keeping the cached statevector fallback for unsupported targets and legacy builds. Local-domain distributed probability requests can share the RCCL outcome-probability reduction used by distributed sampling.
 - Public simulator and framework paths now expose native `MCX` / `CSWAP` dispatch for Qiskit `ccx` / `mcx` / `cswap` and PennyLane `MultiControlledX` / `Toffoli` / `CSWAP`; non-default PennyLane `control_values` use exact `X`-flip plus native-`MCX` decomposition instead of dense matrix fallback.
@@ -116,7 +116,7 @@ What is not real today:
 ### Compiler/runtime
 
 - `rocqCompiler::MLIRCompiler::emit_qir()` exists and does partial lowering to LLVM IR/QIR.
-- Lowering coverage is incomplete, but `compile_and_execute()` now parses the emitted MLIR subset and dispatches qalloc/H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/CSWAP, RX/RY/RZ, and CRX/CRY/CRZ to the configured backend.
+- Lowering coverage is incomplete, but `compile_and_execute()` now parses the emitted MLIR subset and dispatches qalloc/H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ, and CRX/CRY/CRZ to the configured backend.
 - The repo carries two separate compiler/IR stories: `rocqCompiler/*` and `rocquantum/include/src/rocqCompiler/*`.
 
 ### Generic matrix and controlled-unitary support

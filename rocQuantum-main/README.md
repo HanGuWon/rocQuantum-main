@@ -20,7 +20,7 @@ Implemented today:
 Only partial today:
 
 - MLIR/QIR compiler flow
-- `compile_and_execute()` for a narrow MLIR subset: qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ
+- `compile_and_execute()` for a narrow MLIR subset: qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ
 - Generic matrix and controlled-unitary coverage
 - Multi-GPU / distributed execution
 - Observable breadth and density-matrix GPU-fast sampling coverage
@@ -78,14 +78,14 @@ Use those files as the authoritative capability summary for the current codebase
 | `hipStateVec` | Real and useful, with local batched state allocation/readback, batch-specific RX/RY/RZ and CRX/CRY/CRZ, batched probabilities, batched Pauli expectations, and batched dense-matrix expectations exposed through `QuantumSimulator`; not yet fully surfaced through every framework adapter |
 | `hipTensorNet` | Real contraction core with explicit optimizer/dtype/slicing capabilities, narrower than a full cuTensorNet analogue |
 | `hipDensityMat` | Real but limited; generic channels and sampling are correctness-first paths |
-| `rocqCompiler` | Partial codegen path plus a narrow compile-and-execute MVP for qalloc/H/X/Y/Z/S/Sdg/T/CNOT/CZ/SWAP/CCX/CSWAP/RX/RY/RZ/CRX/CRY/CRZ |
+| `rocqCompiler` | Partial codegen path plus a narrow compile-and-execute MVP for qalloc/H/X/Y/Z/S/Sdg/T/CNOT/CZ/SWAP/CCX/MCX/CSWAP/RX/RY/RZ/CRX/CRY/CRZ |
 | Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring |
 | Higher-level helpers | Experimental VQE objective/gradient, MaxCut-style QAOA helper, and 3-qubit repetition-code single-round helper |
 | `python/rocq` | Top-level CMake-built legacy compatibility surface; Pauli expectations, batched state allocation/readback, and CNOT-adjacent GateFusion now use native helpers, while broader fusion and runtime unification still need consolidation |
 
 ## Important Limitations
 
-- `rocqCompiler::MLIRCompiler::compile_and_execute()` executes only the current MVP subset: qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ. Unsupported compiler ops raise diagnostics.
+- `rocqCompiler::MLIRCompiler::compile_and_execute()` executes only the current MVP subset: qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ. Unsupported compiler ops raise diagnostics.
 - `multi_gpu=True` should be treated as experimental partial support, not full distributed execution.
 - Distributed non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix correctness fallback is explicit slow/debug mode: set `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
 - RCCL-backed distributed expectation and sampling reductions are limited to local-domain qubits; set `ROCQ_DISTRIBUTED_COMM=rccl` or `ROCQ_REQUIRE_RCCL=1` to require RCCL on a ROCm runner.

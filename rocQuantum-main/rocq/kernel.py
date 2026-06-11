@@ -86,6 +86,9 @@ class QuantumKernel:
         "cswap": ("quantum.cswap", 3),
         "fredkin": ("quantum.cswap", 3),
     }
+    _VARIADIC_GATE_TO_MLIR = {
+        "mcx": ("quantum.mcx", 2),
+    }
     _PARAM_GATE_TO_MLIR = {
         "rx": ("quantum.rx", 1),
         "ry": ("quantum.ry", 1),
@@ -141,6 +144,18 @@ class QuantumKernel:
                     )
                 targets = ", ".join(refs)
                 operand_types = ", ".join("!quantum.qubit" for _ in range(arity))
+                body_lines.append(
+                    f'    "{mlir_name}"({targets}) : ({operand_types}) -> ()'
+                )
+            elif gate in self._VARIADIC_GATE_TO_MLIR:
+                mlir_name, min_arity = self._VARIADIC_GATE_TO_MLIR[gate]
+                refs = _resolve_target_refs(op.targets)
+                if len(refs) < min_arity:
+                    raise ValueError(
+                        f"Gate '{op.name}' expects at least {min_arity} target(s), got {len(refs)}."
+                    )
+                targets = ", ".join(refs)
+                operand_types = ", ".join("!quantum.qubit" for _ in refs)
                 body_lines.append(
                     f'    "{mlir_name}"({targets}) : ({operand_types}) -> ()'
                 )
