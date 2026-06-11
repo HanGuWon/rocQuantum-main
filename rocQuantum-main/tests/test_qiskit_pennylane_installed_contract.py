@@ -2773,6 +2773,45 @@ def test_pennylane_batch_execute_uses_batched_extended_decompositions(monkeypatc
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_uses_batched_paulirot_sweep(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.PauliRot(0.2, "XYZ", wires=[0, 1, 2])],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [qml.PauliRot(0.8, "XYZ", wires=[0, 1, 2])],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == [
+        ("H", (0,), ()),
+        ("RX", (1,), (np.pi / 2,)),
+        ("CNOT", (0, 2), ()),
+        ("CNOT", (1, 2), ()),
+        ("CNOT", (1, 2), ()),
+        ("CNOT", (0, 2), ()),
+        ("H", (0,), ()),
+        ("RX", (1,), (-np.pi / 2,)),
+    ]
+    assert sim.batch_ops == [("RZ", (2,), (0.2, 0.8))]
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_uses_batched_phase_excitation_variants(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

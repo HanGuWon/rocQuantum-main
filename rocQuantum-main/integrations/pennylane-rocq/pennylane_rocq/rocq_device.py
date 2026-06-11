@@ -35,7 +35,7 @@ MATRIX_OPS = {
     "PhaseShift", "ControlledPhaseShift",
     "CPhaseShift00", "CPhaseShift01", "CPhaseShift10",
     "CH", "CY", "CCZ", "CRot",
-    "MultiControlledX", "MultiRZ",
+    "MultiControlledX", "MultiRZ", "PauliRot",
     "IsingXX", "IsingYY", "IsingZZ", "IsingXY",
     "PSWAP", "ISWAP", "SISWAP", "SQISW", "ECR",
     "SingleExcitation", "SingleExcitationPlus", "SingleExcitationMinus",
@@ -527,6 +527,53 @@ def _apply_multirz_batch(runtime, wire_indices, thetas):
     runtime.apply_operation_batch("RZ", [target], thetas)
     for control in reversed(controls):
         runtime.apply_operation("CNOT", [control, target])
+
+
+def _paulirot_pauli_word(op):
+    return str(getattr(op, "hyperparameters", {}).get("pauli_word", ""))
+
+
+def _paulirot_active_terms(wire_indices, pauli_word):
+    if len(pauli_word) != len(wire_indices):
+        raise ValueError("PauliRot pauli_word length must match its wires.")
+    return [
+        (wire_index, pauli)
+        for wire_index, pauli in zip(wire_indices, pauli_word)
+        if pauli != "I"
+    ]
+
+
+def _apply_paulirot_basis_change(runtime, active_terms, inverse=False):
+    for wire_index, pauli in active_terms:
+        if pauli == "X":
+            runtime.apply_operation("H", [wire_index])
+        elif pauli == "Y":
+            angle = -np.pi / 2 if inverse else np.pi / 2
+            runtime.apply_operation("RX", [wire_index], [angle])
+        elif pauli != "Z":
+            raise ValueError(f"Unsupported PauliRot pauli word character {pauli!r}.")
+
+
+def _apply_paulirot(runtime, wire_indices, theta, pauli_word):
+    active_terms = _paulirot_active_terms(wire_indices, pauli_word)
+    if not active_terms:
+        if wire_indices:
+            _apply_global_phase(runtime, wire_indices[0], -theta / 2)
+        return
+
+    _apply_paulirot_basis_change(runtime, active_terms)
+    _apply_multirz(runtime, [wire_index for wire_index, _ in active_terms], theta)
+    _apply_paulirot_basis_change(runtime, active_terms, inverse=True)
+
+
+def _apply_paulirot_batch(runtime, wire_indices, thetas, pauli_word):
+    active_terms = _paulirot_active_terms(wire_indices, pauli_word)
+    if not active_terms:
+        return
+
+    _apply_paulirot_basis_change(runtime, active_terms)
+    _apply_multirz_batch(runtime, [wire_index for wire_index, _ in active_terms], thetas)
+    _apply_paulirot_basis_change(runtime, active_terms, inverse=True)
 
 
 def _supports_native_phase_decomposition(runtime):
@@ -1416,6 +1463,11 @@ class RocQDevice(QubitDevice):
             if any(op.name != gate_name or [self.wire_map[w] for w in op.wires] != wire_indices for op in ops):
                 return None
 
+            if gate_name == "PauliRot" and any(
+                _paulirot_pauli_word(op) != _paulirot_pauli_word(reference_op) for op in ops[1:]
+            ):
+                return None
+
             if gate_name == "BasisState":
                 if op_index != 0:
                     return None
@@ -1451,7 +1503,7 @@ class RocQDevice(QubitDevice):
 
             if gate_name in {
                 "PhaseShift", "ControlledPhaseShift", "MultiRZ", "IsingXX", "IsingYY", "IsingZZ",
-                "IsingXY", "PSWAP", "SingleExcitation", "SingleExcitationPlus", "SingleExcitationMinus",
+                "IsingXY", "PauliRot", "PSWAP", "SingleExcitation", "SingleExcitationPlus", "SingleExcitationMinus",
                 "DoubleExcitation", "DoubleExcitationPlus", "DoubleExcitationMinus", "FermionicSWAP",
                 "OrbitalRotation", "CPhaseShift00", "CPhaseShift01", "CPhaseShift10",
             } and all(
@@ -1472,6 +1524,8 @@ class RocQDevice(QubitDevice):
                     _apply_multirz_batch(self._runtime, wire_indices, thetas)
                 elif gate_name == "IsingXY":
                     _apply_isingxy_batch(self._runtime, wire_indices, thetas)
+                elif gate_name == "PauliRot":
+                    _apply_paulirot_batch(self._runtime, wire_indices, thetas, _paulirot_pauli_word(reference_op))
                 elif gate_name == "PSWAP":
                     _apply_pswap_batch(self._runtime, wire_indices, thetas)
                 elif gate_name == "SingleExcitation":
@@ -1695,6 +1749,20 @@ class RocQDevice(QubitDevice):
                     if not _supports_native_parametric_decomposition(self._runtime):
                         raise NotImplementedError
                     _apply_multirz(self._runtime, wire_indices, theta)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "PauliRot":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    if not _supports_native_parametric_decomposition(self._runtime):
+                        raise NotImplementedError
+                    _apply_paulirot(self._runtime, wire_indices, theta, _paulirot_pauli_word(op))
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
