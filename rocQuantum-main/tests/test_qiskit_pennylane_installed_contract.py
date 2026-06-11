@@ -4276,6 +4276,74 @@ def test_pennylane_select_decomposes_natively(monkeypatch):
     assert sim.controlled_matrices == []
 
 
+def test_pennylane_partial_select_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=6)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.Select(
+            [qml.PauliX(wires=3), qml.PauliX(wires=4), qml.PauliX(wires=5)],
+            control=[0, 1, 2],
+            partial=True,
+        )
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("X", (1,), ()),
+        ("X", (2,), ()),
+        ("MCX", (1, 2, 3), ()),
+        ("X", (2,), ()),
+        ("X", (1,), ()),
+        ("CNOT", (2, 4), ()),
+        ("CNOT", (1, 5), ()),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
+def test_pennylane_prep_sel_prep_decomposes_partial_select_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        lcu = 0.25 * qml.X(1) + 0.75 * qml.Z(1)
+        qml.PrepSelPrep(lcu, control=[0])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("RY", (0,), (2 * np.pi / 3,)),
+        ("X", (0,), ()),
+        ("CNOT", (0, 1), ()),
+        ("X", (0,), ()),
+        ("CZ", (0, 1), ()),
+        ("RY", (0,), (-2 * np.pi / 3,)),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
 def test_pennylane_qrom_select_product_decomposes_natively(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

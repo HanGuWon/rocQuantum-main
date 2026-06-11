@@ -1089,6 +1089,21 @@ def _select_control_values(index, control_count):
     ]
 
 
+def _select_partial_control_specs(selected_count, control_wires):
+    control_count = len(control_wires)
+    specs = []
+    for index in range(selected_count):
+        selected_controls = []
+        selected_values = []
+        for control_index, control_wire in enumerate(control_wires):
+            value = (index >> (control_count - 1 - control_index)) & 1
+            if value or index + 2 ** (control_count - 1 - control_index) < selected_count:
+                selected_controls.append(control_wire)
+                selected_values.append(bool(value))
+        specs.append((selected_controls, selected_values))
+    return specs
+
+
 def _apply_single_controlled_native_op(runtime, base_name, control, target, control_value, params):
     flipped = False
     try:
@@ -1226,6 +1241,15 @@ def _split_operand_parameters(operands, params):
     return split_params
 
 
+def _global_phase_is_identity(params):
+    if len(params) != 1:
+        return False
+    try:
+        return bool(np.allclose(np.asarray(params[0]), 0.0))
+    except (TypeError, ValueError):
+        return False
+
+
 def _apply_controlled_selected_product(runtime, selected_op, controls, control_values, wire_map, params):
     operands = _operation_operands(selected_op)
     if not operands:
@@ -1236,13 +1260,23 @@ def _apply_controlled_selected_product(runtime, selected_op, controls, control_v
         return False
 
     active_targets = []
+    native_operands = []
     for operand, operand_params in zip(operands, split_params):
         if operand.name in {"Identity", "I"}:
             if operand_params:
                 return False
             continue
 
-        if operand.name != "BasisEmbedding" or len(operand_params) != 1:
+        if operand.name == "GlobalPhase":
+            if not _global_phase_is_identity(operand_params):
+                return False
+            continue
+
+        if operand.name != "BasisEmbedding":
+            native_operands.append((operand, operand_params))
+            continue
+
+        if len(operand_params) != 1:
             return False
 
         bits = np.asarray(operand_params[0], dtype=int).reshape(-1)
@@ -1256,15 +1290,72 @@ def _apply_controlled_selected_product(runtime, selected_op, controls, control_v
             if int(bit)
         )
 
+    if active_targets and native_operands:
+        return False
+    if len(native_operands) > 1:
+        return False
+
+    if native_operands:
+        operand, operand_params = native_operands[0]
+        return _apply_controlled_selected_op(
+            runtime,
+            operand,
+            controls,
+            control_values,
+            wire_map,
+            params=operand_params,
+        )
+
     if not active_targets:
         return True
 
     return _apply_controlled_x_targets(runtime, controls, control_values, active_targets)
 
 
+def _apply_uncontrolled_selected_op(runtime, selected_op, wire_map, params):
+    target_indices = [wire_map[wire] for wire in selected_op.wires]
+    selected_params = list(params)
+
+    if selected_op.name in {"Prod", "Tensor"}:
+        operands = _operation_operands(selected_op)
+        split_params = _split_operand_parameters(operands, selected_params)
+        if split_params is None:
+            return False
+        for operand, operand_params in zip(operands, split_params):
+            if not _apply_uncontrolled_selected_op(runtime, operand, wire_map, operand_params):
+                return False
+        return True
+
+    if selected_op.name in {"Identity", "I"}:
+        return not selected_params
+
+    if selected_op.name == "GlobalPhase":
+        if not _global_phase_is_identity(selected_params):
+            return False
+        return True
+
+    if selected_op.name == "BasisEmbedding" and len(selected_params) == 1:
+        bits = np.asarray(selected_params[0], dtype=int).reshape(-1)
+        _apply_basis_embedding(runtime, target_indices, bits)
+        return True
+
+    if selected_op.name in PENNYLANE_TO_ROCQ_GATES and not selected_params:
+        runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[selected_op.name], target_indices)
+        return True
+
+    if selected_op.name in NATIVE_PARAMETRIC_OPS and selected_params:
+        runtime.apply_operation(selected_op.name, target_indices, selected_params)
+        return True
+
+    return False
+
+
 def _apply_controlled_selected_op(runtime, selected_op, controls, control_values, wire_map, params=None):
     target_indices = [wire_map[wire] for wire in selected_op.wires]
     selected_params = list(getattr(selected_op, "parameters", [])) if params is None else list(params)
+
+    if not controls:
+        return _apply_uncontrolled_selected_op(runtime, selected_op, wire_map, selected_params)
 
     if selected_op.name in {"Prod", "Tensor"}:
         return _apply_controlled_selected_product(
@@ -1341,11 +1432,13 @@ def _select_param_slices(selected_ops):
 
 
 def _apply_select(runtime, op, wire_map, params=None):
-    if _select_is_partial(op):
-        return False
     selected_ops = _select_ops(op)
     controls = [wire_map[wire] for wire in _select_control_wires(op)]
-    if not selected_ops or not controls or len(selected_ops) != (1 << len(controls)):
+    if not selected_ops:
+        return False
+    if not _select_is_partial(op) and (not controls or len(selected_ops) != (1 << len(controls))):
+        return False
+    if _select_is_partial(op) and len(selected_ops) > (1 << len(controls)):
         return False
 
     params = list(getattr(op, "parameters", [])) if params is None else list(params)
@@ -1353,13 +1446,23 @@ def _apply_select(runtime, op, wire_map, params=None):
     if slices and slices[-1][1] != len(params):
         return False
 
+    control_specs = (
+        _select_partial_control_specs(len(selected_ops), controls)
+        if _select_is_partial(op)
+        else [
+            (controls, _select_control_values(index, len(controls)))
+            for index in range(len(selected_ops))
+        ]
+    )
+
     for index, selected_op in enumerate(selected_ops):
         start, end = slices[index]
+        selected_controls, selected_control_values = control_specs[index]
         if not _apply_controlled_selected_op(
             runtime,
             selected_op,
-            controls,
-            _select_control_values(index, len(controls)),
+            selected_controls,
+            selected_control_values,
             wire_map,
             params=params[start:end],
         ):
