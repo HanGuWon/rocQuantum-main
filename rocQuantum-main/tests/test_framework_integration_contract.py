@@ -360,6 +360,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("rocsvGetSparseMatrixMomentsBatch", hipstatevec)
         self.assertIn("reduce_sparse_matrix_moments_kernel", hipstatevec)
         self.assertIn("reduce_sparse_matrix_moments_batch_kernel", hipstatevec)
+        self.assertIn("sparse_matrix_moments_distributed_host_fallback", hipstatevec)
+        self.assertIn("compute_sparse_matrix_moments_host_state", hipstatevec)
         self.assertIn("Sparse Hamiltonian CSR indptr", implementation)
         sparse_body = implementation.split("QuantumSimulator::sparse_hamiltonian_moments", 1)[1].split(
             "unsigned QuantumSimulator::num_qubits", 1

@@ -1624,6 +1624,57 @@ rocqStatus_t apply_sparse_matrix_host_state_impl(std::vector<rocComplex>* host_s
     return ROCQ_STATUS_SUCCESS;
 }
 
+rocqStatus_t compute_sparse_matrix_moments_host_state(const std::vector<rocComplex>& host_state,
+                                                      unsigned numQubits,
+                                                      const std::vector<rocComplex>& data,
+                                                      const std::vector<size_t>& indices,
+                                                      const std::vector<size_t>& indptr,
+                                                      size_t rows,
+                                                      size_t cols,
+                                                      size_t nnz,
+                                                      rocComplex* mean,
+                                                      rocComplex* secondMoment) {
+    if (!mean || !secondMoment) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t stateElements = 0;
+    if (!compute_power_of_two(numQubits, &stateElements) ||
+        host_state.size() != stateElements || rows != stateElements || cols != stateElements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocqStatus_t status = validate_sparse_matrix_host_csr(data, indices, indptr, rows, cols, nnz);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    double mean_re = 0.0;
+    double mean_im = 0.0;
+    double second_re = 0.0;
+    for (size_t row = 0; row < rows; ++row) {
+        double accum_re = 0.0;
+        double accum_im = 0.0;
+        for (size_t offset = indptr[row]; offset < indptr[row + 1]; ++offset) {
+            const rocComplex value = data[offset];
+            const rocComplex ket = host_state[indices[offset]];
+            accum_re += static_cast<double>(value.x) * static_cast<double>(ket.x) -
+                        static_cast<double>(value.y) * static_cast<double>(ket.y);
+            accum_im += static_cast<double>(value.x) * static_cast<double>(ket.y) +
+                        static_cast<double>(value.y) * static_cast<double>(ket.x);
+        }
+
+        const rocComplex bra = host_state[row];
+        mean_re += static_cast<double>(bra.x) * accum_re + static_cast<double>(bra.y) * accum_im;
+        mean_im += static_cast<double>(bra.x) * accum_im - static_cast<double>(bra.y) * accum_re;
+        second_re += accum_re * accum_re + accum_im * accum_im;
+    }
+
+    *mean = make_complex(mean_re, mean_im);
+    *secondMoment = make_complex(second_re, 0.0);
+    return ROCQ_STATUS_SUCCESS;
+}
+
 rocqStatus_t apply_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
                                                     unsigned numQubits,
                                                     const std::vector<unsigned>& targetQubits,
@@ -1652,6 +1703,72 @@ rocqStatus_t apply_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
     }
 
     return scatter_host_state_to_distributed(handle, host_full);
+}
+
+rocqStatus_t sparse_matrix_moments_distributed_host_fallback(rocsvInternalHandle* handle,
+                                                             unsigned numQubits,
+                                                             const rocComplex* d_data,
+                                                             const size_t* d_indices,
+                                                             const size_t* d_indptr,
+                                                             size_t rows,
+                                                             size_t cols,
+                                                             size_t nnz,
+                                                             rocComplex* mean,
+                                                             rocComplex* secondMoment) {
+    if (!distributed_host_fallback_enabled()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !handle->distributedMode || numQubits != handle->globalNumQubits ||
+        handle->distributedDeviceIds.empty() || !mean || !secondMoment) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    int original_device = 0;
+    if (hipGetDevice(&original_device) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    auto restore_device = [&]() {
+        (void)hipSetDevice(original_device);
+    };
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        restore_device();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    std::vector<rocComplex> data;
+    std::vector<size_t> indices;
+    std::vector<size_t> indptr;
+    rocqStatus_t status = copy_sparse_matrix_from_device(d_data,
+                                                         d_indices,
+                                                         d_indptr,
+                                                         rows,
+                                                         nnz,
+                                                         handle->streams[0],
+                                                         &data,
+                                                         &indices,
+                                                         &indptr);
+    restore_device();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    std::vector<rocComplex> host_full;
+    status = gather_distributed_state_to_host(handle, &host_full);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    return compute_sparse_matrix_moments_host_state(host_full,
+                                                    numQubits,
+                                                    data,
+                                                    indices,
+                                                    indptr,
+                                                    rows,
+                                                    cols,
+                                                    nnz,
+                                                    mean,
+                                                    secondMoment);
 }
 
 rocqStatus_t apply_sparse_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
@@ -6654,8 +6771,26 @@ rocqStatus_t rocsvGetSparseMatrixMoments(rocsvHandle_t handle,
     if (nnz > 0 && (!d_data || !d_indices)) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (rows != state_elements || cols != state_elements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
     if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        return sparse_matrix_moments_distributed_host_fallback(handle,
+                                                               numQubits,
+                                                               d_data,
+                                                               d_indices,
+                                                               d_indptr,
+                                                               rows,
+                                                               cols,
+                                                               nnz,
+                                                               mean,
+                                                               secondMoment);
     }
 
     rocComplex* state = resolve_state_pointer(handle, d_state);
@@ -6664,14 +6799,6 @@ rocqStatus_t rocsvGetSparseMatrixMoments(rocsvHandle_t handle,
     }
     if (effective_batch_size(handle, state) != 1) {
         return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
-
-    size_t state_elements = 0;
-    if (!compute_power_of_two(numQubits, &state_elements)) {
-        return ROCQ_STATUS_INVALID_VALUE;
-    }
-    if (rows != state_elements || cols != state_elements) {
-        return ROCQ_STATUS_INVALID_VALUE;
     }
 
     constexpr int threads_per_block = 256;
