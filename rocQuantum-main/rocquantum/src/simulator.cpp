@@ -108,7 +108,10 @@ void QuantumSimulator::reset() {
     check_status(rocsvInitializeState(sim_handle_, device_state_vector_, num_qubits_), "reset");
 }
 
-void QuantumSimulator::reset_qubit(unsigned target) {
+int QuantumSimulator::measure_qubit(unsigned target) {
+    if (batch_size_ != 1) {
+        throw std::invalid_argument("measure_qubit is only valid when batch_size is 1.");
+    }
     ensure_valid_qubit(target);
     int outcome = 0;
     double probability = 0.0;
@@ -118,7 +121,12 @@ void QuantumSimulator::reset_qubit(unsigned target) {
                               target,
                               &outcome,
                               &probability),
-                 "reset qubit measurement");
+                 "measure qubit");
+    return outcome;
+}
+
+void QuantumSimulator::reset_qubit(unsigned target) {
+    const int outcome = measure_qubit(target);
     if (outcome == 1) {
         check_status(rocsvApplyX(sim_handle_, device_state_vector_, num_qubits_, target),
                      "reset qubit conditional X");
@@ -1139,6 +1147,13 @@ void QuantumSimulator::ApplyControlledGate(const std::vector<std::complex<double
 
 void QuantumSimulator::Execute() {
     synchronize();
+}
+
+int QuantumSimulator::MeasureQubit(int target_qubit) {
+    if (target_qubit < 0) {
+        throw std::out_of_range("Qubit index out of bounds for simulator instance.");
+    }
+    return measure_qubit(static_cast<unsigned>(target_qubit));
 }
 
 void QuantumSimulator::ResetQubit(int target_qubit) {

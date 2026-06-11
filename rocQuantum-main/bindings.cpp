@@ -37,6 +37,10 @@ PYBIND11_MODULE(rocquantum_bind, m) {
     simulator
         .def(py::init<unsigned, std::size_t>(), py::arg("num_qubits"), py::arg("batch_size") = 1)
         .def("reset", &rocquantum::QuantumSimulator::reset)
+        .def("measure_qubit",
+             &rocquantum::QuantumSimulator::measure_qubit,
+             py::arg("target"),
+             "Measure one qubit, collapse the state, and return the sampled bit.")
         .def("reset_qubit",
              &rocquantum::QuantumSimulator::reset_qubit,
              py::arg("target"),
@@ -404,6 +408,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("control_qubit"),
              py::arg("target_qubit"))
         .def("Execute", &rocquantum::QuantumSimulator::Execute)
+        .def("MeasureQubit", &rocquantum::QuantumSimulator::MeasureQubit, py::arg("target_qubit"))
         .def("ResetQubit", &rocquantum::QuantumSimulator::ResetQubit, py::arg("target_qubit"))
         .def("GetStateVector",
              [](const rocquantum::QuantumSimulator& self) {

@@ -84,6 +84,48 @@ def _instruction_condition(instruction):
     return getattr(instruction, "condition", None)
 
 
+def _condition_matches(condition, circuit, classical_bits):
+    if condition is None:
+        return True
+    if not isinstance(condition, tuple) or len(condition) != 2:
+        raise NotImplementedError("RocQuantumBackend only supports tuple-style Qiskit conditions.")
+
+    condition_bits, expected = condition
+    if isinstance(expected, bool):
+        expected_value = int(expected)
+    else:
+        expected_value = int(expected)
+
+    try:
+        bit_index = circuit.find_bit(condition_bits).index
+    except Exception:
+        bit_index = None
+
+    if bit_index is not None:
+        return int(classical_bits.get(bit_index, 0)) == expected_value
+
+    try:
+        bits = list(condition_bits)
+    except TypeError as exc:
+        raise NotImplementedError("Unsupported Qiskit condition bit container.") from exc
+
+    actual_value = 0
+    for offset, bit in enumerate(bits):
+        actual_value |= int(classical_bits.get(circuit.find_bit(bit).index, 0)) << offset
+    return actual_value == expected_value
+
+
+def _memory_from_classical_bits(classical_bits, measured_items, memory_width):
+    if memory_width <= 0:
+        memory_width = len(measured_items)
+    bits = ["0"] * memory_width
+    for classical_bit, _ in measured_items:
+        output_index = memory_width - 1 - int(classical_bit)
+        if 0 <= output_index < memory_width:
+            bits[output_index] = "1" if int(classical_bits.get(int(classical_bit), 0)) else "0"
+    return "".join(bits)
+
+
 def _state_preparation_matrix(op):
     if op.name == "initialize":
         return Operator(StatePreparation(op.params)).data
@@ -688,6 +730,122 @@ class RocQuantumBackend(BackendV2):
 
         return True
 
+    def _apply_quantum_operation(self, op, q_indices, *, include_global_phase, touched_qubits, circuit_num_qubits):
+        if op.name in {"p", "cp"} and self._supports_native_phase_decomposition(include_global_phase):
+            (theta,) = normalize_params(op.params)
+            if op.name == "p":
+                self._apply_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
+            else:
+                self._apply_controlled_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
+            touched_qubits.update(q_indices)
+            return
+
+        if op.name == "tdg" and self._supports_native_phase_decomposition(include_global_phase):
+            self._apply_tdg_gate(q_indices, include_global_phase=include_global_phase)
+            touched_qubits.update(q_indices)
+            return
+
+        if op.name in {"rxx", "ryy", "rzz"} and self._supports_native_parametric_decomposition():
+            (theta,) = normalize_params(op.params)
+            if op.name == "rxx":
+                self._apply_rxx_gate(q_indices, theta)
+            elif op.name == "ryy":
+                self._apply_ryy_gate(q_indices, theta)
+            else:
+                self._apply_rzz_gate(q_indices, theta)
+            touched_qubits.update(q_indices)
+            return
+
+        if op.name == "PauliEvolution" and self._supports_native_parametric_decomposition():
+            try:
+                if self._apply_pauli_evolution_gate(
+                    op,
+                    q_indices,
+                    include_global_phase=include_global_phase,
+                ):
+                    touched_qubits.update(q_indices)
+                    return
+            except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                pass
+
+        if op.name in {"sx", "sxdg", "u"} and self._supports_native_phase_decomposition(include_global_phase):
+            params = normalize_params(op.params)
+            if op.name == "sx":
+                self._apply_sx_gate(q_indices, inverse=False, include_global_phase=include_global_phase)
+            elif op.name == "sxdg":
+                self._apply_sx_gate(q_indices, inverse=True, include_global_phase=include_global_phase)
+            else:
+                theta, phi, lam = params
+                self._apply_u_gate(q_indices, theta, phi, lam, include_global_phase=include_global_phase)
+            touched_qubits.update(q_indices)
+            return
+
+        if op.name in {
+            "ch", "cy", "ccz", "dcx", "ecr", "iswap", "rccx", "rcccx"
+        } and self._supports_native_parametric_decomposition():
+            if op.name == "ch":
+                self._apply_ch_gate(q_indices)
+            elif op.name == "cy":
+                self._apply_cy_gate(q_indices)
+            elif op.name == "ccz":
+                self._apply_ccz_gate(q_indices)
+            elif op.name == "dcx":
+                self._apply_dcx_gate(q_indices)
+            elif op.name == "ecr":
+                self._apply_ecr_gate(q_indices)
+            elif op.name == "iswap":
+                self._apply_iswap_gate(q_indices)
+            elif op.name == "rccx":
+                self._apply_rccx_gate(q_indices)
+            else:
+                self._apply_rcccx_gate(q_indices)
+            touched_qubits.update(q_indices)
+            return
+
+        if self._supports_native_parametric_decomposition():
+            try:
+                if self._apply_controlled_base_gate(
+                    op,
+                    q_indices,
+                    include_global_phase=include_global_phase,
+                ):
+                    touched_qubits.update(q_indices)
+                    return
+            except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                pass
+
+        try:
+            if self._apply_generic_controlled_matrix(op, q_indices):
+                touched_qubits.update(q_indices)
+                return
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            pass
+
+        if op.name == "state_preparation" and not touched_qubits and len(q_indices) == circuit_num_qubits:
+            statevector = _state_preparation_vector(op)
+            if statevector is not None:
+                try:
+                    self._runtime.set_statevector(
+                        statevector_to_little_endian_wires(statevector)
+                    )
+                    touched_qubits.update(q_indices)
+                    return
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    pass
+
+        matrix = _operation_matrix(op)
+        if matrix is not None and op.name in {"state_preparation", "unitary"}:
+            params = []
+        else:
+            params = normalize_params(op.params)
+        self._runtime.apply_operation(
+            op.name,
+            q_indices,
+            params,
+            matrix=matrix,
+        )
+        touched_qubits.update(q_indices)
+
     def _apply_circuit(self, circuit, *, include_global_phase: bool = False, allow_runtime_reset: bool = False):
         self._ensure_simulator(circuit.num_qubits)
         if include_global_phase:
@@ -769,120 +927,13 @@ class RocQuantumBackend(BackendV2):
                 measured_bits[c_index] = q_indices[0]
                 continue
 
-            if op.name in {"p", "cp"} and self._supports_native_phase_decomposition(include_global_phase):
-                (theta,) = normalize_params(op.params)
-                if op.name == "p":
-                    self._apply_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
-                else:
-                    self._apply_controlled_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
-                touched_qubits.update(q_indices)
-                continue
-
-            if op.name == "tdg" and self._supports_native_phase_decomposition(include_global_phase):
-                self._apply_tdg_gate(q_indices, include_global_phase=include_global_phase)
-                touched_qubits.update(q_indices)
-                continue
-
-            if op.name in {"rxx", "ryy", "rzz"} and self._supports_native_parametric_decomposition():
-                (theta,) = normalize_params(op.params)
-                if op.name == "rxx":
-                    self._apply_rxx_gate(q_indices, theta)
-                elif op.name == "ryy":
-                    self._apply_ryy_gate(q_indices, theta)
-                else:
-                    self._apply_rzz_gate(q_indices, theta)
-                touched_qubits.update(q_indices)
-                continue
-
-            if op.name == "PauliEvolution" and self._supports_native_parametric_decomposition():
-                try:
-                    if self._apply_pauli_evolution_gate(
-                        op,
-                        q_indices,
-                        include_global_phase=include_global_phase,
-                    ):
-                        touched_qubits.update(q_indices)
-                        continue
-                except (NotImplementedError, RuntimeError, TypeError, ValueError):
-                    pass
-
-            if op.name in {"sx", "sxdg", "u"} and self._supports_native_phase_decomposition(include_global_phase):
-                params = normalize_params(op.params)
-                if op.name == "sx":
-                    self._apply_sx_gate(q_indices, inverse=False, include_global_phase=include_global_phase)
-                elif op.name == "sxdg":
-                    self._apply_sx_gate(q_indices, inverse=True, include_global_phase=include_global_phase)
-                else:
-                    theta, phi, lam = params
-                    self._apply_u_gate(q_indices, theta, phi, lam, include_global_phase=include_global_phase)
-                touched_qubits.update(q_indices)
-                continue
-
-            if op.name in {
-                "ch", "cy", "ccz", "dcx", "ecr", "iswap", "rccx", "rcccx"
-            } and self._supports_native_parametric_decomposition():
-                if op.name == "ch":
-                    self._apply_ch_gate(q_indices)
-                elif op.name == "cy":
-                    self._apply_cy_gate(q_indices)
-                elif op.name == "ccz":
-                    self._apply_ccz_gate(q_indices)
-                elif op.name == "dcx":
-                    self._apply_dcx_gate(q_indices)
-                elif op.name == "ecr":
-                    self._apply_ecr_gate(q_indices)
-                elif op.name == "iswap":
-                    self._apply_iswap_gate(q_indices)
-                elif op.name == "rccx":
-                    self._apply_rccx_gate(q_indices)
-                else:
-                    self._apply_rcccx_gate(q_indices)
-                touched_qubits.update(q_indices)
-                continue
-
-            if self._supports_native_parametric_decomposition():
-                try:
-                    if self._apply_controlled_base_gate(
-                        op,
-                        q_indices,
-                        include_global_phase=include_global_phase,
-                    ):
-                        touched_qubits.update(q_indices)
-                        continue
-                except (NotImplementedError, RuntimeError, TypeError, ValueError):
-                    pass
-
-            try:
-                if self._apply_generic_controlled_matrix(op, q_indices):
-                    touched_qubits.update(q_indices)
-                    continue
-            except (NotImplementedError, RuntimeError, TypeError, ValueError):
-                pass
-
-            if op.name == "state_preparation" and not touched_qubits and len(q_indices) == circuit.num_qubits:
-                statevector = _state_preparation_vector(op)
-                if statevector is not None:
-                    try:
-                        self._runtime.set_statevector(
-                            statevector_to_little_endian_wires(statevector)
-                        )
-                        touched_qubits.update(q_indices)
-                        continue
-                    except (NotImplementedError, RuntimeError, TypeError, ValueError):
-                        pass
-
-            matrix = _operation_matrix(op)
-            if matrix is not None and op.name in {"state_preparation", "unitary"}:
-                params = []
-            else:
-                params = normalize_params(op.params)
-            self._runtime.apply_operation(
-                op.name,
+            self._apply_quantum_operation(
+                op,
                 q_indices,
-                params,
-                matrix=matrix,
+                include_global_phase=include_global_phase,
+                touched_qubits=touched_qubits,
+                circuit_num_qubits=circuit.num_qubits,
             )
-            touched_qubits.update(q_indices)
 
         return measured_bits
 
@@ -998,12 +1049,158 @@ class RocQuantumBackend(BackendV2):
     def _requests_statevector(circuit):
         return any(instruction.operation.name == "save_statevector" for instruction in circuit.data)
 
+    @staticmethod
+    def _has_dynamic_circuit(circuit):
+        measurement_started = False
+        for instruction in circuit.data:
+            op = instruction.operation
+            if op.name in {"barrier", "delay", "save_statevector"}:
+                continue
+            if op.name in CONTROL_FLOW_OPS or getattr(op, "blocks", None) is not None:
+                return True
+            if _instruction_condition(instruction) is not None:
+                return True
+            if measurement_started and op.name != "measure":
+                return True
+            if op.name == "measure":
+                measurement_started = True
+        return False
+
+    def _measure_qubit_for_trajectory(self, qubit):
+        measure_qubit = getattr(self._runtime, "measure_qubit", None)
+        if not callable(measure_qubit):
+            raise NotImplementedError(
+                "Dynamic Qiskit sampling requires a state-collapsing measure_qubit binding."
+            )
+        return int(measure_qubit(int(qubit)))
+
+    def _apply_trajectory_instruction(
+        self,
+        instruction,
+        circuit,
+        classical_bits,
+        measured_bits,
+        touched_qubits,
+        *,
+        include_global_phase=False,
+    ):
+        op = instruction.operation
+        if op.name in {"barrier", "delay", "save_statevector"}:
+            return
+
+        q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
+        c_indices = [circuit.find_bit(c).index for c in instruction.clbits]
+
+        if op.name == "if_else" and getattr(op, "blocks", None) is not None:
+            blocks = tuple(op.blocks)
+            if len(blocks) not in {1, 2}:
+                raise NotImplementedError("RocQuantumBackend supports if_else with one or two blocks.")
+            branch_index = 0 if _condition_matches(op.condition, circuit, classical_bits) else 1
+            if branch_index >= len(blocks):
+                return
+
+            block = blocks[branch_index]
+            for block_instruction in block.data:
+                mapped_qargs = [
+                    instruction.qubits[block.find_bit(qubit).index]
+                    for qubit in block_instruction.qubits
+                ]
+                mapped_cargs = [
+                    instruction.clbits[block.find_bit(clbit).index]
+                    for clbit in block_instruction.clbits
+                ]
+                mapped_instruction = block_instruction.replace(qubits=tuple(mapped_qargs), clbits=tuple(mapped_cargs))
+                self._apply_trajectory_instruction(
+                    mapped_instruction,
+                    circuit,
+                    classical_bits,
+                    measured_bits,
+                    touched_qubits,
+                    include_global_phase=include_global_phase,
+                )
+            return
+
+        if op.name in CONTROL_FLOW_OPS or getattr(op, "blocks", None) is not None:
+            raise NotImplementedError(
+                f"RocQuantumBackend dynamic sampling does not support {op.name!r} yet."
+            )
+
+        condition = _instruction_condition(instruction)
+        if condition is not None and not _condition_matches(condition, circuit, classical_bits):
+            return
+
+        if op.name == "measure":
+            if len(q_indices) != 1 or len(c_indices) != 1:
+                raise NotImplementedError("Dynamic Qiskit sampling supports one-qubit measure instructions.")
+            outcome = self._measure_qubit_for_trajectory(q_indices[0])
+            classical_bits[c_indices[0]] = outcome
+            measured_bits[c_indices[0]] = q_indices[0]
+            return
+
+        if op.name == "reset":
+            for target in q_indices:
+                if target in touched_qubits:
+                    self._runtime.reset_qubit(target)
+            touched_qubits.update(q_indices)
+            return
+
+        if op.name == "initialize":
+            reset_targets = set(q_indices)
+            if touched_qubits & reset_targets:
+                raise ValueError(
+                    "RocQuantumBackend only supports initialize before a qubit has been operated on. "
+                    "Later initialize instructions require non-unitary reset support."
+                )
+            statevector = _state_preparation_vector(op)
+            if statevector is not None and len(q_indices) == circuit.num_qubits:
+                try:
+                    self._runtime.set_statevector(
+                        statevector_to_little_endian_wires(statevector)
+                    )
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    self._runtime.apply_operation(
+                        "state_preparation",
+                        q_indices,
+                        matrix=_state_preparation_matrix(op),
+                    )
+            else:
+                self._runtime.apply_operation(
+                    "state_preparation",
+                    q_indices,
+                    matrix=_state_preparation_matrix(op),
+                )
+            touched_qubits.update(q_indices)
+            return
+
+        self._apply_quantum_operation(
+            op,
+            q_indices,
+            include_global_phase=include_global_phase,
+            touched_qubits=touched_qubits,
+            circuit_num_qubits=circuit.num_qubits,
+        )
+
+    def _apply_circuit_trajectory(self, circuit):
+        self._ensure_simulator(circuit.num_qubits)
+        classical_bits = {}
+        measured_bits = {}
+        touched_qubits = set()
+        for instruction in circuit.data:
+            self._apply_trajectory_instruction(
+                instruction,
+                circuit,
+                classical_bits,
+                measured_bits,
+                touched_qubits,
+            )
+        return measured_bits, classical_bits
+
     def estimate_expectation(self, circuit, observable):
         """Return a native expectation for a circuit and Qiskit observable."""
-        if self._has_runtime_reset(circuit):
+        if self._has_runtime_reset(circuit) or self._has_dynamic_circuit(circuit):
             raise ValueError(
-                "RocQuantumBackend estimator does not support runtime reset yet. "
-                "Use backend.run(..., sampling=True) for shot-by-shot reset sampling."
+                "RocQuantumBackend estimator does not support shot-trajectory circuits yet. "
+                "Use backend.run(..., sampling=True) for shot-by-shot sampling."
             )
         self._apply_circuit(circuit, include_global_phase=False)
         return estimate_observable(self._runtime, observable, circuit.num_qubits)
@@ -1038,6 +1235,35 @@ class RocQuantumBackend(BackendV2):
             "memory": memory if memory_enabled else None,
         }
 
+    def _run_dynamic_sampling(self, circuit, shots, memory_enabled):
+        memory = []
+        measured_items = None
+        memory_width = getattr(circuit, "num_clbits", 0)
+
+        for _ in range(int(shots)):
+            measured_bits, classical_bits = self._apply_circuit_trajectory(circuit)
+            current_items = (
+                sorted(measured_bits.items())
+                if measured_bits
+                else [(idx, idx) for idx in range(circuit.num_qubits)]
+            )
+            if measured_items is None:
+                measured_items = current_items
+
+            width = memory_width or len(current_items)
+            if measured_bits:
+                memory.append(_memory_from_classical_bits(classical_bits, current_items, width))
+            else:
+                qubits_to_measure, sample_offsets = qiskit_sample_plan(current_items)
+                raw_sample = self._runtime.measure(qubits_to_measure, 1)
+                memory.extend(qiskit_memory_from_samples(raw_sample, current_items, width, sample_offsets))
+
+        formatted_counts = counts_from_memory(memory)
+        return {
+            "counts": formatted_counts,
+            "memory": memory if memory_enabled else None,
+        }
+
     def run(self, run_input, **options):
         if not isinstance(run_input, list):
             run_input = [run_input]
@@ -1053,6 +1279,35 @@ class RocQuantumBackend(BackendV2):
             )
             return_sampling = bool(options.get("sampling", self.options.sampling))
             has_runtime_reset = self._has_runtime_reset(circuit)
+            has_dynamic_circuit = self._has_dynamic_circuit(circuit)
+
+            if has_dynamic_circuit:
+                if return_statevector:
+                    raise ValueError(
+                        "RocQuantumBackend cannot return a single statevector for shot-trajectory circuits."
+                    )
+                if not return_sampling:
+                    raise ValueError("RocQuantumBackend dynamic circuits require sampling=True.")
+
+                data = self._run_dynamic_sampling(
+                    circuit,
+                    shots,
+                    bool(options.get("memory", self.options.memory)),
+                )
+                exp_data = ExperimentResultData(**data)
+                results.append(
+                    ExperimentResult(
+                        shots=shots,
+                        success=True,
+                        data=exp_data,
+                        header=getattr(
+                            circuit,
+                            "header",
+                            {"name": getattr(circuit, "name", None), "metadata": getattr(circuit, "metadata", None)},
+                        ),
+                    )
+                )
+                continue
 
             if has_runtime_reset:
                 if return_statevector:

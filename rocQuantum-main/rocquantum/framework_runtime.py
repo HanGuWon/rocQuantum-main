@@ -403,6 +403,17 @@ class RocQuantumRuntime:
 
         raise NotImplementedError("The active rocQuantum binding does not expose qubit reset.")
 
+    def measure_qubit(self, target: int) -> int:
+        native = getattr(self.simulator, "measure_qubit", None)
+        if callable(native):
+            return int(native(int(target)))
+
+        legacy = getattr(self.simulator, "MeasureQubit", None)
+        if callable(legacy):
+            return int(legacy(int(target)))
+
+        raise NotImplementedError("The active rocQuantum binding does not expose state-collapsing qubit measurement.")
+
     def num_qubits(self) -> int:
         getter = getattr(self.simulator, "num_qubits", None)
         if callable(getter):

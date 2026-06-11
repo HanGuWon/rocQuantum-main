@@ -23,6 +23,7 @@ class _FakeQuantumSimulator:
     enable_sparse_moments = False
     enable_probabilities = False
     enable_matrix_expectation = False
+    measure_qubit_results = []
 
     def __init__(self, num_qubits, batch_size=1):
         self._num_qubits = int(num_qubits)
@@ -34,7 +35,9 @@ class _FakeQuantumSimulator:
         self.controlled_matrices = []
         self.statevectors = []
         self.measurements = []
+        self.measure_qubits = []
         self.total_measurements = []
+        self.total_measure_qubits = []
         self.expectations = []
         self.batch_expectations = []
         self.matrix_expectations = []
@@ -56,6 +59,7 @@ class _FakeQuantumSimulator:
         self.controlled_matrices.clear()
         self.statevectors.clear()
         self.measurements.clear()
+        self.measure_qubits.clear()
         self.expectations.clear()
         self.batch_expectations.clear()
         self.matrix_expectations.clear()
@@ -105,6 +109,15 @@ class _FakeQuantumSimulator:
             return [0 for _ in range(int(shots))]
         high = (1 << len(qubits)) - 1
         return [0 if shot % 2 == 0 else high for shot in range(int(shots))]
+
+    def measure_qubit(self, target):
+        target = int(target)
+        self.measure_qubits.append(target)
+        self.total_measure_qubits.append(target)
+        self._measured = True
+        if _FakeQuantumSimulator.measure_qubit_results:
+            return int(_FakeQuantumSimulator.measure_qubit_results.pop(0))
+        return 0
 
     def reset_qubit(self, target):
         self.reset_qubits.append(int(target))
@@ -248,6 +261,7 @@ def _install_fake_binding(monkeypatch):
     _FakeQuantumSimulator.enable_sparse_moments = False
     _FakeQuantumSimulator.enable_probabilities = False
     _FakeQuantumSimulator.enable_matrix_expectation = False
+    _FakeQuantumSimulator.measure_qubit_results = []
     return fake
 
 
@@ -389,9 +403,10 @@ def test_framework_runtime_converts_full_statevectors_to_little_endian_order():
     )
 
 
-def test_qiskit_backend_rejects_mid_circuit_measurement(monkeypatch):
+def test_qiskit_backend_samples_mid_circuit_measurement_trajectory(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.measure_qubit_results = [1]
 
     from qiskit import QuantumCircuit
     from qiskit_rocquantum_provider import RocQuantumProvider
@@ -401,8 +416,13 @@ def test_qiskit_backend_rejects_mid_circuit_measurement(monkeypatch):
     circuit.measure(0, 0)
     circuit.x(0)
 
-    with pytest.raises(ValueError, match="terminal measurements"):
-        backend.run(circuit).result()
+    result = backend.run(circuit, shots=1, memory=True, statevector=False).result()
+
+    assert result.get_counts() == {"1": 1}
+    assert result.get_memory() == ["1"]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.measure_qubits == [0]
+    assert sim.ops == [("X", (0,), ())]
 
 
 def test_qiskit_backend_allows_initial_reset_as_noop(monkeypatch):
@@ -461,7 +481,35 @@ def test_qiskit_backend_rejects_statevector_for_runtime_reset(monkeypatch):
         backend.run(circuit, statevector=True).result()
 
 
-def test_qiskit_backend_rejects_control_flow_operations(monkeypatch):
+def test_qiskit_backend_samples_if_else_conditioned_gate(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.measure_qubit_results = [1, 1]
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(2, 2)
+    if not hasattr(circuit, "if_test"):
+        pytest.skip("Qiskit version does not expose QuantumCircuit.if_test")
+
+    circuit.measure(0, 0)
+    with circuit.if_test((circuit.clbits[0], True)):
+        circuit.x(1)
+    circuit.measure(1, 1)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuit, shots=1, memory=True, statevector=False).result()
+
+    assert result.get_counts() == {"11": 1}
+    assert result.get_memory() == ["11"]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("X", (1,), ())]
+    assert sim.measure_qubits == [0, 1]
+    assert sim.measurements == []
+
+
+def test_qiskit_backend_rejects_statevector_for_if_else(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
 
@@ -472,12 +520,32 @@ def test_qiskit_backend_rejects_control_flow_operations(monkeypatch):
     if not hasattr(circuit, "if_test"):
         pytest.skip("Qiskit version does not expose QuantumCircuit.if_test")
 
+    circuit.measure(0, 0)
     with circuit.if_test((circuit.clbits[0], True)):
         circuit.x(0)
 
     backend = RocQuantumProvider().get_backend("rocq_simulator")
-    with pytest.raises(ValueError, match="control-flow operations"):
-        backend.run(circuit).result()
+    with pytest.raises(ValueError, match="shot-trajectory"):
+        backend.run(circuit, statevector=True).result()
+
+
+def test_qiskit_backend_rejects_unsupported_control_flow_operations(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1, 1)
+    if not hasattr(circuit, "for_loop"):
+        pytest.skip("Qiskit version does not expose QuantumCircuit.for_loop")
+
+    with circuit.for_loop(range(1)):
+        circuit.x(0)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    with pytest.raises(NotImplementedError, match="for_loop"):
+        backend.run(circuit, statevector=False).result()
 
 
 def test_qiskit_backend_applies_global_phase_for_statevector(monkeypatch):

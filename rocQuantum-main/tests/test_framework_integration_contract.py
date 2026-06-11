@@ -245,7 +245,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn(".def(\"ApplyControlledGate\"", bindings)
         self.assertIn("def apply_controlled_matrix", runtime)
 
-    def test_public_simulator_exposes_qubit_reset(self):
+    def test_public_simulator_exposes_qubit_measure_and_reset(self):
         with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
             header = f.read()
         with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
@@ -255,13 +255,19 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
             runtime = f.read()
 
+        self.assertIn("int measure_qubit", header)
         self.assertIn("void reset_qubit", header)
+        self.assertIn("int MeasureQubit", header)
         self.assertIn("void ResetQubit", header)
+        self.assertIn("QuantumSimulator::measure_qubit", implementation)
         self.assertIn("QuantumSimulator::reset_qubit", implementation)
         self.assertIn("rocsvMeasure", implementation)
         self.assertIn("rocsvApplyX", implementation)
+        self.assertIn(".def(\"measure_qubit\"", bindings)
         self.assertIn(".def(\"reset_qubit\"", bindings)
+        self.assertIn(".def(\"MeasureQubit\"", bindings)
         self.assertIn(".def(\"ResetQubit\"", bindings)
+        self.assertIn("def measure_qubit", runtime)
         self.assertIn("def reset_qubit", runtime)
 
     def test_public_simulator_exposes_sparse_hamiltonian_moments(self):
@@ -523,6 +529,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("Target(num_qubits=int(num_qubits))", source)
         self.assertIn("MCXGate(3)", source)
         self.assertIn("raw_samples = self._runtime.measure(qubits_to_measure, shots)", source)
+        self.assertIn("def _run_dynamic_sampling", source)
+        self.assertIn("def _apply_circuit_trajectory", source)
+        self.assertIn("if op.name == \"if_else\"", source)
+        self.assertIn("measure_qubit", source)
         self.assertIn("formatted_counts = counts_from_memory(memory)", source)
         self.assertIn("return RocQuantumJob(self, job_id, result)", source)
         self.assertNotIn("{bin(k): v for k, v in counts.items()}", source)

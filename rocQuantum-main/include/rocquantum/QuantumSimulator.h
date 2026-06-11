@@ -16,6 +16,7 @@ public:
     ~QuantumSimulator();
 
     void reset();
+    int measure_qubit(unsigned target);
     void reset_qubit(unsigned target);
     void apply_gate(const std::string& gate_name,
                     const std::vector<unsigned>& targets,
@@ -72,6 +73,7 @@ public:
                              int control_qubit,
                              int target_qubit);
     void Execute();
+    int MeasureQubit(int target_qubit);
     void ResetQubit(int target_qubit);
     std::vector<std::complex<double>> GetStateVector() const;
     std::vector<std::complex<double>> GetStateVectors() const;
