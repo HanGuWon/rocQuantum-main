@@ -1105,7 +1105,7 @@ class RocQuantumBackend(BackendV2):
             reference_op = reference_instruction.operation
             if reference_op.name in {"barrier", "delay", "save_statevector"}:
                 continue
-            if reference_op.name in {"initialize", "reset", "state_preparation"}:
+            if reference_op.name == "reset":
                 raise NotImplementedError(f"Batched Qiskit execution does not support {reference_op.name!r}.")
             if reference_op.name in CONTROL_FLOW_OPS or getattr(reference_op, "blocks", None) is not None:
                 raise NotImplementedError("Batched Qiskit execution does not support control-flow operations.")
@@ -1148,7 +1148,23 @@ class RocQuantumBackend(BackendV2):
                 if _instruction_condition(instruction) is not None:
                     raise NotImplementedError("Batched Qiskit execution does not support conditioned operations.")
                 ops.append(op)
-                params_by_circuit.append(normalize_params(op.params))
+
+            if reference_op.name in {"initialize", "state_preparation"}:
+                if touched_qubits or len(q_indices) != num_qubits:
+                    raise NotImplementedError(
+                        "Batched Qiskit execution only supports initial full-wire state preparation."
+                    )
+                statevectors = []
+                for op in ops:
+                    statevector = _state_preparation_vector(op)
+                    if statevector is None:
+                        raise NotImplementedError("Batched Qiskit execution requires state preparation vectors.")
+                    statevectors.append(statevector_to_little_endian_wires(statevector))
+                self._runtime.set_statevectors(statevectors)
+                touched_qubits.update(q_indices)
+                continue
+
+            params_by_circuit = [normalize_params(op.params) for op in ops]
 
             if reference_op.name in {"rx", "ry", "rz", "crx", "cry", "crz"} and all(
                 len(params) == 1 for params in params_by_circuit
