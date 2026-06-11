@@ -1519,6 +1519,42 @@ def test_qiskit_native_sampler_batches_controlled_parameter_values(monkeypatch):
     assert sim.probability_requests == [(1,)]
 
 
+def test_qiskit_native_sampler_batches_static_native_decompositions(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(2, 1)
+    circuit.ry(theta, 0)
+    circuit.sx(1)
+    circuit.ch(0, 1)
+    circuit.measure(1, 0)
+
+    result = RocQuantumProvider().get_sampler().run(
+        [(circuit, [0.1, 0.2])],
+        shots=3,
+    ).result()[0]
+
+    assert result.data.c.shape == (2,)
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.ops == [
+        ("RX", (1,), (np.pi / 2,)),
+        ("RY", (1,), (np.pi / 4,)),
+        ("CNOT", (0, 1), ()),
+        ("RY", (1,), (-np.pi / 4,)),
+    ]
+    assert sim.matrices == []
+    assert sim.measurements == []
+    assert sim.probability_requests == [(1,)]
+
+
 def test_runtime_measure_batch_falls_back_to_batch_probabilities():
     from rocquantum.framework_runtime import RocQuantumRuntime
 
@@ -2176,6 +2212,46 @@ def test_pennylane_batch_execute_uses_batched_parametric_gate(monkeypatch):
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_pennylane_batch_execute_keeps_static_native_decompositions_batched(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.RY(0.1, wires=0), qml.CH(wires=[0, 1]), qml.ECR(wires=[0, 1])],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [qml.RY(0.2, wires=0), qml.CH(wires=[0, 1]), qml.ECR(wires=[0, 1])],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.ops == [
+        ("RY", (1,), (np.pi / 4,)),
+        ("CNOT", (0, 1), ()),
+        ("RY", (1,), (-np.pi / 4,)),
+        ("Z", (0,), ()),
+        ("CNOT", (0, 1), ()),
+        ("RX", (1,), (np.pi / 2,)),
+        ("RX", (0,), (np.pi / 2,)),
+        ("RY", (0,), (np.pi / 2,)),
+        ("RX", (0,), (np.pi / 2,)),
+    ]
+    assert sim.matrices == []
     assert sim.batch_expectations == [("Z", (0,))]
 
 

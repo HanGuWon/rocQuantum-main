@@ -945,6 +945,115 @@ def _apply_orbital_rotation(runtime, wire_indices, theta):
     _apply_fermionic_swap(runtime, [second, third], np.pi)
 
 
+def _apply_static_batch_operation(runtime, gate_name, wire_indices, params):
+    if gate_name in PENNYLANE_TO_ROCQ_GATES and not params:
+        runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)
+        return True
+
+    if gate_name == "Toffoli" and not params:
+        runtime.apply_operation("MCX", wire_indices)
+        return True
+
+    if gate_name == "CSWAP" and not params:
+        runtime.apply_operation("CSWAP", wire_indices)
+        return True
+
+    if gate_name == "CY" and not params:
+        if not _supports_native_gate_decomposition(runtime):
+            raise NotImplementedError
+        _apply_cy(runtime, wire_indices)
+        return True
+
+    if gate_name == "CH" and not params:
+        if not _supports_native_gate_decomposition(runtime):
+            raise NotImplementedError
+        _apply_ch(runtime, wire_indices)
+        return True
+
+    if gate_name == "CCZ" and not params:
+        if not _supports_native_gate_decomposition(runtime):
+            raise NotImplementedError
+        _apply_ccz(runtime, wire_indices)
+        return True
+
+    if gate_name == "ISWAP" and not params:
+        if not _supports_native_gate_decomposition(runtime):
+            raise NotImplementedError
+        _apply_iswap(runtime, wire_indices)
+        return True
+
+    if gate_name in {"SISWAP", "SQISW"} and not params:
+        if not _supports_native_phase_decomposition(runtime):
+            raise NotImplementedError
+        _apply_siswap(runtime, wire_indices)
+        return True
+
+    if gate_name == "ECR" and not params:
+        if not _supports_native_phase_decomposition(runtime):
+            raise NotImplementedError
+        _apply_ecr(runtime, wire_indices)
+        return True
+
+    if gate_name == "PSWAP" and len(params) == 1:
+        if not _supports_native_phase_decomposition(runtime):
+            raise NotImplementedError
+        _apply_pswap(runtime, wire_indices, params[0])
+        return True
+
+    if gate_name == "IsingXY" and len(params) == 1:
+        if not _supports_native_parametric_decomposition(runtime):
+            raise NotImplementedError
+        _apply_isingxy(runtime, wire_indices, params[0])
+        return True
+
+    if gate_name == "SingleExcitation" and len(params) == 1:
+        if not _supports_native_parametric_decomposition(runtime):
+            raise NotImplementedError
+        _apply_single_excitation(runtime, wire_indices, params[0])
+        return True
+
+    if gate_name in {"SingleExcitationPlus", "SingleExcitationMinus"} and len(params) == 1:
+        if not _supports_native_phase_decomposition(runtime):
+            raise NotImplementedError
+        sign = 1 if gate_name == "SingleExcitationPlus" else -1
+        _apply_single_excitation_phase_variant(runtime, wire_indices, params[0], sign)
+        return True
+
+    if gate_name == "DoubleExcitation" and len(params) == 1:
+        if not _supports_native_parametric_decomposition(runtime):
+            raise NotImplementedError
+        _apply_double_excitation(runtime, wire_indices, params[0])
+        return True
+
+    if gate_name in {"DoubleExcitationPlus", "DoubleExcitationMinus"} and len(params) == 1:
+        if not _supports_native_phase_decomposition(runtime):
+            raise NotImplementedError
+        sign = 1 if gate_name == "DoubleExcitationPlus" else -1
+        _apply_double_excitation_phase_variant(runtime, wire_indices, params[0], sign)
+        return True
+
+    if gate_name == "FermionicSWAP" and len(params) == 1:
+        if not _supports_native_phase_decomposition(runtime):
+            raise NotImplementedError
+        _apply_fermionic_swap(runtime, wire_indices, params[0])
+        return True
+
+    if gate_name == "OrbitalRotation" and len(params) == 1:
+        if not _supports_native_phase_decomposition(runtime):
+            raise NotImplementedError
+        _apply_orbital_rotation(runtime, wire_indices, params[0])
+        return True
+
+    if gate_name in {"CPhaseShift00", "CPhaseShift01", "CPhaseShift10"} and len(params) == 1:
+        if not _supports_native_phase_decomposition(runtime):
+            raise NotImplementedError
+        control_state = gate_name[len("CPhaseShift"):]
+        _apply_controlled_phase_variant(runtime, wire_indices, params[0], control_state)
+        return True
+
+    return False
+
+
 class RocQDevice(QubitDevice):
     name = "rocQuantum Simulator Device"
     short_name = "rocquantum.qpu"
@@ -1177,6 +1286,11 @@ class RocQDevice(QubitDevice):
                 continue
 
             if any(params != params_by_op[0] for params in params_by_op[1:]):
+                return None
+            try:
+                if _apply_static_batch_operation(self._runtime, gate_name, wire_indices, params_by_op[0]):
+                    continue
+            except (NotImplementedError, RuntimeError, TypeError, ValueError):
                 return None
             if gate_name in PENNYLANE_TO_ROCQ_GATES and not params_by_op[0]:
                 self._runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)

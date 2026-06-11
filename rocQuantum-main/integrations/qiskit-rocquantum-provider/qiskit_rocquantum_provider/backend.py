@@ -1028,6 +1028,7 @@ class RocQuantumBackend(BackendV2):
 
         measured_bits = {}
         measurement_started = False
+        touched_qubits = set()
         for position, reference_instruction in enumerate(circuits[0].data):
             reference_op = reference_instruction.operation
             if reference_op.name in {"barrier", "delay", "save_statevector"}:
@@ -1117,10 +1118,13 @@ class RocQuantumBackend(BackendV2):
                     f"p/cp, u, and decomposed rxx/ryy/rzz parameters, got {reference_op.name!r}."
                 )
 
-            matrix = _operation_matrix(reference_op)
-            if matrix is not None and reference_op.name in {"state_preparation", "unitary"}:
-                first_params = []
-            self._runtime.apply_operation(reference_op.name, q_indices, first_params, matrix=matrix)
+            self._apply_quantum_operation(
+                reference_op,
+                q_indices,
+                include_global_phase=False,
+                touched_qubits=touched_qubits,
+                circuit_num_qubits=num_qubits,
+            )
 
         return measured_bits
 
