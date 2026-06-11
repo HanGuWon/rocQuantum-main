@@ -1134,7 +1134,7 @@ class RocQuantumBackend(BackendV2):
                 for clbit in block_instruction.clbits
             ]
             mapped_instruction = block_instruction.replace(qubits=tuple(mapped_qargs), clbits=tuple(mapped_cargs))
-            self._apply_trajectory_instruction(
+            signal = self._apply_trajectory_instruction(
                 mapped_instruction,
                 circuit,
                 classical_bits,
@@ -1143,6 +1143,8 @@ class RocQuantumBackend(BackendV2):
                 include_global_phase=include_global_phase,
                 max_dynamic_loop_iterations=max_dynamic_loop_iterations,
             )
+            if signal is not None:
+                return signal
 
     def _apply_trajectory_instruction(
         self,
@@ -1159,6 +1161,11 @@ class RocQuantumBackend(BackendV2):
         if op.name in {"barrier", "delay", "save_statevector"}:
             return
 
+        if op.name == "break_loop":
+            return "break"
+        if op.name == "continue_loop":
+            return "continue"
+
         q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
         c_indices = [circuit.find_bit(c).index for c in instruction.clbits]
 
@@ -1171,7 +1178,7 @@ class RocQuantumBackend(BackendV2):
                 return
 
             block = blocks[branch_index]
-            self._apply_control_flow_block(
+            return self._apply_control_flow_block(
                 block,
                 instruction,
                 circuit,
@@ -1190,7 +1197,7 @@ class RocQuantumBackend(BackendV2):
             loop_values, loop_parameter = _for_loop_metadata(op)
             for loop_value in loop_values:
                 block = _bind_for_loop_block(blocks[0], loop_parameter, loop_value)
-                self._apply_control_flow_block(
+                signal = self._apply_control_flow_block(
                     block,
                     instruction,
                     circuit,
@@ -1200,6 +1207,12 @@ class RocQuantumBackend(BackendV2):
                     include_global_phase=include_global_phase,
                     max_dynamic_loop_iterations=max_dynamic_loop_iterations,
                 )
+                if signal == "break":
+                    break
+                if signal == "continue":
+                    continue
+                if signal is not None:
+                    return signal
             return
 
         if op.name == "switch_case" and getattr(op, "blocks", None) is not None:
@@ -1218,7 +1231,7 @@ class RocQuantumBackend(BackendV2):
             block = selected_block if selected_block is not None else default_block
             if block is None:
                 return
-            self._apply_control_flow_block(
+            return self._apply_control_flow_block(
                 block,
                 instruction,
                 circuit,
@@ -1241,7 +1254,7 @@ class RocQuantumBackend(BackendV2):
                         "RocQuantumBackend while_loop exceeded max_dynamic_loop_iterations."
                     )
                 iterations += 1
-                self._apply_control_flow_block(
+                signal = self._apply_control_flow_block(
                     blocks[0],
                     instruction,
                     circuit,
@@ -1251,6 +1264,12 @@ class RocQuantumBackend(BackendV2):
                     include_global_phase=include_global_phase,
                     max_dynamic_loop_iterations=max_dynamic_loop_iterations,
                 )
+                if signal == "break":
+                    break
+                if signal == "continue":
+                    continue
+                if signal is not None:
+                    return signal
             return
 
         if op.name in CONTROL_FLOW_OPS or getattr(op, "blocks", None) is not None:
@@ -1319,7 +1338,7 @@ class RocQuantumBackend(BackendV2):
         measured_bits = {}
         touched_qubits = set()
         for instruction in circuit.data:
-            self._apply_trajectory_instruction(
+            signal = self._apply_trajectory_instruction(
                 instruction,
                 circuit,
                 classical_bits,
@@ -1327,6 +1346,10 @@ class RocQuantumBackend(BackendV2):
                 touched_qubits,
                 max_dynamic_loop_iterations=max_dynamic_loop_iterations,
             )
+            if signal is not None:
+                raise RuntimeError(
+                    f"RocQuantumBackend encountered {signal}_loop outside an active loop."
+                )
         return measured_bits, classical_bits
 
     def estimate_expectation(self, circuit, observable):

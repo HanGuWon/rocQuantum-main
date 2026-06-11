@@ -634,6 +634,64 @@ def test_qiskit_backend_samples_parameterized_for_loop(monkeypatch):
     assert sim.measurements == []
 
 
+def test_qiskit_backend_samples_break_loop_in_for_loop(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.measure_qubit_results = [0, 0]
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(2, 2)
+    if not hasattr(circuit, "for_loop") or not hasattr(circuit, "break_loop"):
+        pytest.skip("Qiskit version does not expose loop-control operations")
+
+    with circuit.for_loop(range(3)):
+        circuit.x(0)
+        circuit.break_loop()
+        circuit.x(1)
+    circuit.measure([0, 1], [0, 1])
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuit, shots=1, memory=True, statevector=False).result()
+
+    assert result.get_counts() == {"00": 1}
+    assert result.get_memory() == ["00"]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("X", (0,), ())]
+    assert sim.measure_qubits == [0, 1]
+    assert sim.measurements == []
+
+
+def test_qiskit_backend_samples_continue_loop_in_for_loop(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.measure_qubit_results = [0, 0]
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(2, 2)
+    if not hasattr(circuit, "for_loop") or not hasattr(circuit, "continue_loop"):
+        pytest.skip("Qiskit version does not expose loop-control operations")
+
+    with circuit.for_loop(range(3)):
+        circuit.x(0)
+        circuit.continue_loop()
+        circuit.y(1)
+    circuit.measure([0, 1], [0, 1])
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuit, shots=1, memory=True, statevector=False).result()
+
+    assert result.get_counts() == {"00": 1}
+    assert result.get_memory() == ["00"]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("X", (0,), ()), ("X", (0,), ()), ("X", (0,), ())]
+    assert sim.measure_qubits == [0, 1]
+    assert sim.measurements == []
+
+
 def test_qiskit_backend_rejects_statevector_for_if_else(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
