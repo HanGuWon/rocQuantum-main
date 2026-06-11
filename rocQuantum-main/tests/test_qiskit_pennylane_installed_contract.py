@@ -2680,6 +2680,36 @@ def test_pennylane_batch_execute_keeps_static_qft_batched(monkeypatch):
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_skips_global_phase_sweeps(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.GlobalPhase(0.1, wires=[0, 1]), qml.RY(0.2, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [qml.GlobalPhase(0.9, wires=[0, 1]), qml.RY(0.8, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == []
+    assert sim.batch_ops == [("RY", (0,), (0.2, 0.8))]
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_keeps_static_unitaries_batched(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -3740,6 +3770,32 @@ def test_pennylane_stateprep_after_operation_is_rejected(monkeypatch):
 
     with pytest.raises(ValueError, match="StatePrep is only supported as an initial state preparation"):
         circuit()
+
+
+def test_pennylane_global_phase_uses_single_wire_phase_matrix(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.GlobalPhase(0.3)
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == []
+    assert len(sim.matrices) == 1
+    matrix, targets = sim.matrices[0]
+    np.testing.assert_allclose(matrix, np.eye(2, dtype=np.complex128) * np.exp(-0.3j))
+    assert targets == (0,)
 
 
 def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypatch):

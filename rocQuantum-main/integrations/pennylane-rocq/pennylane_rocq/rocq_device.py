@@ -43,7 +43,7 @@ MATRIX_OPS = {
     "OrbitalRotation", "FermionicSWAP",
     "Toffoli", "CSWAP",
 }
-DECOMPOSED_OPS = {"QFT"}
+DECOMPOSED_OPS = {"GlobalPhase", "QFT"}
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
     "PauliX": "X",
@@ -621,6 +621,18 @@ def _apply_global_phase(runtime, wire_index, phase):
     factor = np.exp(1j * phase)
     matrix = np.array([[factor, 0.0], [0.0, factor]], dtype=np.complex128)
     runtime.apply_operation("QubitUnitary", [wire_index], matrix=matrix)
+
+
+def _apply_global_phase_operation(runtime, wire_indices, theta, fallback_wire=None):
+    if not getattr(runtime, "preserve_global_phase", True):
+        return
+    if wire_indices:
+        wire_index = wire_indices[0]
+    elif fallback_wire is not None:
+        wire_index = fallback_wire
+    else:
+        raise ValueError("GlobalPhase requires at least one device wire for runtime dispatch.")
+    _apply_global_phase(runtime, wire_index, -theta)
 
 
 def _apply_phase_shift(runtime, wire_indices, theta):
@@ -1215,6 +1227,10 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
         _apply_qft(runtime, wire_indices)
         return True
 
+    if gate_name == "GlobalPhase" and len(params) == 1:
+        _apply_global_phase_operation(runtime, wire_indices, params[0])
+        return True
+
     if gate_name == "Toffoli" and not params:
         runtime.apply_operation("MCX", wire_indices)
         return True
@@ -1561,6 +1577,9 @@ class RocQDevice(QubitDevice):
                 len(params) == 1 for params in params_by_op
             ):
                 self._runtime.apply_operation_batch(gate_name, wire_indices, [params[0] for params in params_by_op])
+                continue
+
+            if gate_name == "GlobalPhase" and all(len(params) == 1 for params in params_by_op):
                 continue
 
             if gate_name in {
@@ -2161,6 +2180,24 @@ class RocQDevice(QubitDevice):
             elif gate_name == "QFT":
                 try:
                     _apply_qft(self._runtime, wire_indices)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "GlobalPhase":
+                try:
+                    (theta,) = getattr(op, "parameters", [])
+                    fallback_wire = self.wire_map[self.wires[0]] if len(self.wires) else None
+                    _apply_global_phase_operation(
+                        self._runtime,
+                        wire_indices,
+                        theta,
+                        fallback_wire=fallback_wire,
+                    )
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
