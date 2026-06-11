@@ -50,6 +50,8 @@ from qiskit.circuit.library import (
     UGate,
     UnitaryGate,
     XGate,
+    XXMinusYYGate,
+    XXPlusYYGate,
     YGate,
     ZGate,
     iSwapGate,
@@ -303,6 +305,8 @@ def _instruction_target(num_qubits):
     target.add_instruction(UGate(0.0, 0.0, 0.0), name="u")
     target.add_instruction(UnitaryGate([[1, 0], [0, 1]]), name="unitary")
     target.add_instruction(XGate(), name="x")
+    target.add_instruction(XXMinusYYGate(0.0, 0.0), name="xx_minus_yy")
+    target.add_instruction(XXPlusYYGate(0.0, 0.0), name="xx_plus_yy")
     target.add_instruction(YGate(), name="y")
     target.add_instruction(ZGate(), name="z")
     target.add_instruction(Measure(), name="measure")
@@ -647,6 +651,86 @@ class RocQuantumBackend(BackendV2):
         self._apply_rzz_gate_batch(q_indices, thetas)
         for qubit in q_indices:
             self._runtime.apply_operation("rx", [qubit], [-cmath.pi / 2])
+
+    def _apply_xx_plus_yy_gate(self, q_indices, theta, beta, *, include_global_phase):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit xx_plus_yy gate requires exactly two qubits.")
+
+        left, right = q_indices
+        self._runtime.apply_operation("rz", [left], [beta])
+        self._runtime.apply_operation("sdg", [right])
+        self._apply_sx_gate([right], inverse=False, include_global_phase=include_global_phase)
+        self._runtime.apply_operation("s", [right])
+        self._runtime.apply_operation("s", [left])
+        self._runtime.apply_operation("cx", [right, left])
+        self._runtime.apply_operation("ry", [right], [-theta / 2])
+        self._runtime.apply_operation("ry", [left], [-theta / 2])
+        self._runtime.apply_operation("cx", [right, left])
+        self._runtime.apply_operation("sdg", [left])
+        self._runtime.apply_operation("sdg", [right])
+        self._apply_sx_gate([right], inverse=True, include_global_phase=include_global_phase)
+        self._runtime.apply_operation("s", [right])
+        self._runtime.apply_operation("rz", [left], [-beta])
+
+    def _apply_xx_plus_yy_gate_batch(self, q_indices, thetas, betas):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit xx_plus_yy gate requires exactly two qubits.")
+
+        left, right = q_indices
+        self._runtime.apply_operation_batch("rz", [left], betas)
+        self._runtime.apply_operation("sdg", [right])
+        self._apply_sx_gate([right], inverse=False, include_global_phase=False)
+        self._runtime.apply_operation("s", [right])
+        self._runtime.apply_operation("s", [left])
+        self._runtime.apply_operation("cx", [right, left])
+        self._runtime.apply_operation_batch("ry", [right], [-theta / 2 for theta in thetas])
+        self._runtime.apply_operation_batch("ry", [left], [-theta / 2 for theta in thetas])
+        self._runtime.apply_operation("cx", [right, left])
+        self._runtime.apply_operation("sdg", [left])
+        self._runtime.apply_operation("sdg", [right])
+        self._apply_sx_gate([right], inverse=True, include_global_phase=False)
+        self._runtime.apply_operation("s", [right])
+        self._runtime.apply_operation_batch("rz", [left], [-beta for beta in betas])
+
+    def _apply_xx_minus_yy_gate(self, q_indices, theta, beta, *, include_global_phase):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit xx_minus_yy gate requires exactly two qubits.")
+
+        left, right = q_indices
+        self._runtime.apply_operation("rz", [right], [-beta])
+        self._runtime.apply_operation("sdg", [left])
+        self._apply_sx_gate([left], inverse=False, include_global_phase=include_global_phase)
+        self._runtime.apply_operation("s", [left])
+        self._runtime.apply_operation("s", [right])
+        self._runtime.apply_operation("cx", [left, right])
+        self._runtime.apply_operation("ry", [left], [theta / 2])
+        self._runtime.apply_operation("ry", [right], [-theta / 2])
+        self._runtime.apply_operation("cx", [left, right])
+        self._runtime.apply_operation("sdg", [right])
+        self._runtime.apply_operation("sdg", [left])
+        self._apply_sx_gate([left], inverse=True, include_global_phase=include_global_phase)
+        self._runtime.apply_operation("s", [left])
+        self._runtime.apply_operation("rz", [right], [beta])
+
+    def _apply_xx_minus_yy_gate_batch(self, q_indices, thetas, betas):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit xx_minus_yy gate requires exactly two qubits.")
+
+        left, right = q_indices
+        self._runtime.apply_operation_batch("rz", [right], [-beta for beta in betas])
+        self._runtime.apply_operation("sdg", [left])
+        self._apply_sx_gate([left], inverse=False, include_global_phase=False)
+        self._runtime.apply_operation("s", [left])
+        self._runtime.apply_operation("s", [right])
+        self._runtime.apply_operation("cx", [left, right])
+        self._runtime.apply_operation_batch("ry", [left], [theta / 2 for theta in thetas])
+        self._runtime.apply_operation_batch("ry", [right], [-theta / 2 for theta in thetas])
+        self._runtime.apply_operation("cx", [left, right])
+        self._runtime.apply_operation("sdg", [right])
+        self._runtime.apply_operation("sdg", [left])
+        self._apply_sx_gate([left], inverse=True, include_global_phase=False)
+        self._runtime.apply_operation("s", [left])
+        self._runtime.apply_operation_batch("rz", [right], betas)
 
     def _apply_pauli_evolution_gate(self, op, q_indices, *, include_global_phase):
         terms = _pauli_evolution_terms(op)
@@ -1022,6 +1106,25 @@ class RocQuantumBackend(BackendV2):
             touched_qubits.update(q_indices)
             return
 
+        if op.name in {"xx_plus_yy", "xx_minus_yy"} and self._supports_native_phase_decomposition(include_global_phase):
+            theta, beta = normalize_params(op.params)
+            if op.name == "xx_plus_yy":
+                self._apply_xx_plus_yy_gate(
+                    q_indices,
+                    theta,
+                    beta,
+                    include_global_phase=include_global_phase,
+                )
+            else:
+                self._apply_xx_minus_yy_gate(
+                    q_indices,
+                    theta,
+                    beta,
+                    include_global_phase=include_global_phase,
+                )
+            touched_qubits.update(q_indices)
+            return
+
         if op.name == "PauliEvolution" and self._supports_native_parametric_decomposition():
             try:
                 if self._apply_pauli_evolution_gate(
@@ -1361,12 +1464,25 @@ class RocQuantumBackend(BackendV2):
                 self._apply_r_gate_batch(q_indices, thetas, phis)
                 continue
 
+            if normalized_params_by_circuit is not None and reference_op.name in {
+                "xx_plus_yy", "xx_minus_yy"
+            } and all(
+                len(params) == 2 for params in normalized_params_by_circuit
+            ):
+                thetas = [params[0] for params in normalized_params_by_circuit]
+                betas = [params[1] for params in normalized_params_by_circuit]
+                if reference_op.name == "xx_plus_yy":
+                    self._apply_xx_plus_yy_gate_batch(q_indices, thetas, betas)
+                else:
+                    self._apply_xx_minus_yy_gate_batch(q_indices, thetas, betas)
+                continue
+
             first_params = params_by_circuit[0]
             if any(not _parameter_lists_match(params, first_params) for params in params_by_circuit[1:]):
                 raise NotImplementedError(
                     "Batched Qiskit execution only supports varying RX/RY/RZ, CRX/CRY/CRZ, "
                     f"fixed unitary/controlled-unitary operations, open-control controlled rotations/phase, "
-                    f"p/cp, u/r, decomposed rxx/ryy/rzz/rzx, and PauliEvolution parameters, "
+                    f"p/cp, u/r, decomposed rxx/ryy/rzz/rzx/xx_plus_yy/xx_minus_yy, and PauliEvolution parameters, "
                     f"got {reference_op.name!r}."
                 )
 
