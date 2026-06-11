@@ -2424,6 +2424,54 @@ def test_pennylane_batch_execute_keeps_static_native_decompositions_batched(monk
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_keeps_static_unitaries_batched(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    unitary = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    controlled = np.array([[1.0, 0.0], [0.0, 1.0j]], dtype=np.complex128)
+    dev = qml.device("lightning.rocq", wires=2)
+    circuits = [
+        qml.tape.QuantumScript(
+            [
+                qml.QubitUnitary(unitary, wires=[0]),
+                qml.ControlledQubitUnitary(controlled, wires=[0, 1], control_values=[False]),
+                qml.RY(0.2, wires=1),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [
+                qml.QubitUnitary(unitary.copy(), wires=[0]),
+                qml.ControlledQubitUnitary(controlled.copy(), wires=[0, 1], control_values=[False]),
+                qml.RY(0.8, wires=1),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert len(sim.matrices) == 1
+    matrix, targets = sim.matrices[0]
+    np.testing.assert_allclose(matrix, unitary)
+    assert targets == (0,)
+    assert sim.ops == [("X", (0,), ()), ("X", (0,), ())]
+    assert len(sim.controlled_matrices) == 1
+    matrix, controls, targets = sim.controlled_matrices[0]
+    np.testing.assert_allclose(matrix, controlled)
+    assert controls == (0,)
+    assert targets == (1,)
+    assert sim.batch_ops == [("RY", (1,), (0.2, 0.8))]
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_uses_batched_multiple_expvals(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

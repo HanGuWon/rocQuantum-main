@@ -485,6 +485,27 @@ def _apply_controlled_qubit_unitary(runtime, matrix, controls, targets, control_
             runtime.apply_operation("X", [wire_index])
 
 
+def _parameter_value_matches(left, right):
+    try:
+        left_array = np.asarray(left)
+        right_array = np.asarray(right)
+        if left_array.shape or right_array.shape:
+            return left_array.shape == right_array.shape and np.allclose(left_array, right_array)
+    except (TypeError, ValueError):
+        pass
+
+    comparison = left == right
+    if isinstance(comparison, np.ndarray):
+        return bool(np.all(comparison))
+    return bool(comparison)
+
+
+def _parameter_lists_match(left, right):
+    if len(left) != len(right):
+        return False
+    return all(_parameter_value_matches(left_value, right_value) for left_value, right_value in zip(left, right))
+
+
 def _apply_native_or_matrix(runtime, native_name, wire_indices, op):
     try:
         runtime.apply_operation(native_name, wire_indices)
@@ -1154,7 +1175,19 @@ def _apply_orbital_rotation_batch(runtime, wire_indices, thetas):
     _apply_fermionic_swap(runtime, [second, third], np.pi)
 
 
-def _apply_static_batch_operation(runtime, gate_name, wire_indices, params):
+def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=None, wire_map=None):
+    if gate_name == "QubitUnitary" and len(params) == 1:
+        matrix = matrix_to_little_endian_wires(params[0])
+        runtime.apply_operation("QubitUnitary", wire_indices, matrix=matrix)
+        return True
+
+    if gate_name == "ControlledQubitUnitary" and op is not None and wire_map is not None:
+        payload = _controlled_qubit_unitary_components(op, wire_map)
+        if payload is None:
+            return False
+        _apply_controlled_qubit_unitary(runtime, *payload)
+        return True
+
     if gate_name in PENNYLANE_TO_ROCQ_GATES and not params:
         runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)
         return True
@@ -1559,10 +1592,17 @@ class RocQDevice(QubitDevice):
                 _apply_crot_batch(self._runtime, wire_indices, params_by_op)
                 continue
 
-            if any(params != params_by_op[0] for params in params_by_op[1:]):
+            if any(not _parameter_lists_match(params, params_by_op[0]) for params in params_by_op[1:]):
                 return None
             try:
-                if _apply_static_batch_operation(self._runtime, gate_name, wire_indices, params_by_op[0]):
+                if _apply_static_batch_operation(
+                    self._runtime,
+                    gate_name,
+                    wire_indices,
+                    params_by_op[0],
+                    op=reference_op,
+                    wire_map=self.wire_map,
+                ):
                     continue
             except (NotImplementedError, RuntimeError, TypeError, ValueError):
                 return None
