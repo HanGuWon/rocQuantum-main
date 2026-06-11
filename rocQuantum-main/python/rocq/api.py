@@ -273,6 +273,10 @@ class Circuit:
         self._validate_qubit_index(target_qubit)
         self._enqueue_gate("T", targets=[target_qubit])
 
+    def tdg(self, target_qubit: int):
+        self._validate_qubit_index(target_qubit)
+        self._enqueue_gate("TDG", targets=[target_qubit])
+
     def rx(self, angle: float, target_qubit: int):
         self._validate_qubit_index(target_qubit)
         self._enqueue_gate("RX", targets=[target_qubit], params=[angle])

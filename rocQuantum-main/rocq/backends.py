@@ -313,6 +313,8 @@ class _HipStateVectorState:
             return self._call(op_name, hip_backend.apply_sdg, self._handle, self._d_state, self._num_qubits, targets[0])
         if op == "t":
             return self._call(op_name, hip_backend.apply_t, self._handle, self._d_state, self._num_qubits, targets[0])
+        if op in {"tdg", "tdag"}:
+            return self._call(op_name, hip_backend.apply_tdg, self._handle, self._d_state, self._num_qubits, targets[0])
         if op == "rx":
             angle = self._angle(op_name, params, "theta", "phi")
             return self._call(op_name, hip_backend.apply_rx, self._handle, self._d_state, self._num_qubits, targets[0], angle)
@@ -697,6 +699,9 @@ class DensityMatrixBackend(_BaseBackend):
             return np.array([[1, 0], [0, -1j]], dtype=np.complex64)
         if op == "t":
             phase = math.pi / 4.0
+            return np.array([[1, 0], [0, math.cos(phase) + 1j * math.sin(phase)]], dtype=np.complex64)
+        if op in {"tdg", "tdag"}:
+            phase = -math.pi / 4.0
             return np.array([[1, 0], [0, math.cos(phase) + 1j * math.sin(phase)]], dtype=np.complex64)
         if op in {"rx", "ry", "rz"} and param is not None:
             c = math.cos(param / 2.0)

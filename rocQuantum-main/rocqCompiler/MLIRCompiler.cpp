@@ -45,7 +45,7 @@ struct ExecutableOp {
 };
 
 std::string supported_compile_execute_subset() {
-    return "supported subset: quantum.qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/MCX/CSWAP, "
+    return "supported subset: quantum.qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, "
            "RX/RY/RZ, CRX/CRY/CRZ";
 }
 
@@ -113,6 +113,7 @@ std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned
         "quantum.s",
         "quantum.sdg",
         "quantum.t",
+        "quantum.tdg",
     };
     static const std::unordered_map<std::string, unsigned> parametrized_gate_arities = {
         {"quantum.rx", 1},

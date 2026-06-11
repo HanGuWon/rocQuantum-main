@@ -77,6 +77,8 @@ class QuantumKernel:
         "s": ("quantum.s", 1),
         "sdg": ("quantum.sdg", 1),
         "t": ("quantum.t", 1),
+        "tdg": ("quantum.tdg", 1),
+        "tdag": ("quantum.tdg", 1),
         "cnot": ("quantum.cnot", 2),
         "cx": ("quantum.cnot", 2),
         "cz": ("quantum.cz", 2),

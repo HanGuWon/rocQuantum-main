@@ -51,6 +51,9 @@ def SdgOp : Quantum_Op<"sdg", [NoSideEffect]> {
 def TOp : Quantum_Op<"t", [NoSideEffect]> {
   let arguments = (ins QubitType:$target);
 }
+def TdgOp : Quantum_Op<"tdg", [NoSideEffect]> {
+  let arguments = (ins QubitType:$target);
+}
 def CnotOp : Quantum_Op<"cnot", [NoSideEffect]> {
   let arguments = (ins QubitType:$control, QubitType:$target);
 }

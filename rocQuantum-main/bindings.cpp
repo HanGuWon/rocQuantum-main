@@ -26,7 +26,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("mlir"),
              py::arg("args") = py::dict(),
-             "Executes the supported MLIR subset (qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ) "
+             "Executes the supported MLIR subset (qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ) "
              "through the selected backend and returns the final state vector. "
              "Unsupported ops raise actionable diagnostics.")
         .def("emit_qir", &rocq::MLIRCompiler::emit_qir,

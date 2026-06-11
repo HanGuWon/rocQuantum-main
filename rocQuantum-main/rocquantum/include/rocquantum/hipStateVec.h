@@ -285,6 +285,11 @@ rocqStatus_t rocsvApplyS(rocsvHandle_t handle, rocComplex* d_state, unsigned num
 rocqStatus_t rocsvApplyT(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit);
 
 /**
+ * @brief Applies a T-dagger (conjugate transpose of T) gate to the target qubit.
+ */
+rocqStatus_t rocsvApplyTdg(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit);
+
+/**
  * @brief Applies an S-dagger (conjugate transpose of S) gate to the target qubit.
  */
 rocqStatus_t rocsvApplySdg(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit);

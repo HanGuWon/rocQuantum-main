@@ -222,6 +222,13 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
         check_status(rocsvApplyT(sim_handle_, device_state_vector_, num_qubits_, targets[0]), "apply T");
         return;
     }
+    if (normalized == "TDG" || normalized == "TDAG") {
+        if (targets.size() != 1) {
+            throw std::invalid_argument("TDG requires exactly 1 target qubit.");
+        }
+        check_status(rocsvApplyTdg(sim_handle_, device_state_vector_, num_qubits_, targets[0]), "apply TDG");
+        return;
+    }
 
     if (normalized == "RX") {
         if (targets.size() != 1) {

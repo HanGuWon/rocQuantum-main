@@ -63,7 +63,7 @@ class TestLoweringCoverage(unittest.TestCase):
         path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "passes", "QuantumToSimulatorPass.cpp")
         with open(path, "r", encoding="utf-8") as f:
             src = f.read()
-        for token in ["SOp", "SdgOp", "TOp", "CzOp", "SwapOp", "CcxOp", "McxOp", "CswapOp"]:
+        for token in ["SOp", "SdgOp", "TOp", "TdgOp", "CzOp", "SwapOp", "CcxOp", "McxOp", "CswapOp"]:
             self.assertIn(token, src)
 
 
@@ -93,15 +93,46 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("quantum.ccx", src)
         self.assertIn("quantum.mcx", src)
         self.assertIn("quantum.cswap", src)
+        self.assertIn("quantum.tdg", src)
 
     def test_binding_documents_compile_and_execute_mvp(self):
         path = os.path.join(_PROJECT_ROOT, "bindings.cpp")
         with open(path, "r", encoding="utf-8") as f:
             src = f.read()
 
-        self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ", src)
+        self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ", src)
         self.assertIn("Unsupported ops raise actionable diagnostics", src)
         self.assertNotIn("Stub API", src)
+
+    def test_tdg_reaches_native_statevec_dispatch(self):
+        backend_path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "HipStateVecBackend.cpp")
+        simulator_path = os.path.join(_PROJECT_ROOT, "rocquantum", "src", "simulator.cpp")
+        hipstatevec_path = os.path.join(_PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "hipStateVec.cpp")
+        header_path = os.path.join(_PROJECT_ROOT, "rocquantum", "include", "rocquantum", "hipStateVec.h")
+        legacy_binding_path = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
+        legacy_api_path = os.path.join(_PROJECT_ROOT, "python", "rocq", "api.py")
+
+        with open(backend_path, "r", encoding="utf-8") as f:
+            backend_src = f.read()
+        with open(simulator_path, "r", encoding="utf-8") as f:
+            simulator_src = f.read()
+        with open(hipstatevec_path, "r", encoding="utf-8") as f:
+            hipstatevec_src = f.read()
+        with open(header_path, "r", encoding="utf-8") as f:
+            header_src = f.read()
+        with open(legacy_binding_path, "r", encoding="utf-8") as f:
+            binding_src = f.read()
+        with open(legacy_api_path, "r", encoding="utf-8") as f:
+            legacy_api_src = f.read()
+
+        self.assertIn("emplace_alias(\"tdg\"", backend_src)
+        self.assertIn("rocsvApplyTdg", backend_src)
+        self.assertIn("normalized == \"TDG\"", simulator_src)
+        self.assertIn("rocqStatus_t rocsvApplyTdg", header_src)
+        self.assertIn("rocqStatus_t rocsvApplyTdg", hipstatevec_src)
+        self.assertIn("phase = -pi / 4.0", hipstatevec_src)
+        self.assertIn("apply_tdg", binding_src)
+        self.assertIn("def tdg", legacy_api_src)
 
 
 class TestKernelMlirEmission(unittest.TestCase):
@@ -163,7 +194,7 @@ class TestKernelMlirEmission(unittest.TestCase):
     def test_extended_core_gates_emit_mlir(self):
         from rocq.kernel import QuantumKernel
         from rocq.qvec import qvec
-        from rocq.gates import cz, s, sdg, swap, t
+        from rocq.gates import cz, s, sdg, swap, t, tdg
 
         @QuantumKernel
         def extended_core_program():
@@ -171,6 +202,7 @@ class TestKernelMlirEmission(unittest.TestCase):
             s(q[0])
             sdg(q[1])
             t(q[0])
+            tdg(q[1])
             cz(q[0], q[1])
             swap(q[0], q[1])
 
@@ -178,6 +210,7 @@ class TestKernelMlirEmission(unittest.TestCase):
         self.assertIn('"quantum.s"(%q0)', mlir_str)
         self.assertIn('"quantum.sdg"(%q1)', mlir_str)
         self.assertIn('"quantum.t"(%q0)', mlir_str)
+        self.assertIn('"quantum.tdg"(%q1)', mlir_str)
         self.assertIn('"quantum.cz"(%q0, %q1)', mlir_str)
         self.assertIn('"quantum.swap"(%q0, %q1)', mlir_str)
 
@@ -219,12 +252,13 @@ class TestKernelMlirEmission(unittest.TestCase):
     def test_emitted_ops_exist_in_quantum_dialect(self):
         from rocq.kernel import QuantumKernel
         from rocq.qvec import qvec
-        from rocq.gates import ccx, cnot, cswap, h, mcx, rx, z
+        from rocq.gates import ccx, cnot, cswap, h, mcx, rx, tdg, z
 
         @QuantumKernel
         def dialect_covered():
             q = qvec(5)
             h(q[0])
+            tdg(q[0])
             z(q[1])
             cnot(q[0], q[1])
             ccx(q[0], q[1], q[2])

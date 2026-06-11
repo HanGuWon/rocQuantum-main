@@ -254,6 +254,8 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         return rocsvApplyS(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ); }, "Applies S gate");
     m.def("apply_t", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned tQ) {
         return rocsvApplyT(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ); }, "Applies T gate");
+    m.def("apply_tdg", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned tQ) {
+        return rocsvApplyTdg(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ); }, "Applies T dagger gate");
     m.def("apply_sdg", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned tQ) {
         return rocsvApplySdg(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ); }, "Applies S dagger gate");
 

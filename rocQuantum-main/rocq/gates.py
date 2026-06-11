@@ -26,6 +26,12 @@ def sdg(target):
 def t(target):
     _KernelBuildContext.add_gate("t", [target])
 
+def tdg(target):
+    _KernelBuildContext.add_gate("tdg", [target])
+
+def tdag(target):
+    _KernelBuildContext.add_gate("tdg", [target])
+
 def rx(angle, target):
     _KernelBuildContext.add_gate("rx", [target], params={"theta": angle})
 

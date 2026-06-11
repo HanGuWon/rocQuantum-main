@@ -94,6 +94,10 @@ const std::unordered_map<std::string, GateSpec>& non_param_gate_table() {
         const GateSpec t_spec{1, 1, &HipStateVecBackend::apply_t_gate};
         emplace_alias("t", t_spec);
 
+        const GateSpec tdg_spec{1, 1, &HipStateVecBackend::apply_tdg_gate};
+        emplace_alias("tdg", tdg_spec);
+        emplace_alias("tdag", tdg_spec);
+
         const GateSpec cx_spec{2, 2, &HipStateVecBackend::apply_cnot_gate};
         emplace_alias("cx", cx_spec);
         emplace_alias("cnot", cx_spec);
@@ -282,6 +286,10 @@ void HipStateVecBackend::apply_sdg_gate(const std::vector<unsigned>& targets) {
 
 void HipStateVecBackend::apply_t_gate(const std::vector<unsigned>& targets) {
     check_status(rocsvApplyT(sim_handle, device_state, num_qubits, targets[0]), "apply T");
+}
+
+void HipStateVecBackend::apply_tdg_gate(const std::vector<unsigned>& targets) {
+    check_status(rocsvApplyTdg(sim_handle, device_state, num_qubits, targets[0]), "apply Tdg");
 }
 
 void HipStateVecBackend::apply_cnot_gate(const std::vector<unsigned>& targets) {

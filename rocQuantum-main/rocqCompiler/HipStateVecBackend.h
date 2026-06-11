@@ -38,6 +38,7 @@ private:
     void apply_s_gate(const std::vector<unsigned>& targets);
     void apply_sdg_gate(const std::vector<unsigned>& targets);
     void apply_t_gate(const std::vector<unsigned>& targets);
+    void apply_tdg_gate(const std::vector<unsigned>& targets);
     void apply_cnot_gate(const std::vector<unsigned>& targets);
     void apply_cz_gate(const std::vector<unsigned>& targets);
     void apply_swap_gate(const std::vector<unsigned>& targets);

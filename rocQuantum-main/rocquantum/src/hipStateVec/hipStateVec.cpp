@@ -3994,6 +3994,22 @@ rocqStatus_t rocsvApplyT(rocsvHandle_t handle,
     return launch_single_qubit_matrix(handle, state, numQubits, targetQubit, one, zero, zero, t_phase);
 }
 
+rocqStatus_t rocsvApplyTdg(rocsvHandle_t handle,
+                           rocComplex* d_state,
+                           unsigned numQubits,
+                           unsigned targetQubit) {
+    if (!handle) return ROCQ_STATUS_INVALID_VALUE;
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) return ROCQ_STATUS_INVALID_VALUE;
+
+    constexpr double pi = 3.14159265358979323846;
+    const double phase = -pi / 4.0;
+    const rocComplex one = make_complex(1.0, 0.0);
+    const rocComplex zero = make_complex(0.0, 0.0);
+    const rocComplex tdg_phase = make_complex(std::cos(phase), std::sin(phase));
+    return launch_single_qubit_matrix(handle, state, numQubits, targetQubit, one, zero, zero, tdg_phase);
+}
+
 // --- Parametrised single-qubit rotations ------------------------------------
 
 enum class RotationAxis {
