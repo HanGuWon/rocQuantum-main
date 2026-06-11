@@ -2809,6 +2809,49 @@ def test_pennylane_batch_execute_batches_select_pauli_rot_sweeps(monkeypatch):
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_keeps_permutation_templates_batched(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    circuits = [
+        qml.tape.QuantumScript(
+            [
+                qml.BasisEmbedding(np.array([1, 0, 1]), wires=[0, 1, 2]),
+                qml.Permute([2, 0, 1], wires=[0, 1, 2]),
+                qml.RY(0.2, wires=0),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [
+                qml.BasisEmbedding(np.array([1, 0, 1]), wires=[0, 1, 2]),
+                qml.Permute([2, 0, 1], wires=[0, 1, 2]),
+                qml.RY(0.8, wires=0),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == [
+        ("X", (0,), ()),
+        ("X", (2,), ()),
+        ("SWAP", (0, 2), ()),
+        ("SWAP", (1, 2), ()),
+    ]
+    assert sim.batch_ops == [("RY", (0,), (0.2, 0.8))]
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_keeps_arithmetic_templates_batched(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -4066,6 +4109,35 @@ def test_pennylane_select_pauli_rot_decomposes_natively(monkeypatch):
     np.testing.assert_allclose(sim.ops[7][2], (-0.5,))
     np.testing.assert_allclose(sim.ops[12][2], (1.25,))
     np.testing.assert_allclose(sim.ops[14][2], (-0.5,))
+    assert sim.matrices == []
+
+
+def test_pennylane_permutation_templates_decompose_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.BasisEmbedding(np.array([1, 0, 1]), wires=[0, 1, 2])
+        qml.Permute([2, 0, 1], wires=[0, 1, 2])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("X", (0,), ()),
+        ("X", (2,), ()),
+        ("SWAP", (0, 2), ()),
+        ("SWAP", (1, 2), ()),
+    ]
     assert sim.matrices == []
 
 

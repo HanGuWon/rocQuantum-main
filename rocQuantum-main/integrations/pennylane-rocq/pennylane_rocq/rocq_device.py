@@ -44,9 +44,11 @@ MATRIX_OPS = {
     "Toffoli", "CSWAP",
 }
 DECOMPOSED_OPS = {
+    "BasisEmbedding",
     "DiagonalQubitUnitary",
     "GlobalPhase",
     "GroverOperator",
+    "Permute",
     "QFT",
     "QubitCarry",
     "QubitSum",
@@ -379,14 +381,14 @@ def _counts_result_from_rows(rows):
     return counts
 
 
-def _basis_state_bits(op, num_wires):
+def _basis_state_bits(op, num_wires, op_name="BasisState"):
     if not getattr(op, "parameters", None):
-        raise ValueError("BasisState requires a computational basis vector.")
+        raise ValueError(f"{op_name} requires a computational basis vector.")
     bits = np.asarray(op.parameters[0], dtype=int).reshape(-1)
     if len(bits) != int(num_wires):
-        raise ValueError("BasisState length must match the number of target wires.")
+        raise ValueError(f"{op_name} length must match the number of target wires.")
     if not np.all((bits == 0) | (bits == 1)):
-        raise ValueError("BasisState entries must be 0 or 1.")
+        raise ValueError(f"{op_name} entries must be 0 or 1.")
     return bits
 
 
@@ -886,6 +888,36 @@ def _apply_select_pauli_rot_batch(runtime, wire_indices, angles_by_batch, rot_ax
         _apply_uniform_rz_batch(runtime, control_indices, target, angle_array)
     else:
         raise ValueError("SelectPauliRot rot_axis must be X, Y, or Z.")
+
+
+def _permute_permutation(op):
+    return tuple(getattr(op, "hyperparameters", {}).get("permutation", ()))
+
+
+def _apply_basis_embedding(runtime, wire_indices, bits):
+    if len(bits) != len(wire_indices):
+        raise ValueError("BasisEmbedding length must match the number of target wires.")
+    for bit, wire_index in zip(bits, wire_indices):
+        if int(bit):
+            runtime.apply_operation("X", [wire_index])
+
+
+def _apply_permute(runtime, wire_indices, op):
+    permutation = _permute_permutation(op)
+    wire_labels = list(getattr(op, "wires", ()))
+    if len(permutation) != len(wire_indices) or len(wire_labels) != len(wire_indices):
+        raise ValueError("Permute permutation length must match its wires.")
+
+    working_order = list(wire_labels)
+    for current_index, target_label in enumerate(permutation):
+        if working_order[current_index] == target_label:
+            continue
+        swap_index = working_order.index(target_label)
+        runtime.apply_operation("SWAP", [wire_indices[current_index], wire_indices[swap_index]])
+        working_order[current_index], working_order[swap_index] = (
+            working_order[swap_index],
+            working_order[current_index],
+        )
 
 
 def _apply_qft(runtime, wire_indices):
@@ -1456,6 +1488,15 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
         _apply_select_pauli_rot(runtime, wire_indices, params[0], _select_pauli_rot_axis(op))
         return True
 
+    if gate_name == "BasisEmbedding" and len(params) == 1:
+        bits = np.asarray(params[0], dtype=int).reshape(-1)
+        _apply_basis_embedding(runtime, wire_indices, bits)
+        return True
+
+    if gate_name == "Permute" and not params and op is not None:
+        _apply_permute(runtime, wire_indices, op)
+        return True
+
     if gate_name == "QubitSum" and not params:
         _apply_qubit_sum(runtime, wire_indices)
         return True
@@ -1788,6 +1829,11 @@ class RocQDevice(QubitDevice):
             ):
                 return None
 
+            if gate_name == "Permute" and any(
+                _permute_permutation(op) != _permute_permutation(reference_op) for op in ops[1:]
+            ):
+                return None
+
             if gate_name == "BasisState":
                 if op_index != 0:
                     return None
@@ -1822,6 +1868,19 @@ class RocQDevice(QubitDevice):
                 continue
 
             if gate_name == "GlobalPhase" and all(len(params) == 1 for params in params_by_op):
+                continue
+
+            if gate_name == "BasisEmbedding" and all(len(params) == 1 for params in params_by_op):
+                try:
+                    bits_by_op = [
+                        tuple(np.asarray(params[0], dtype=int).reshape(-1))
+                        for params in params_by_op
+                    ]
+                except (TypeError, ValueError):
+                    return None
+                if any(bits != bits_by_op[0] for bits in bits_by_op[1:]):
+                    return None
+                _apply_basis_embedding(self._runtime, wire_indices, bits_by_op[0])
                 continue
 
             if gate_name == "DiagonalQubitUnitary" and all(len(params) == 1 for params in params_by_op):
@@ -2484,6 +2543,29 @@ class RocQDevice(QubitDevice):
                         angles,
                         _select_pauli_rot_axis(op),
                     )
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "BasisEmbedding":
+                try:
+                    bits = _basis_state_bits(op, len(wire_indices), op_name="BasisEmbedding")
+                    _apply_basis_embedding(self._runtime, wire_indices, bits)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "Permute":
+                try:
+                    _apply_permute(self._runtime, wire_indices, op)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
