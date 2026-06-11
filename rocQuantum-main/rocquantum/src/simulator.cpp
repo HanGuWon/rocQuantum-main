@@ -56,6 +56,88 @@ std::vector<rocComplex> row_major_to_column_major(const std::vector<std::complex
     return out;
 }
 
+std::size_t extract_local_sparse_row(std::size_t state_index, const std::vector<unsigned>& targets) {
+    std::size_t local_row = 0;
+    for (std::size_t output_bit = 0; output_bit < targets.size(); ++output_bit) {
+        const std::size_t mask = std::size_t{1} << targets[output_bit];
+        if ((state_index & mask) != 0) {
+            local_row |= std::size_t{1} << output_bit;
+        }
+    }
+    return local_row;
+}
+
+std::size_t clear_target_bits(std::size_t state_index, const std::vector<unsigned>& targets) {
+    for (unsigned target : targets) {
+        state_index &= ~(std::size_t{1} << target);
+    }
+    return state_index;
+}
+
+std::size_t insert_local_sparse_col(std::size_t base_index,
+                                    std::size_t local_col,
+                                    const std::vector<unsigned>& targets) {
+    for (std::size_t output_bit = 0; output_bit < targets.size(); ++output_bit) {
+        if (((local_col >> output_bit) & std::size_t{1}) != 0) {
+            base_index |= std::size_t{1} << targets[output_bit];
+        }
+    }
+    return base_index;
+}
+
+void validate_sparse_operation_csr(const std::vector<std::complex<double>>& data,
+                                   const std::vector<std::size_t>& indices,
+                                   const std::vector<std::size_t>& indptr,
+                                   std::size_t rows,
+                                   std::size_t cols,
+                                   std::size_t local_dimension) {
+    if (rows != cols) {
+        throw std::invalid_argument("Sparse operation matrix must be square.");
+    }
+    if (rows != local_dimension) {
+        throw std::invalid_argument("Sparse operation matrix shape must match target qubits.");
+    }
+    if (indptr.size() != rows + 1) {
+        throw std::invalid_argument("Sparse operation CSR indptr length must equal rows + 1.");
+    }
+    if (data.size() != indices.size()) {
+        throw std::invalid_argument("Sparse operation CSR data and indices lengths must match.");
+    }
+    if (indptr.empty() || indptr.front() != 0 || indptr.back() != data.size()) {
+        throw std::invalid_argument("Sparse operation CSR indptr must start at 0 and end at nnz.");
+    }
+    for (std::size_t row = 0; row < rows; ++row) {
+        if (indptr[row] > indptr[row + 1]) {
+            throw std::invalid_argument("Sparse operation CSR indptr must be monotonic.");
+        }
+    }
+    for (const std::size_t col : indices) {
+        if (col >= cols) {
+            throw std::invalid_argument("Sparse operation CSR column index is out of bounds.");
+        }
+    }
+}
+
+void apply_sparse_operation_to_state_slice(const std::vector<std::complex<double>>& data,
+                                           const std::vector<std::size_t>& indices,
+                                           const std::vector<std::size_t>& indptr,
+                                           const std::vector<unsigned>& targets,
+                                           std::size_t state_vec_size,
+                                           const std::complex<double>* input,
+                                           std::complex<double>* output) {
+    for (std::size_t row_index = 0; row_index < state_vec_size; ++row_index) {
+        const std::size_t local_row = extract_local_sparse_row(row_index, targets);
+        const std::size_t base_index = clear_target_bits(row_index, targets);
+        std::complex<double> value{0.0, 0.0};
+
+        for (std::size_t offset = indptr[local_row]; offset < indptr[local_row + 1]; ++offset) {
+            const std::size_t col_index = insert_local_sparse_col(base_index, indices[offset], targets);
+            value += data[offset] * input[col_index];
+        }
+        output[row_index] = value;
+    }
+}
+
 } // namespace
 
 namespace rocquantum {
@@ -521,6 +603,45 @@ void QuantumSimulator::apply_matrix(const std::vector<std::complex<double>>& mat
         throw;
     }
     check_hip(hipFree(d_matrix), "matrix free");
+}
+
+void QuantumSimulator::apply_sparse_matrix(const std::vector<std::complex<double>>& data,
+                                           const std::vector<std::size_t>& indices,
+                                           const std::vector<std::size_t>& indptr,
+                                           std::size_t rows,
+                                           std::size_t cols,
+                                           const std::vector<unsigned>& targets) {
+    if (targets.empty()) {
+        throw std::invalid_argument("apply_sparse_matrix requires at least one target qubit.");
+    }
+    if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+        throw std::invalid_argument("Too many target qubits for sparse matrix application.");
+    }
+
+    std::unordered_set<unsigned> unique_targets;
+    for (unsigned target : targets) {
+        ensure_valid_qubit(target);
+        if (!unique_targets.insert(target).second) {
+            throw std::invalid_argument("Sparse operation targets must be unique.");
+        }
+    }
+
+    const std::size_t local_dimension = std::size_t{1} << targets.size();
+    validate_sparse_operation_csr(data, indices, indptr, rows, cols, local_dimension);
+
+    const std::vector<std::complex<double>> states = get_statevectors();
+    std::vector<std::complex<double>> out(states.size(), std::complex<double>{0.0, 0.0});
+    for (std::size_t batch = 0; batch < batch_size_; ++batch) {
+        const std::size_t offset = batch * state_vec_size_;
+        apply_sparse_operation_to_state_slice(data,
+                                              indices,
+                                              indptr,
+                                              targets,
+                                              state_vec_size_,
+                                              states.data() + offset,
+                                              out.data() + offset);
+    }
+    set_statevectors(out);
 }
 
 void QuantumSimulator::apply_controlled_matrix(const std::vector<std::complex<double>>& matrix,
@@ -1193,6 +1314,15 @@ void QuantumSimulator::ApplyControlledGate(const std::vector<std::complex<double
     apply_controlled_matrix(gate_matrix,
                             {static_cast<unsigned>(control_qubit)},
                             {static_cast<unsigned>(target_qubit)});
+}
+
+void QuantumSimulator::ApplySparseMatrix(const std::vector<std::complex<double>>& data,
+                                         const std::vector<std::size_t>& indices,
+                                         const std::vector<std::size_t>& indptr,
+                                         std::size_t rows,
+                                         std::size_t cols,
+                                         const std::vector<unsigned>& targets) {
+    apply_sparse_matrix(data, indices, indptr, rows, cols, targets);
 }
 
 void QuantumSimulator::Execute() {

@@ -26,6 +26,12 @@ public:
                           const std::vector<double>& params_by_batch);
     void apply_matrix(const std::vector<std::complex<double>>& matrix,
                       const std::vector<unsigned>& targets);
+    void apply_sparse_matrix(const std::vector<std::complex<double>>& data,
+                             const std::vector<std::size_t>& indices,
+                             const std::vector<std::size_t>& indptr,
+                             std::size_t rows,
+                             std::size_t cols,
+                             const std::vector<unsigned>& targets);
     void apply_controlled_matrix(const std::vector<std::complex<double>>& matrix,
                                  const std::vector<unsigned>& controls,
                                  const std::vector<unsigned>& targets);
@@ -72,6 +78,12 @@ public:
     void ApplyControlledGate(const std::vector<std::complex<double>>& gate_matrix,
                              int control_qubit,
                              int target_qubit);
+    void ApplySparseMatrix(const std::vector<std::complex<double>>& data,
+                           const std::vector<std::size_t>& indices,
+                           const std::vector<std::size_t>& indptr,
+                           std::size_t rows,
+                           std::size_t cols,
+                           const std::vector<unsigned>& targets);
     void Execute();
     int MeasureQubit(int target_qubit);
     void ResetQubit(int target_qubit);

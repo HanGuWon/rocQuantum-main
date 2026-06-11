@@ -398,6 +398,32 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("self.set_statevector(", runtime)
         self.assertIn("self.set_statevectors(", runtime)
 
+    def test_public_simulator_exposes_sparse_matrix_application(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("void apply_sparse_matrix", header)
+        self.assertIn("void ApplySparseMatrix", header)
+        self.assertIn("QuantumSimulator::apply_sparse_matrix", implementation)
+        self.assertIn("QuantumSimulator::ApplySparseMatrix", implementation)
+        self.assertIn("validate_sparse_operation_csr", implementation)
+        self.assertIn("apply_sparse_operation_to_state_slice", implementation)
+        self.assertIn("Sparse operation CSR indptr", implementation)
+        self.assertIn("get_statevectors()", implementation)
+        self.assertIn("set_statevectors(out)", implementation)
+        self.assertIn(".def(\"apply_sparse_matrix\"", bindings)
+        self.assertIn(".def(\"ApplySparseMatrix\"", bindings)
+        self.assertIn("copy_nonnegative_indices", bindings)
+        self.assertIn("self.apply_sparse_matrix(", bindings)
+        self.assertIn("getattr(self.simulator, \"apply_sparse_matrix\"", runtime)
+        self.assertIn("getattr(self.simulator, \"ApplySparseMatrix\"", runtime)
+
     def test_pennylane_sampling_prefers_native_measure(self):
         with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
             source = f.read()

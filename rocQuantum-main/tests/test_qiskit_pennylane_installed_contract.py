@@ -5624,6 +5624,47 @@ def test_runtime_probabilities_falls_back_when_native_reports_not_implemented(mo
     assert sim.statevector_reads == 1
 
 
+def test_runtime_apply_sparse_matrix_prefers_native_hook():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _SparseApplySimulator(_FakeQuantumSimulator):
+        def __init__(self, num_qubits):
+            super().__init__(num_qubits)
+            self.sparse_applications = []
+
+        def apply_sparse_matrix(self, data, indices, indptr, shape, targets):
+            self.sparse_applications.append(
+                (
+                    np.asarray(data, dtype=np.complex128).copy(),
+                    np.asarray(indices, dtype=np.int64).copy(),
+                    np.asarray(indptr, dtype=np.int64).copy(),
+                    tuple(shape),
+                    tuple(targets),
+                )
+            )
+
+    sim = _SparseApplySimulator(2)
+    runtime = RocQuantumRuntime(sim)
+
+    runtime.apply_sparse_matrix(
+        np.array([1.0, -1.0], dtype=np.complex128),
+        np.array([0, 1], dtype=np.int64),
+        np.array([0, 1, 2], dtype=np.int64),
+        (2, 2),
+        [1],
+    )
+
+    assert len(sim.sparse_applications) == 1
+    data, indices, indptr, shape, targets = sim.sparse_applications[0]
+    np.testing.assert_allclose(data, np.array([1.0, -1.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+    assert shape == (2, 2)
+    assert targets == (1,)
+    assert sim.statevector_reads == 0
+    assert sim.statevectors == []
+
+
 def test_runtime_can_create_and_read_batched_bindings():
     from rocquantum.framework_runtime import RocQuantumRuntime
 

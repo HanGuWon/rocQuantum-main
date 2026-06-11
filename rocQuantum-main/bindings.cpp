@@ -4,6 +4,7 @@
 #include <pybind11/numpy.h>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 #include "rocqCompiler/MLIRCompiler.h"
@@ -11,6 +12,39 @@
 #include "rocquantum/QuantumSimulator.h"
 
 namespace py = pybind11;
+
+namespace {
+
+std::vector<std::size_t> copy_nonnegative_indices(
+    py::array_t<long long, py::array::c_style | py::array::forcecast> values,
+    const char* label) {
+    std::vector<std::size_t> out(static_cast<std::size_t>(values.size()));
+    for (std::size_t idx = 0; idx < out.size(); ++idx) {
+        if (values.data()[idx] < 0) {
+            throw std::invalid_argument(std::string(label) + " must be non-negative.");
+        }
+        out[idx] = static_cast<std::size_t>(values.data()[idx]);
+    }
+    return out;
+}
+
+void apply_sparse_matrix_from_python(
+    rocquantum::QuantumSimulator& self,
+    py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> data,
+    py::array_t<long long, py::array::c_style | py::array::forcecast> indices,
+    py::array_t<long long, py::array::c_style | py::array::forcecast> indptr,
+    const std::pair<std::size_t, std::size_t>& shape,
+    const std::vector<unsigned>& targets) {
+    std::vector<std::complex<double>> host_data(static_cast<std::size_t>(data.size()));
+    if (!host_data.empty()) {
+        std::memcpy(host_data.data(), data.data(), host_data.size() * sizeof(std::complex<double>));
+    }
+    auto host_indices = copy_nonnegative_indices(indices, "Sparse operation CSR indices");
+    auto host_indptr = copy_nonnegative_indices(indptr, "Sparse operation CSR indptr");
+    self.apply_sparse_matrix(host_data, host_indices, host_indptr, shape.first, shape.second, targets);
+}
+
+} // namespace
 
 PYBIND11_MODULE(rocquantum_bind, m) {
     m.doc() = "pybind11 plugin for rocQuantum-1";
@@ -92,6 +126,14 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("matrix"),
              py::arg("targets"))
+        .def("apply_sparse_matrix",
+             &apply_sparse_matrix_from_python,
+             py::arg("data"),
+             py::arg("indices"),
+             py::arg("indptr"),
+             py::arg("shape"),
+             py::arg("targets"),
+             "Apply a CSR sparse matrix to target qubits via the simulator sparse-operation hook.")
         .def("apply_controlled_matrix",
              [](rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
@@ -567,6 +609,13 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("indices"),
              py::arg("indptr"),
              py::arg("shape"))
+        .def("ApplySparseMatrix",
+             &apply_sparse_matrix_from_python,
+             py::arg("data"),
+             py::arg("indices"),
+             py::arg("indptr"),
+             py::arg("shape"),
+             py::arg("targets"))
         .def("SparseHamiltonianMomentsBatch",
              [](const rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> data,
