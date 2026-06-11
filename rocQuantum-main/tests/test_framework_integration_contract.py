@@ -532,6 +532,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _run_dynamic_sampling", source)
         self.assertIn("def _apply_circuit_trajectory", source)
         self.assertIn("if op.name == \"if_else\"", source)
+        self.assertIn("if op.name == \"switch_case\"", source)
+        self.assertIn("_classical_value", source)
         self.assertIn("measure_qubit", source)
         self.assertIn("formatted_counts = counts_from_memory(memory)", source)
         self.assertIn("return RocQuantumJob(self, job_id, result)", source)

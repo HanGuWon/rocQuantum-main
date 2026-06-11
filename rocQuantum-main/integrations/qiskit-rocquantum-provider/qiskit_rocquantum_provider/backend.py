@@ -96,23 +96,31 @@ def _condition_matches(condition, circuit, classical_bits):
     else:
         expected_value = int(expected)
 
+    return _classical_value(condition_bits, circuit, classical_bits) == expected_value
+
+
+def _classical_value(bits_or_register, circuit, classical_bits):
     try:
-        bit_index = circuit.find_bit(condition_bits).index
+        bit_index = circuit.find_bit(bits_or_register).index
     except Exception:
         bit_index = None
 
     if bit_index is not None:
-        return int(classical_bits.get(bit_index, 0)) == expected_value
+        return int(classical_bits.get(bit_index, 0))
 
     try:
-        bits = list(condition_bits)
+        bits = list(bits_or_register)
     except TypeError as exc:
         raise NotImplementedError("Unsupported Qiskit condition bit container.") from exc
 
     actual_value = 0
     for offset, bit in enumerate(bits):
         actual_value |= int(classical_bits.get(circuit.find_bit(bit).index, 0)) << offset
-    return actual_value == expected_value
+    return actual_value
+
+
+def _is_default_switch_case(label):
+    return str(label) == "<default case>"
 
 
 def _memory_from_classical_bits(classical_bits, measured_items, memory_width):
@@ -1074,6 +1082,36 @@ class RocQuantumBackend(BackendV2):
             )
         return int(measure_qubit(int(qubit)))
 
+    def _apply_control_flow_block(
+        self,
+        block,
+        instruction,
+        circuit,
+        classical_bits,
+        measured_bits,
+        touched_qubits,
+        *,
+        include_global_phase=False,
+    ):
+        for block_instruction in block.data:
+            mapped_qargs = [
+                instruction.qubits[block.find_bit(qubit).index]
+                for qubit in block_instruction.qubits
+            ]
+            mapped_cargs = [
+                instruction.clbits[block.find_bit(clbit).index]
+                for clbit in block_instruction.clbits
+            ]
+            mapped_instruction = block_instruction.replace(qubits=tuple(mapped_qargs), clbits=tuple(mapped_cargs))
+            self._apply_trajectory_instruction(
+                mapped_instruction,
+                circuit,
+                classical_bits,
+                measured_bits,
+                touched_qubits,
+                include_global_phase=include_global_phase,
+            )
+
     def _apply_trajectory_instruction(
         self,
         instruction,
@@ -1100,24 +1138,42 @@ class RocQuantumBackend(BackendV2):
                 return
 
             block = blocks[branch_index]
-            for block_instruction in block.data:
-                mapped_qargs = [
-                    instruction.qubits[block.find_bit(qubit).index]
-                    for qubit in block_instruction.qubits
-                ]
-                mapped_cargs = [
-                    instruction.clbits[block.find_bit(clbit).index]
-                    for clbit in block_instruction.clbits
-                ]
-                mapped_instruction = block_instruction.replace(qubits=tuple(mapped_qargs), clbits=tuple(mapped_cargs))
-                self._apply_trajectory_instruction(
-                    mapped_instruction,
-                    circuit,
-                    classical_bits,
-                    measured_bits,
-                    touched_qubits,
-                    include_global_phase=include_global_phase,
-                )
+            self._apply_control_flow_block(
+                block,
+                instruction,
+                circuit,
+                classical_bits,
+                measured_bits,
+                touched_qubits,
+                include_global_phase=include_global_phase,
+            )
+            return
+
+        if op.name == "switch_case" and getattr(op, "blocks", None) is not None:
+            cases = op.cases()
+            if not hasattr(cases, "items"):
+                raise NotImplementedError("RocQuantumBackend requires mapping-style Qiskit switch cases.")
+            target_value = _classical_value(op.target, circuit, classical_bits)
+            default_block = None
+            selected_block = None
+            for label, block in cases.items():
+                if _is_default_switch_case(label):
+                    default_block = block
+                elif int(label) == target_value:
+                    selected_block = block
+                    break
+            block = selected_block if selected_block is not None else default_block
+            if block is None:
+                return
+            self._apply_control_flow_block(
+                block,
+                instruction,
+                circuit,
+                classical_bits,
+                measured_bits,
+                touched_qubits,
+                include_global_phase=include_global_phase,
+            )
             return
 
         if op.name in CONTROL_FLOW_OPS or getattr(op, "blocks", None) is not None:

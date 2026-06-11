@@ -509,6 +509,74 @@ def test_qiskit_backend_samples_if_else_conditioned_gate(monkeypatch):
     assert sim.measurements == []
 
 
+def test_qiskit_backend_samples_switch_case_conditioned_gate(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.measure_qubit_results = [1, 1]
+
+    from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    qreg = QuantumRegister(2, "q")
+    creg = ClassicalRegister(2, "c")
+    circuit = QuantumCircuit(qreg, creg)
+    if not hasattr(circuit, "switch"):
+        pytest.skip("Qiskit version does not expose QuantumCircuit.switch")
+
+    circuit.measure(qreg[0], creg[0])
+    with circuit.switch(creg) as case:
+        with case(1):
+            circuit.x(qreg[1])
+        with case(2):
+            circuit.z(qreg[1])
+        with case(case.DEFAULT):
+            circuit.h(qreg[1])
+    circuit.measure(qreg[1], creg[1])
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuit, shots=1, memory=True, statevector=False).result()
+
+    assert result.get_counts() == {"11": 1}
+    assert result.get_memory() == ["11"]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("X", (1,), ())]
+    assert sim.measure_qubits == [0, 1]
+    assert sim.measurements == []
+
+
+def test_qiskit_backend_samples_switch_case_default_branch(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.measure_qubit_results = [0, 0]
+
+    from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    qreg = QuantumRegister(2, "q")
+    creg = ClassicalRegister(2, "c")
+    circuit = QuantumCircuit(qreg, creg)
+    if not hasattr(circuit, "switch"):
+        pytest.skip("Qiskit version does not expose QuantumCircuit.switch")
+
+    circuit.measure(qreg[0], creg[0])
+    with circuit.switch(creg) as case:
+        with case(1):
+            circuit.x(qreg[1])
+        with case(case.DEFAULT):
+            circuit.h(qreg[1])
+    circuit.measure(qreg[1], creg[1])
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuit, shots=1, memory=True, statevector=False).result()
+
+    assert result.get_counts() == {"00": 1}
+    assert result.get_memory() == ["00"]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("H", (1,), ())]
+    assert sim.measure_qubits == [0, 1]
+    assert sim.measurements == []
+
+
 def test_qiskit_backend_rejects_statevector_for_if_else(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
