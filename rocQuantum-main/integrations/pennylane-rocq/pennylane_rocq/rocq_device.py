@@ -43,7 +43,7 @@ MATRIX_OPS = {
     "OrbitalRotation", "FermionicSWAP",
     "Toffoli", "CSWAP",
 }
-DECOMPOSED_OPS = {"GlobalPhase", "QFT"}
+DECOMPOSED_OPS = {"GlobalPhase", "QFT", "QubitCarry", "QubitSum"}
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
     "PauliX": "X",
@@ -724,6 +724,25 @@ def _apply_qft(runtime, wire_indices):
         )
 
 
+def _apply_qubit_sum(runtime, wire_indices):
+    if len(wire_indices) != 3:
+        raise ValueError("QubitSum requires exactly three wires.")
+
+    first, second, output = wire_indices
+    runtime.apply_operation("CNOT", [second, output])
+    runtime.apply_operation("CNOT", [first, output])
+
+
+def _apply_qubit_carry(runtime, wire_indices):
+    if len(wire_indices) != 4:
+        raise ValueError("QubitCarry requires exactly four wires.")
+
+    first, second, third, output = wire_indices
+    runtime.apply_operation("MCX", [second, third, output])
+    runtime.apply_operation("CNOT", [second, third])
+    runtime.apply_operation("MCX", [first, third, output])
+
+
 def _apply_controlled_phase_variant(runtime, wire_indices, theta, control_state):
     if len(control_state) != len(wire_indices):
         raise ValueError("Controlled phase control_state must match the wire count.")
@@ -1229,6 +1248,14 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
 
     if gate_name == "GlobalPhase" and len(params) == 1:
         _apply_global_phase_operation(runtime, wire_indices, params[0])
+        return True
+
+    if gate_name == "QubitSum" and not params:
+        _apply_qubit_sum(runtime, wire_indices)
+        return True
+
+    if gate_name == "QubitCarry" and not params:
+        _apply_qubit_carry(runtime, wire_indices)
         return True
 
     if gate_name == "Toffoli" and not params:
@@ -2198,6 +2225,28 @@ class RocQDevice(QubitDevice):
                         theta,
                         fallback_wire=fallback_wire,
                     )
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "QubitSum":
+                try:
+                    _apply_qubit_sum(self._runtime, wire_indices)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "QubitCarry":
+                try:
+                    _apply_qubit_carry(self._runtime, wire_indices)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
