@@ -2736,6 +2736,64 @@ def test_pennylane_batch_execute_uses_batched_extended_decompositions(monkeypatc
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_uses_batched_phase_excitation_variants(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=4)
+    circuits = [
+        qml.tape.QuantumScript(
+            [
+                qml.CPhaseShift00(0.1, wires=[0, 1]),
+                qml.CPhaseShift01(0.2, wires=[0, 1]),
+                qml.CPhaseShift10(0.3, wires=[0, 1]),
+                qml.PSWAP(0.4, wires=[0, 1]),
+                qml.SingleExcitationPlus(0.5, wires=[0, 1]),
+                qml.SingleExcitationMinus(0.6, wires=[0, 1]),
+                qml.DoubleExcitationPlus(0.7, wires=[0, 1, 2, 3]),
+                qml.DoubleExcitationMinus(0.8, wires=[0, 1, 2, 3]),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [
+                qml.CPhaseShift00(0.9, wires=[0, 1]),
+                qml.CPhaseShift01(1.0, wires=[0, 1]),
+                qml.CPhaseShift10(1.1, wires=[0, 1]),
+                qml.PSWAP(1.2, wires=[0, 1]),
+                qml.SingleExcitationPlus(1.3, wires=[0, 1]),
+                qml.SingleExcitationMinus(1.4, wires=[0, 1]),
+                qml.DoubleExcitationPlus(1.5, wires=[0, 1, 2, 3]),
+                qml.DoubleExcitationMinus(1.6, wires=[0, 1, 2, 3]),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert ("CP", (0, 1), (0.1, 0.9)) in sim.batch_ops
+    assert ("CP", (0, 1), (0.2, 1.0)) in sim.batch_ops
+    assert ("CP", (0, 1), (0.3, 1.1)) in sim.batch_ops
+    assert ("P", (1,), (0.4, 1.2)) in sim.batch_ops
+    assert ("RY", (0,), (0.25, 0.65)) in sim.batch_ops
+    assert ("RZ", (1,), (-0.25, -0.65)) in sim.batch_ops
+    assert ("RY", (0,), (0.3, 0.7)) in sim.batch_ops
+    assert ("RZ", (1,), (0.3, 0.7)) in sim.batch_ops
+    assert ("RZ", (1,), (0.0875, 0.1875)) in sim.batch_ops
+    assert ("RZ", (1,), (-0.1, -0.2)) in sim.batch_ops
+    assert ("RY", (1,), (0.0875, 0.1875)) in sim.batch_ops
+    assert ("RY", (1,), (0.1, 0.2)) in sim.batch_ops
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_uses_batched_probabilities(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
