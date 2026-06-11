@@ -306,6 +306,49 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("indptr"),
              py::arg("shape"),
              "Return (<H>, <H^2>) from a CSR sparse Hamiltonian without densifying it.")
+        .def("sparse_hamiltonian_moments_batch",
+             [](const rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> data,
+                py::array_t<long long, py::array::c_style | py::array::forcecast> indices,
+                py::array_t<long long, py::array::c_style | py::array::forcecast> indptr,
+                const std::pair<std::size_t, std::size_t>& shape) {
+                 std::vector<std::complex<double>> host_data(static_cast<std::size_t>(data.size()));
+                 std::vector<std::size_t> host_indices(static_cast<std::size_t>(indices.size()));
+                 std::vector<std::size_t> host_indptr(static_cast<std::size_t>(indptr.size()));
+                 std::memcpy(host_data.data(), data.data(), host_data.size() * sizeof(std::complex<double>));
+                 for (std::size_t idx = 0; idx < host_indices.size(); ++idx) {
+                     if (indices.data()[idx] < 0) {
+                         throw std::invalid_argument("Sparse Hamiltonian CSR indices must be non-negative.");
+                     }
+                     host_indices[idx] = static_cast<std::size_t>(indices.data()[idx]);
+                 }
+                 for (std::size_t idx = 0; idx < host_indptr.size(); ++idx) {
+                     if (indptr.data()[idx] < 0) {
+                         throw std::invalid_argument("Sparse Hamiltonian CSR indptr must be non-negative.");
+                     }
+                     host_indptr[idx] = static_cast<std::size_t>(indptr.data()[idx]);
+                 }
+                 auto moments = self.sparse_hamiltonian_moments_batch(
+                     host_data,
+                     host_indices,
+                     host_indptr,
+                     shape.first,
+                     shape.second);
+                 py::array_t<std::complex<double>> means(moments.first.size());
+                 py::array_t<std::complex<double>> second_moments(moments.second.size());
+                 std::memcpy(means.mutable_data(),
+                             moments.first.data(),
+                             moments.first.size() * sizeof(std::complex<double>));
+                 std::memcpy(second_moments.mutable_data(),
+                             moments.second.data(),
+                             moments.second.size() * sizeof(std::complex<double>));
+                 return py::make_tuple(means, second_moments);
+             },
+             py::arg("data"),
+             py::arg("indices"),
+             py::arg("indptr"),
+             py::arg("shape"),
+             "Return batch-major (<H>, <H^2>) arrays from a CSR sparse Hamiltonian without densifying it.")
         .def("num_qubits", &rocquantum::QuantumSimulator::num_qubits)
         .def("batch_size", &rocquantum::QuantumSimulator::batch_size)
         // Legacy-style bindings
@@ -514,6 +557,48 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      host_indptr,
                      shape.first,
                      shape.second);
+             },
+             py::arg("data"),
+             py::arg("indices"),
+             py::arg("indptr"),
+             py::arg("shape"))
+        .def("SparseHamiltonianMomentsBatch",
+             [](const rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> data,
+                py::array_t<long long, py::array::c_style | py::array::forcecast> indices,
+                py::array_t<long long, py::array::c_style | py::array::forcecast> indptr,
+                const std::pair<std::size_t, std::size_t>& shape) {
+                 std::vector<std::complex<double>> host_data(static_cast<std::size_t>(data.size()));
+                 std::vector<std::size_t> host_indices(static_cast<std::size_t>(indices.size()));
+                 std::vector<std::size_t> host_indptr(static_cast<std::size_t>(indptr.size()));
+                 std::memcpy(host_data.data(), data.data(), host_data.size() * sizeof(std::complex<double>));
+                 for (std::size_t idx = 0; idx < host_indices.size(); ++idx) {
+                     if (indices.data()[idx] < 0) {
+                         throw std::invalid_argument("Sparse Hamiltonian CSR indices must be non-negative.");
+                     }
+                     host_indices[idx] = static_cast<std::size_t>(indices.data()[idx]);
+                 }
+                 for (std::size_t idx = 0; idx < host_indptr.size(); ++idx) {
+                     if (indptr.data()[idx] < 0) {
+                         throw std::invalid_argument("Sparse Hamiltonian CSR indptr must be non-negative.");
+                     }
+                     host_indptr[idx] = static_cast<std::size_t>(indptr.data()[idx]);
+                 }
+                 auto moments = self.SparseHamiltonianMomentsBatch(
+                     host_data,
+                     host_indices,
+                     host_indptr,
+                     shape.first,
+                     shape.second);
+                 py::array_t<std::complex<double>> means(moments.first.size());
+                 py::array_t<std::complex<double>> second_moments(moments.second.size());
+                 std::memcpy(means.mutable_data(),
+                             moments.first.data(),
+                             moments.first.size() * sizeof(std::complex<double>));
+                 std::memcpy(second_moments.mutable_data(),
+                             moments.second.data(),
+                             moments.second.size() * sizeof(std::complex<double>));
+                 return py::make_tuple(means, second_moments);
              },
              py::arg("data"),
              py::arg("indices"),

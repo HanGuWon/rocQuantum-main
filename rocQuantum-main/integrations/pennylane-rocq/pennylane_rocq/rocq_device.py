@@ -269,6 +269,11 @@ def _native_sparse_hamiltonian_moments(runtime, observable, wire_order):
     )
 
 
+def _native_sparse_hamiltonian_moments_batch(runtime, payload):
+    _, data, indices, indptr, shape = payload
+    return runtime.sparse_hamiltonian_moments_batch(data, indices, indptr, shape)
+
+
 def _hermitian_matrix_and_targets(observable, wire_map):
     if observable.name != "Hermitian":
         return None
@@ -285,13 +290,23 @@ def _native_hermitian_expectation(runtime, observable, wire_map):
     return runtime.expectation_matrix(matrix, targets)
 
 
-def _observable_batch_payload(observable, wire_map):
+def _observable_batch_payload(observable, wire_map, wire_order=None):
     if observable is None:
         return None
 
     terms = _pauli_terms_from_observable(observable, wire_map)
     if terms is not None:
         return "pauli", _combine_pauli_terms(terms)
+
+    if observable.name == "SparseHamiltonian":
+        sparse_matrix = observable.sparse_matrix(wire_order=wire_order or tuple(wire_map.keys()), format="csr")
+        return (
+            "sparse",
+            np.asarray(sparse_matrix.data, dtype=np.complex128),
+            np.asarray(sparse_matrix.indices, dtype=np.int64),
+            np.asarray(sparse_matrix.indptr, dtype=np.int64),
+            tuple(int(dim) for dim in sparse_matrix.shape),
+        )
 
     components = _hermitian_matrix_and_targets(observable, wire_map)
     if components is not None:
@@ -301,12 +316,19 @@ def _observable_batch_payload(observable, wire_map):
     return None
 
 
-def _observable_batch_payload_matches(observable, wire_map, reference_payload):
-    current = _observable_batch_payload(observable, wire_map)
+def _observable_batch_payload_matches(observable, wire_map, reference_payload, wire_order=None):
+    current = _observable_batch_payload(observable, wire_map, wire_order=wire_order)
     if current is None or current[0] != reference_payload[0]:
         return False
     if reference_payload[0] == "pauli":
         return current[1] == reference_payload[1]
+    if reference_payload[0] == "sparse":
+        return (
+            current[4] == reference_payload[4]
+            and np.array_equal(current[1], reference_payload[1])
+            and np.array_equal(current[2], reference_payload[2])
+            and np.array_equal(current[3], reference_payload[3])
+        )
     return current[2] == reference_payload[2] and np.array_equal(current[1], reference_payload[1])
 
 
@@ -316,6 +338,9 @@ def _evaluate_observable_batch_payload(runtime, payload):
         return _evaluate_pauli_terms_batch(runtime, payload[1])
     if kind == "matrix":
         return runtime.expectation_matrix_batch(payload[1], payload[2])
+    if kind == "sparse":
+        means, _ = _native_sparse_hamiltonian_moments_batch(runtime, payload)
+        return means
     raise TypeError(f"Unsupported observable batch payload kind: {kind!r}")
 
 
@@ -1030,7 +1055,7 @@ class RocQDevice(QubitDevice):
         for measurement_name, measurement in zip(measurement_names, reference_measurements):
             if measurement_name in {"ExpectationMP", "VarianceMP"}:
                 observable = getattr(measurement, "obs", None)
-                payload = _observable_batch_payload(observable, self.wire_map)
+                payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
                 if payload is None:
                     return None
                 reference_measurement_specs.append((measurement_name, payload))
@@ -1054,6 +1079,7 @@ class RocQDevice(QubitDevice):
                         getattr(measurement, "obs", None),
                         self.wire_map,
                         reference_payload,
+                        wire_order=self.wires,
                     ):
                         return None
                 elif measurement_name in {"ProbabilityMP", "SampleMP", "CountsMP"} and (
@@ -1115,6 +1141,11 @@ class RocQDevice(QubitDevice):
                         else [self.wire_map[wire] for wire in payload]
                     )
                     batched_values.append(self._runtime.probabilities_batch(probability_targets))
+                    continue
+
+                if measurement_name == "VarianceMP" and payload[0] == "sparse":
+                    means, second_moments = _native_sparse_hamiltonian_moments_batch(self._runtime, payload)
+                    batched_values.append(second_moments - means * means)
                     continue
 
                 means = _evaluate_observable_batch_payload(self._runtime, payload)

@@ -316,6 +316,43 @@ def expectation_matrix_from_statevector(
     return complex(result)
 
 
+def sparse_hamiltonian_moments_from_statevector(
+    statevector: Sequence[complex],
+    data: object,
+    indices: object,
+    indptr: object,
+    shape: Sequence[int],
+) -> tuple[complex, complex]:
+    state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    normalized_data = np.asarray(data, dtype=np.complex128).reshape(-1)
+    normalized_indices = np.asarray(indices, dtype=np.int64).reshape(-1)
+    normalized_indptr = np.asarray(indptr, dtype=np.int64).reshape(-1)
+    rows, cols = (int(dim) for dim in shape)
+    if rows != state.size or cols != state.size:
+        raise ValueError("Sparse Hamiltonian shape must match the statevector length.")
+    if normalized_indptr.size != rows + 1:
+        raise ValueError("Sparse Hamiltonian CSR indptr length must equal rows + 1.")
+    if normalized_data.size != normalized_indices.size:
+        raise ValueError("Sparse Hamiltonian CSR data and indices lengths must match.")
+    if normalized_indptr[0] != 0 or normalized_indptr[-1] != normalized_data.size:
+        raise ValueError("Sparse Hamiltonian CSR indptr must start at 0 and end at nnz.")
+
+    h_state = np.zeros_like(state)
+    for row in range(rows):
+        start = int(normalized_indptr[row])
+        end = int(normalized_indptr[row + 1])
+        if start > end:
+            raise ValueError("Sparse Hamiltonian CSR indptr must be monotonic.")
+        for offset in range(start, end):
+            col = int(normalized_indices[offset])
+            if col < 0 or col >= cols:
+                raise ValueError("Sparse Hamiltonian CSR column index is out of bounds.")
+            h_state[row] += normalized_data[offset] * state[col]
+    mean = np.vdot(state, h_state)
+    second_moment = np.vdot(h_state, h_state)
+    return complex(mean), complex(second_moment)
+
+
 class RocQuantumRuntime:
     """Small adapter around the public rocquantum_bind simulator surface."""
 
@@ -778,3 +815,55 @@ class RocQuantumRuntime:
             return complex(mean), complex(second_moment)
 
         raise NotImplementedError("The active rocQuantum binding does not expose sparse Hamiltonian moments.")
+
+    def sparse_hamiltonian_moments_batch(
+        self,
+        data: object,
+        indices: object,
+        indptr: object,
+        shape: Iterable[int],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        normalized_data = np.ascontiguousarray(np.asarray(data, dtype=np.complex128).reshape(-1))
+        normalized_indices = np.ascontiguousarray(np.asarray(indices, dtype=np.int64).reshape(-1))
+        normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
+        normalized_shape = tuple(int(dim) for dim in shape)
+
+        native = getattr(self.simulator, "sparse_hamiltonian_moments_batch", None)
+        if callable(native):
+            means, second_moments = native(
+                normalized_data,
+                normalized_indices,
+                normalized_indptr,
+                normalized_shape,
+            )
+            return (
+                np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
+                np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
+            )
+
+        legacy = getattr(self.simulator, "SparseHamiltonianMomentsBatch", None)
+        if callable(legacy):
+            means, second_moments = legacy(
+                normalized_data,
+                normalized_indices,
+                normalized_indptr,
+                normalized_shape,
+            )
+            return (
+                np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
+                np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
+            )
+
+        means = []
+        second_moments = []
+        for state in self.statevectors():
+            mean, second_moment = sparse_hamiltonian_moments_from_statevector(
+                state,
+                normalized_data,
+                normalized_indices,
+                normalized_indptr,
+                normalized_shape,
+            )
+            means.append(mean)
+            second_moments.append(second_moment)
+        return np.asarray(means, dtype=np.complex128), np.asarray(second_moments, dtype=np.complex128)

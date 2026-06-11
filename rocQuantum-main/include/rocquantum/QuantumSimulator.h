@@ -52,6 +52,12 @@ public:
         const std::vector<std::size_t>& indptr,
         std::size_t rows,
         std::size_t cols) const;
+    std::pair<std::vector<std::complex<double>>, std::vector<std::complex<double>>> sparse_hamiltonian_moments_batch(
+        const std::vector<std::complex<double>>& data,
+        const std::vector<std::size_t>& indices,
+        const std::vector<std::size_t>& indptr,
+        std::size_t rows,
+        std::size_t cols) const;
     unsigned num_qubits() const noexcept;
     std::size_t batch_size() const noexcept;
 
@@ -83,6 +89,12 @@ public:
         const std::vector<std::complex<double>>& matrix,
         const std::vector<unsigned>& targets) const;
     std::pair<std::complex<double>, std::complex<double>> SparseHamiltonianMoments(
+        const std::vector<std::complex<double>>& data,
+        const std::vector<std::size_t>& indices,
+        const std::vector<std::size_t>& indptr,
+        std::size_t rows,
+        std::size_t cols) const;
+    std::pair<std::vector<std::complex<double>>, std::vector<std::complex<double>>> SparseHamiltonianMomentsBatch(
         const std::vector<std::complex<double>>& data,
         const std::vector<std::size_t>& indices,
         const std::vector<std::size_t>& indptr,

@@ -282,6 +282,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
 
         self.assertIn("sparse_hamiltonian_moments", header)
         self.assertIn("SparseHamiltonianMoments", header)
+        self.assertIn("sparse_hamiltonian_moments_batch", header)
+        self.assertIn("SparseHamiltonianMomentsBatch", header)
         self.assertIn("expectation_matrix", header)
         self.assertIn("ExpectationMatrix", header)
         self.assertIn("expectation_matrix_batch", header)
@@ -289,6 +291,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("expectation_pauli_string_batch", header)
         self.assertIn("GetExpectationPauliStringBatch", header)
         self.assertIn("QuantumSimulator::sparse_hamiltonian_moments", implementation)
+        self.assertIn("QuantumSimulator::sparse_hamiltonian_moments_batch", implementation)
         self.assertIn("QuantumSimulator::expectation_matrix", implementation)
         self.assertIn("QuantumSimulator::expectation_matrix_batch", implementation)
         self.assertIn("QuantumSimulator::expectation_pauli_string_batch", implementation)
@@ -301,8 +304,11 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("rocsvGetExpectationMatrixBatch", hip_header)
         self.assertIn("dim3(blocks, static_cast<unsigned>(batch_size))", hipstatevec)
         self.assertIn("rocsvGetSparseMatrixMoments", implementation)
+        self.assertIn("rocsvGetSparseMatrixMomentsBatch", implementation)
         self.assertIn("rocsvGetSparseMatrixMoments", hipstatevec)
+        self.assertIn("rocsvGetSparseMatrixMomentsBatch", hipstatevec)
         self.assertIn("reduce_sparse_matrix_moments_kernel", hipstatevec)
+        self.assertIn("reduce_sparse_matrix_moments_batch_kernel", hipstatevec)
         self.assertIn("Sparse Hamiltonian CSR indptr", implementation)
         sparse_body = implementation.split("QuantumSimulator::sparse_hamiltonian_moments", 1)[1].split(
             "unsigned QuantumSimulator::num_qubits", 1
@@ -319,11 +325,16 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("rocsvGetExpectationPauliStringBatch", low_level_bindings)
         self.assertIn("m.def(\"get_expectation_matrix_batch\"", low_level_bindings)
         self.assertIn("rocsvGetExpectationMatrixBatch", low_level_bindings)
+        self.assertIn("m.def(\"get_sparse_matrix_moments_batch\"", low_level_bindings)
+        self.assertIn("rocsvGetSparseMatrixMomentsBatch", low_level_bindings)
         self.assertIn(".def(\"expectation_pauli_string_batch\"", bindings)
         self.assertIn(".def(\"GetExpectationPauliStringBatch\"", bindings)
         self.assertIn(".def(\"sparse_hamiltonian_moments\"", bindings)
         self.assertIn(".def(\"SparseHamiltonianMoments\"", bindings)
+        self.assertIn(".def(\"sparse_hamiltonian_moments_batch\"", bindings)
+        self.assertIn(".def(\"SparseHamiltonianMomentsBatch\"", bindings)
         self.assertIn("def expectation_matrix_batch", runtime)
+        self.assertIn("def sparse_hamiltonian_moments_batch", runtime)
 
     def test_pennylane_sampling_prefers_native_measure(self):
         with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
@@ -442,7 +453,9 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _projector_terms_from_observable", source)
         self.assertIn("observable.name != \"Projector\"", source)
         self.assertIn("_native_sparse_hamiltonian_moments", source)
+        self.assertIn("_native_sparse_hamiltonian_moments_batch", source)
         self.assertIn("runtime.sparse_hamiltonian_moments", source)
+        self.assertIn("runtime.sparse_hamiltonian_moments_batch", source)
         self.assertIn("_sparse_hamiltonian_moments", source)
         self.assertIn("sparse_matrix(wire_order=wire_order, format=\"csr\")", source)
         self.assertIn("rotation_ops = list(rotations or [])", source)

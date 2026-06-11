@@ -633,6 +633,34 @@ rocqStatus_t rocsvGetSparseMatrixMoments(rocsvHandle_t handle,
                                          rocComplex* secondMoment);
 
 /**
+ * @brief Computes <psi|H|psi> and <psi|H^2|psi> for a CSR sparse matrix over every local batch state.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector batch.
+ * @param[in] numQubits Total number of qubits per state.
+ * @param[in] d_data Device pointer to CSR non-zero matrix values.
+ * @param[in] d_indices Device pointer to CSR column indices.
+ * @param[in] d_indptr Device pointer to CSR row offsets with rows + 1 entries.
+ * @param[in] rows Number of sparse matrix rows. Must equal 2^numQubits.
+ * @param[in] cols Number of sparse matrix columns. Must equal rows.
+ * @param[in] nnz Number of sparse matrix non-zero entries.
+ * @param[out] means Host pointer to batchSize <psi|H|psi> values.
+ * @param[out] secondMoments Host pointer to batchSize <psi|H^2|psi> values.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetSparseMatrixMomentsBatch(rocsvHandle_t handle,
+                                              rocComplex* d_state,
+                                              unsigned numQubits,
+                                              const rocComplex* d_data,
+                                              const size_t* d_indices,
+                                              const size_t* d_indptr,
+                                              size_t rows,
+                                              size_t cols,
+                                              size_t nnz,
+                                              rocComplex* means,
+                                              rocComplex* secondMoments);
+
+/**
  * @brief Reports temporary workspace size required by expectation APIs.
  *
  * Current implementation requires no extra workspace and reports 0.

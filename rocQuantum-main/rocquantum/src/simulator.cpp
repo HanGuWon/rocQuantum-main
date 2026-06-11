@@ -979,6 +979,125 @@ std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::sparse_h
             {static_cast<double>(raw_second_moment.x), static_cast<double>(raw_second_moment.y)}};
 }
 
+std::pair<std::vector<std::complex<double>>, std::vector<std::complex<double>>> QuantumSimulator::sparse_hamiltonian_moments_batch(
+    const std::vector<std::complex<double>>& data,
+    const std::vector<std::size_t>& indices,
+    const std::vector<std::size_t>& indptr,
+    std::size_t rows,
+    std::size_t cols) const {
+    if (rows != state_vec_size_ || cols != state_vec_size_) {
+        throw std::invalid_argument("Sparse Hamiltonian shape must match the simulator state dimension.");
+    }
+    if (indptr.size() != rows + 1) {
+        throw std::invalid_argument("Sparse Hamiltonian CSR indptr length must equal rows + 1.");
+    }
+    if (data.size() != indices.size()) {
+        throw std::invalid_argument("Sparse Hamiltonian CSR data and indices lengths must match.");
+    }
+    if (indptr.empty() || indptr.front() != 0 || indptr.back() != data.size()) {
+        throw std::invalid_argument("Sparse Hamiltonian CSR indptr must start at 0 and end at nnz.");
+    }
+    for (std::size_t row = 0; row < rows; ++row) {
+        if (indptr[row] > indptr[row + 1]) {
+            throw std::invalid_argument("Sparse Hamiltonian CSR indptr must be monotonic.");
+        }
+    }
+    for (const std::size_t col : indices) {
+        if (col >= cols) {
+            throw std::invalid_argument("Sparse Hamiltonian CSR column index is out of bounds.");
+        }
+    }
+
+    std::vector<rocComplex> raw_data;
+    raw_data.reserve(data.size());
+    for (const std::complex<double>& value : data) {
+        raw_data.push_back(to_roc_complex(value));
+    }
+
+    rocComplex* d_data = nullptr;
+    std::size_t* d_indices = nullptr;
+    std::size_t* d_indptr = nullptr;
+    auto free_sparse_buffers = [&]() {
+        if (d_data) {
+            check_hip(hipFree(d_data), "batched sparse Hamiltonian data free");
+        }
+        if (d_indices) {
+            check_hip(hipFree(d_indices), "batched sparse Hamiltonian indices free");
+        }
+        if (d_indptr) {
+            check_hip(hipFree(d_indptr), "batched sparse Hamiltonian indptr free");
+        }
+    };
+    auto cleanup_after_error = [&]() {
+        if (d_data) {
+            hipFree(d_data);
+        }
+        if (d_indices) {
+            hipFree(d_indices);
+        }
+        if (d_indptr) {
+            hipFree(d_indptr);
+        }
+    };
+
+    std::vector<rocComplex> raw_means(batch_size_, to_roc_complex(std::complex<double>{0.0, 0.0}));
+    std::vector<rocComplex> raw_second_moments(batch_size_, to_roc_complex(std::complex<double>{0.0, 0.0}));
+    try {
+        if (!raw_data.empty()) {
+            check_hip(hipMalloc(&d_data, raw_data.size() * sizeof(rocComplex)),
+                      "batched sparse Hamiltonian data allocation");
+            check_hip(hipMemcpy(d_data,
+                                raw_data.data(),
+                                raw_data.size() * sizeof(rocComplex),
+                                hipMemcpyHostToDevice),
+                      "batched sparse Hamiltonian data upload");
+        }
+        if (!indices.empty()) {
+            check_hip(hipMalloc(&d_indices, indices.size() * sizeof(std::size_t)),
+                      "batched sparse Hamiltonian indices allocation");
+            check_hip(hipMemcpy(d_indices,
+                                indices.data(),
+                                indices.size() * sizeof(std::size_t),
+                                hipMemcpyHostToDevice),
+                      "batched sparse Hamiltonian indices upload");
+        }
+        check_hip(hipMalloc(&d_indptr, indptr.size() * sizeof(std::size_t)),
+                  "batched sparse Hamiltonian indptr allocation");
+        check_hip(hipMemcpy(d_indptr,
+                            indptr.data(),
+                            indptr.size() * sizeof(std::size_t),
+                            hipMemcpyHostToDevice),
+                  "batched sparse Hamiltonian indptr upload");
+
+        check_status(rocsvGetSparseMatrixMomentsBatch(sim_handle_,
+                                                      device_state_vector_,
+                                                      num_qubits_,
+                                                      d_data,
+                                                      d_indices,
+                                                      d_indptr,
+                                                      rows,
+                                                      cols,
+                                                      raw_data.size(),
+                                                      raw_means.data(),
+                                                      raw_second_moments.data()),
+                     "batch sparse Hamiltonian moments");
+    } catch (...) {
+        cleanup_after_error();
+        throw;
+    }
+    free_sparse_buffers();
+
+    std::vector<std::complex<double>> means(raw_means.size());
+    std::vector<std::complex<double>> second_moments(raw_second_moments.size());
+    for (std::size_t idx = 0; idx < raw_means.size(); ++idx) {
+        means[idx] = {static_cast<double>(raw_means[idx].x), static_cast<double>(raw_means[idx].y)};
+        second_moments[idx] = {
+            static_cast<double>(raw_second_moments[idx].x),
+            static_cast<double>(raw_second_moments[idx].y)};
+    }
+    return {means, second_moments};
+}
+
 unsigned QuantumSimulator::num_qubits() const noexcept {
     return num_qubits_;
 }
@@ -1086,6 +1205,15 @@ std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::SparseHa
     std::size_t rows,
     std::size_t cols) const {
     return sparse_hamiltonian_moments(data, indices, indptr, rows, cols);
+}
+
+std::pair<std::vector<std::complex<double>>, std::vector<std::complex<double>>> QuantumSimulator::SparseHamiltonianMomentsBatch(
+    const std::vector<std::complex<double>>& data,
+    const std::vector<std::size_t>& indices,
+    const std::vector<std::size_t>& indptr,
+    std::size_t rows,
+    std::size_t cols) const {
+    return sparse_hamiltonian_moments_batch(data, indices, indptr, rows, cols);
 }
 
 void QuantumSimulator::ensure_valid_qubit(unsigned qubit) const {

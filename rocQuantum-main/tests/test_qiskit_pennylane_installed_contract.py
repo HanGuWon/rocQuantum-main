@@ -41,6 +41,7 @@ class _FakeQuantumSimulator:
         self.matrix_batch_expectations = []
         self.probability_requests = []
         self.sparse_moments = []
+        self.sparse_batch_moments = []
         self.reset_qubits = []
         self.total_reset_qubits = []
         self.statevector_reads = 0
@@ -61,6 +62,7 @@ class _FakeQuantumSimulator:
         self.matrix_batch_expectations.clear()
         self.probability_requests.clear()
         self.sparse_moments.clear()
+        self.sparse_batch_moments.clear()
         self.reset_qubits.clear()
         self.statevector_reads = 0
         self._measured = False
@@ -210,6 +212,22 @@ class _FakeQuantumSimulator:
             )
         )
         return 1.0 + 0.0j, 1.0 + 0.0j
+
+    def sparse_hamiltonian_moments_batch(self, data, indices, indptr, shape):
+        if not self.enable_sparse_moments:
+            raise NotImplementedError("native sparse Hamiltonian moments batch disabled")
+        self.sparse_batch_moments.append(
+            (
+                np.asarray(data, dtype=np.complex128),
+                np.asarray(indices, dtype=np.int64),
+                np.asarray(indptr, dtype=np.int64),
+                tuple(shape),
+            )
+        )
+        return (
+            np.ones(self._batch_size, dtype=np.complex128),
+            np.ones(self._batch_size, dtype=np.complex128),
+        )
 
     def ApplyGate(self, *args):
         self.ops.append(("legacy", args, ()))
@@ -2349,6 +2367,66 @@ def test_pennylane_sparse_hamiltonian_prefers_native_csr_moments(monkeypatch):
     np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
     assert shape == (2, 2)
+
+
+def test_pennylane_sparse_hamiltonian_batch_uses_native_csr_moments(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_sparse_moments", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
+    dev = qml.device("lightning.rocq", wires=1)
+    tapes = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.expval(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.expval(observable)]),
+    ]
+
+    results = dev.batch_execute(tapes)
+
+    assert results == pytest.approx((1.0, 1.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert len(sim.sparse_batch_moments) == 1
+    assert sim.sparse_moments == []
+    assert sim.statevector_reads == 0
+
+
+def test_pennylane_sparse_hamiltonian_batch_variance_uses_native_csr_moments(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_sparse_moments", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
+    dev = qml.device("lightning.rocq", wires=1)
+    tapes = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.var(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.var(observable)]),
+    ]
+
+    results = dev.batch_execute(tapes)
+
+    assert results == pytest.approx((0.0, 0.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert len(sim.sparse_batch_moments) == 1
+    assert sim.sparse_moments == []
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_hadamard_observable_uses_native_pauli_terms(monkeypatch):
