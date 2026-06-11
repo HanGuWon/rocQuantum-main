@@ -67,6 +67,17 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("distributed_all_qubits_local(handle, targets)", source)
         self.assertIn("distributed_all_qubits_local(handle, measured)", source)
 
+    def test_sparse_apply_supports_local_distributed_slices(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("apply_sparse_matrix_distributed_local", source)
+        self.assertIn("rocsvApplySparseMatrix", source)
+        self.assertIn("distributed_all_qubits_local(handle, targets)", source)
+        self.assertIn("handle->distributedSwapBuffers", source)
+        self.assertIn("handle->distributedStreams", source)
+        self.assertIn("apply_sparse_matrix_kernel", source)
+
 
 if __name__ == "__main__":
     unittest.main()
