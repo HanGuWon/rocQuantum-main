@@ -1350,6 +1350,20 @@ class RocQDevice(QubitDevice):
             if any(op.name != gate_name or [self.wire_map[w] for w in op.wires] != wire_indices for op in ops):
                 return None
 
+            if gate_name == "BasisState":
+                if op_index != 0:
+                    return None
+                try:
+                    bits_by_op = [tuple(_basis_state_bits(op, len(wire_indices))) for op in ops]
+                except (TypeError, ValueError):
+                    return None
+                if any(bits != bits_by_op[0] for bits in bits_by_op[1:]):
+                    return None
+                for bit, wire_index in zip(bits_by_op[0], wire_indices):
+                    if int(bit):
+                        self._runtime.apply_operation("X", [wire_index])
+                continue
+
             params_by_op = [list(getattr(op, "parameters", [])) for op in ops]
             if gate_name in {"RX", "RY", "RZ", "CRX", "CRY", "CRZ"} and all(
                 len(params) == 1 for params in params_by_op

@@ -496,6 +496,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("_pauli_square_terms(payload[1])", source)
         self.assertIn("self._runtime.probabilities_batch(probability_targets)", source)
         self.assertIn("self._runtime.apply_operation_batch", source)
+        self.assertIn("gate_name == \"BasisState\"", source)
+        self.assertIn("_basis_state_bits(op, len(wire_indices))", source)
         self.assertIn("\"PhaseShift\", \"ControlledPhaseShift\", \"MultiRZ\", \"IsingXX\", \"IsingYY\", \"IsingZZ\"", source)
         self.assertIn("gate_name == \"SingleExcitation\"", source)
         self.assertIn("gate_name == \"FermionicSWAP\"", source)
