@@ -32,10 +32,12 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("ROCQ_ALLOW_HOST_MATRIX_FALLBACK", source)
         self.assertEqual(
             source.count("if (!allow_host_matrix_fallback())"),
-            2,
-            "rocsvApplyMatrix and rocsvApplyControlledMatrix should both gate host fallback.",
+            4,
+            "Matrix apply/control and dense expectation host fallbacks should all require opt-in.",
         )
         self.assertEqual(source.count("return apply_matrix_host_impl"), 2)
+        self.assertIn("return expectation_matrix_host_fallback", source)
+        self.assertIn("return expectation_matrix_batch_host_fallback", source)
         self.assertRegex(
             source,
             re.compile(
@@ -68,6 +70,8 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("apply_matrix_distributed_host_fallback", source)
         self.assertIn("apply_sparse_matrix_distributed_host_fallback", source)
         self.assertIn("apply_sparse_matrix_host_state_impl", source)
+        self.assertIn("expectation_matrix_host_fallback", source)
+        self.assertIn("expectation_matrix_batch_host_fallback", source)
         self.assertIn("expectation_matrix_distributed_host_fallback", source)
         self.assertIn("sparse_matrix_moments_distributed_host_fallback", source)
         self.assertGreaterEqual(

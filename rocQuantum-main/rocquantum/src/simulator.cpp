@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <complex>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -35,6 +36,18 @@ void check_hip(hipError_t status, const char* context) {
         throw std::runtime_error(std::string("HIP error during ") + context + ": " +
                                  hipGetErrorString(status));
     }
+}
+
+bool matrix_expectation_host_fallback_allowed() {
+    const char* value = std::getenv("ROCQ_ALLOW_HOST_MATRIX_FALLBACK");
+    if (!value) {
+        return false;
+    }
+    std::string normalized(value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return normalized == "1" || normalized == "true" || normalized == "on" || normalized == "yes";
 }
 
 rocComplex to_roc_complex(const std::complex<double>& value) {
@@ -1027,7 +1040,7 @@ std::complex<double> QuantumSimulator::expectation_matrix(
     if (targets.empty()) {
         throw std::invalid_argument("expectation_matrix requires at least one target qubit.");
     }
-    if (targets.size() > 4) {
+    if (targets.size() > 4 && !matrix_expectation_host_fallback_allowed()) {
         throw std::runtime_error("expectation_matrix currently supports at most 4 target qubits.");
     }
 
@@ -1080,7 +1093,7 @@ std::vector<std::complex<double>> QuantumSimulator::expectation_matrix_batch(
     if (targets.empty()) {
         throw std::invalid_argument("expectation_matrix_batch requires at least one target qubit.");
     }
-    if (targets.size() > 4) {
+    if (targets.size() > 4 && !matrix_expectation_host_fallback_allowed()) {
         throw std::runtime_error("expectation_matrix_batch currently supports at most 4 target qubits.");
     }
 

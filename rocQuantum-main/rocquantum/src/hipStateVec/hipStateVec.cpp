@@ -1779,7 +1779,7 @@ rocqStatus_t expectation_matrix_distributed_host_fallback(rocsvInternalHandle* h
         handle->distributedDeviceIds.empty() || !d_matrix || !result) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    if (matrixDim > std::numeric_limits<size_t>::max() / matrixDim) {
+    if (matrixDim == 0 || matrixDim > std::numeric_limits<size_t>::max() / matrixDim) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
 
@@ -1818,6 +1818,114 @@ rocqStatus_t expectation_matrix_distributed_host_fallback(rocsvInternalHandle* h
                                                  matrix_host,
                                                  matrixDim,
                                                  result);
+}
+
+rocqStatus_t expectation_matrix_host_fallback(rocsvInternalHandle* handle,
+                                              rocComplex* state,
+                                              unsigned numQubits,
+                                              const std::vector<unsigned>& targetQubits,
+                                              const rocComplex* d_matrix,
+                                              size_t matrixDim,
+                                              rocComplex* result) {
+    if (!allow_host_matrix_fallback()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !state || !d_matrix || !result) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (effective_batch_size(handle, state) != 1) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (matrixDim == 0 || matrixDim > std::numeric_limits<size_t>::max() / matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> matrix_host;
+    rocqStatus_t status = copy_matrix_from_device(d_matrix,
+                                                  matrixDim * matrixDim,
+                                                  handle->streams[0],
+                                                  &matrix_host);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> host_state(state_elements);
+    status = copy_device_to_host(host_state.data(),
+                                 state,
+                                 state_elements * sizeof(rocComplex),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    return compute_expectation_matrix_host_state(host_state,
+                                                 numQubits,
+                                                 targetQubits,
+                                                 matrix_host,
+                                                 matrixDim,
+                                                 result);
+}
+
+rocqStatus_t expectation_matrix_batch_host_fallback(rocsvInternalHandle* handle,
+                                                    rocComplex* state,
+                                                    unsigned numQubits,
+                                                    const std::vector<unsigned>& targetQubits,
+                                                    const rocComplex* d_matrix,
+                                                    size_t matrixDim,
+                                                    rocComplex* results) {
+    if (!allow_host_matrix_fallback()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !state || !d_matrix || !results) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (matrixDim == 0 || matrixDim > std::numeric_limits<size_t>::max() / matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    std::vector<rocComplex> matrix_host;
+    rocqStatus_t status = copy_matrix_from_device(d_matrix,
+                                                  matrixDim * matrixDim,
+                                                  handle->streams[0],
+                                                  &matrix_host);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (batch_size > std::numeric_limits<size_t>::max() / state_elements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> host_state(state_elements);
+    for (size_t batch = 0; batch < batch_size; ++batch) {
+        status = copy_device_to_host(host_state.data(),
+                                     state + batch * state_elements,
+                                     state_elements * sizeof(rocComplex),
+                                     handle->streams[0]);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+        status = compute_expectation_matrix_host_state(host_state,
+                                                       numQubits,
+                                                       targetQubits,
+                                                       matrix_host,
+                                                       matrixDim,
+                                                       results + batch);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+    }
+    return ROCQ_STATUS_SUCCESS;
 }
 
 rocqStatus_t sparse_matrix_moments_distributed_host_fallback(rocsvInternalHandle* handle,
@@ -6647,9 +6755,6 @@ rocqStatus_t rocsvGetExpectationMatrix(rocsvHandle_t handle,
     if (!handle || !targetQubits || numTargetQubits == 0 || !d_matrix || !result) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    if (numTargetQubits > 4) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
 
     size_t expected_matrix_dim = 0;
     if (!compute_power_of_two(numTargetQubits, &expected_matrix_dim) ||
@@ -6683,6 +6788,15 @@ rocqStatus_t rocsvGetExpectationMatrix(rocsvHandle_t handle,
     }
     if (effective_batch_size(handle, state) != 1) {
         return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numTargetQubits > 4) {
+        return expectation_matrix_host_fallback(handle,
+                                                state,
+                                                numQubits,
+                                                targets,
+                                                d_matrix,
+                                                matrixDim,
+                                                result);
     }
 
     void* d_targets_void = nullptr;
@@ -6763,9 +6877,6 @@ rocqStatus_t rocsvGetExpectationMatrixBatch(rocsvHandle_t handle,
     if (!handle || !targetQubits || numTargetQubits == 0 || !d_matrix || !results) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    if (numTargetQubits > 4) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
 
     size_t expected_matrix_dim = 0;
     if (!compute_power_of_two(numTargetQubits, &expected_matrix_dim) ||
@@ -6790,6 +6901,15 @@ rocqStatus_t rocsvGetExpectationMatrixBatch(rocsvHandle_t handle,
     const size_t batch_size = effective_batch_size(handle, state);
     if (batch_size > 65535) {
         return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numTargetQubits > 4) {
+        return expectation_matrix_batch_host_fallback(handle,
+                                                      state,
+                                                      numQubits,
+                                                      targets,
+                                                      d_matrix,
+                                                      matrixDim,
+                                                      results);
     }
 
     size_t state_elements = 0;
