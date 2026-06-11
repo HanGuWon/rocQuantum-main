@@ -1544,6 +1544,67 @@ rocqStatus_t apply_matrix_host_state_impl(std::vector<rocComplex>* host_state,
     return ROCQ_STATUS_SUCCESS;
 }
 
+rocqStatus_t compute_expectation_matrix_host_state(const std::vector<rocComplex>& host_state,
+                                                   unsigned numQubits,
+                                                   const std::vector<unsigned>& targetQubits,
+                                                   const std::vector<rocComplex>& matrixHost,
+                                                   size_t matrixDim,
+                                                   rocComplex* result) {
+    if (!result || targetQubits.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t stateElements = 0;
+    if (!compute_power_of_two(numQubits, &stateElements) || host_state.size() != stateElements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t expectedMatrixDim = 0;
+    if (!compute_power_of_two(static_cast<unsigned>(targetQubits.size()), &expectedMatrixDim) ||
+        matrixDim != expectedMatrixDim ||
+        matrixHost.size() != matrixDim * matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    for (unsigned q : targetQubits) {
+        if (!validate_qubit_index(q, numQubits)) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+
+    double total_re = 0.0;
+    double total_im = 0.0;
+    for (size_t rowIndex = 0; rowIndex < stateElements; ++rowIndex) {
+        size_t row_target = 0;
+        size_t base_index = rowIndex;
+        for (unsigned bit = 0; bit < targetQubits.size(); ++bit) {
+            const unsigned qubit = targetQubits[bit];
+            const size_t mask = size_t{1} << qubit;
+            if ((rowIndex & mask) != 0ULL) {
+                row_target |= (size_t{1} << bit);
+            }
+            base_index &= ~mask;
+        }
+
+        const rocComplex bra = host_state[rowIndex];
+        for (size_t col_target = 0; col_target < matrixDim; ++col_target) {
+            const size_t col_index = compose_basis_index(base_index, col_target, targetQubits);
+            const rocComplex m = matrixHost[row_target + col_target * matrixDim];
+            const rocComplex ket = host_state[col_index];
+            const double mv_re = static_cast<double>(m.x) * static_cast<double>(ket.x) -
+                                 static_cast<double>(m.y) * static_cast<double>(ket.y);
+            const double mv_im = static_cast<double>(m.x) * static_cast<double>(ket.y) +
+                                 static_cast<double>(m.y) * static_cast<double>(ket.x);
+
+            total_re += static_cast<double>(bra.x) * mv_re + static_cast<double>(bra.y) * mv_im;
+            total_im += static_cast<double>(bra.x) * mv_im - static_cast<double>(bra.y) * mv_re;
+        }
+    }
+
+    *result = make_complex(total_re, total_im);
+    return ROCQ_STATUS_SUCCESS;
+}
+
 rocqStatus_t apply_sparse_matrix_host_state_impl(std::vector<rocComplex>* host_state,
                                                  unsigned numQubits,
                                                  const std::vector<unsigned>& targetQubits,
@@ -1703,6 +1764,60 @@ rocqStatus_t apply_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
     }
 
     return scatter_host_state_to_distributed(handle, host_full);
+}
+
+rocqStatus_t expectation_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
+                                                          unsigned numQubits,
+                                                          const std::vector<unsigned>& targetQubits,
+                                                          const rocComplex* d_matrix,
+                                                          size_t matrixDim,
+                                                          rocComplex* result) {
+    if (!distributed_host_fallback_enabled()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !handle->distributedMode || numQubits != handle->globalNumQubits ||
+        handle->distributedDeviceIds.empty() || !d_matrix || !result) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (matrixDim > std::numeric_limits<size_t>::max() / matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    int original_device = 0;
+    if (hipGetDevice(&original_device) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    auto restore_device = [&]() {
+        (void)hipSetDevice(original_device);
+    };
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        restore_device();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    std::vector<rocComplex> matrix_host;
+    rocqStatus_t status = copy_matrix_from_device(d_matrix,
+                                                  matrixDim * matrixDim,
+                                                  handle->streams[0],
+                                                  &matrix_host);
+    restore_device();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    std::vector<rocComplex> host_full;
+    status = gather_distributed_state_to_host(handle, &host_full);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    return compute_expectation_matrix_host_state(host_full,
+                                                 numQubits,
+                                                 targetQubits,
+                                                 matrix_host,
+                                                 matrixDim,
+                                                 result);
 }
 
 rocqStatus_t sparse_matrix_moments_distributed_host_fallback(rocsvInternalHandle* handle,
@@ -6547,8 +6662,19 @@ rocqStatus_t rocsvGetExpectationMatrix(rocsvHandle_t handle,
     if (status != ROCQ_STATUS_SUCCESS) {
         return status;
     }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
     if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        return expectation_matrix_distributed_host_fallback(handle,
+                                                            numQubits,
+                                                            targets,
+                                                            d_matrix,
+                                                            matrixDim,
+                                                            result);
     }
 
     rocComplex* state = resolve_state_pointer(handle, d_state);
@@ -6557,11 +6683,6 @@ rocqStatus_t rocsvGetExpectationMatrix(rocsvHandle_t handle,
     }
     if (effective_batch_size(handle, state) != 1) {
         return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
-
-    size_t state_elements = 0;
-    if (!compute_power_of_two(numQubits, &state_elements)) {
-        return ROCQ_STATUS_INVALID_VALUE;
     }
 
     void* d_targets_void = nullptr;

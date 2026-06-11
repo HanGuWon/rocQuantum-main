@@ -353,6 +353,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("rocsvGetExpectationMatrix", implementation)
         self.assertIn("rocsvGetExpectationMatrixBatch", implementation)
         self.assertIn("rocsvGetExpectationMatrixBatch", hip_header)
+        self.assertIn("expectation_matrix_distributed_host_fallback", hipstatevec)
+        self.assertIn("compute_expectation_matrix_host_state", hipstatevec)
         self.assertIn("dim3(blocks, static_cast<unsigned>(batch_size))", hipstatevec)
         self.assertIn("rocsvGetSparseMatrixMoments", implementation)
         self.assertIn("rocsvGetSparseMatrixMomentsBatch", implementation)
