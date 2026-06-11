@@ -123,19 +123,27 @@ def _is_default_switch_case(label):
     return str(label) == "<default case>"
 
 
-def _static_for_loop_values(op):
+def _for_loop_metadata(op):
     params = list(getattr(op, "params", ()) or ())
     if len(params) < 2:
         raise NotImplementedError("RocQuantumBackend requires Qiskit for_loop indexset metadata.")
     indexset, loop_parameter = params[0], params[1]
-    if loop_parameter is not None:
-        raise NotImplementedError(
-            "RocQuantumBackend dynamic sampling does not support parameterized for_loop bodies yet."
-        )
     try:
-        return list(indexset)
+        loop_values = list(indexset)
     except TypeError as exc:
         raise NotImplementedError("RocQuantumBackend requires a finite static for_loop indexset.") from exc
+    return loop_values, loop_parameter
+
+
+def _bind_for_loop_block(block, loop_parameter, value):
+    if loop_parameter is None:
+        return block
+    try:
+        return block.assign_parameters({loop_parameter: value}, inplace=False)
+    except Exception as exc:
+        raise NotImplementedError(
+            "RocQuantumBackend could not bind a Qiskit for_loop parameter for dynamic sampling."
+        ) from exc
 
 
 def _memory_from_classical_bits(classical_bits, measured_items, memory_width):
@@ -1168,10 +1176,11 @@ class RocQuantumBackend(BackendV2):
             blocks = tuple(op.blocks)
             if len(blocks) != 1:
                 raise NotImplementedError("RocQuantumBackend supports for_loop with exactly one body block.")
-            loop_values = _static_for_loop_values(op)
-            for _ in loop_values:
+            loop_values, loop_parameter = _for_loop_metadata(op)
+            for loop_value in loop_values:
+                block = _bind_for_loop_block(blocks[0], loop_parameter, loop_value)
                 self._apply_control_flow_block(
-                    blocks[0],
+                    block,
                     instruction,
                     circuit,
                     classical_bits,

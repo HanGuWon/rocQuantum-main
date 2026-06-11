@@ -605,9 +605,10 @@ def test_qiskit_backend_samples_static_for_loop(monkeypatch):
     assert sim.measurements == []
 
 
-def test_qiskit_backend_rejects_parameterized_for_loop(monkeypatch):
+def test_qiskit_backend_samples_parameterized_for_loop(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.measure_qubit_results = [0, 0]
 
     from qiskit import QuantumCircuit
     from qiskit.circuit import Parameter
@@ -620,10 +621,17 @@ def test_qiskit_backend_rejects_parameterized_for_loop(monkeypatch):
     loop_parameter = Parameter("i")
     with circuit.for_loop(range(2), loop_parameter):
         circuit.rx(loop_parameter, 0)
+    circuit.measure(0, 0)
 
     backend = RocQuantumProvider().get_backend("rocq_simulator")
-    with pytest.raises(NotImplementedError, match="parameterized for_loop"):
-        backend.run(circuit, statevector=False).result()
+    result = backend.run(circuit, shots=1, memory=True, statevector=False).result()
+
+    assert result.get_counts() == {"0": 1}
+    assert result.get_memory() == ["0"]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("RX", (0,), (0.0,)), ("RX", (0,), (1.0,))]
+    assert sim.measure_qubits == [0]
+    assert sim.measurements == []
 
 
 def test_qiskit_backend_rejects_statevector_for_if_else(monkeypatch):
