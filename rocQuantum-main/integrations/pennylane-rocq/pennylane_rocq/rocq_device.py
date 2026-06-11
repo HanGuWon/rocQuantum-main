@@ -43,6 +43,7 @@ MATRIX_OPS = {
     "OrbitalRotation", "FermionicSWAP",
     "Toffoli", "CSWAP",
 }
+DECOMPOSED_OPS = {"QFT"}
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
     "PauliX": "X",
@@ -693,6 +694,24 @@ def _apply_controlled_phase_shift_batch(runtime, wire_indices, thetas):
     runtime.apply_operation_batch("RZ", [target], half_thetas)
 
 
+def _apply_qft(runtime, wire_indices):
+    if not wire_indices:
+        raise ValueError("QFT requires at least one wire.")
+
+    for target_position, target in enumerate(wire_indices):
+        runtime.apply_operation("H", [target])
+        for control_position in range(target_position + 1, len(wire_indices)):
+            control = wire_indices[control_position]
+            angle = np.pi / (2 ** (control_position - target_position))
+            _apply_controlled_phase_shift(runtime, [control, target], angle)
+
+    for left_position in range(len(wire_indices) // 2):
+        runtime.apply_operation(
+            "SWAP",
+            [wire_indices[left_position], wire_indices[-left_position - 1]],
+        )
+
+
 def _apply_controlled_phase_variant(runtime, wire_indices, theta, control_state):
     if len(control_state) != len(wire_indices):
         raise ValueError("Controlled phase control_state must match the wire count.")
@@ -1192,6 +1211,10 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
         runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)
         return True
 
+    if gate_name == "QFT" and not params:
+        _apply_qft(runtime, wire_indices)
+        return True
+
     if gate_name == "Toffoli" and not params:
         runtime.apply_operation("MCX", wire_indices)
         return True
@@ -1303,7 +1326,13 @@ class RocQDevice(QubitDevice):
     version = "0.1.0"
     pennylane_requires = ">=0.30"
 
-    operations = set(PENNYLANE_TO_ROCQ_GATES.keys()) | NATIVE_PARAMETRIC_OPS | MATRIX_OPS | {"BasisState", "StatePrep", "Rot"}
+    operations = (
+        set(PENNYLANE_TO_ROCQ_GATES.keys())
+        | NATIVE_PARAMETRIC_OPS
+        | MATRIX_OPS
+        | DECOMPOSED_OPS
+        | {"BasisState", "StatePrep", "Rot"}
+    )
     observables = {
         "PauliX", "PauliY", "PauliZ", "Hadamard", "Identity",
         "Hermitian", "Projector", "SparseHamiltonian",
@@ -2121,6 +2150,17 @@ class RocQDevice(QubitDevice):
                         raise NotImplementedError
                     control_state = gate_name[len("CPhaseShift"):]
                     _apply_controlled_phase_variant(self._runtime, wire_indices, theta, control_state)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "QFT":
+                try:
+                    _apply_qft(self._runtime, wire_indices)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
