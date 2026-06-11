@@ -4344,6 +4344,83 @@ def test_pennylane_prep_sel_prep_decomposes_partial_select_natively(monkeypatch)
     assert sim.controlled_matrices == []
 
 
+def test_pennylane_prep_sel_prep_signed_coefficients_decompose_controlled_phase_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    cases = [
+        (-0.25 * qml.X(1) + 0.75 * qml.Z(1), np.pi),
+        ((0.25j) * qml.X(1) + 0.75 * qml.Z(1), np.pi / 2),
+    ]
+
+    for lcu, phase_angle in cases:
+        dev = qml.device("lightning.rocq", wires=2)
+
+        @qml.qnode(dev)
+        def circuit():
+            qml.PrepSelPrep(lcu, control=[0])
+            return qml.state()
+
+        circuit()
+        sim = _FakeQuantumSimulator.instances[-1]
+
+        assert [op[:2] for op in sim.ops] == [
+            ("RY", (0,)),
+            ("X", (0,)),
+            ("CNOT", (0, 1)),
+            ("X", (0,)),
+            ("X", (0,)),
+            ("P", (0,)),
+            ("X", (0,)),
+            ("CZ", (0, 1)),
+            ("RY", (0,)),
+        ]
+        np.testing.assert_allclose(sim.ops[5][2], (phase_angle,))
+        assert sim.matrices == []
+        assert sim.controlled_matrices == []
+
+
+def test_pennylane_select_global_phase_uses_small_controlled_matrix(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.Select(
+            [
+                qml.I(2),
+                qml.I(2),
+                qml.I(2),
+                qml.GlobalPhase(0.4, wires=[2]),
+            ],
+            control=[0, 1],
+        )
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == []
+    assert sim.matrices == []
+    assert len(sim.controlled_matrices) == 1
+    matrix, controls, targets = sim.controlled_matrices[0]
+    np.testing.assert_allclose(matrix, np.diag([1.0, np.exp(-0.4j)]))
+    assert controls == (0,)
+    assert targets == (1,)
+
+
 def test_pennylane_qrom_select_product_decomposes_natively(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

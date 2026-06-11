@@ -1241,13 +1241,58 @@ def _split_operand_parameters(operands, params):
     return split_params
 
 
-def _global_phase_is_identity(params):
+def _global_phase_theta(params):
     if len(params) != 1:
-        return False
+        return None
     try:
-        return bool(np.allclose(np.asarray(params[0]), 0.0))
+        theta = np.asarray(params[0])
+        if theta.shape:
+            return None
+        return float(theta)
     except (TypeError, ValueError):
+        return None
+
+
+def _apply_controlled_global_phase(runtime, controls, control_values, theta, fallback_wire=None):
+    if len(control_values) != len(controls):
         return False
+    if np.isclose(theta, 0.0):
+        return True
+
+    if not controls:
+        wire_indices = [] if fallback_wire is None else [fallback_wire]
+        _apply_global_phase_operation(runtime, wire_indices, theta, fallback_wire=fallback_wire)
+        return True
+
+    flipped = []
+    try:
+        for control, value in zip(controls, control_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [control])
+                flipped.append(control)
+
+        if len(controls) == 1:
+            _apply_phase_shift(runtime, [controls[0]], -theta)
+        else:
+            matrix = np.array(
+                [[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, np.exp(-1j * theta)]],
+                dtype=np.complex128,
+            )
+            _apply_controlled_qubit_unitary(
+                runtime,
+                matrix,
+                controls[:-1],
+                [controls[-1]],
+                [True for _ in controls[:-1]],
+            )
+
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+        flipped.clear()
+        return True
+    finally:
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
 
 
 def _apply_controlled_selected_product(runtime, selected_op, controls, control_values, wire_map, params):
@@ -1261,6 +1306,7 @@ def _apply_controlled_selected_product(runtime, selected_op, controls, control_v
 
     active_targets = []
     native_operands = []
+    phase_thetas = []
     for operand, operand_params in zip(operands, split_params):
         if operand.name in {"Identity", "I"}:
             if operand_params:
@@ -1268,8 +1314,10 @@ def _apply_controlled_selected_product(runtime, selected_op, controls, control_v
             continue
 
         if operand.name == "GlobalPhase":
-            if not _global_phase_is_identity(operand_params):
+            theta = _global_phase_theta(operand_params)
+            if theta is None:
                 return False
+            phase_thetas.append(theta)
             continue
 
         if operand.name != "BasisEmbedding":
@@ -1297,16 +1345,54 @@ def _apply_controlled_selected_product(runtime, selected_op, controls, control_v
 
     if native_operands:
         operand, operand_params = native_operands[0]
-        return _apply_controlled_selected_op(
+        if not _apply_controlled_selected_op(
             runtime,
             operand,
             controls,
             control_values,
             wire_map,
             params=operand_params,
-        )
+        ):
+            return False
+        target_indices = [wire_map[wire] for wire in operand.wires]
+        fallback_wire = target_indices[0] if target_indices else None
+        for theta in phase_thetas:
+            if not _apply_controlled_global_phase(
+                runtime,
+                controls,
+                control_values,
+                theta,
+                fallback_wire=fallback_wire,
+            ):
+                return False
+        return True
+
+    if active_targets:
+        if not _apply_controlled_x_targets(runtime, controls, control_values, active_targets):
+            return False
+        fallback_wire = active_targets[0]
+        for theta in phase_thetas:
+            if not _apply_controlled_global_phase(
+                runtime,
+                controls,
+                control_values,
+                theta,
+                fallback_wire=fallback_wire,
+            ):
+                return False
+        return True
 
     if not active_targets:
+        for theta in phase_thetas:
+            fallback_wire = wire_map[selected_op.wires[0]] if selected_op.wires else None
+            if not _apply_controlled_global_phase(
+                runtime,
+                controls,
+                control_values,
+                theta,
+                fallback_wire=fallback_wire,
+            ):
+                return False
         return True
 
     return _apply_controlled_x_targets(runtime, controls, control_values, active_targets)
@@ -1330,8 +1416,11 @@ def _apply_uncontrolled_selected_op(runtime, selected_op, wire_map, params):
         return not selected_params
 
     if selected_op.name == "GlobalPhase":
-        if not _global_phase_is_identity(selected_params):
+        theta = _global_phase_theta(selected_params)
+        if theta is None:
             return False
+        fallback_wire = target_indices[0] if target_indices else None
+        _apply_global_phase_operation(runtime, target_indices, theta, fallback_wire=fallback_wire)
         return True
 
     if selected_op.name == "BasisEmbedding" and len(selected_params) == 1:
@@ -1369,6 +1458,19 @@ def _apply_controlled_selected_op(runtime, selected_op, controls, control_values
 
     if selected_op.name in {"Identity", "I"}:
         return not selected_params
+
+    if selected_op.name == "GlobalPhase":
+        theta = _global_phase_theta(selected_params)
+        if theta is None:
+            return False
+        fallback_wire = target_indices[0] if target_indices else None
+        return _apply_controlled_global_phase(
+            runtime,
+            controls,
+            control_values,
+            theta,
+            fallback_wire=fallback_wire,
+        )
 
     if selected_op.name == "BasisEmbedding" and len(selected_params) == 1:
         bits = np.asarray(selected_params[0], dtype=int).reshape(-1)
