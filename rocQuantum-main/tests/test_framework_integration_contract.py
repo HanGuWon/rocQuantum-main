@@ -387,6 +387,17 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def expectation_matrix_batch", runtime)
         self.assertIn("def sparse_hamiltonian_moments_batch", runtime)
 
+    def test_framework_runtime_exposes_sparse_matrix_fallback(self):
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("def sparse_matrix_to_little_endian_wires", runtime)
+        self.assertIn("def apply_sparse_matrix_to_statevector", runtime)
+        self.assertIn("def apply_sparse_matrix", runtime)
+        self.assertIn("apply_sparse_matrix_to_statevector(", runtime)
+        self.assertIn("self.set_statevector(", runtime)
+        self.assertIn("self.set_statevectors(", runtime)
+
     def test_pennylane_sampling_prefers_native_measure(self):
         with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
             source = f.read()

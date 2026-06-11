@@ -13,6 +13,7 @@ from rocquantum.framework_runtime import (
     matrix_to_little_endian_wires,
     sample_rows_from_statevector,
     samples_to_binary_rows,
+    sparse_matrix_to_little_endian_wires,
     statevector_to_little_endian_wires,
 )
 
@@ -2149,6 +2150,26 @@ def _apply_orbital_rotation_batch(runtime, wire_indices, thetas):
     _apply_fermionic_swap(runtime, [second, third], np.pi)
 
 
+def _apply_block_encode(runtime, wire_indices, op):
+    if bool(getattr(op, "has_sparse_matrix", False)):
+        try:
+            sparse_matrix = sparse_matrix_to_little_endian_wires(op.sparse_matrix(format="csr"))
+            runtime.apply_sparse_matrix(
+                sparse_matrix.data,
+                sparse_matrix.indices,
+                sparse_matrix.indptr,
+                sparse_matrix.shape,
+                wire_indices,
+            )
+            return True
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            pass
+
+    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+    runtime.apply_operation("BlockEncode", wire_indices, matrix=matrix)
+    return True
+
+
 def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=None, wire_map=None):
     if gate_name == "QubitUnitary" and len(params) == 1:
         matrix = matrix_to_little_endian_wires(params[0])
@@ -2156,9 +2177,7 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
         return True
 
     if gate_name == "BlockEncode" and op is not None:
-        matrix = matrix_to_little_endian_wires(qml.matrix(op))
-        runtime.apply_operation("BlockEncode", wire_indices, matrix=matrix)
-        return True
+        return _apply_block_encode(runtime, wire_indices, op)
 
     if gate_name == "ControlledQubitUnitary" and op is not None and wire_map is not None:
         payload = _controlled_qubit_unitary_components(op, wire_map)
@@ -3361,6 +3380,9 @@ class RocQDevice(QubitDevice):
                         wire_indices,
                         matrix=matrix,
                     )
+                operation_applied = True
+            elif gate_name == "BlockEncode":
+                _apply_block_encode(self._runtime, wire_indices, op)
                 operation_applied = True
             elif gate_name in MATRIX_OPS:
                 matrix = matrix_to_little_endian_wires(qml.matrix(op))

@@ -98,6 +98,27 @@ def matrix_to_little_endian_wires(matrix: object) -> np.ndarray:
     return np.ascontiguousarray(normalized[np.ix_(permutation, permutation)])
 
 
+def sparse_matrix_to_little_endian_wires(sparse_matrix: object):
+    """Convert a wire-ordered sparse matrix to rocQuantum's local little-endian basis."""
+    if not hasattr(sparse_matrix, "tocsr"):
+        raise TypeError("Sparse operation matrix must expose a CSR conversion.")
+
+    normalized = sparse_matrix.tocsr()
+    if normalized.ndim != 2 or normalized.shape[0] != normalized.shape[1]:
+        raise ValueError("Sparse operation matrix must be square.")
+
+    dimension = int(normalized.shape[0])
+    if dimension == 0 or dimension & (dimension - 1):
+        raise ValueError("Sparse operation matrix dimension must be a power of two.")
+
+    num_wires = int(np.log2(dimension))
+    if num_wires <= 1:
+        return normalized
+
+    permutation = np.array([_reverse_bits(index, num_wires) for index in range(dimension)])
+    return normalized[permutation, :][:, permutation].tocsr()
+
+
 def statevector_to_little_endian_wires(statevector: object) -> np.ndarray:
     """Convert a full wire-ordered statevector to rocQuantum's little-endian basis."""
     normalized = np.asarray(statevector, dtype=np.complex128).reshape(-1)
@@ -360,6 +381,67 @@ def sparse_hamiltonian_moments_from_statevector(
     return complex(mean), complex(second_moment)
 
 
+def apply_sparse_matrix_to_statevector(
+    statevector: Sequence[complex],
+    data: object,
+    indices: object,
+    indptr: object,
+    shape: Sequence[int],
+    targets: Iterable[int],
+    num_qubits: int,
+) -> np.ndarray:
+    state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    normalized_data = np.asarray(data, dtype=np.complex128).reshape(-1)
+    normalized_indices = np.asarray(indices, dtype=np.int64).reshape(-1)
+    normalized_indptr = np.asarray(indptr, dtype=np.int64).reshape(-1)
+    normalized_shape = tuple(int(dim) for dim in shape)
+    normalized_targets = normalize_targets(targets)
+    dimension = 1 << int(num_qubits)
+
+    if state.size != dimension:
+        raise ValueError("Statevector length must match the simulator qubit count.")
+    if len(normalized_shape) != 2 or normalized_shape[0] != normalized_shape[1]:
+        raise ValueError("Sparse operation matrix must be square.")
+    local_dimension = 1 << len(normalized_targets)
+    if normalized_shape != (local_dimension, local_dimension):
+        raise ValueError("Sparse operation matrix shape must match target wires.")
+    if len(set(normalized_targets)) != len(normalized_targets):
+        raise ValueError("Sparse operation targets must be unique.")
+    if any(target < 0 or target >= int(num_qubits) for target in normalized_targets):
+        raise ValueError("Sparse operation target is out of range.")
+    if normalized_indptr.size != local_dimension + 1:
+        raise ValueError("Sparse operation CSR indptr length must equal rows + 1.")
+    if normalized_data.size != normalized_indices.size:
+        raise ValueError("Sparse operation CSR data and indices lengths must match.")
+    if normalized_indptr[0] != 0 or normalized_indptr[-1] != normalized_data.size:
+        raise ValueError("Sparse operation CSR indptr must start at 0 and end at nnz.")
+
+    out = np.zeros_like(state)
+    for row_index in range(dimension):
+        local_row = 0
+        base_index = int(row_index)
+        for output_bit, target in enumerate(normalized_targets):
+            mask = 1 << target
+            if row_index & mask:
+                local_row |= 1 << output_bit
+            base_index &= ~mask
+
+        row_start = int(normalized_indptr[local_row])
+        row_end = int(normalized_indptr[local_row + 1])
+        if row_end < row_start:
+            raise ValueError("Sparse operation CSR indptr must be monotonic.")
+        for offset in range(row_start, row_end):
+            local_col = int(normalized_indices[offset])
+            if local_col < 0 or local_col >= local_dimension:
+                raise ValueError("Sparse operation CSR column index is out of bounds.")
+            col_index = base_index
+            for output_bit, target in enumerate(normalized_targets):
+                if (local_col >> output_bit) & 1:
+                    col_index |= 1 << target
+            out[row_index] += normalized_data[offset] * state[col_index]
+    return np.ascontiguousarray(out)
+
+
 class RocQuantumRuntime:
     """Small adapter around the public rocquantum_bind simulator surface."""
 
@@ -552,6 +634,59 @@ class RocQuantumRuntime:
             return
 
         raise NotImplementedError("The active rocQuantum binding does not expose controlled matrix application.")
+
+    def apply_sparse_matrix(
+        self,
+        data: object,
+        indices: object,
+        indptr: object,
+        shape: Iterable[int],
+        targets: Iterable[int],
+    ) -> None:
+        normalized_targets = normalize_targets(targets)
+        normalized_data = np.ascontiguousarray(np.asarray(data, dtype=np.complex128).reshape(-1))
+        normalized_indices = np.ascontiguousarray(np.asarray(indices, dtype=np.int64).reshape(-1))
+        normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
+        normalized_shape = tuple(int(dim) for dim in shape)
+
+        native = getattr(self.simulator, "apply_sparse_matrix", None)
+        if callable(native):
+            native(normalized_data, normalized_indices, normalized_indptr, normalized_shape, normalized_targets)
+            return
+
+        legacy = getattr(self.simulator, "ApplySparseMatrix", None)
+        if callable(legacy):
+            legacy(normalized_data, normalized_indices, normalized_indptr, normalized_shape, normalized_targets)
+            return
+
+        if self.batch_size() == 1:
+            self.set_statevector(
+                apply_sparse_matrix_to_statevector(
+                    self.statevector(),
+                    normalized_data,
+                    normalized_indices,
+                    normalized_indptr,
+                    normalized_shape,
+                    normalized_targets,
+                    self.num_qubits(),
+                )
+            )
+            return
+
+        self.set_statevectors(
+            [
+                apply_sparse_matrix_to_statevector(
+                    state,
+                    normalized_data,
+                    normalized_indices,
+                    normalized_indptr,
+                    normalized_shape,
+                    normalized_targets,
+                    self.num_qubits(),
+                )
+                for state in self.statevectors()
+            ]
+        )
 
     def set_statevector(self, statevector: object) -> None:
         normalized_state = np.ascontiguousarray(np.asarray(statevector, dtype=np.complex128).reshape(-1))
