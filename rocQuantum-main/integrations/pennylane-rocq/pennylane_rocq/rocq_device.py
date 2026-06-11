@@ -45,6 +45,7 @@ MATRIX_OPS = {
 }
 DECOMPOSED_OPS = {
     "BasisEmbedding",
+    "ControlledSequence",
     "DiagonalQubitUnitary",
     "GlobalPhase",
     "GroverOperator",
@@ -920,6 +921,144 @@ def _apply_permute(runtime, wire_indices, op):
         )
 
 
+def _controlled_sequence_base(op):
+    base = getattr(op, "base", None)
+    if base is None:
+        base = getattr(op, "hyperparameters", {}).get("base")
+    return base
+
+
+def _controlled_sequence_control_wires(op):
+    control_wires = getattr(op, "control", None)
+    if control_wires is None:
+        control_wires = getattr(op, "control_wires", None)
+    if control_wires is None:
+        control_wires = getattr(op, "hyperparameters", {}).get("control_wires", ())
+    return list(control_wires)
+
+
+def _controlled_sequence_signature(op):
+    base = _controlled_sequence_base(op)
+    if base is None:
+        return None
+    return (
+        base.name,
+        tuple(base.wires),
+        tuple(_controlled_sequence_control_wires(op)),
+    )
+
+
+def _apply_controlled_sequence_power(runtime, base_name, control_index, target_index, power, params):
+    if base_name in {"RX", "RY", "RZ", "PhaseShift"} and len(params) == 1:
+        theta = params[0] * power
+        if base_name == "RX":
+            runtime.apply_operation("CRX", [control_index, target_index], [theta])
+        elif base_name == "RY":
+            runtime.apply_operation("CRY", [control_index, target_index], [theta])
+        elif base_name == "RZ":
+            runtime.apply_operation("CRZ", [control_index, target_index], [theta])
+        else:
+            _apply_controlled_phase_shift(runtime, [control_index, target_index], theta)
+        return True
+
+    if params:
+        return False
+
+    if base_name == "PauliX":
+        if power % 2:
+            runtime.apply_operation("CNOT", [control_index, target_index])
+        return True
+    if base_name == "PauliY":
+        if power % 2:
+            _apply_cy(runtime, [control_index, target_index])
+        return True
+    if base_name == "PauliZ":
+        if power % 2:
+            runtime.apply_operation("CZ", [control_index, target_index])
+        return True
+    if base_name == "Hadamard":
+        if power % 2:
+            _apply_ch(runtime, [control_index, target_index])
+        return True
+    if base_name == "S":
+        _apply_controlled_phase_shift(runtime, [control_index, target_index], power * np.pi / 2)
+        return True
+    if base_name == "T":
+        _apply_controlled_phase_shift(runtime, [control_index, target_index], power * np.pi / 4)
+        return True
+
+    return False
+
+
+def _apply_controlled_sequence_power_batch(runtime, base_name, control_index, target_index, power, params_by_op):
+    if base_name in {"RX", "RY", "RZ", "PhaseShift"} and all(len(params) == 1 for params in params_by_op):
+        thetas = [params[0] * power for params in params_by_op]
+        if base_name == "RX":
+            runtime.apply_operation_batch("CRX", [control_index, target_index], thetas)
+        elif base_name == "RY":
+            runtime.apply_operation_batch("CRY", [control_index, target_index], thetas)
+        elif base_name == "RZ":
+            runtime.apply_operation_batch("CRZ", [control_index, target_index], thetas)
+        else:
+            _apply_controlled_phase_shift_batch(runtime, [control_index, target_index], thetas)
+        return True
+
+    if any(params for params in params_by_op):
+        return False
+
+    return _apply_controlled_sequence_power(
+        runtime,
+        base_name,
+        control_index,
+        target_index,
+        power,
+        [],
+    )
+
+
+def _apply_controlled_sequence(runtime, op, wire_map, params=None):
+    base = _controlled_sequence_base(op)
+    control_wires = _controlled_sequence_control_wires(op)
+    if base is None or len(base.wires) != 1 or not control_wires:
+        return False
+
+    target_index = wire_map[base.wires[0]]
+    base_params = list(getattr(base, "parameters", [])) if params is None else list(params)
+    powers = [2**index for index in range(len(control_wires))]
+    for power, control_wire in zip(reversed(powers), control_wires):
+        if not _apply_controlled_sequence_power(
+            runtime,
+            base.name,
+            wire_map[control_wire],
+            target_index,
+            power,
+            base_params,
+        ):
+            return False
+    return True
+
+
+def _apply_controlled_sequence_batch(runtime, reference_op, wire_map, params_by_op):
+    base = _controlled_sequence_base(reference_op)
+    control_wires = _controlled_sequence_control_wires(reference_op)
+    if base is None or len(base.wires) != 1 or not control_wires:
+        return False
+
+    target_index = wire_map[base.wires[0]]
+    powers = [2**index for index in range(len(control_wires))]
+    for power, control_wire in zip(reversed(powers), control_wires):
+        if not _apply_controlled_sequence_power_batch(
+            runtime,
+            base.name,
+            wire_map[control_wire],
+            target_index,
+            power,
+            params_by_op,
+        ):
+            return False
+    return True
+
+
 def _apply_qft(runtime, wire_indices):
     if not wire_indices:
         raise ValueError("QFT requires at least one wire.")
@@ -1497,6 +1636,9 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
         _apply_permute(runtime, wire_indices, op)
         return True
 
+    if gate_name == "ControlledSequence" and op is not None and wire_map is not None:
+        return _apply_controlled_sequence(runtime, op, wire_map, params=params)
+
     if gate_name == "QubitSum" and not params:
         _apply_qubit_sum(runtime, wire_indices)
         return True
@@ -1834,6 +1976,12 @@ class RocQDevice(QubitDevice):
             ):
                 return None
 
+            if gate_name == "ControlledSequence" and any(
+                _controlled_sequence_signature(op) != _controlled_sequence_signature(reference_op)
+                for op in ops[1:]
+            ):
+                return None
+
             if gate_name == "BasisState":
                 if op_index != 0:
                     return None
@@ -1882,6 +2030,16 @@ class RocQDevice(QubitDevice):
                     return None
                 _apply_basis_embedding(self._runtime, wire_indices, bits_by_op[0])
                 continue
+
+            if gate_name == "ControlledSequence":
+                if _apply_controlled_sequence_batch(
+                    self._runtime,
+                    reference_op,
+                    self.wire_map,
+                    params_by_op,
+                ):
+                    continue
+                return None
 
             if gate_name == "DiagonalQubitUnitary" and all(len(params) == 1 for params in params_by_op):
                 diagonals = [params[0] for params in params_by_op]
@@ -2566,6 +2724,18 @@ class RocQDevice(QubitDevice):
             elif gate_name == "Permute":
                 try:
                     _apply_permute(self._runtime, wire_indices, op)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "ControlledSequence":
+                try:
+                    if not _apply_controlled_sequence(self._runtime, op, self.wire_map):
+                        raise NotImplementedError
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(

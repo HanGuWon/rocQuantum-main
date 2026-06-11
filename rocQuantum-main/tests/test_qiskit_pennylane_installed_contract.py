@@ -2852,6 +2852,39 @@ def test_pennylane_batch_execute_keeps_permutation_templates_batched(monkeypatch
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_batches_controlled_sequence_sweeps(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.ControlledSequence(qml.RX(0.2, wires=2), control=[0, 1])],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [qml.ControlledSequence(qml.RX(0.8, wires=2), control=[0, 1])],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [
+        ("CRX", (0, 2), (0.4, 1.6)),
+        ("CRX", (1, 2), (0.2, 0.8)),
+    ]
+    assert sim.ops == []
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_keeps_arithmetic_templates_batched(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -4137,6 +4170,41 @@ def test_pennylane_permutation_templates_decompose_natively(monkeypatch):
         ("X", (2,), ()),
         ("SWAP", (0, 2), ()),
         ("SWAP", (1, 2), ()),
+    ]
+    assert sim.matrices == []
+
+
+def test_pennylane_controlled_sequence_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.ControlledSequence(qml.RX(0.2, wires=2), control=[0, 1])
+        qml.ControlledSequence(qml.PhaseShift(0.3, wires=2), control=[0, 1])
+        qml.ControlledSequence(qml.Hadamard(wires=2), control=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops[:6] == [
+        ("CRX", (0, 2), (0.4,)),
+        ("CRX", (1, 2), (0.2,)),
+        ("CP", (0, 2), (0.6,)),
+        ("CP", (1, 2), (0.3,)),
+        ("RY", (2,), (np.pi / 4,)),
+        ("CNOT", (1, 2), ()),
+    ]
+    assert sim.ops[6:] == [
+        ("RY", (2,), (-np.pi / 4,)),
     ]
     assert sim.matrices == []
 
