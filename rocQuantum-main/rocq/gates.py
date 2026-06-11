@@ -47,6 +47,18 @@ def cz(control, target):
 def swap(qubit_a, qubit_b):
     _KernelBuildContext.add_gate("swap", [qubit_a, qubit_b])
 
+def ccx(control_a, control_b, target):
+    _KernelBuildContext.add_gate("ccx", [control_a, control_b, target])
+
+def toffoli(control_a, control_b, target):
+    _KernelBuildContext.add_gate("ccx", [control_a, control_b, target])
+
+def cswap(control, target_a, target_b):
+    _KernelBuildContext.add_gate("cswap", [control, target_a, target_b])
+
+def fredkin(control, target_a, target_b):
+    _KernelBuildContext.add_gate("cswap", [control, target_a, target_b])
+
 def crx(angle, control, target):
     _KernelBuildContext.add_gate("crx", [control, target], params={"theta": angle})
 

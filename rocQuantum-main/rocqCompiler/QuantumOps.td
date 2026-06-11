@@ -60,6 +60,12 @@ def CzOp : Quantum_Op<"cz", [NoSideEffect]> {
 def SwapOp : Quantum_Op<"swap", [NoSideEffect]> {
   let arguments = (ins QubitType:$lhs, QubitType:$rhs);
 }
+def CcxOp : Quantum_Op<"ccx", [NoSideEffect]> {
+  let arguments = (ins QubitType:$control0, QubitType:$control1, QubitType:$target);
+}
+def CswapOp : Quantum_Op<"cswap", [NoSideEffect]> {
+  let arguments = (ins QubitType:$control, QubitType:$lhs, QubitType:$rhs);
+}
 def RxOp : Quantum_Op<"rx", [NoSideEffect]> {
   let arguments = (ins F64Attr:$angle, QubitType:$target);
 }

@@ -76,6 +76,8 @@ struct QuantumToSimulatorPass : public mlir::PassWrapper<QuantumToSimulatorPass,
         patterns.add<GateLoweringPattern<rocq::mlir::quantum::TOp>>(&getContext(), "t");
         patterns.add<GateLoweringPattern<rocq::mlir::quantum::CzOp>>(&getContext(), "cz");
         patterns.add<GateLoweringPattern<rocq::mlir::quantum::SwapOp>>(&getContext(), "swap");
+        patterns.add<GateLoweringPattern<rocq::mlir::quantum::CcxOp>>(&getContext(), "ccx");
+        patterns.add<GateLoweringPattern<rocq::mlir::quantum::CswapOp>>(&getContext(), "cswap");
         patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RxOp>>(&getContext(), "rx");
         patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RyOp>>(&getContext(), "ry");
         patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RzOp>>(&getContext(), "rz");

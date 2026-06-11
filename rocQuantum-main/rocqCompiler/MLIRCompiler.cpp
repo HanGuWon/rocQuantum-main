@@ -45,7 +45,7 @@ struct ExecutableOp {
 };
 
 std::string supported_compile_execute_subset() {
-    return "supported subset: quantum.qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP, "
+    return "supported subset: quantum.qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/CSWAP, "
            "RX/RY/RZ, CRX/CRY/CRZ";
 }
 
@@ -104,6 +104,13 @@ std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned
         {"quantum.cry", 2},
         {"quantum.crz", 2},
     };
+    static const std::unordered_map<std::string, unsigned> fixed_arity_gates = {
+        {"quantum.cnot", 2},
+        {"quantum.cz", 2},
+        {"quantum.swap", 2},
+        {"quantum.ccx", 3},
+        {"quantum.cswap", 3},
+    };
 
     module.walk([&](mlir::Operation* op) {
         const std::string op_name = op->getName().getStringRef().str();
@@ -149,14 +156,10 @@ std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned
             return;
         }
 
-        if (op_name == "quantum.cnot") {
-            executable_ops.push_back({"cnot", resolve_targets(op, qubit_indices, 2)});
-            return;
-        }
-
-        if (op_name == "quantum.cz" || op_name == "quantum.swap") {
+        auto fixed_it = fixed_arity_gates.find(op_name);
+        if (fixed_it != fixed_arity_gates.end()) {
             executable_ops.push_back({op_name.substr(std::string("quantum.").size()),
-                                      resolve_targets(op, qubit_indices, 2)});
+                                      resolve_targets(op, qubit_indices, fixed_it->second)});
             return;
         }
 

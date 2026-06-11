@@ -81,6 +81,10 @@ class QuantumKernel:
         "cx": ("quantum.cnot", 2),
         "cz": ("quantum.cz", 2),
         "swap": ("quantum.swap", 2),
+        "ccx": ("quantum.ccx", 3),
+        "toffoli": ("quantum.ccx", 3),
+        "cswap": ("quantum.cswap", 3),
+        "fredkin": ("quantum.cswap", 3),
     }
     _PARAM_GATE_TO_MLIR = {
         "rx": ("quantum.rx", 1),

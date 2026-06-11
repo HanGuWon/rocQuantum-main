@@ -63,7 +63,7 @@ class TestLoweringCoverage(unittest.TestCase):
         path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "passes", "QuantumToSimulatorPass.cpp")
         with open(path, "r", encoding="utf-8") as f:
             src = f.read()
-        for token in ["SOp", "SdgOp", "TOp", "CzOp", "SwapOp"]:
+        for token in ["SOp", "SdgOp", "TOp", "CzOp", "SwapOp", "CcxOp", "CswapOp"]:
             self.assertIn(token, src)
 
 
@@ -90,13 +90,15 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("quantum.cz", src)
         self.assertIn("quantum.swap", src)
         self.assertIn("quantum.cnot", src)
+        self.assertIn("quantum.ccx", src)
+        self.assertIn("quantum.cswap", src)
 
     def test_binding_documents_compile_and_execute_mvp(self):
         path = os.path.join(_PROJECT_ROOT, "bindings.cpp")
         with open(path, "r", encoding="utf-8") as f:
             src = f.read()
 
-        self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP, RX/RY/RZ, CRX/CRY/CRZ", src)
+        self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T, CNOT/CZ/SWAP/CCX/CSWAP, RX/RY/RZ, CRX/CRY/CRZ", src)
         self.assertIn("Unsupported ops raise actionable diagnostics", src)
         self.assertNotIn("Stub API", src)
 
@@ -178,18 +180,39 @@ class TestKernelMlirEmission(unittest.TestCase):
         self.assertIn('"quantum.cz"(%q0, %q1)', mlir_str)
         self.assertIn('"quantum.swap"(%q0, %q1)', mlir_str)
 
+    def test_multi_control_gates_emit_mlir(self):
+        from rocq.kernel import QuantumKernel
+        from rocq.qvec import qvec
+        from rocq.gates import ccx, cswap, fredkin, toffoli
+
+        @QuantumKernel
+        def multi_control_program():
+            q = qvec(5)
+            ccx(q[0], q[1], q[2])
+            toffoli(q[1], q[2], q[3])
+            cswap(q[0], q[3], q[4])
+            fredkin(q[2], q[0], q[4])
+
+        mlir_str = multi_control_program.mlir()
+        self.assertIn('"quantum.ccx"(%q0, %q1, %q2)', mlir_str)
+        self.assertIn('"quantum.ccx"(%q1, %q2, %q3)', mlir_str)
+        self.assertIn('"quantum.cswap"(%q0, %q3, %q4)', mlir_str)
+        self.assertIn('"quantum.cswap"(%q2, %q0, %q4)', mlir_str)
+
     def test_emitted_ops_exist_in_quantum_dialect(self):
         from rocq.kernel import QuantumKernel
         from rocq.qvec import qvec
-        from rocq.gates import cnot, h, rx, z
+        from rocq.gates import ccx, cnot, cswap, h, rx, z
 
         @QuantumKernel
         def dialect_covered():
-            q = qvec(2)
+            q = qvec(4)
             h(q[0])
             z(q[1])
             cnot(q[0], q[1])
-            rx(0.75, q[1])
+            ccx(q[0], q[1], q[2])
+            cswap(q[0], q[2], q[3])
+            rx(0.75, q[3])
 
         mlir_str = dialect_covered.mlir()
 
