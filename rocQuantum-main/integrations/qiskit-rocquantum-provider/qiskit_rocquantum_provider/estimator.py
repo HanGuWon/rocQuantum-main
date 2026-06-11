@@ -88,7 +88,24 @@ def _dense_operator_plan(observable, num_qubits: int):
             "Dense Qiskit Operator dimension must equal 2^k for some k <= circuit qubits."
         )
 
-    return matrix, list(range(target_qubits))
+    input_dims = tuple(int(dim) for dim in observable.input_dims())
+    output_dims = tuple(int(dim) for dim in observable.output_dims())
+    if input_dims != output_dims:
+        raise ValueError("Dense Qiskit Operator observables must have matching input/output dimensions.")
+    if len(input_dims) > int(num_qubits):
+        raise ValueError("Dense Qiskit Operator dimension metadata exceeds circuit qubits.")
+    if any(dim not in {1, 2} for dim in input_dims):
+        raise ValueError("Dense Qiskit Operator dimensions must describe qubit or trivial axes.")
+
+    targets = [
+        qubit
+        for qubit, dim in enumerate(reversed(input_dims))
+        if dim == 2
+    ]
+    if len(targets) != target_qubits:
+        raise ValueError("Dense Qiskit Operator dimension metadata does not match matrix size.")
+
+    return matrix, targets
 
 
 def _is_dense_operator_observable(observable) -> bool:

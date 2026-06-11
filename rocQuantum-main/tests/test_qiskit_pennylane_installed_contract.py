@@ -2159,6 +2159,33 @@ def test_qiskit_estimator_partial_dense_operator_uses_matrix_targets(monkeypatch
     np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -0.5]))
 
 
+def test_qiskit_estimator_dense_operator_uses_dimension_metadata_targets(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable
+
+    class Runtime:
+        def __init__(self):
+            self.calls = []
+
+        def expectation_matrix(self, matrix, targets):
+            self.calls.append((np.asarray(matrix, dtype=np.complex128), tuple(targets)))
+            return 0.75 + 0.0j
+
+    runtime = Runtime()
+    observable = Operator(
+        np.diag([1.0, -0.5]).astype(np.complex128),
+        input_dims=(2, 1),
+        output_dims=(2, 1),
+    )
+
+    assert estimate_observable(runtime, observable, 2) == pytest.approx(0.75)
+    assert runtime.calls[0][1] == (1,)
+    np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -0.5]))
+
+
 def test_qiskit_native_estimator_accepts_dense_operator(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
