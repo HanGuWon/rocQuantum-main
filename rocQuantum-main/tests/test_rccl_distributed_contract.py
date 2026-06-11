@@ -77,6 +77,8 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("handle->distributedSwapBuffers", source)
         self.assertIn("handle->distributedStreams", source)
         self.assertIn("apply_sparse_matrix_kernel", source)
+        self.assertIn("apply_sparse_matrix_distributed_host_fallback", source)
+        self.assertIn("apply_sparse_matrix_host_state_impl", source)
 
 
 if __name__ == "__main__":

@@ -1246,6 +1246,78 @@ inline rocqStatus_t copy_matrix_from_device(const rocComplex* matrixDevice,
                                stream);
 }
 
+inline rocqStatus_t copy_sparse_matrix_from_device(const rocComplex* dataDevice,
+                                                   const size_t* indicesDevice,
+                                                   const size_t* indptrDevice,
+                                                   size_t rows,
+                                                   size_t nnz,
+                                                   hipStream_t stream,
+                                                   std::vector<rocComplex>* hostData,
+                                                   std::vector<size_t>* hostIndices,
+                                                   std::vector<size_t>* hostIndptr) {
+    if (!indptrDevice || !hostData || !hostIndices || !hostIndptr ||
+        rows == std::numeric_limits<size_t>::max()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (nnz > 0 && (!dataDevice || !indicesDevice)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    hostData->assign(nnz, make_complex(0.0, 0.0));
+    hostIndices->assign(nnz, 0);
+    hostIndptr->assign(rows + 1, 0);
+
+    rocqStatus_t status = ROCQ_STATUS_SUCCESS;
+    if (nnz > 0) {
+        status = copy_device_to_host(hostData->data(),
+                                     dataDevice,
+                                     nnz * sizeof(rocComplex),
+                                     stream);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+
+        status = copy_device_to_host(hostIndices->data(),
+                                     indicesDevice,
+                                     nnz * sizeof(size_t),
+                                     stream);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+    }
+
+    return copy_device_to_host(hostIndptr->data(),
+                               indptrDevice,
+                               hostIndptr->size() * sizeof(size_t),
+                               stream);
+}
+
+inline rocqStatus_t validate_sparse_matrix_host_csr(const std::vector<rocComplex>& data,
+                                                    const std::vector<size_t>& indices,
+                                                    const std::vector<size_t>& indptr,
+                                                    size_t rows,
+                                                    size_t cols,
+                                                    size_t nnz) {
+    if (rows == 0 || cols == 0 || rows != cols ||
+        data.size() != nnz || indices.size() != nnz || indptr.size() != rows + 1) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (indptr.empty() || indptr.front() != 0 || indptr.back() != nnz) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    for (size_t row = 0; row < rows; ++row) {
+        if (indptr[row] > indptr[row + 1]) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+    for (size_t col : indices) {
+        if (col >= cols) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
 inline size_t compose_basis_index(size_t baseIdx,
                                   size_t targetConfiguration,
                                   const std::vector<unsigned>& targetQubits) {
@@ -1472,6 +1544,86 @@ rocqStatus_t apply_matrix_host_state_impl(std::vector<rocComplex>* host_state,
     return ROCQ_STATUS_SUCCESS;
 }
 
+rocqStatus_t apply_sparse_matrix_host_state_impl(std::vector<rocComplex>* host_state,
+                                                 unsigned numQubits,
+                                                 const std::vector<unsigned>& targetQubits,
+                                                 const std::vector<rocComplex>& data,
+                                                 const std::vector<size_t>& indices,
+                                                 const std::vector<size_t>& indptr,
+                                                 size_t rows,
+                                                 size_t cols) {
+    if (!host_state || targetQubits.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t stateElements = 0;
+    if (!compute_power_of_two(numQubits, &stateElements) || host_state->size() != stateElements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t matrixDim = 0;
+    if (!compute_power_of_two(static_cast<unsigned>(targetQubits.size()), &matrixDim) ||
+        rows != matrixDim || cols != matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocqStatus_t status =
+        validate_sparse_matrix_host_csr(data, indices, indptr, rows, cols, data.size());
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    std::vector<char> isTarget(numQubits, 0);
+    for (unsigned q : targetQubits) {
+        if (!validate_qubit_index(q, numQubits)) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        isTarget[q] = 1;
+    }
+
+    std::vector<unsigned> nonTargetQubits;
+    nonTargetQubits.reserve(numQubits - static_cast<unsigned>(targetQubits.size()));
+    for (unsigned q = 0; q < numQubits; ++q) {
+        if (!isTarget[q]) {
+            nonTargetQubits.push_back(q);
+        }
+    }
+
+    size_t nonTargetConfigs = 0;
+    if (!compute_power_of_two(static_cast<unsigned>(nonTargetQubits.size()), &nonTargetConfigs)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> output_state(stateElements, make_complex(0.0, 0.0));
+    for (size_t config = 0; config < nonTargetConfigs; ++config) {
+        size_t baseIdx = 0;
+        for (size_t bit = 0; bit < nonTargetQubits.size(); ++bit) {
+            if ((config >> bit) & 1ULL) {
+                baseIdx |= (size_t{1} << nonTargetQubits[bit]);
+            }
+        }
+
+        for (size_t local_row = 0; local_row < rows; ++local_row) {
+            double accum_re = 0.0;
+            double accum_im = 0.0;
+            for (size_t offset = indptr[local_row]; offset < indptr[local_row + 1]; ++offset) {
+                const size_t col_index = compose_basis_index(baseIdx, indices[offset], targetQubits);
+                const rocComplex ket = (*host_state)[col_index];
+                const rocComplex value = data[offset];
+                accum_re += static_cast<double>(value.x) * static_cast<double>(ket.x) -
+                            static_cast<double>(value.y) * static_cast<double>(ket.y);
+                accum_im += static_cast<double>(value.x) * static_cast<double>(ket.y) +
+                            static_cast<double>(value.y) * static_cast<double>(ket.x);
+            }
+            const size_t row_index = compose_basis_index(baseIdx, local_row, targetQubits);
+            output_state[row_index] = make_complex(accum_re, accum_im);
+        }
+    }
+
+    *host_state = std::move(output_state);
+    return ROCQ_STATUS_SUCCESS;
+}
+
 rocqStatus_t apply_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
                                                     unsigned numQubits,
                                                     const std::vector<unsigned>& targetQubits,
@@ -1495,6 +1647,79 @@ rocqStatus_t apply_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
                                           targetQubits,
                                           controlQubits,
                                           matrixHost);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    return scatter_host_state_to_distributed(handle, host_full);
+}
+
+rocqStatus_t apply_sparse_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
+                                                           unsigned numQubits,
+                                                           const std::vector<unsigned>& targetQubits,
+                                                           const rocComplex* d_data,
+                                                           const size_t* d_indices,
+                                                           const size_t* d_indptr,
+                                                           size_t rows,
+                                                           size_t cols,
+                                                           size_t nnz) {
+    if (!distributed_host_fallback_enabled()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !handle->distributedMode || numQubits != handle->globalNumQubits ||
+        handle->distributedDeviceIds.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    int original_device = 0;
+    if (hipGetDevice(&original_device) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    auto restore_device = [&]() {
+        (void)hipSetDevice(original_device);
+    };
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        restore_device();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    std::vector<rocComplex> data;
+    std::vector<size_t> indices;
+    std::vector<size_t> indptr;
+    rocqStatus_t status = copy_sparse_matrix_from_device(d_data,
+                                                         d_indices,
+                                                         d_indptr,
+                                                         rows,
+                                                         nnz,
+                                                         handle->streams[0],
+                                                         &data,
+                                                         &indices,
+                                                         &indptr);
+    restore_device();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    status = validate_sparse_matrix_host_csr(data, indices, indptr, rows, cols, nnz);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    std::vector<rocComplex> host_full;
+    status = gather_distributed_state_to_host(handle, &host_full);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    status = apply_sparse_matrix_host_state_impl(&host_full,
+                                                 numQubits,
+                                                 targetQubits,
+                                                 data,
+                                                 indices,
+                                                 indptr,
+                                                 rows,
+                                                 cols);
     if (status != ROCQ_STATUS_SUCCESS) {
         return status;
     }
@@ -3465,6 +3690,7 @@ inline rocqStatus_t apply_sparse_matrix_distributed_local(rocsvInternalHandle* h
                                                           const size_t* d_indices,
                                                           const size_t* d_indptr,
                                                           size_t rows,
+                                                          size_t cols,
                                                           size_t nnz) {
     if (!handle || handle->distributedGpuCount <= 0 || handle->localSliceElements == 0) {
         return ROCQ_STATUS_INVALID_VALUE;
@@ -3480,7 +3706,15 @@ inline rocqStatus_t apply_sparse_matrix_distributed_local(rocsvInternalHandle* h
         return ROCQ_STATUS_INVALID_VALUE;
     }
     if (!distributed_all_qubits_local(handle, targets)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        return apply_sparse_matrix_distributed_host_fallback(handle,
+                                                             numQubits,
+                                                             targets,
+                                                             d_data,
+                                                             d_indices,
+                                                             d_indptr,
+                                                             rows,
+                                                             cols,
+                                                             nnz);
     }
 
     int original_device = 0;
@@ -3496,39 +3730,18 @@ inline rocqStatus_t apply_sparse_matrix_distributed_local(rocsvInternalHandle* h
         return ROCQ_STATUS_HIP_ERROR;
     }
 
-    std::vector<rocComplex> h_data(nnz);
-    if (nnz > 0) {
-        rocqStatus_t status = copy_device_to_host(h_data.data(),
-                                                  d_data,
-                                                  nnz * sizeof(rocComplex),
-                                                  handle->streams[0]);
-        if (status != ROCQ_STATUS_SUCCESS) {
-            restore_device();
-            return status;
-        }
-    }
-
-    std::vector<size_t> h_indices(nnz);
-    if (nnz > 0) {
-        rocqStatus_t status = copy_device_to_host(h_indices.data(),
-                                                  d_indices,
-                                                  nnz * sizeof(size_t),
-                                                  handle->streams[0]);
-        if (status != ROCQ_STATUS_SUCCESS) {
-            restore_device();
-            return status;
-        }
-    }
-
-    if (rows == std::numeric_limits<size_t>::max()) {
-        restore_device();
-        return ROCQ_STATUS_INVALID_VALUE;
-    }
-    std::vector<size_t> h_indptr(rows + 1);
-    rocqStatus_t status = copy_device_to_host(h_indptr.data(),
-                                              d_indptr,
-                                              h_indptr.size() * sizeof(size_t),
-                                              handle->streams[0]);
+    std::vector<rocComplex> h_data;
+    std::vector<size_t> h_indices;
+    std::vector<size_t> h_indptr;
+    rocqStatus_t status = copy_sparse_matrix_from_device(d_data,
+                                                         d_indices,
+                                                         d_indptr,
+                                                         rows,
+                                                         nnz,
+                                                         handle->streams[0],
+                                                         &h_data,
+                                                         &h_indices,
+                                                         &h_indptr);
     if (status != ROCQ_STATUS_SUCCESS) {
         restore_device();
         return status;
@@ -5374,6 +5587,7 @@ rocqStatus_t rocsvApplySparseMatrix(rocsvHandle_t handle,
                                                      d_indices,
                                                      d_indptr,
                                                      rows,
+                                                     cols,
                                                      nnz);
     }
 

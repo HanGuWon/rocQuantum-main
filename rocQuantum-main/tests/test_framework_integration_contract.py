@@ -424,6 +424,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("rocsvApplySparseMatrix", hipstatevec)
         self.assertIn("apply_sparse_matrix_kernel", hipstatevec)
         self.assertIn("apply_sparse_matrix_distributed_local", hipstatevec)
+        self.assertIn("apply_sparse_matrix_distributed_host_fallback", hipstatevec)
+        self.assertIn("copy_sparse_matrix_from_device", hipstatevec)
         self.assertIn("distributed_all_qubits_local(handle, targets)", hipstatevec)
         self.assertIn("handle->distributedSwapBuffers", hipstatevec)
         self.assertIn("hipMemcpyDeviceToDevice", hipstatevec)

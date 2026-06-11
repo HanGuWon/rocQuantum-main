@@ -66,11 +66,14 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("ROCQ_DISTRIBUTED_FALLBACK_MODE", source)
         self.assertIn("ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK", source)
         self.assertIn("apply_matrix_distributed_host_fallback", source)
+        self.assertIn("apply_sparse_matrix_distributed_host_fallback", source)
+        self.assertIn("apply_sparse_matrix_host_state_impl", source)
         self.assertGreaterEqual(
             source.count("return apply_matrix_distributed_host_fallback"),
             7,
             "Distributed single/control/matrix fallbacks should share the same explicit host path.",
         )
+        self.assertIn("return apply_sparse_matrix_distributed_host_fallback", source)
         self.assertGreaterEqual(source.count("distributed_host_fallback_enabled()"), 3)
 
 
