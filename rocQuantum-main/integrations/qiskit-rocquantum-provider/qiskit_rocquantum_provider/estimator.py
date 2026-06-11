@@ -59,7 +59,7 @@ def _observable_terms(observable, num_qubits: int | None = None):
     raise TypeError(f"Unsupported Qiskit observable type: {type(observable)!r}")
 
 
-def _dense_operator_matrix(observable, num_qubits: int):
+def _dense_operator_plan(observable, num_qubits: int):
     try:
         from qiskit.quantum_info import Operator
     except ImportError as exc:
@@ -69,13 +69,26 @@ def _dense_operator_matrix(observable, num_qubits: int):
         return None
 
     matrix = np.ascontiguousarray(np.asarray(observable.data, dtype=np.complex128))
-    expected_dim = 1 << int(num_qubits)
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+        raise ValueError("Dense Qiskit Operator observables must be square matrices.")
+
+    dimension = int(matrix.shape[0])
+    if dimension == 0 or dimension & (dimension - 1):
+        raise ValueError("Dense Qiskit Operator dimension must be a power of two.")
+
+    target_qubits = dimension.bit_length() - 1
+    if target_qubits == 0:
+        raise ValueError("Dense Qiskit Operator observables must act on at least one qubit.")
+    if target_qubits > int(num_qubits):
+        raise ValueError("Dense Qiskit Operator observable acts on more qubits than the circuit.")
+
+    expected_dim = 1 << target_qubits
     if matrix.shape != (expected_dim, expected_dim):
         raise ValueError(
-            "Dense Qiskit Operator observables must act on all circuit qubits. "
-            "Use SparsePauliOp/Pauli for padded or partial observables."
+            "Dense Qiskit Operator dimension must equal 2^k for some k <= circuit qubits."
         )
-    return matrix
+
+    return matrix, list(range(target_qubits))
 
 
 def _is_dense_operator_observable(observable) -> bool:
@@ -207,14 +220,16 @@ def _observable_signature(observable, num_qubits: int):
 
 
 def _observable_plan(observable, num_qubits: int):
-    matrix = _dense_operator_matrix(observable, int(num_qubits))
-    if matrix is not None:
+    dense_plan = _dense_operator_plan(observable, int(num_qubits))
+    if dense_plan is not None:
+        matrix, targets = dense_plan
         cache_key = (
             "matrix",
+            tuple(targets),
             matrix.shape,
             tuple(complex(value) for value in matrix.reshape(-1)),
         )
-        return cache_key, ("matrix", matrix)
+        return cache_key, ("matrix", (matrix, tuple(targets)))
 
     signature = _observable_signature(observable, int(num_qubits))
     return ("pauli", signature), ("pauli", signature)
@@ -256,7 +271,8 @@ def _estimate_observable_plan(runtime, plan, num_qubits: int) -> float:
         return _estimate_combined_observable_terms(runtime, payload, int(num_qubits))
 
     if kind == "matrix":
-        result = runtime.expectation_matrix(payload, list(range(int(num_qubits))))
+        matrix, targets = payload
+        result = runtime.expectation_matrix(matrix, targets)
         real_result = np.real_if_close(result)
         if np.iscomplexobj(real_result):
             raise ValueError("Observable expectation has a non-negligible imaginary component.")
@@ -271,7 +287,8 @@ def _estimate_observable_plan_batch(runtime, plan, num_qubits: int) -> np.ndarra
         return _estimate_combined_observable_terms_batch(runtime, payload, int(num_qubits))
 
     if kind == "matrix":
-        result = runtime.expectation_matrix_batch(payload, list(range(int(num_qubits))))
+        matrix, targets = payload
+        result = runtime.expectation_matrix_batch(matrix, targets)
         real_result = np.real_if_close(result)
         if np.iscomplexobj(real_result):
             raise ValueError("Observable expectation has a non-negligible imaginary component.")

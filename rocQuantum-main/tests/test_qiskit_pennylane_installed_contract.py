@@ -1474,6 +1474,29 @@ def test_qiskit_estimator_dense_operator_batch_helper_uses_matrix_batch(monkeypa
     np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -1.0]))
 
 
+def test_qiskit_estimator_partial_dense_operator_uses_matrix_targets(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable
+
+    class Runtime:
+        def __init__(self):
+            self.calls = []
+
+        def expectation_matrix(self, matrix, targets):
+            self.calls.append((np.asarray(matrix, dtype=np.complex128), tuple(targets)))
+            return 0.25 + 0.0j
+
+    runtime = Runtime()
+    observable = Operator(np.diag([1.0, -0.5]).astype(np.complex128))
+
+    assert estimate_observable(runtime, observable, 2) == pytest.approx(0.25)
+    assert runtime.calls[0][1] == (0,)
+    np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -0.5]))
+
+
 def test_qiskit_native_estimator_accepts_dense_operator(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -1492,6 +1515,29 @@ def test_qiskit_native_estimator_accepts_dense_operator(monkeypatch):
 
     assert float(result.data.evs) == pytest.approx(1.0)
     assert result.metadata["native"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.matrix_expectations[0][1] == (0,)
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+
+
+def test_qiskit_native_estimator_accepts_partial_dense_operator(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(2)
+    observable = Operator(np.diag([1.0, -0.5]).astype(np.complex128))
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable)],
+    ).result()[0]
+
+    assert float(result.data.evs) == pytest.approx(0.25)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations[0][1] == (0,)
     assert sim.expectations == []
@@ -1595,6 +1641,26 @@ def test_qiskit_provider_estimates_dense_operator_natively(monkeypatch):
     assert provider.estimate_expectation(circuit, observable) == pytest.approx(1.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations[0][1] == (0, 1)
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+
+
+def test_qiskit_provider_estimates_partial_dense_operator_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    circuit = QuantumCircuit(2)
+    observable = Operator(np.diag([1.0, -0.5]).astype(np.complex128))
+
+    assert provider.estimate_expectation(circuit, observable) == pytest.approx(0.25)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.matrix_expectations[0][1] == (0,)
     assert sim.expectations == []
     assert sim.statevector_reads == 0
 
