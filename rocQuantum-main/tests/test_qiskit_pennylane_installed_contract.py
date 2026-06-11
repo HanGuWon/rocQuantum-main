@@ -577,6 +577,55 @@ def test_qiskit_backend_samples_switch_case_default_branch(monkeypatch):
     assert sim.measurements == []
 
 
+def test_qiskit_backend_samples_static_for_loop(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.measure_qubit_results = [0, 0]
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(2, 2)
+    if not hasattr(circuit, "for_loop"):
+        pytest.skip("Qiskit version does not expose QuantumCircuit.for_loop")
+
+    circuit.measure(0, 0)
+    with circuit.for_loop(range(2)):
+        circuit.x(1)
+    circuit.measure(1, 1)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuit, shots=1, memory=True, statevector=False).result()
+
+    assert result.get_counts() == {"00": 1}
+    assert result.get_memory() == ["00"]
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("X", (1,), ()), ("X", (1,), ())]
+    assert sim.measure_qubits == [0, 1]
+    assert sim.measurements == []
+
+
+def test_qiskit_backend_rejects_parameterized_for_loop(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1, 1)
+    if not hasattr(circuit, "for_loop"):
+        pytest.skip("Qiskit version does not expose QuantumCircuit.for_loop")
+
+    loop_parameter = Parameter("i")
+    with circuit.for_loop(range(2), loop_parameter):
+        circuit.rx(loop_parameter, 0)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    with pytest.raises(NotImplementedError, match="parameterized for_loop"):
+        backend.run(circuit, statevector=False).result()
+
+
 def test_qiskit_backend_rejects_statevector_for_if_else(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -597,7 +646,7 @@ def test_qiskit_backend_rejects_statevector_for_if_else(monkeypatch):
         backend.run(circuit, statevector=True).result()
 
 
-def test_qiskit_backend_rejects_unsupported_control_flow_operations(monkeypatch):
+def test_qiskit_backend_rejects_unsupported_while_loop_operations(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
 
@@ -605,14 +654,14 @@ def test_qiskit_backend_rejects_unsupported_control_flow_operations(monkeypatch)
     from qiskit_rocquantum_provider import RocQuantumProvider
 
     circuit = QuantumCircuit(1, 1)
-    if not hasattr(circuit, "for_loop"):
-        pytest.skip("Qiskit version does not expose QuantumCircuit.for_loop")
+    if not hasattr(circuit, "while_loop"):
+        pytest.skip("Qiskit version does not expose QuantumCircuit.while_loop")
 
-    with circuit.for_loop(range(1)):
+    with circuit.while_loop((circuit.clbits[0], False)):
         circuit.x(0)
 
     backend = RocQuantumProvider().get_backend("rocq_simulator")
-    with pytest.raises(NotImplementedError, match="for_loop"):
+    with pytest.raises(NotImplementedError, match="while_loop"):
         backend.run(circuit, statevector=False).result()
 
 

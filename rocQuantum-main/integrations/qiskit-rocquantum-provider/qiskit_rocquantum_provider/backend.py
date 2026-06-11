@@ -123,6 +123,21 @@ def _is_default_switch_case(label):
     return str(label) == "<default case>"
 
 
+def _static_for_loop_values(op):
+    params = list(getattr(op, "params", ()) or ())
+    if len(params) < 2:
+        raise NotImplementedError("RocQuantumBackend requires Qiskit for_loop indexset metadata.")
+    indexset, loop_parameter = params[0], params[1]
+    if loop_parameter is not None:
+        raise NotImplementedError(
+            "RocQuantumBackend dynamic sampling does not support parameterized for_loop bodies yet."
+        )
+    try:
+        return list(indexset)
+    except TypeError as exc:
+        raise NotImplementedError("RocQuantumBackend requires a finite static for_loop indexset.") from exc
+
+
 def _memory_from_classical_bits(classical_bits, measured_items, memory_width):
     if memory_width <= 0:
         memory_width = len(measured_items)
@@ -1147,6 +1162,23 @@ class RocQuantumBackend(BackendV2):
                 touched_qubits,
                 include_global_phase=include_global_phase,
             )
+            return
+
+        if op.name == "for_loop" and getattr(op, "blocks", None) is not None:
+            blocks = tuple(op.blocks)
+            if len(blocks) != 1:
+                raise NotImplementedError("RocQuantumBackend supports for_loop with exactly one body block.")
+            loop_values = _static_for_loop_values(op)
+            for _ in loop_values:
+                self._apply_control_flow_block(
+                    blocks[0],
+                    instruction,
+                    circuit,
+                    classical_bits,
+                    measured_bits,
+                    touched_qubits,
+                    include_global_phase=include_global_phase,
+                )
             return
 
         if op.name == "switch_case" and getattr(op, "blocks", None) is not None:
