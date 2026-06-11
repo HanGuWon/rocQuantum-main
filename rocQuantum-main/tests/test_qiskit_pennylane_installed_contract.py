@@ -2751,6 +2751,64 @@ def test_pennylane_batch_execute_batches_diagonal_qubit_unitary_sweeps(monkeypat
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_batches_select_pauli_rot_sweeps(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    circuits = [
+        qml.tape.QuantumScript(
+            [
+                qml.SelectPauliRot(
+                    np.array([0.25, 1.25]),
+                    control_wires=[0],
+                    target_wire=1,
+                    rot_axis="X",
+                ),
+                qml.RY(0.2, wires=0),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [
+                qml.SelectPauliRot(
+                    np.array([0.75, 1.75]),
+                    control_wires=[0],
+                    target_wire=1,
+                    rot_axis="X",
+                ),
+                qml.RY(0.8, wires=0),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == [
+        ("H", (1,), ()),
+        ("CNOT", (0, 1), ()),
+        ("CNOT", (0, 1), ()),
+        ("H", (1,), ()),
+    ]
+    assert [op[:2] for op in sim.batch_ops] == [
+        ("RZ", (1,)),
+        ("RZ", (1,)),
+        ("RY", (0,)),
+    ]
+    np.testing.assert_allclose(sim.batch_ops[0][2], (0.75, 1.25))
+    np.testing.assert_allclose(sim.batch_ops[1][2], (-0.5, -0.5))
+    np.testing.assert_allclose(sim.batch_ops[2][2], (0.2, 0.8))
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_keeps_arithmetic_templates_batched(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -3959,6 +4017,56 @@ def test_pennylane_diagonal_qubit_unitary_decomposes_natively(monkeypatch):
     matrix, targets = sim.matrices[0]
     np.testing.assert_allclose(matrix, np.eye(2, dtype=np.complex128) * np.exp(0.55j))
     assert targets == (0,)
+
+
+def test_pennylane_select_pauli_rot_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.SelectPauliRot(np.array([0.25, 1.25]), control_wires=[0], target_wire=1, rot_axis="Z")
+        qml.SelectPauliRot(np.array([0.5, 1.5]), control_wires=[0], target_wire=1, rot_axis="X")
+        qml.SelectPauliRot(np.array([0.75, 1.75]), control_wires=[0], target_wire=1, rot_axis="Y")
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert [op[:2] for op in sim.ops] == [
+        ("RZ", (1,)),
+        ("CNOT", (0, 1)),
+        ("RZ", (1,)),
+        ("CNOT", (0, 1)),
+        ("H", (1,)),
+        ("RZ", (1,)),
+        ("CNOT", (0, 1)),
+        ("RZ", (1,)),
+        ("CNOT", (0, 1)),
+        ("H", (1,)),
+        ("SDG", (1,)),
+        ("H", (1,)),
+        ("RZ", (1,)),
+        ("CNOT", (0, 1)),
+        ("RZ", (1,)),
+        ("CNOT", (0, 1)),
+        ("H", (1,)),
+        ("S", (1,)),
+    ]
+    np.testing.assert_allclose(sim.ops[0][2], (0.75,))
+    np.testing.assert_allclose(sim.ops[2][2], (-0.5,))
+    np.testing.assert_allclose(sim.ops[5][2], (1.0,))
+    np.testing.assert_allclose(sim.ops[7][2], (-0.5,))
+    np.testing.assert_allclose(sim.ops[12][2], (1.25,))
+    np.testing.assert_allclose(sim.ops[14][2], (-0.5,))
+    assert sim.matrices == []
 
 
 def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypatch):

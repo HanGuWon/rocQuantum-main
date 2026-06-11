@@ -50,6 +50,7 @@ DECOMPOSED_OPS = {
     "QFT",
     "QubitCarry",
     "QubitSum",
+    "SelectPauliRot",
 }
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
@@ -832,6 +833,61 @@ def _apply_diagonal_qubit_unitary_batch(runtime, wire_indices, diagonals):
     _apply_diagonal_phases_batch(runtime, wire_indices, phases_by_batch)
 
 
+def _select_pauli_rot_axis(op):
+    return str(getattr(op, "hyperparameters", {}).get("rot_axis", "Z")).upper()
+
+
+def _apply_select_pauli_rot(runtime, wire_indices, angles, rot_axis):
+    if len(wire_indices) < 2:
+        raise ValueError("SelectPauliRot requires at least one control wire and one target wire.")
+    control_indices = wire_indices[:-1]
+    target = wire_indices[-1]
+    expected = 1 << len(control_indices)
+    if np.asarray(angles).reshape(-1).shape[-1] != expected:
+        raise ValueError("SelectPauliRot angle count must match its control wires.")
+
+    if rot_axis == "X":
+        runtime.apply_operation("H", [target])
+        _apply_uniform_rz(runtime, control_indices, target, angles)
+        runtime.apply_operation("H", [target])
+    elif rot_axis == "Y":
+        runtime.apply_operation("SDG", [target])
+        runtime.apply_operation("H", [target])
+        _apply_uniform_rz(runtime, control_indices, target, angles)
+        runtime.apply_operation("H", [target])
+        runtime.apply_operation("S", [target])
+    elif rot_axis == "Z":
+        _apply_uniform_rz(runtime, control_indices, target, angles)
+    else:
+        raise ValueError("SelectPauliRot rot_axis must be X, Y, or Z.")
+
+
+def _apply_select_pauli_rot_batch(runtime, wire_indices, angles_by_batch, rot_axis):
+    if len(wire_indices) < 2:
+        raise ValueError("SelectPauliRot requires at least one control wire and one target wire.")
+    control_indices = wire_indices[:-1]
+    target = wire_indices[-1]
+    angle_array = np.asarray(angles_by_batch, dtype=float)
+    expected = 1 << len(control_indices)
+    if angle_array.ndim != 2 or angle_array.shape[-1] != expected:
+        raise ValueError("SelectPauliRot batched angles must match its control wires.")
+
+    if rot_axis == "X":
+        runtime.apply_operation("H", [target])
+        _apply_uniform_rz_batch(runtime, control_indices, target, angle_array)
+        runtime.apply_operation("H", [target])
+    elif rot_axis == "Y":
+        runtime.apply_operation("SDG", [target])
+        runtime.apply_operation("H", [target])
+        _apply_uniform_rz_batch(runtime, control_indices, target, angle_array)
+        runtime.apply_operation("H", [target])
+        runtime.apply_operation("S", [target])
+    elif rot_axis == "Z":
+        _apply_uniform_rz_batch(runtime, control_indices, target, angle_array)
+    else:
+        raise ValueError("SelectPauliRot rot_axis must be X, Y, or Z.")
+
+
 def _apply_qft(runtime, wire_indices):
     if not wire_indices:
         raise ValueError("QFT requires at least one wire.")
@@ -1396,6 +1452,10 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
         _apply_diagonal_qubit_unitary(runtime, wire_indices, params[0])
         return True
 
+    if gate_name == "SelectPauliRot" and len(params) == 1 and op is not None:
+        _apply_select_pauli_rot(runtime, wire_indices, params[0], _select_pauli_rot_axis(op))
+        return True
+
     if gate_name == "QubitSum" and not params:
         _apply_qubit_sum(runtime, wire_indices)
         return True
@@ -1723,6 +1783,11 @@ class RocQDevice(QubitDevice):
             ):
                 return None
 
+            if gate_name == "SelectPauliRot" and any(
+                _select_pauli_rot_axis(op) != _select_pauli_rot_axis(reference_op) for op in ops[1:]
+            ):
+                return None
+
             if gate_name == "BasisState":
                 if op_index != 0:
                     return None
@@ -1762,6 +1827,16 @@ class RocQDevice(QubitDevice):
             if gate_name == "DiagonalQubitUnitary" and all(len(params) == 1 for params in params_by_op):
                 diagonals = [params[0] for params in params_by_op]
                 _apply_diagonal_qubit_unitary_batch(self._runtime, wire_indices, diagonals)
+                continue
+
+            if gate_name == "SelectPauliRot" and all(len(params) == 1 for params in params_by_op):
+                angles_by_batch = [params[0] for params in params_by_op]
+                _apply_select_pauli_rot_batch(
+                    self._runtime,
+                    wire_indices,
+                    angles_by_batch,
+                    _select_pauli_rot_axis(reference_op),
+                )
                 continue
 
             if gate_name in {
@@ -2392,6 +2467,23 @@ class RocQDevice(QubitDevice):
                 try:
                     (diagonal,) = getattr(op, "parameters", [])
                     _apply_diagonal_qubit_unitary(self._runtime, wire_indices, diagonal)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "SelectPauliRot":
+                try:
+                    (angles,) = getattr(op, "parameters", [])
+                    _apply_select_pauli_rot(
+                        self._runtime,
+                        wire_indices,
+                        angles,
+                        _select_pauli_rot_axis(op),
+                    )
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(
