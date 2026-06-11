@@ -1,6 +1,8 @@
 import cmath
 import uuid
 
+import numpy as np
+
 from qiskit.providers import BackendV2, Options
 from qiskit.transpiler import Target
 from qiskit.result import Result
@@ -188,6 +190,27 @@ def _operation_matrix(op):
     if op.name in MATRIX_FALLBACK_OPS:
         return op.to_matrix()
     return _automatic_operation_matrix(op)
+
+
+def _parameter_value_matches(left, right):
+    try:
+        left_array = np.asarray(left)
+        right_array = np.asarray(right)
+        if left_array.shape or right_array.shape:
+            return left_array.shape == right_array.shape and np.allclose(left_array, right_array)
+    except (TypeError, ValueError):
+        pass
+
+    comparison = left == right
+    if isinstance(comparison, np.ndarray):
+        return bool(np.all(comparison))
+    return bool(comparison)
+
+
+def _parameter_lists_match(left, right):
+    if len(left) != len(right):
+        return False
+    return all(_parameter_value_matches(left_value, right_value) for left_value, right_value in zip(left, right))
 
 
 def _pauli_labels_commute(left, right):
@@ -1191,27 +1214,35 @@ class RocQuantumBackend(BackendV2):
                 touched_qubits.update(q_indices)
                 continue
 
-            params_by_circuit = [normalize_params(op.params) for op in ops]
+            params_by_circuit = [list(getattr(op, "params", []) or []) for op in ops]
+            try:
+                normalized_params_by_circuit = [normalize_params(params) for params in params_by_circuit]
+            except (TypeError, ValueError):
+                normalized_params_by_circuit = None
 
-            if all(len(params) == 1 for params in params_by_circuit):
-                thetas = [params[0] for params in params_by_circuit]
+            if normalized_params_by_circuit is not None and all(
+                len(params) == 1 for params in normalized_params_by_circuit
+            ):
+                thetas = [params[0] for params in normalized_params_by_circuit]
                 if self._apply_controlled_base_gate_batch(reference_op, q_indices, thetas):
                     continue
 
-            if reference_op.name in {"rx", "ry", "rz", "crx", "cry", "crz"} and all(
-                len(params) == 1 for params in params_by_circuit
+            if normalized_params_by_circuit is not None and reference_op.name in {
+                "rx", "ry", "rz", "crx", "cry", "crz"
+            } and all(
+                len(params) == 1 for params in normalized_params_by_circuit
             ):
                 self._runtime.apply_operation_batch(
                     reference_op.name,
                     q_indices,
-                    [params[0] for params in params_by_circuit],
+                    [params[0] for params in normalized_params_by_circuit],
                 )
                 continue
 
-            if reference_op.name in {"p", "cp", "rxx", "ryy", "rzz"} and all(
-                len(params) == 1 for params in params_by_circuit
+            if normalized_params_by_circuit is not None and reference_op.name in {"p", "cp", "rxx", "ryy", "rzz"} and all(
+                len(params) == 1 for params in normalized_params_by_circuit
             ):
-                thetas = [params[0] for params in params_by_circuit]
+                thetas = [params[0] for params in normalized_params_by_circuit]
                 if reference_op.name == "p":
                     self._apply_phase_gate_batch(q_indices, thetas)
                 elif reference_op.name == "cp":
@@ -1224,25 +1255,30 @@ class RocQuantumBackend(BackendV2):
                     self._apply_rzz_gate_batch(q_indices, thetas)
                 continue
 
-            if reference_op.name == "PauliEvolution" and all(len(params) == 1 for params in params_by_circuit):
+            if normalized_params_by_circuit is not None and reference_op.name == "PauliEvolution" and all(
+                len(params) == 1 for params in normalized_params_by_circuit
+            ):
                 terms = _pauli_evolution_terms(reference_op)
                 if terms is not None and all(_pauli_evolution_terms(op) == terms for op in ops[1:]):
-                    times = [params[0] for params in params_by_circuit]
+                    times = [params[0] for params in normalized_params_by_circuit]
                     if self._apply_pauli_evolution_gate_batch(reference_op, q_indices, times):
                         continue
 
-            if reference_op.name == "u" and all(len(params) == 3 for params in params_by_circuit):
-                thetas = [params[0] for params in params_by_circuit]
-                phis = [params[1] for params in params_by_circuit]
-                lams = [params[2] for params in params_by_circuit]
+            if normalized_params_by_circuit is not None and reference_op.name == "u" and all(
+                len(params) == 3 for params in normalized_params_by_circuit
+            ):
+                thetas = [params[0] for params in normalized_params_by_circuit]
+                phis = [params[1] for params in normalized_params_by_circuit]
+                lams = [params[2] for params in normalized_params_by_circuit]
                 self._apply_u_gate_batch(q_indices, thetas, phis, lams)
                 continue
 
             first_params = params_by_circuit[0]
-            if any(params != first_params for params in params_by_circuit[1:]):
+            if any(not _parameter_lists_match(params, first_params) for params in params_by_circuit[1:]):
                 raise NotImplementedError(
                     "Batched Qiskit execution only supports varying RX/RY/RZ, CRX/CRY/CRZ, "
-                    f"open-control controlled rotations/phase, p/cp, u, decomposed rxx/ryy/rzz, and PauliEvolution parameters, "
+                    f"fixed unitary/controlled-unitary operations, open-control controlled rotations/phase, "
+                    f"p/cp, u, decomposed rxx/ryy/rzz, and PauliEvolution parameters, "
                     f"got {reference_op.name!r}."
                 )
 
