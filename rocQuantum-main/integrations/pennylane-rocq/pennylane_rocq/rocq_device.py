@@ -1164,9 +1164,131 @@ def _apply_single_controlled_native_op_batch(runtime, base_name, control, target
             runtime.apply_operation("X", [control])
 
 
+def _apply_controlled_x_targets(runtime, controls, control_values, active_targets):
+    if len(control_values) != len(controls):
+        return False
+    if not active_targets:
+        return True
+
+    if not controls:
+        for target_index in active_targets:
+            runtime.apply_operation("X", [target_index])
+        return True
+
+    flipped = []
+    try:
+        for control, value in zip(controls, control_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [control])
+                flipped.append(control)
+
+        for target_index in active_targets:
+            if len(controls) == 1:
+                runtime.apply_operation("CNOT", [controls[0], target_index])
+            else:
+                runtime.apply_operation("MCX", controls + [target_index])
+
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+        flipped.clear()
+        return True
+    finally:
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+
+
+def _apply_controlled_basis_embedding(runtime, controls, control_values, target_indices, bits):
+    if len(bits) != len(target_indices):
+        return False
+
+    active_targets = [
+        target_index
+        for bit, target_index in zip(bits, target_indices)
+        if int(bit)
+    ]
+    return _apply_controlled_x_targets(runtime, controls, control_values, active_targets)
+
+
+def _operation_operands(op):
+    return tuple(getattr(op, "operands", None) or getattr(op, "obs", ()) or ())
+
+
+def _split_operand_parameters(operands, params):
+    counts = [len(getattr(operand, "parameters", ())) for operand in operands]
+    if sum(counts) != len(params):
+        return None
+
+    split_params = []
+    offset = 0
+    for count in counts:
+        split_params.append(params[offset:offset + count])
+        offset += count
+    return split_params
+
+
+def _apply_controlled_selected_product(runtime, selected_op, controls, control_values, wire_map, params):
+    operands = _operation_operands(selected_op)
+    if not operands:
+        return False
+
+    split_params = _split_operand_parameters(operands, params)
+    if split_params is None:
+        return False
+
+    active_targets = []
+    for operand, operand_params in zip(operands, split_params):
+        if operand.name in {"Identity", "I"}:
+            if operand_params:
+                return False
+            continue
+
+        if operand.name != "BasisEmbedding" or len(operand_params) != 1:
+            return False
+
+        bits = np.asarray(operand_params[0], dtype=int).reshape(-1)
+        target_indices = [wire_map[wire] for wire in operand.wires]
+        if len(bits) != len(target_indices):
+            return False
+
+        active_targets.extend(
+            target_index
+            for bit, target_index in zip(bits, target_indices)
+            if int(bit)
+        )
+
+    if not active_targets:
+        return True
+
+    return _apply_controlled_x_targets(runtime, controls, control_values, active_targets)
+
+
 def _apply_controlled_selected_op(runtime, selected_op, controls, control_values, wire_map, params=None):
     target_indices = [wire_map[wire] for wire in selected_op.wires]
     selected_params = list(getattr(selected_op, "parameters", [])) if params is None else list(params)
+
+    if selected_op.name in {"Prod", "Tensor"}:
+        return _apply_controlled_selected_product(
+            runtime,
+            selected_op,
+            controls,
+            control_values,
+            wire_map,
+            selected_params,
+        )
+
+    if selected_op.name in {"Identity", "I"}:
+        return not selected_params
+
+    if selected_op.name == "BasisEmbedding" and len(selected_params) == 1:
+        bits = np.asarray(selected_params[0], dtype=int).reshape(-1)
+        return _apply_controlled_basis_embedding(
+            runtime,
+            controls,
+            control_values,
+            target_indices,
+            bits,
+        )
+
     if len(controls) == 1 and len(target_indices) == 1:
         if _apply_single_controlled_native_op(
             runtime,

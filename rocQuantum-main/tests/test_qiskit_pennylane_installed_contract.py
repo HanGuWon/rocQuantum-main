@@ -4276,6 +4276,81 @@ def test_pennylane_select_decomposes_natively(monkeypatch):
     assert sim.controlled_matrices == []
 
 
+def test_pennylane_qrom_select_product_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=6)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.QROM(
+            np.array([[0, 1], [1, 0], [1, 1], [0, 0]], dtype=int),
+            control_wires=[0, 1],
+            target_wires=[2, 3],
+            work_wires=[4, 5],
+            clean=False,
+        )
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("X", (0,), ()),
+        ("CNOT", (0, 3), ()),
+        ("CNOT", (0, 4), ()),
+        ("X", (0,), ()),
+        ("CNOT", (0, 2), ()),
+        ("CNOT", (0, 3), ()),
+        ("CSWAP", (1, 2, 4), ()),
+        ("CSWAP", (1, 3, 5), ()),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
+def test_pennylane_fable_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.FABLE(np.array([[0.5, 0.25], [0.125, 0.75]]), wires=[0, 1, 2])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert [op[:2] for op in sim.ops] == [
+        ("H", (1,)),
+        ("RY", (0,)),
+        ("CNOT", (2, 0)),
+        ("RY", (0,)),
+        ("CNOT", (1, 0)),
+        ("RY", (0,)),
+        ("CNOT", (2, 0)),
+        ("RY", (0,)),
+        ("CNOT", (1, 0)),
+        ("SWAP", (1, 2)),
+        ("H", (1,)),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
 def test_pennylane_common_gates_use_native_toffoli_and_matrix_fallback(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
