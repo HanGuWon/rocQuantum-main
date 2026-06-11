@@ -3052,6 +3052,43 @@ def test_pennylane_batch_execute_keeps_static_unitaries_batched(monkeypatch):
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_keeps_static_block_encode_batched(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from rocquantum.framework_runtime import matrix_to_little_endian_wires
+
+    block = np.array([[0.2, 0.3], [0.4, 0.1]], dtype=np.complex128)
+    dev = qml.device("lightning.rocq", wires=2)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.BlockEncode(block, wires=[0, 1]), qml.RY(0.2, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [qml.BlockEncode(block.copy(), wires=[0, 1]), qml.RY(0.8, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert len(sim.matrices) == 1
+    matrix, targets = sim.matrices[0]
+    np.testing.assert_allclose(
+        matrix,
+        matrix_to_little_endian_wires(qml.matrix(qml.BlockEncode(block, wires=[0, 1]))),
+    )
+    assert targets == (0, 1)
+    assert sim.batch_ops == [("RY", (0,), (0.2, 0.8))]
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_uses_batched_multiple_expvals(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -4591,6 +4628,37 @@ def test_pennylane_matrix_fallback_converts_wire_order_for_rocquantum(monkeypatc
     )
     assert targets == (0, 1)
     np.testing.assert_allclose(matrix, expected_local_little_endian)
+
+
+def test_pennylane_block_encode_dispatches_dense_matrix(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from rocquantum.framework_runtime import matrix_to_little_endian_wires
+
+    block = np.array([[0.2, 0.3], [0.4, 0.1]], dtype=np.complex128)
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.BlockEncode(block, wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == []
+    assert len(sim.matrices) == 1
+    matrix, targets = sim.matrices[0]
+    np.testing.assert_allclose(
+        matrix,
+        matrix_to_little_endian_wires(qml.matrix(qml.BlockEncode(block, wires=[0, 1]))),
+    )
+    assert targets == (0, 1)
 
 
 def test_pennylane_controlled_qubit_unitary_uses_native_controlled_matrix(monkeypatch):

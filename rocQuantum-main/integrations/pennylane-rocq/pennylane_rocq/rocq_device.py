@@ -30,6 +30,7 @@ PENNYLANE_TO_ROCQ_GATES = {
 
 NATIVE_PARAMETRIC_OPS = {"RX", "RY", "RZ", "CRX", "CRY", "CRZ"}
 MATRIX_OPS = {
+    "BlockEncode",
     "QubitUnitary",
     "ControlledQubitUnitary",
     "PhaseShift", "ControlledPhaseShift",
@@ -2152,6 +2153,11 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
     if gate_name == "QubitUnitary" and len(params) == 1:
         matrix = matrix_to_little_endian_wires(params[0])
         runtime.apply_operation("QubitUnitary", wire_indices, matrix=matrix)
+        return True
+
+    if gate_name == "BlockEncode" and op is not None:
+        matrix = matrix_to_little_endian_wires(qml.matrix(op))
+        runtime.apply_operation("BlockEncode", wire_indices, matrix=matrix)
         return True
 
     if gate_name == "ControlledQubitUnitary" and op is not None and wire_map is not None:
