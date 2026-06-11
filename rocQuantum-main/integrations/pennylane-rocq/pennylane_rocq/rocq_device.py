@@ -572,6 +572,11 @@ def _apply_phase_shift_batch(runtime, wire_indices, thetas):
     if len(wire_indices) != 1:
         raise ValueError("PhaseShift requires exactly one wire.")
 
+    try:
+        runtime.apply_operation_batch("P", [wire_indices[0]], thetas)
+        return
+    except (NotImplementedError, RuntimeError, TypeError, ValueError):
+        pass
     runtime.apply_operation_batch("RZ", [wire_indices[0]], thetas)
 
 
@@ -607,6 +612,11 @@ def _apply_controlled_phase_shift_batch(runtime, wire_indices, thetas):
         raise ValueError("ControlledPhaseShift requires exactly two wires.")
 
     control, target = wire_indices
+    try:
+        runtime.apply_operation_batch("CP", [control, target], thetas)
+        return
+    except (NotImplementedError, RuntimeError, TypeError, ValueError):
+        pass
     half_thetas = [0.5 * theta for theta in thetas]
     runtime.apply_operation_batch("RZ", [control], half_thetas)
     runtime.apply_operation("CNOT", [control, target])

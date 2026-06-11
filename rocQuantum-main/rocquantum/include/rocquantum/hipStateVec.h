@@ -339,6 +339,13 @@ rocqStatus_t rocsvApplyRyBatch(rocsvHandle_t handle, rocComplex* d_state, unsign
  */
 rocqStatus_t rocsvApplyRzBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
 
+/**
+ * @brief Applies one phase gate diag(1, exp(i theta)) per local batch state.
+ * @param h_thetas Host pointer to batchSize phase angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyPBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
 // --- Two Qubit Specific Gates ---
 
 /**
@@ -403,6 +410,13 @@ rocqStatus_t rocsvApplyCRYBatch(rocsvHandle_t handle, rocComplex* d_state, unsig
  * @param thetaCount Number of host angles; must equal the effective batch size.
  */
 rocqStatus_t rocsvApplyCRZBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one controlled phase gate per local batch state.
+ * @param h_thetas Host pointer to batchSize phase angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyCPBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
 
 /**
  * @brief Applies a multi-controlled X (Toffoli, etc.) gate.

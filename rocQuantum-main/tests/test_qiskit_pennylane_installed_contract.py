@@ -1651,7 +1651,7 @@ def test_qiskit_native_estimator_batches_parameters_with_observables(monkeypatch
     assert sim.batch_expectations == [("Z", (0,)), ("X", (0,))]
 
 
-def test_qiskit_native_estimator_batches_decomposed_parameter_values(monkeypatch):
+def test_qiskit_native_estimator_batches_parametric_values(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
 
@@ -1677,9 +1677,8 @@ def test_qiskit_native_estimator_batches_decomposed_parameter_values(monkeypatch
     assert result.metadata["batched_parameters"] is True
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
-    assert ("RZ", (0,), (0.1, 0.2)) in sim.batch_ops
-    assert ("RZ", (0,), (0.05, 0.1)) in sim.batch_ops
-    assert ("RZ", (1,), (-0.05, -0.1)) in sim.batch_ops
+    assert ("P", (0,), (0.1, 0.2)) in sim.batch_ops
+    assert ("CP", (0, 1), (0.1, 0.2)) in sim.batch_ops
     assert ("RX", (0,), (0.1, 0.2)) in sim.batch_ops
     assert sim.batch_ops.count(("RZ", (1,), (0.1, 0.2))) == 2
     assert sim.matrices == []
@@ -2356,7 +2355,7 @@ def test_pennylane_batch_execute_uses_batched_controlled_parametric_gate(monkeyp
     assert sim.batch_expectations == [("Z", (0,))]
 
 
-def test_pennylane_batch_execute_uses_batched_decomposed_parametric_gates(monkeypatch):
+def test_pennylane_batch_execute_uses_batched_parametric_gates(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
     for name in list(sys.modules):
@@ -2392,9 +2391,8 @@ def test_pennylane_batch_execute_uses_batched_decomposed_parametric_gates(monkey
     assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
-    assert ("RZ", (0,), (0.1, 0.6)) in sim.batch_ops
-    assert ("RZ", (0,), (0.1, 0.35)) in sim.batch_ops
-    assert ("RZ", (1,), (-0.1, -0.35)) in sim.batch_ops
+    assert ("P", (0,), (0.1, 0.6)) in sim.batch_ops
+    assert ("CP", (0, 1), (0.2, 0.7)) in sim.batch_ops
     assert ("RX", (0,), (0.3, 0.8)) in sim.batch_ops
     assert ("RZ", (1,), (0.4, 0.9)) in sim.batch_ops
     assert ("RZ", (1,), (0.5, 1.0)) in sim.batch_ops
@@ -4001,6 +3999,10 @@ def test_runtime_can_create_and_read_batched_bindings():
     assert runtime.simulator.batch_ops == [("RY", (0,), (0.1, 0.2, 0.3))]
     runtime.apply_operation_batch("crz", [0, 1], [0.4, 0.5, 0.6])
     assert runtime.simulator.batch_ops == [("CRZ", (0, 1), (0.4, 0.5, 0.6))]
+    runtime.apply_operation_batch("p", [0], [0.7, 0.8, 0.9])
+    assert runtime.simulator.batch_ops == [("P", (0,), (0.7, 0.8, 0.9))]
+    runtime.apply_operation_batch("cp", [0, 1], [1.0, 1.1, 1.2])
+    assert runtime.simulator.batch_ops == [("CP", (0, 1), (1.0, 1.1, 1.2))]
 
 
 def test_runtime_batch_parametric_gate_falls_back_for_equal_angles():

@@ -493,7 +493,7 @@ class RocQuantumRuntime:
         if len(normalized_params) != self.batch_size():
             raise ValueError("Batch parameter count must equal the simulator batch size.")
 
-        batched_parametric_ops = {"RX", "RY", "RZ", "CRX", "CRY", "CRZ"}
+        batched_parametric_ops = {"RX", "RY", "RZ", "P", "CRX", "CRY", "CRZ", "CP"}
 
         apply_gate_batch = getattr(self.simulator, "apply_gate_batch", None)
         if callable(apply_gate_batch) and normalized_name in batched_parametric_ops:

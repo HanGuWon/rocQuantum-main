@@ -143,8 +143,12 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("m.def(\"apply_cp\"", low_level_bindings)
         self.assertIn("self._runtime.apply_operation(\"p\"", qiskit_backend)
         self.assertIn("self._runtime.apply_operation(\"cp\"", qiskit_backend)
+        self.assertIn("self._runtime.apply_operation_batch(\"p\"", qiskit_backend)
+        self.assertIn("self._runtime.apply_operation_batch(\"cp\"", qiskit_backend)
         self.assertIn("runtime.apply_operation(\"P\"", pennylane_adapter)
         self.assertIn("runtime.apply_operation(\"CP\"", pennylane_adapter)
+        self.assertIn("runtime.apply_operation_batch(\"P\"", pennylane_adapter)
+        self.assertIn("runtime.apply_operation_batch(\"CP\"", pennylane_adapter)
 
     def test_public_simulator_exposes_statevector_upload(self):
         with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
@@ -193,15 +197,20 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("rocsvApplyRxBatch", implementation)
         self.assertIn("rocsvApplyRyBatch", implementation)
         self.assertIn("rocsvApplyRzBatch", implementation)
+        self.assertIn("rocsvApplyPBatch", implementation)
         self.assertIn("rocsvApplyCRXBatch", implementation)
         self.assertIn("rocsvApplyCRYBatch", implementation)
         self.assertIn("rocsvApplyCRZBatch", implementation)
+        self.assertIn("rocsvApplyCPBatch", implementation)
         self.assertIn("rocsvApplyRxBatch", hip_header)
         self.assertIn("rocsvApplyRyBatch", hip_header)
         self.assertIn("rocsvApplyRzBatch", hip_header)
+        self.assertIn("rocsvApplyPBatch", hip_header)
         self.assertIn("rocsvApplyCRXBatch", hip_header)
         self.assertIn("rocsvApplyCRYBatch", hip_header)
         self.assertIn("rocsvApplyCRZBatch", hip_header)
+        self.assertIn("rocsvApplyCPBatch", hip_header)
+        self.assertIn("make_phase_matrices", hip_source)
         self.assertIn("launch_single_qubit_matrix_batch", hip_source)
         self.assertIn("launch_controlled_single_qubit_matrix_batch", hip_source)
         self.assertIn("apply_single_qubit_matrix_batch_kernel", single_qubit_kernels)
@@ -209,6 +218,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn(".def(\"apply_gate_batch\"", bindings)
         self.assertIn(".def(\"ApplyGateBatch\"", bindings)
         self.assertIn("def apply_operation_batch", runtime)
+        self.assertIn("\"P\", \"CRX\"", runtime)
+        self.assertIn("\"CP\"", runtime)
 
     def test_public_simulator_exposes_native_probabilities(self):
         with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:

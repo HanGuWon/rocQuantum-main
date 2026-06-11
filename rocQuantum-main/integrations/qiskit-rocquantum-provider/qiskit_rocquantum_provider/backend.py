@@ -386,6 +386,11 @@ class RocQuantumBackend(BackendV2):
         if len(q_indices) != 1:
             raise ValueError("Qiskit p gate requires exactly one qubit.")
 
+        try:
+            self._runtime.apply_operation_batch("p", [q_indices[0]], thetas)
+            return
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            pass
         self._runtime.apply_operation_batch("rz", [q_indices[0]], thetas)
 
     def _apply_controlled_phase_gate(self, q_indices, theta, *, include_global_phase):
@@ -411,6 +416,11 @@ class RocQuantumBackend(BackendV2):
             raise ValueError("Qiskit cp gate requires exactly two qubits.")
 
         control, target = q_indices
+        try:
+            self._runtime.apply_operation_batch("cp", [control, target], thetas)
+            return
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            pass
         half_thetas = [0.5 * theta for theta in thetas]
         self._runtime.apply_operation_batch("rz", [control], half_thetas)
         self._runtime.apply_operation("cx", [control, target])

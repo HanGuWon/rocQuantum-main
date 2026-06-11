@@ -4049,6 +4049,22 @@ inline std::vector<rocComplex> make_rotation_matrices(const double* h_thetas,
     return matrices;
 }
 
+inline std::vector<rocComplex> make_phase_matrices(const double* h_thetas,
+                                                   size_t thetaCount) {
+    std::vector<rocComplex> matrices;
+    matrices.reserve(thetaCount * 4ULL);
+    const rocComplex one = make_complex(1.0, 0.0);
+    const rocComplex zero = make_complex(0.0, 0.0);
+    for (size_t batch = 0; batch < thetaCount; ++batch) {
+        const double theta = h_thetas[batch];
+        matrices.push_back(one);
+        matrices.push_back(zero);
+        matrices.push_back(zero);
+        matrices.push_back(make_complex(std::cos(theta), std::sin(theta)));
+    }
+    return matrices;
+}
+
 inline rocqStatus_t rocsvApplyRotationBatch(rocsvHandle_t handle,
                                             rocComplex* d_state,
                                             unsigned numQubits,
@@ -4165,6 +4181,30 @@ rocqStatus_t rocsvApplyRzBatch(rocsvHandle_t handle,
                                const double* h_thetas,
                                size_t thetaCount) {
     return rocsvApplyRotationBatch(handle, d_state, numQubits, targetQubit, h_thetas, thetaCount, RotationAxis::Z);
+}
+
+rocqStatus_t rocsvApplyPBatch(rocsvHandle_t handle,
+                              rocComplex* d_state,
+                              unsigned numQubits,
+                              unsigned targetQubit,
+                              const double* h_thetas,
+                              size_t thetaCount) {
+    if (!handle || !h_thetas || thetaCount == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (thetaCount != batch_size) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> matrices = make_phase_matrices(h_thetas, thetaCount);
+    return launch_single_qubit_matrix_batch(handle, state, numQubits, targetQubit, matrices);
 }
 
 // --- Two-qubit named gates ---------------------------------------------------
@@ -4514,6 +4554,37 @@ rocqStatus_t rocsvApplyCRZBatch(rocsvHandle_t handle,
                                 size_t thetaCount) {
     return rocsvApplyControlledRotationBatch(
         handle, d_state, numQubits, controlQubit, targetQubit, h_thetas, thetaCount, RotationAxis::Z);
+}
+
+rocqStatus_t rocsvApplyCPBatch(rocsvHandle_t handle,
+                               rocComplex* d_state,
+                               unsigned numQubits,
+                               unsigned controlQubit,
+                               unsigned targetQubit,
+                               const double* h_thetas,
+                               size_t thetaCount) {
+    if (!handle || !h_thetas || thetaCount == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (thetaCount != batch_size) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> matrices = make_phase_matrices(h_thetas, thetaCount);
+    return launch_controlled_single_qubit_matrix_batch(
+        handle,
+        state,
+        numQubits,
+        controlQubit,
+        targetQubit,
+        matrices);
 }
 
 // --- Multi-controlled gates --------------------------------------------------
