@@ -611,6 +611,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _apply_iswap_gate", source)
         self.assertIn("def _apply_ecr_gate", source)
         self.assertIn("def _apply_tdg_gate", source)
+        self.assertIn("def _apply_pauli_gate", source)
         self.assertIn("def _apply_rccx_gate", source)
         self.assertIn("def _apply_rcccx_gate", source)
         self.assertIn("def _apply_controlled_base_gate", source)

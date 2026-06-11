@@ -764,6 +764,22 @@ class RocQuantumBackend(BackendV2):
             self._apply_global_phase_value(-cmath.pi / 8, target=target)
         self._runtime.apply_operation("rz", [target], [-cmath.pi / 4])
 
+    def _apply_pauli_gate(self, op, q_indices):
+        if op.name != "pauli" or len(getattr(op, "params", ()) or ()) != 1:
+            return False
+
+        label = str(op.params[0]).upper()
+        if len(label) != len(q_indices):
+            return False
+
+        for target, pauli in zip(q_indices, reversed(label)):
+            if pauli == "I":
+                continue
+            if pauli not in {"X", "Y", "Z"}:
+                return False
+            self._runtime.apply_operation(pauli.lower(), [target])
+        return True
+
     def _apply_rccx_gate(self, q_indices):
         if len(q_indices) != 3:
             raise ValueError("Qiskit rccx gate requires exactly three qubits.")
@@ -1002,6 +1018,10 @@ class RocQuantumBackend(BackendV2):
                 self._apply_rccx_gate(q_indices)
             else:
                 self._apply_rcccx_gate(q_indices)
+            touched_qubits.update(q_indices)
+            return
+
+        if self._supports_native_parametric_decomposition() and self._apply_pauli_gate(op, q_indices):
             touched_qubits.update(q_indices)
             return
 
