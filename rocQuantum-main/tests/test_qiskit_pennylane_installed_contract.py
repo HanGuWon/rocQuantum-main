@@ -1688,6 +1688,38 @@ def test_qiskit_native_estimator_batches_u_gate_parameters(monkeypatch):
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_qiskit_native_estimator_batches_pauli_evolution_time(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.circuit.library import PauliEvolutionGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    time = Parameter("time")
+    circuit = QuantumCircuit(2)
+    circuit.append(
+        PauliEvolutionGate(SparsePauliOp.from_list([("ZZ", 0.5)]), time=time),
+        [0, 1],
+    )
+    observable = SparsePauliOp.from_list([("ZI", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.0, 0.0]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == [("CNOT", (0, 1), ()), ("CNOT", (0, 1), ())]
+    assert sim.batch_ops == [("RZ", (1,), (0.1, 0.2))]
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (1,))]
+
+
 def test_qiskit_native_estimator_batches_parameters_with_observables(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

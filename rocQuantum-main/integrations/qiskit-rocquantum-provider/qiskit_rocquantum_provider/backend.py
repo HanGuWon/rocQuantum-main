@@ -460,6 +460,20 @@ class RocQuantumBackend(BackendV2):
         for control in reversed(q_indices[:-1]):
             self._runtime.apply_operation("cx", [control, target])
 
+    def _apply_multirz_gate_batch(self, q_indices, thetas):
+        if not q_indices:
+            raise ValueError("Qiskit MultiRZ decomposition requires at least one active qubit.")
+        if len(q_indices) == 1:
+            self._runtime.apply_operation_batch("rz", [q_indices[0]], thetas)
+            return
+
+        target = q_indices[-1]
+        for control in q_indices[:-1]:
+            self._runtime.apply_operation("cx", [control, target])
+        self._runtime.apply_operation_batch("rz", [target], thetas)
+        for control in reversed(q_indices[:-1]):
+            self._runtime.apply_operation("cx", [control, target])
+
     def _apply_pauli_rotation_gate(self, q_indices, label, theta):
         if len(label) != len(q_indices):
             raise ValueError("PauliEvolution label length must match the target qubits.")
@@ -492,6 +506,47 @@ class RocQuantumBackend(BackendV2):
                 raise ValueError("PauliEvolution labels may only contain I, X, Y, or Z.")
 
         self._apply_multirz_gate([qubit for qubit, _ in active], theta)
+
+        for qubit, pauli in active:
+            if pauli == "X":
+                self._runtime.apply_operation("h", [qubit])
+            elif pauli == "Y":
+                self._runtime.apply_operation("rx", [qubit], [-cmath.pi / 2])
+
+        return True
+
+    def _apply_pauli_rotation_gate_batch(self, q_indices, label, thetas):
+        if len(label) != len(q_indices):
+            raise ValueError("PauliEvolution label length must match the target qubits.")
+
+        active = [
+            (q_indices[local_index], pauli)
+            for local_index, pauli in enumerate(reversed(str(label).upper()))
+            if pauli != "I"
+        ]
+        if not active:
+            return False
+        if len(active) == 1:
+            qubit, pauli = active[0]
+            if pauli == "X":
+                self._runtime.apply_operation_batch("rx", [qubit], thetas)
+            elif pauli == "Y":
+                self._runtime.apply_operation_batch("ry", [qubit], thetas)
+            elif pauli == "Z":
+                self._runtime.apply_operation_batch("rz", [qubit], thetas)
+            else:
+                raise ValueError("PauliEvolution labels may only contain I, X, Y, or Z.")
+            return True
+
+        for qubit, pauli in active:
+            if pauli == "X":
+                self._runtime.apply_operation("h", [qubit])
+            elif pauli == "Y":
+                self._runtime.apply_operation("rx", [qubit], [cmath.pi / 2])
+            elif pauli != "Z":
+                raise ValueError("PauliEvolution labels may only contain I, X, Y, or Z.")
+
+        self._apply_multirz_gate_batch([qubit for qubit, _ in active], thetas)
 
         for qubit, pauli in active:
             if pauli == "X":
@@ -556,6 +611,23 @@ class RocQuantumBackend(BackendV2):
 
             theta = 2.0 * float(time) * coeff
             applied = self._apply_pauli_rotation_gate(q_indices, label, theta) or applied
+
+        return applied
+
+    def _apply_pauli_evolution_gate_batch(self, op, q_indices, times):
+        terms = _pauli_evolution_terms(op)
+        if terms is None:
+            return False
+
+        applied = False
+        for label, coeff in terms:
+            coeff = complex(coeff).real
+            if set(str(label).upper()) <= {"I"}:
+                applied = True
+                continue
+
+            thetas = [2.0 * float(time) * coeff for time in times]
+            applied = self._apply_pauli_rotation_gate_batch(q_indices, label, thetas) or applied
 
         return applied
 
@@ -1104,6 +1176,13 @@ class RocQuantumBackend(BackendV2):
                     self._apply_rzz_gate_batch(q_indices, thetas)
                 continue
 
+            if reference_op.name == "PauliEvolution" and all(len(params) == 1 for params in params_by_circuit):
+                terms = _pauli_evolution_terms(reference_op)
+                if terms is not None and all(_pauli_evolution_terms(op) == terms for op in ops[1:]):
+                    times = [params[0] for params in params_by_circuit]
+                    if self._apply_pauli_evolution_gate_batch(reference_op, q_indices, times):
+                        continue
+
             if reference_op.name == "u" and all(len(params) == 3 for params in params_by_circuit):
                 thetas = [params[0] for params in params_by_circuit]
                 phis = [params[1] for params in params_by_circuit]
@@ -1115,7 +1194,8 @@ class RocQuantumBackend(BackendV2):
             if any(params != first_params for params in params_by_circuit[1:]):
                 raise NotImplementedError(
                     "Batched Qiskit execution only supports varying RX/RY/RZ, CRX/CRY/CRZ, "
-                    f"p/cp, u, and decomposed rxx/ryy/rzz parameters, got {reference_op.name!r}."
+                    f"p/cp, u, decomposed rxx/ryy/rzz, and PauliEvolution parameters, "
+                    f"got {reference_op.name!r}."
                 )
 
             self._apply_quantum_operation(
