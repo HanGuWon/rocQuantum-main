@@ -1371,6 +1371,27 @@ def test_qiskit_backend_runs_direct_unitary_without_parameter_normalization(monk
     assert targets == (0,)
 
 
+def test_qiskit_backend_runs_pauli_gate_as_fixed_matrix(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import PauliGate
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    gate = PauliGate("XZ")
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(2)
+    circuit.append(gate, [0, 1])
+
+    backend.run(circuit, sampling=False).result()
+
+    matrix, targets = _FakeQuantumSimulator.instances[-1].matrices[0]
+    np.testing.assert_allclose(matrix, Operator(gate).data)
+    assert targets == (0, 1)
+
+
 def test_qiskit_backend_uses_native_controlled_matrix_for_generic_controlled_unitary(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -1703,6 +1724,39 @@ def test_qiskit_native_estimator_keeps_fixed_unitaries_batched(monkeypatch):
     np.testing.assert_allclose(matrix, controlled)
     assert controls == (0,)
     assert targets == (1,)
+    assert sim.batch_ops == [("RY", (1,), (0.2, 0.8))]
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_keeps_fixed_pauli_gates_batched(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.circuit.library import PauliGate
+    from qiskit.quantum_info import Operator, SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    gate = PauliGate("XZ")
+    circuit = QuantumCircuit(2)
+    circuit.append(gate, [0, 1])
+    circuit.ry(theta, 1)
+    observable = SparsePauliOp.from_list([("IZ", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.2, 0.8])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert len(sim.matrices) == 1
+    matrix, targets = sim.matrices[0]
+    np.testing.assert_allclose(matrix, Operator(gate).data)
+    assert targets == (0, 1)
     assert sim.batch_ops == [("RY", (1,), (0.2, 0.8))]
     assert sim.batch_expectations == [("Z", (0,))]
 

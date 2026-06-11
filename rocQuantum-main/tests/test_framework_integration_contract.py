@@ -592,6 +592,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("self._runtime.apply_operation_batch", source)
         self.assertIn("self._runtime.set_statevectors", source)
         self.assertIn("initial full-wire state preparation", source)
+        self.assertIn("def _operation_runtime_params", source)
         self.assertIn("def _apply_u_gate_batch", source)
         self.assertIn("touched_qubits = set()", source)
         self.assertIn("circuit_num_qubits=num_qubits", source)

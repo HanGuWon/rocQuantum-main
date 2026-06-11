@@ -192,6 +192,15 @@ def _operation_matrix(op):
     return _automatic_operation_matrix(op)
 
 
+def _operation_runtime_params(op, matrix):
+    try:
+        return normalize_params(op.params)
+    except (TypeError, ValueError):
+        if matrix is not None:
+            return []
+        raise
+
+
 def _parameter_value_matches(left, right):
     try:
         left_array = np.asarray(left)
@@ -1028,10 +1037,7 @@ class RocQuantumBackend(BackendV2):
                     pass
 
         matrix = _operation_matrix(op)
-        if matrix is not None and op.name in {"state_preparation", "unitary"}:
-            params = []
-        else:
-            params = normalize_params(op.params)
+        params = _operation_runtime_params(op, matrix)
         self._runtime.apply_operation(
             op.name,
             q_indices,
