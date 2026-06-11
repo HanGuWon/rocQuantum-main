@@ -4661,6 +4661,38 @@ def test_pennylane_block_encode_dispatches_dense_matrix(monkeypatch):
     assert targets == (0, 1)
 
 
+def test_pennylane_sparse_block_encode_materializes_dense_matrix(monkeypatch):
+    pytest.importorskip("pennylane")
+    sparse = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from rocquantum.framework_runtime import matrix_to_little_endian_wires
+
+    block = sparse.csr_matrix(np.array([[0.2, 0.0], [0.0, 0.3]], dtype=np.complex128))
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.BlockEncode(block, wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == []
+    assert len(sim.matrices) == 1
+    matrix, targets = sim.matrices[0]
+    np.testing.assert_allclose(
+        matrix,
+        matrix_to_little_endian_wires(qml.matrix(qml.BlockEncode(block, wires=[0, 1]))),
+    )
+    assert targets == (0, 1)
+
+
 def test_pennylane_controlled_qubit_unitary_uses_native_controlled_matrix(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
