@@ -43,7 +43,14 @@ MATRIX_OPS = {
     "OrbitalRotation", "FermionicSWAP",
     "Toffoli", "CSWAP",
 }
-DECOMPOSED_OPS = {"GlobalPhase", "GroverOperator", "QFT", "QubitCarry", "QubitSum"}
+DECOMPOSED_OPS = {
+    "DiagonalQubitUnitary",
+    "GlobalPhase",
+    "GroverOperator",
+    "QFT",
+    "QubitCarry",
+    "QubitSum",
+}
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
     "PauliX": "X",
@@ -706,6 +713,125 @@ def _apply_controlled_phase_shift_batch(runtime, wire_indices, thetas):
     runtime.apply_operation_batch("RZ", [target], half_thetas)
 
 
+def _gray_code(rank):
+    if rank == 0:
+        return np.array([0], dtype=int)
+    code = np.array([0, 1], dtype=int)
+    for index in range(1, rank):
+        code = np.concatenate([code, code[::-1] + 2**index])
+    return code
+
+
+def _normalized_walsh_hadamard(values):
+    transformed = np.asarray(values, dtype=float).copy()
+    width = transformed.shape[-1]
+    step = 1
+    while step < width:
+        for start in range(0, width, 2 * step):
+            left = transformed[..., start:start + step].copy()
+            right = transformed[..., start + step:start + 2 * step].copy()
+            transformed[..., start:start + step] = left + right
+            transformed[..., start + step:start + 2 * step] = left - right
+        step *= 2
+    return transformed / width
+
+
+def _uniform_rz_thetas(angles):
+    angles = np.asarray(angles, dtype=float)
+    control_count = int(np.log2(angles.shape[-1]))
+    transformed = _normalized_walsh_hadamard(angles)
+    return transformed[..., _gray_code(control_count)]
+
+
+def _apply_uniform_rz(runtime, control_indices, target, angles):
+    thetas = _uniform_rz_thetas(angles)
+    tolerance = np.finfo(np.asarray(thetas).dtype).eps
+    if not np.any(np.abs(thetas) > tolerance):
+        return
+    if not control_indices:
+        runtime.apply_operation("RZ", [target], [thetas[0]])
+        return
+
+    code = _gray_code(len(control_indices))
+    control_indexes = np.log2(code ^ np.roll(code, -1)).astype(int)
+    for theta, control_index in zip(thetas, control_indexes):
+        if abs(theta) > tolerance:
+            runtime.apply_operation("RZ", [target], [theta])
+        runtime.apply_operation("CNOT", [control_indices[control_index], target])
+
+
+def _apply_uniform_rz_batch(runtime, control_indices, target, angles_by_batch):
+    thetas_by_batch = _uniform_rz_thetas(angles_by_batch)
+    tolerance = np.finfo(np.asarray(thetas_by_batch).dtype).eps
+    if not np.any(np.abs(thetas_by_batch) > tolerance):
+        return
+    if not control_indices:
+        runtime.apply_operation_batch("RZ", [target], thetas_by_batch[:, 0])
+        return
+
+    code = _gray_code(len(control_indices))
+    control_indexes = np.log2(code ^ np.roll(code, -1)).astype(int)
+    for theta_column, control_index in zip(thetas_by_batch.T, control_indexes):
+        if np.any(np.abs(theta_column) > tolerance):
+            runtime.apply_operation_batch("RZ", [target], theta_column)
+        runtime.apply_operation("CNOT", [control_indices[control_index], target])
+
+
+def _diagonal_unitary_phases(diagonal, wire_count):
+    phases = np.angle(np.asarray(diagonal, dtype=np.complex128).reshape(-1))
+    expected = 1 << wire_count
+    if phases.shape[-1] != expected:
+        raise ValueError("DiagonalQubitUnitary diagonal length must match its wires.")
+    return phases
+
+
+def _apply_diagonal_phases(runtime, wire_indices, phases):
+    if len(wire_indices) == 1:
+        mean = 0.5 * (phases[0] + phases[1])
+        diff = phases[1] - phases[0]
+        _apply_global_phase_operation(runtime, wire_indices, -mean)
+        runtime.apply_operation("RZ", [wire_indices[0]], [diff])
+        return
+
+    means = 0.5 * (phases[::2] + phases[1::2])
+    diffs = phases[1::2] - phases[::2]
+    _apply_diagonal_phases(runtime, wire_indices[:-1], means)
+    _apply_uniform_rz(runtime, wire_indices[:-1], wire_indices[-1], diffs)
+
+
+def _apply_diagonal_phases_batch(runtime, wire_indices, phases_by_batch):
+    if len(wire_indices) == 1:
+        means = 0.5 * (phases_by_batch[:, 0] + phases_by_batch[:, 1])
+        diffs = phases_by_batch[:, 1] - phases_by_batch[:, 0]
+        if getattr(runtime, "preserve_global_phase", True):
+            if not np.allclose(means, means[0]):
+                raise NotImplementedError("Batched GlobalPhase sweeps require measurement-only execution.")
+            _apply_global_phase_operation(runtime, wire_indices, -means[0])
+        runtime.apply_operation_batch("RZ", [wire_indices[0]], diffs)
+        return
+
+    means = 0.5 * (phases_by_batch[:, ::2] + phases_by_batch[:, 1::2])
+    diffs = phases_by_batch[:, 1::2] - phases_by_batch[:, ::2]
+    _apply_diagonal_phases_batch(runtime, wire_indices[:-1], means)
+    _apply_uniform_rz_batch(runtime, wire_indices[:-1], wire_indices[-1], diffs)
+
+
+def _apply_diagonal_qubit_unitary(runtime, wire_indices, diagonal):
+    if not wire_indices:
+        raise ValueError("DiagonalQubitUnitary requires at least one wire.")
+    phases = _diagonal_unitary_phases(diagonal, len(wire_indices))
+    _apply_diagonal_phases(runtime, wire_indices, phases)
+
+
+def _apply_diagonal_qubit_unitary_batch(runtime, wire_indices, diagonals):
+    if not wire_indices:
+        raise ValueError("DiagonalQubitUnitary requires at least one wire.")
+    phases_by_batch = np.vstack(
+        [_diagonal_unitary_phases(diagonal, len(wire_indices)) for diagonal in diagonals]
+    )
+    _apply_diagonal_phases_batch(runtime, wire_indices, phases_by_batch)
+
+
 def _apply_qft(runtime, wire_indices):
     if not wire_indices:
         raise ValueError("QFT requires at least one wire.")
@@ -1266,6 +1392,10 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
         _apply_global_phase_operation(runtime, wire_indices, params[0])
         return True
 
+    if gate_name == "DiagonalQubitUnitary" and len(params) == 1:
+        _apply_diagonal_qubit_unitary(runtime, wire_indices, params[0])
+        return True
+
     if gate_name == "QubitSum" and not params:
         _apply_qubit_sum(runtime, wire_indices)
         return True
@@ -1627,6 +1757,11 @@ class RocQDevice(QubitDevice):
                 continue
 
             if gate_name == "GlobalPhase" and all(len(params) == 1 for params in params_by_op):
+                continue
+
+            if gate_name == "DiagonalQubitUnitary" and all(len(params) == 1 for params in params_by_op):
+                diagonals = [params[0] for params in params_by_op]
+                _apply_diagonal_qubit_unitary_batch(self._runtime, wire_indices, diagonals)
                 continue
 
             if gate_name in {
@@ -2245,6 +2380,18 @@ class RocQDevice(QubitDevice):
                         theta,
                         fallback_wire=fallback_wire,
                     )
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "DiagonalQubitUnitary":
+                try:
+                    (diagonal,) = getattr(op, "parameters", [])
+                    _apply_diagonal_qubit_unitary(self._runtime, wire_indices, diagonal)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(

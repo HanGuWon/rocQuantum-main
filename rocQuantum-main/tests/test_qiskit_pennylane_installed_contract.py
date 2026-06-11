@@ -2710,6 +2710,47 @@ def test_pennylane_batch_execute_skips_global_phase_sweeps(monkeypatch):
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_batches_diagonal_qubit_unitary_sweeps(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    first_diagonal = np.exp(1j * np.array([0.1, 0.3, 0.6, 1.2]))
+    second_diagonal = np.exp(1j * np.array([0.2, 0.5, 0.9, 1.4]))
+    dev = qml.device("lightning.rocq", wires=2)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.DiagonalQubitUnitary(first_diagonal, wires=[0, 1]), qml.RY(0.2, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [qml.DiagonalQubitUnitary(second_diagonal, wires=[0, 1]), qml.RY(0.8, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert [op[:2] for op in sim.batch_ops] == [
+        ("RZ", (0,)),
+        ("RZ", (1,)),
+        ("RZ", (1,)),
+        ("RY", (0,)),
+    ]
+    np.testing.assert_allclose(sim.batch_ops[0][2], (0.7, 0.8))
+    np.testing.assert_allclose(sim.batch_ops[1][2], (0.4, 0.4))
+    np.testing.assert_allclose(sim.batch_ops[2][2], (-0.2, -0.1))
+    np.testing.assert_allclose(sim.batch_ops[3][2], (0.2, 0.8))
+    assert sim.ops == [("CNOT", (0, 1), ()), ("CNOT", (0, 1), ())]
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_keeps_arithmetic_templates_batched(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -3881,6 +3922,42 @@ def test_pennylane_global_phase_uses_single_wire_phase_matrix(monkeypatch):
     assert len(sim.matrices) == 1
     matrix, targets = sim.matrices[0]
     np.testing.assert_allclose(matrix, np.eye(2, dtype=np.complex128) * np.exp(-0.3j))
+    assert targets == (0,)
+
+
+def test_pennylane_diagonal_qubit_unitary_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    diagonal = np.exp(1j * np.array([0.1, 0.3, 0.6, 1.2]))
+    dev = qml.device("lightning.rocq", wires=2)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.DiagonalQubitUnitary(diagonal, wires=[0, 1])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert [op[:2] for op in sim.ops] == [
+        ("RZ", (0,)),
+        ("RZ", (1,)),
+        ("CNOT", (0, 1)),
+        ("RZ", (1,)),
+        ("CNOT", (0, 1)),
+    ]
+    np.testing.assert_allclose(sim.ops[0][2], (0.7,))
+    np.testing.assert_allclose(sim.ops[1][2], (0.4,))
+    np.testing.assert_allclose(sim.ops[3][2], (-0.2,))
+    assert len(sim.matrices) == 1
+    matrix, targets = sim.matrices[0]
+    np.testing.assert_allclose(matrix, np.eye(2, dtype=np.complex128) * np.exp(0.55j))
     assert targets == (0,)
 
 
