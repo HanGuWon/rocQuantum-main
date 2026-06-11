@@ -43,7 +43,7 @@ MATRIX_OPS = {
     "OrbitalRotation", "FermionicSWAP",
     "Toffoli", "CSWAP",
 }
-DECOMPOSED_OPS = {"GlobalPhase", "QFT", "QubitCarry", "QubitSum"}
+DECOMPOSED_OPS = {"GlobalPhase", "GroverOperator", "QFT", "QubitCarry", "QubitSum"}
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
     "PauliX": "X",
@@ -743,6 +743,22 @@ def _apply_qubit_carry(runtime, wire_indices):
     runtime.apply_operation("MCX", [first, third, output])
 
 
+def _apply_grover_operator(runtime, wire_indices):
+    if len(wire_indices) < 2:
+        raise ValueError("GroverOperator requires at least two wires.")
+
+    target = wire_indices[-1]
+    controls = wire_indices[:-1]
+    for wire_index in controls:
+        runtime.apply_operation("H", [wire_index])
+    runtime.apply_operation("Z", [target])
+    _apply_mcx_with_control_values(runtime, wire_indices, [False] * len(controls))
+    runtime.apply_operation("Z", [target])
+    for wire_index in controls:
+        runtime.apply_operation("H", [wire_index])
+    _apply_global_phase_operation(runtime, wire_indices, np.pi)
+
+
 def _apply_controlled_phase_variant(runtime, wire_indices, theta, control_state):
     if len(control_state) != len(wire_indices):
         raise ValueError("Controlled phase control_state must match the wire count.")
@@ -1256,6 +1272,10 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
 
     if gate_name == "QubitCarry" and not params:
         _apply_qubit_carry(runtime, wire_indices)
+        return True
+
+    if gate_name == "GroverOperator" and not params:
+        _apply_grover_operator(runtime, wire_indices)
         return True
 
     if gate_name == "Toffoli" and not params:
@@ -2247,6 +2267,17 @@ class RocQDevice(QubitDevice):
             elif gate_name == "QubitCarry":
                 try:
                     _apply_qubit_carry(self._runtime, wire_indices)
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
+                operation_applied = True
+            elif gate_name == "GroverOperator":
+                try:
+                    _apply_grover_operator(self._runtime, wire_indices)
                 except (NotImplementedError, RuntimeError, TypeError, ValueError):
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                     self._runtime.apply_operation(

@@ -2754,6 +2754,48 @@ def test_pennylane_batch_execute_keeps_arithmetic_templates_batched(monkeypatch)
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_keeps_grover_operator_batched(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.GroverOperator(wires=[0, 1, 2]), qml.RY(0.2, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [qml.GroverOperator(wires=[0, 1, 2]), qml.RY(0.8, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == [
+        ("H", (0,), ()),
+        ("H", (1,), ()),
+        ("Z", (2,), ()),
+        ("X", (0,), ()),
+        ("X", (1,), ()),
+        ("MCX", (0, 1, 2), ()),
+        ("X", (1,), ()),
+        ("X", (0,), ()),
+        ("Z", (2,), ()),
+        ("H", (0,), ()),
+        ("H", (1,), ()),
+    ]
+    assert sim.batch_ops == [("RY", (0,), (0.2, 0.8))]
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_keeps_static_unitaries_batched(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -4393,6 +4435,44 @@ def test_pennylane_arithmetic_templates_decompose_natively(monkeypatch):
         ("MCX", (0, 2, 3), ()),
     ]
     assert sim.matrices == []
+
+
+def test_pennylane_grover_operator_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.GroverOperator(wires=[0, 1, 2])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("H", (0,), ()),
+        ("H", (1,), ()),
+        ("Z", (2,), ()),
+        ("X", (0,), ()),
+        ("X", (1,), ()),
+        ("MCX", (0, 1, 2), ()),
+        ("X", (1,), ()),
+        ("X", (0,), ()),
+        ("Z", (2,), ()),
+        ("H", (0,), ()),
+        ("H", (1,), ()),
+    ]
+    assert len(sim.matrices) == 1
+    matrix, targets = sim.matrices[0]
+    np.testing.assert_allclose(matrix, -np.eye(2, dtype=np.complex128))
+    assert targets == (0,)
 
 
 def test_pennylane_isingzz_dispatches_native_cnot_chain(monkeypatch):
