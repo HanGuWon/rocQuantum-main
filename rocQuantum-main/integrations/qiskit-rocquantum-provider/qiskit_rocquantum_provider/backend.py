@@ -389,7 +389,13 @@ def _instruction_target(num_qubits):
     target.add_instruction(UnitaryGate([[1, 0], [0, 1]]), name="unitary")
     target.add_instruction(XGate(), name="x")
     target.add_instruction(XXMinusYYGate(0.0, 0.0), name="xx_minus_yy")
+    target.add_instruction(XXMinusYYGate(0.0, 0.0).control(1, annotated=False), name="cxx_minus_yy")
+    target.add_instruction(XXMinusYYGate(0.0, 0.0).control(2, annotated=False), name="ccxx_minus_yy")
+    target.add_instruction(XXMinusYYGate(0.0, 0.0).control(3, annotated=False), name="c3xx_minus_yy")
     target.add_instruction(XXPlusYYGate(0.0, 0.0), name="xx_plus_yy")
+    target.add_instruction(XXPlusYYGate(0.0, 0.0).control(1, annotated=False), name="cxx_plus_yy")
+    target.add_instruction(XXPlusYYGate(0.0, 0.0).control(2, annotated=False), name="ccxx_plus_yy")
+    target.add_instruction(XXPlusYYGate(0.0, 0.0).control(3, annotated=False), name="c3xx_plus_yy")
     target.add_instruction(YGate(), name="y")
     target.add_instruction(ZGate(), name="z")
     target.add_instruction(Measure(), name="measure")
@@ -1024,6 +1030,127 @@ class RocQuantumBackend(BackendV2):
         for qubit in q_indices:
             self._runtime.apply_operation("rx", [qubit], [-cmath.pi / 2])
 
+    def _apply_multi_controlled_phase_like_gate(self, controls, target, theta, *, include_global_phase):
+        if len(controls) == 1:
+            self._apply_controlled_phase_gate(
+                [controls[0], target],
+                theta,
+                include_global_phase=include_global_phase,
+            )
+        else:
+            self._apply_multi_controlled_phase_gate(
+                list(controls) + [target],
+                theta,
+                include_global_phase=include_global_phase,
+            )
+
+    def _apply_multi_controlled_rz_like_gate(self, controls, target, theta, *, include_global_phase):
+        self._apply_multi_controlled_rz_gate(
+            list(controls) + [target],
+            theta,
+            include_global_phase=include_global_phase,
+        )
+
+    def _apply_multi_controlled_rz_like_gate_batch(self, controls, target, thetas):
+        self._apply_multi_controlled_rz_gate_batch(list(controls) + [target], thetas)
+
+    def _apply_multi_controlled_x_gate(self, controls, target):
+        if len(controls) == 1:
+            self._runtime.apply_operation("cx", [controls[0], target])
+        else:
+            self._runtime.apply_operation("mcx", list(controls) + [target])
+
+    def _apply_multi_controlled_sx_like_gate(self, controls, target, *, inverse, include_global_phase):
+        phase = -cmath.pi / 2 if inverse else cmath.pi / 2
+        self._runtime.apply_operation("h", [target])
+        self._apply_multi_controlled_phase_like_gate(
+            controls,
+            target,
+            phase,
+            include_global_phase=include_global_phase,
+        )
+        self._runtime.apply_operation("h", [target])
+
+    def _apply_controlled_xx_plus_yy_gate(self, controls, q_indices, theta, beta, *, include_global_phase):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit controlled xx_plus_yy gate requires two target qubits.")
+
+        left, right = q_indices
+        self._apply_multi_controlled_rz_like_gate(controls, left, beta, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_phase_like_gate(controls, right, -cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_sx_like_gate(controls, right, inverse=False, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_phase_like_gate(controls, right, cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_phase_like_gate(controls, left, cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_x_gate(list(controls) + [right], left)
+        self._apply_multi_controlled_ry_gate(list(controls) + [right], -theta / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_ry_gate(list(controls) + [left], -theta / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_x_gate(list(controls) + [right], left)
+        self._apply_multi_controlled_phase_like_gate(controls, left, -cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_phase_like_gate(controls, right, -cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_sx_like_gate(controls, right, inverse=True, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_phase_like_gate(controls, right, cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_rz_like_gate(controls, left, -beta, include_global_phase=include_global_phase)
+
+    def _apply_controlled_xx_plus_yy_gate_batch(self, controls, q_indices, thetas, betas):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit controlled xx_plus_yy gate requires two target qubits.")
+
+        left, right = q_indices
+        self._apply_multi_controlled_rz_like_gate_batch(controls, left, betas)
+        self._apply_multi_controlled_phase_like_gate(controls, right, -cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_sx_like_gate(controls, right, inverse=False, include_global_phase=False)
+        self._apply_multi_controlled_phase_like_gate(controls, right, cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_phase_like_gate(controls, left, cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_x_gate(list(controls) + [right], left)
+        self._apply_multi_controlled_ry_gate_batch(list(controls) + [right], [-theta / 2 for theta in thetas])
+        self._apply_multi_controlled_ry_gate_batch(list(controls) + [left], [-theta / 2 for theta in thetas])
+        self._apply_multi_controlled_x_gate(list(controls) + [right], left)
+        self._apply_multi_controlled_phase_like_gate(controls, left, -cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_phase_like_gate(controls, right, -cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_sx_like_gate(controls, right, inverse=True, include_global_phase=False)
+        self._apply_multi_controlled_phase_like_gate(controls, right, cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_rz_like_gate_batch(controls, left, [-beta for beta in betas])
+
+    def _apply_controlled_xx_minus_yy_gate(self, controls, q_indices, theta, beta, *, include_global_phase):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit controlled xx_minus_yy gate requires two target qubits.")
+
+        left, right = q_indices
+        self._apply_multi_controlled_rz_like_gate(controls, right, -beta, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_phase_like_gate(controls, left, -cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_sx_like_gate(controls, left, inverse=False, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_phase_like_gate(controls, left, cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_phase_like_gate(controls, right, cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_x_gate(list(controls) + [left], right)
+        self._apply_multi_controlled_ry_gate(list(controls) + [left], theta / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_ry_gate(list(controls) + [right], -theta / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_x_gate(list(controls) + [left], right)
+        self._apply_multi_controlled_phase_like_gate(controls, right, -cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_phase_like_gate(controls, left, -cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_sx_like_gate(controls, left, inverse=True, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_phase_like_gate(controls, left, cmath.pi / 2, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_rz_like_gate(controls, right, beta, include_global_phase=include_global_phase)
+
+    def _apply_controlled_xx_minus_yy_gate_batch(self, controls, q_indices, thetas, betas):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit controlled xx_minus_yy gate requires two target qubits.")
+
+        left, right = q_indices
+        self._apply_multi_controlled_rz_like_gate_batch(controls, right, [-beta for beta in betas])
+        self._apply_multi_controlled_phase_like_gate(controls, left, -cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_sx_like_gate(controls, left, inverse=False, include_global_phase=False)
+        self._apply_multi_controlled_phase_like_gate(controls, left, cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_phase_like_gate(controls, right, cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_x_gate(list(controls) + [left], right)
+        self._apply_multi_controlled_ry_gate_batch(list(controls) + [left], [theta / 2 for theta in thetas])
+        self._apply_multi_controlled_ry_gate_batch(list(controls) + [right], [-theta / 2 for theta in thetas])
+        self._apply_multi_controlled_x_gate(list(controls) + [left], right)
+        self._apply_multi_controlled_phase_like_gate(controls, right, -cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_phase_like_gate(controls, left, -cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_sx_like_gate(controls, left, inverse=True, include_global_phase=False)
+        self._apply_multi_controlled_phase_like_gate(controls, left, cmath.pi / 2, include_global_phase=False)
+        self._apply_multi_controlled_rz_like_gate_batch(controls, right, betas)
+
     def _apply_xx_plus_yy_gate(self, q_indices, theta, beta, *, include_global_phase):
         if len(q_indices) != 2:
             raise ValueError("Qiskit xx_plus_yy gate requires exactly two qubits.")
@@ -1528,10 +1655,25 @@ class RocQuantumBackend(BackendV2):
         num_controls = int(getattr(op, "num_ctrl_qubits", 0))
         base_gate = getattr(op, "base_gate", None)
         base_name = getattr(base_gate, "name", None)
-        target_count = 2 if base_name in {"dcx", "ecr", "iswap", "rxx", "ryy", "rzz", "rzx", "swap"} else 1
+        target_count = 2 if base_name in {
+            "dcx",
+            "ecr",
+            "iswap",
+            "rxx",
+            "ryy",
+            "rzz",
+            "rzx",
+            "swap",
+            "xx_minus_yy",
+            "xx_plus_yy",
+        } else 1
         if num_controls < 1 or len(q_indices) != num_controls + target_count:
             return False
-        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx", "dcx", "ecr", "iswap", "rxx", "ryy", "rzz", "rzx", "swap", "u1", "u2", "u3", "u"}:
+        if base_name not in {
+            "x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx",
+            "dcx", "ecr", "iswap", "rxx", "ryy", "rzz", "rzx", "swap", "u1", "u2", "u3", "u",
+            "xx_minus_yy", "xx_plus_yy",
+        }:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
@@ -1606,6 +1748,24 @@ class RocQuantumBackend(BackendV2):
                     targets,
                     pauli_word,
                     theta,
+                )
+            elif base_name == "xx_plus_yy":
+                theta, beta = normalize_params(op.params)
+                self._apply_controlled_xx_plus_yy_gate(
+                    controls,
+                    targets,
+                    theta,
+                    beta,
+                    include_global_phase=include_global_phase,
+                )
+            elif base_name == "xx_minus_yy":
+                theta, beta = normalize_params(op.params)
+                self._apply_controlled_xx_minus_yy_gate(
+                    controls,
+                    targets,
+                    theta,
+                    beta,
+                    include_global_phase=include_global_phase,
                 )
             elif base_name == "p":
                 (theta,) = normalize_params(op.params)
@@ -1882,6 +2042,47 @@ class RocQuantumBackend(BackendV2):
                 self._runtime.apply_operation("x", [control])
                 flipped.append(control)
             self._apply_controlled_pauli_rotation_gate_batch(controls, targets, pauli_word, thetas)
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+            flipped.clear()
+            return True
+        finally:
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+
+    def _apply_controlled_xx_yy_gate_batch(self, op, q_indices, params_by_circuit):
+        num_controls = int(getattr(op, "num_ctrl_qubits", 0))
+        base_gate = getattr(op, "base_gate", None)
+        base_name = getattr(base_gate, "name", None)
+        if (
+            num_controls < 1
+            or len(q_indices) != num_controls + 2
+            or base_name not in {"xx_minus_yy", "xx_plus_yy"}
+            or not all(len(params) == 2 for params in params_by_circuit)
+        ):
+            return False
+
+        ctrl_state = getattr(op, "ctrl_state", None)
+        ctrl_state = (1 << num_controls) - 1 if ctrl_state is None else int(ctrl_state)
+        controls = list(q_indices[:num_controls])
+        targets = list(q_indices[num_controls:])
+        open_controls = [
+            control
+            for control_index, control in enumerate(controls)
+            if not ((ctrl_state >> control_index) & 1)
+        ]
+        thetas = [params[0] for params in params_by_circuit]
+        betas = [params[1] for params in params_by_circuit]
+
+        flipped = []
+        try:
+            for control in open_controls:
+                self._runtime.apply_operation("x", [control])
+                flipped.append(control)
+            if base_name == "xx_plus_yy":
+                self._apply_controlled_xx_plus_yy_gate_batch(controls, targets, thetas, betas)
+            else:
+                self._apply_controlled_xx_minus_yy_gate_batch(controls, targets, thetas, betas)
             for control in reversed(flipped):
                 self._runtime.apply_operation("x", [control])
             flipped.clear()
@@ -2442,6 +2643,14 @@ class RocQuantumBackend(BackendV2):
                 continue
 
             if normalized_params_by_circuit is not None and self._apply_controlled_r_gate_batch(
+                reference_op,
+                q_indices,
+                normalized_params_by_circuit,
+            ):
+                touched_qubits.update(q_indices)
+                continue
+
+            if normalized_params_by_circuit is not None and self._apply_controlled_xx_yy_gate_batch(
                 reference_op,
                 q_indices,
                 normalized_params_by_circuit,
