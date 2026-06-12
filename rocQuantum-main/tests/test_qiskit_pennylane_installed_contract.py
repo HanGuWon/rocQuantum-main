@@ -1672,6 +1672,35 @@ def test_qiskit_native_sampler_batches_initial_reset_parameter_values(monkeypatc
     assert sim.probability_requests == [(0,)]
 
 
+def test_qiskit_native_sampler_does_not_batch_mid_circuit_state_preparation(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1, 1)
+    circuit.h(0)
+    circuit.prepare_state([0.0, 1.0], 0)
+    circuit.ry(theta, 0)
+    circuit.measure(0, 0)
+
+    result = RocQuantumProvider().get_sampler().run(
+        [(circuit, [0.1, 0.2])],
+        shots=3,
+    ).result()[0]
+
+    assert "batched_parameters" not in result.metadata
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 1
+    assert sim.statevectors == []
+    assert sim.batch_ops == []
+    assert [targets for _, targets in sim.matrices] == [(0,)]
+    assert sim.ops == [("H", (0,), ()), ("RY", (0,), (0.2,))]
+
+
 def test_qiskit_native_sampler_batches_controlled_parameter_values(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -1872,6 +1901,37 @@ def test_qiskit_native_estimator_batches_initial_state_preparation(monkeypatch):
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
     assert sim.matrices == []
     assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_does_not_batch_mid_circuit_state_preparation(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+    circuit.prepare_state([0.0, 1.0], 0)
+    circuit.ry(theta, 0)
+    observable = SparsePauliOp.from_list([("Z", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    assert "batched_parameters" not in result.metadata
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 1
+    assert sim.statevectors == []
+    assert sim.batch_ops == []
+    assert [targets for _, targets in sim.matrices] == [(0,)]
+    assert sim.ops == [("H", (0,), ()), ("RY", (0,), (0.2,))]
+    assert sim.expectations == [("Z", (0,))]
 
 
 def test_qiskit_native_estimator_keeps_fixed_unitaries_batched(monkeypatch):

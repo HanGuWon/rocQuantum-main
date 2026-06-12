@@ -1415,6 +1415,7 @@ class RocQuantumBackend(BackendV2):
             ):
                 thetas = [params[0] for params in normalized_params_by_circuit]
                 if self._apply_controlled_base_gate_batch(reference_op, q_indices, thetas):
+                    touched_qubits.update(q_indices)
                     continue
 
             if normalized_params_by_circuit is not None and reference_op.name in {
@@ -1427,6 +1428,7 @@ class RocQuantumBackend(BackendV2):
                     q_indices,
                     [params[0] for params in normalized_params_by_circuit],
                 )
+                touched_qubits.update(q_indices)
                 continue
 
             if normalized_params_by_circuit is not None and reference_op.name in {
@@ -1447,6 +1449,7 @@ class RocQuantumBackend(BackendV2):
                     self._apply_rzz_gate_batch(q_indices, thetas)
                 else:
                     self._apply_rzx_gate_batch(q_indices, thetas)
+                touched_qubits.update(q_indices)
                 continue
 
             if normalized_params_by_circuit is not None and reference_op.name == "PauliEvolution" and all(
@@ -1456,6 +1459,7 @@ class RocQuantumBackend(BackendV2):
                 if terms is not None and all(_pauli_evolution_terms(op) == terms for op in ops[1:]):
                     times = [params[0] for params in normalized_params_by_circuit]
                     if self._apply_pauli_evolution_gate_batch(reference_op, q_indices, times):
+                        touched_qubits.update(q_indices)
                         continue
 
             if normalized_params_by_circuit is not None and reference_op.name == "u" and all(
@@ -1465,6 +1469,7 @@ class RocQuantumBackend(BackendV2):
                 phis = [params[1] for params in normalized_params_by_circuit]
                 lams = [params[2] for params in normalized_params_by_circuit]
                 self._apply_u_gate_batch(q_indices, thetas, phis, lams)
+                touched_qubits.update(q_indices)
                 continue
 
             if normalized_params_by_circuit is not None and reference_op.name == "r" and all(
@@ -1473,6 +1478,7 @@ class RocQuantumBackend(BackendV2):
                 thetas = [params[0] for params in normalized_params_by_circuit]
                 phis = [params[1] for params in normalized_params_by_circuit]
                 self._apply_r_gate_batch(q_indices, thetas, phis)
+                touched_qubits.update(q_indices)
                 continue
 
             if normalized_params_by_circuit is not None and reference_op.name in {
@@ -1486,6 +1492,7 @@ class RocQuantumBackend(BackendV2):
                     self._apply_xx_plus_yy_gate_batch(q_indices, thetas, betas)
                 else:
                     self._apply_xx_minus_yy_gate_batch(q_indices, thetas, betas)
+                touched_qubits.update(q_indices)
                 continue
 
             first_params = params_by_circuit[0]
