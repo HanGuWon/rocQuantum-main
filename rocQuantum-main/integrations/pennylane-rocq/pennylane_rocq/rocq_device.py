@@ -2892,6 +2892,23 @@ class RocQDevice(QubitDevice):
                 append_fixed("Hadamard", "H", [left])
                 continue
 
+            if op.name in {"SingleExcitationPlus", "SingleExcitationMinus"}:
+                if len(params) != 1 or len(wire_indices) != 2:
+                    return None
+                sign = 1 if op.name == "SingleExcitationPlus" else -1
+                left, right = wire_indices
+                half_theta = params[0] / 2
+                append_fixed("Hadamard", "H", [right])
+                append_fixed("CNOT", "CNOT", [right, left])
+                append_scaled("RY", "RY", [left], half_theta, param_indices[0], 0.5)
+                append_scaled("RY", "RY", [right], half_theta, param_indices[0], 0.5)
+                append_cy([right, left])
+                append_fixed("S", "S", [right])
+                append_fixed("Hadamard", "H", [right])
+                append_scaled("RZ", "RZ", [right], -sign * half_theta, param_indices[0], -sign * 0.5)
+                append_fixed("CNOT", "CNOT", [left, right])
+                continue
+
             if op.name == "PSWAP":
                 if len(params) != 1 or len(wire_indices) != 2:
                     return None
@@ -2900,6 +2917,27 @@ class RocQDevice(QubitDevice):
                 append_fixed("CNOT", "CNOT", [left, right])
                 append_scaled("PhaseShift", "P", [right], params[0], param_indices[0], 1.0)
                 append_fixed("CNOT", "CNOT", [left, right])
+                continue
+
+            if op.name == "FermionicSWAP":
+                if len(params) != 1 or len(wire_indices) != 2:
+                    return None
+                left, right = wire_indices
+                half_theta = params[0] / 2
+                append_fixed("Hadamard", "H", [left])
+                append_fixed("Hadamard", "H", [right])
+                if not append_multirz(wire_indices, half_theta, param_indices[0], 0.5):
+                    return None
+                append_fixed("Hadamard", "H", [left])
+                append_fixed("Hadamard", "H", [right])
+                append_fixed("RX", "RX", [left], [np.pi / 2])
+                append_fixed("RX", "RX", [right], [np.pi / 2])
+                if not append_multirz(wire_indices, half_theta, param_indices[0], 0.5):
+                    return None
+                append_fixed("RX", "RX", [left], [-np.pi / 2])
+                append_fixed("RX", "RX", [right], [-np.pi / 2])
+                append_scaled("RZ", "RZ", [left], half_theta, param_indices[0], 0.5)
+                append_scaled("RZ", "RZ", [right], half_theta, param_indices[0], 0.5)
                 continue
 
             append_payload(

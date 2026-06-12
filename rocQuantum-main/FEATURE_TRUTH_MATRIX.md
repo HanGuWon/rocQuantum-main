@@ -2,7 +2,7 @@
 
 Status legend: `IMPLEMENTED`, `PARTIAL`, `STUB`, `ABSENT`, `UNKNOWN`
 
-Recent adapter note: Qiskit native Sampler and Estimator parameter batches now keep no-op initial `reset` instructions in the batched simulator path instead of falling back to per-parameter replay. Runtime reset after prior operations remains a shot-trajectory-only path. PennyLane native adjoint payloads now include `Rot` / `CRot`, `PhaseShift` / controlled-phase, `MultiRZ`, `PauliRot`, Ising, `SingleExcitation`, and `PSWAP` lowering into the root binding's RX/RY/RZ/P/CRX/CRY/CRZ/CP path, with explicit derivative scales for decomposed half-angle gates.
+Recent adapter note: Qiskit native Sampler and Estimator parameter batches now keep no-op initial `reset` instructions in the batched simulator path instead of falling back to per-parameter replay. Runtime reset after prior operations remains a shot-trajectory-only path. PennyLane native adjoint payloads now include `Rot` / `CRot`, `PhaseShift` / controlled-phase, `MultiRZ`, `PauliRot`, Ising, `SingleExcitation` plus/minus, `PSWAP`, and `FermionicSWAP` lowering into the root binding's RX/RY/RZ/P/CRX/CRY/CRZ/CP path, with explicit derivative scales for decomposed half-angle gates.
 
 | Area | Feature | Current Status | Evidence | Native Or Fallback | Comparison Target | Impact If Missing | Priority |
 | --- | --- | --- | --- | --- | --- | --- | --- |

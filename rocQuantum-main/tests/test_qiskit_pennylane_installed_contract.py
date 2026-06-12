@@ -6715,6 +6715,57 @@ def test_pennylane_native_adjoint_lowers_decomposition_payloads_with_scales(monk
     )
 
 
+def test_pennylane_native_adjoint_lowers_excitation_phase_and_fermionic_swap_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.SingleExcitationPlus(0.6, wires=[0, 1]),
+            qml.SingleExcitationMinus(0.8, wires=[0, 1]),
+            qml.FermionicSWAP(1.0, wires=[0, 1]),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0, 1, 2]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0, 1, 2]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    scaled_ops = [
+        (
+            op["rocq_name"],
+            tuple(op["wires"]),
+            tuple(op["params"]),
+            tuple(op["param_indices"]),
+            tuple(op.get("param_derivative_scales", ())),
+        )
+        for op in operations
+        if op.get("param_derivative_scales") is not None
+    ]
+    assert scaled_ops[:6] == [
+        ("RY", (0,), (0.3,), (0,), (0.5,)),
+        ("RY", (1,), (0.3,), (0,), (0.5,)),
+        ("RZ", (1,), (-0.3,), (0,), (-0.5,)),
+        ("RY", (0,), (0.4,), (1,), (0.5,)),
+        ("RY", (1,), (0.4,), (1,), (0.5,)),
+        ("RZ", (1,), (0.4,), (1,), (0.5,)),
+    ]
+    assert scaled_ops[6:] == [
+        ("RZ", (1,), (0.5,), (2,), (0.5,)),
+        ("RZ", (1,), (0.5,), (2,), (0.5,)),
+        ("RZ", (0,), (0.5,), (2,), (0.5,)),
+        ("RZ", (1,), (0.5,), (2,), (0.5,)),
+    ]
+
+
 def test_pennylane_native_adjoint_accepts_hermitian_payload(monkeypatch):
     pytest.importorskip("pennylane")
 
