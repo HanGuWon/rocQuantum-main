@@ -86,11 +86,16 @@ class SumOperator(QuantumOperator):
         super().__init__(coefficient)
         self.terms = operators
 
+    def _add_terms(self) -> list[QuantumOperator]:
+        if self.coefficient == 1:
+            return list(self.terms)
+        return [SumOperator(list(self.terms), coefficient=self.coefficient)]
+
     def __add__(self, other):
         if isinstance(other, SumOperator):
-            return SumOperator(list(self.terms) + list(other.terms))
+            return SumOperator(self._add_terms() + other._add_terms())
         if isinstance(other, QuantumOperator):
-            return SumOperator(list(self.terms) + [other])
+            return SumOperator(self._add_terms() + [other])
         raise NotImplementedError
 
     def to_string(self) -> str:

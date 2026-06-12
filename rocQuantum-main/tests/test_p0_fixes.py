@@ -98,6 +98,37 @@ class TestSumOperatorImmutability(unittest.TestCase):
         self.assertEqual(len(s1.terms), s1_len)
         self.assertEqual(len(s3.terms), s1_len + len(s2.terms))
 
+    def test_add_preserves_scaled_sum_coefficients(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        scaled_sum = 2 * (PauliOperator("X0") + PauliOperator("Y1"))
+        combined = scaled_sum + PauliOperator("Z0", -0.5)
+
+        self.assertEqual(
+            iter_pauli_terms(combined),
+            [
+                (2 + 0j, [("X", 0)]),
+                (2 + 0j, [("Y", 1)]),
+                (-0.5 + 0j, [("Z", 0)]),
+            ],
+        )
+
+    def test_add_two_scaled_sums_preserves_both_coefficients(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        left = 2 * (PauliOperator("X0") + PauliOperator("Y1"))
+        right = -3 * (PauliOperator("Z0") + PauliOperator("I"))
+
+        self.assertEqual(
+            iter_pauli_terms(left + right),
+            [
+                (2 + 0j, [("X", 0)]),
+                (2 + 0j, [("Y", 1)]),
+                (-3 + 0j, [("Z", 0)]),
+                (-3 + 0j, []),
+            ],
+        )
+
 
 # ===================================================================
 # 3. Expectation Value — No Placeholder, No Kernel Execution

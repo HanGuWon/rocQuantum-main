@@ -149,6 +149,7 @@ What is not real today:
 
 - Native expectation helpers exist in `hipStateVec` and are bound in `python/rocq/bindings.cpp`.
 - The canonical top-level `rocq.operator.get_expectation_value()` delegates to `rocq.observe()` for supported Pauli operators, `HermitianOperator` dense matrices, and full-state `SparseHamiltonianOperator` CSR observables; the state-vector backend prefers the low-level `get_expectation_matrix` / `rocsvGetExpectationMatrix` and `get_sparse_matrix_moments` / `rocsvGetSparseMatrixMoments` hooks when available, and the legacy `_rocq_hip_backend` binding also exposes `get_expectation_pauli_string_batch` / `rocsvGetExpectationPauliStringBatch` plus `get_expectation_matrix_batch` / `rocsvGetExpectationMatrixBatch` for local batched readouts.
+- Canonical `SumOperator` addition preserves scalar coefficients on nested sums, so VQE/QAOA-style composite observables such as `2 * (X0 + Y1) + Z0` no longer lose the outer sum weight during Pauli-term expansion.
 - `python/rocq/api.py::Circuit.expval()` now uses native backend Pauli expectation helpers, matching `get_expval()` for supported Pauli terms.
 
 ### Packaging and CI
