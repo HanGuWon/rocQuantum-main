@@ -2679,14 +2679,17 @@ class RocQDevice(QubitDevice):
         if self.shots is not None or self.shot_vector is not None:
             return None
 
-        operations = self._native_adjoint_operation_payloads(tape)
-        observables = self._native_adjoint_observable_payloads(tape)
         trainable_params = self._native_adjoint_trainable_params(tape)
-        if operations is None or observables is None or trainable_params is None:
+        if trainable_params is None:
+            return None
+        trainable_param_set = set(trainable_params)
+        operations = self._native_adjoint_operation_payloads(tape, trainable_param_set)
+        observables = self._native_adjoint_observable_payloads(tape)
+        if operations is None or observables is None:
             return None
         return operations, observables, trainable_params
 
-    def _native_adjoint_operation_payloads(self, tape):
+    def _native_adjoint_operation_payloads(self, tape, trainable_param_set):
         payloads = []
         parameter_index = 0
         for op in tape.operations:
@@ -2705,6 +2708,14 @@ class RocQDevice(QubitDevice):
                     return None
 
             param_indices = list(range(parameter_index, parameter_index + len(params)))
+            trainable_param_indices = [
+                param_index for param_index in param_indices if param_index in trainable_param_set
+            ]
+            trainable_param_positions = [
+                position
+                for position, param_index in enumerate(param_indices)
+                if param_index in trainable_param_set
+            ]
             parameter_index += len(params)
             payloads.append(
                 {
@@ -2713,6 +2724,8 @@ class RocQDevice(QubitDevice):
                     "wires": [int(self.wire_map[wire]) for wire in op.wires],
                     "params": params,
                     "param_indices": param_indices,
+                    "trainable_param_indices": trainable_param_indices,
+                    "trainable_param_positions": trainable_param_positions,
                 }
             )
         return payloads

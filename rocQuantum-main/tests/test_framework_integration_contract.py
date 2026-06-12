@@ -644,6 +644,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("supports_adjoint_jacobian", source)
         self.assertIn("def _native_adjoint_payload", source)
         self.assertIn("def _native_adjoint_observable_payloads", source)
+        self.assertIn("trainable_param_indices", source)
+        self.assertIn("trainable_param_positions", source)
         self.assertIn("_capture_adjoint_reference_state", source)
         self.assertIn("def _apply_unitary", source)
         self.assertIn("_pauli_square_terms", source)

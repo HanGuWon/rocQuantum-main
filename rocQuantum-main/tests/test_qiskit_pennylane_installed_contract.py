@@ -6342,6 +6342,8 @@ def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
             "wires": [0],
             "params": [float(theta)],
             "param_indices": [0],
+            "trainable_param_indices": [0],
+            "trainable_param_positions": [0],
         }
     ]
     assert native_call["observables"] == [
@@ -6451,6 +6453,48 @@ def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
     ]
     assert all(sim.native_adjoint_calls == 0 for sim in matrix_fallback_sims)
     assert any(sim.statevector_reads == 1 for sim in matrix_fallback_sims)
+
+
+def test_pennylane_native_adjoint_marks_trainable_operation_parameters(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    tape = qml.tape.QuantumScript(
+        [qml.Rot(0.1, 0.2, 0.3, wires=0), qml.RZ(0.4, wires=0)],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [1, 3]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [1, 3]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert operations == [
+        {
+            "name": "Rot",
+            "rocq_name": "Rot",
+            "wires": [0],
+            "params": [0.1, 0.2, 0.3],
+            "param_indices": [0, 1, 2],
+            "trainable_param_indices": [1],
+            "trainable_param_positions": [1],
+        },
+        {
+            "name": "RZ",
+            "rocq_name": "RZ",
+            "wires": [0],
+            "params": [0.4],
+            "param_indices": [3],
+            "trainable_param_indices": [3],
+            "trainable_param_positions": [0],
+        },
+    ]
 
 
 def test_pennylane_native_adjoint_accepts_hermitian_payload(monkeypatch):
