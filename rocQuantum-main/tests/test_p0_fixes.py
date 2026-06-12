@@ -211,6 +211,47 @@ class TestSumOperatorImmutability(unittest.TestCase):
         self.assertEqual(iter_pauli_terms(xy), [(1j, [("Z", 0)])])
         self.assertEqual(iter_pauli_terms(yx), [(-1j, [("Z", 0)])])
 
+    def test_sum_operator_right_product_distributes_pauli_terms(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = (PauliOperator("X0") + 2 * PauliOperator("Y1")) * PauliOperator("Z2")
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1 + 0j, [("X", 0), ("Z", 2)]),
+                (2 + 0j, [("Y", 1), ("Z", 2)]),
+            ],
+        )
+
+    def test_sum_operator_left_product_distributes_pauli_terms(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = PauliOperator("Z2") * (PauliOperator("X0") + 2 * PauliOperator("Y1"))
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1 + 0j, [("X", 0), ("Z", 2)]),
+                (2 + 0j, [("Y", 1), ("Z", 2)]),
+            ],
+        )
+
+    def test_sum_operator_product_preserves_identity_and_phase_terms(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = (1 + PauliOperator("X0")) * (PauliOperator("Y0") + PauliOperator("Z1"))
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1 + 0j, [("Y", 0)]),
+                (1 + 0j, [("Z", 1)]),
+                (1j, [("Z", 0)]),
+                (1 + 0j, [("X", 0), ("Z", 1)]),
+            ],
+        )
+
 
 # ===================================================================
 # 3. Expectation Value — No Placeholder, No Kernel Execution

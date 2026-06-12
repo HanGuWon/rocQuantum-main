@@ -24,6 +24,8 @@ class QuantumOperator(ABC):
             new_op.__dict__.update(self.__dict__)
             new_op.coefficient = self.coefficient * other
             return new_op
+        if isinstance(other, QuantumOperator):
+            return _multiply_operator_pauli_terms(self, other)
         raise NotImplementedError(f"Cannot multiply QuantumOperator by {type(other)}")
 
     def __rmul__(self, other):
@@ -224,6 +226,23 @@ def _format_pauli_string(paulis: Sequence[Tuple[str, int]]) -> str:
     if not paulis:
         return "I"
     return " ".join(f"{pauli}{int(qubit)}" for pauli, qubit in paulis)
+
+
+def _multiply_operator_pauli_terms(left: QuantumOperator, right: QuantumOperator) -> QuantumOperator:
+    product_terms = []
+    for left_coefficient, left_paulis in iter_pauli_terms(left):
+        for right_coefficient, right_paulis in iter_pauli_terms(right):
+            phase, paulis = _multiply_pauli_terms(left_paulis, right_paulis)
+            product_terms.append(
+                PauliOperator(
+                    _format_pauli_string(paulis),
+                    coefficient=left_coefficient * right_coefficient * phase,
+                )
+            )
+
+    if len(product_terms) == 1:
+        return product_terms[0]
+    return SumOperator(product_terms)
 
 
 def iter_pauli_terms(operator: QuantumOperator) -> List[Tuple[complex, List[Tuple[str, int]]]]:
