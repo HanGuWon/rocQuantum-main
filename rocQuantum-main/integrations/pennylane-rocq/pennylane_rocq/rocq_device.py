@@ -314,6 +314,11 @@ def _complex_matrix_payload(matrix):
     ]
 
 
+def _complex_vector_payload(values):
+    normalized = np.asarray(values, dtype=np.complex128).reshape(-1)
+    return [(float(np.real(value)), float(np.imag(value))) for value in normalized]
+
+
 def _observable_batch_payload(observable, wire_map, wire_order=None):
     if observable is None:
         return None
@@ -2635,7 +2640,21 @@ class RocQDevice(QubitDevice):
 
             components = _hermitian_matrix_and_targets(observable, self.wire_map)
             if components is None:
-                return None
+                if observable.name != "SparseHamiltonian":
+                    return None
+                sparse_matrix = observable.sparse_matrix(wire_order=self.wires, format="csr")
+                payloads.append(
+                    [
+                        {
+                            "kind": "sparse",
+                            "data": _complex_vector_payload(sparse_matrix.data),
+                            "indices": [int(index) for index in sparse_matrix.indices],
+                            "indptr": [int(offset) for offset in sparse_matrix.indptr],
+                            "shape": [int(dim) for dim in sparse_matrix.shape],
+                        }
+                    ]
+                )
+                continue
             matrix, targets = components
             payloads.append(
                 [
