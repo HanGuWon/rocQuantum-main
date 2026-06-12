@@ -7,6 +7,7 @@
 High-level Variational Quantum Eigensolver (VQE) using rocQuantum primitives.
 """
 
+import inspect
 from typing import Callable, List, Dict, Any
 import numpy as np
 from abc import ABC, abstractmethod
@@ -41,6 +42,29 @@ except ImportError:  # pragma: no cover - exercised in minimal CI environments.
 
 # --- Type Hinting Placeholders ---
 AnsatzKernel = Callable[..., None]  # An ansatz is a kernel function
+
+
+def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
+    params = np.asarray(params, dtype=float).reshape(-1)
+    underlying = getattr(ansatz_kernel, "_func", ansatz_kernel)
+    try:
+        signature = inspect.signature(underlying)
+    except (TypeError, ValueError):
+        return tuple(float(value) for value in params)
+
+    positional = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+        and parameter.default is inspect.Parameter.empty
+    ]
+    if len(positional) == 1 and params.size != 1:
+        return (params.copy(),)
+    return tuple(float(value) for value in params)
 
 # --- Optimizer Strategy Pattern Definition ---
 
@@ -153,7 +177,7 @@ class VQE_Solver:
         energy = observe(
             ansatz_kernel,
             hamiltonian,
-            *np.asarray(params, dtype=float).tolist(),
+            *_ansatz_parameter_args(params, ansatz_kernel),
             backend=self.backend,
         )
         energy = float(np.real(energy))

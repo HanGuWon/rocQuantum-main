@@ -81,6 +81,25 @@ class TestVqeSolverContract(unittest.TestCase):
 
         np.testing.assert_allclose(gradient, np.array([0.5]))
 
+    def test_objective_passes_multi_parameter_vector_to_qaoa_kernel(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.qaoa import make_maxcut_qaoa_kernel
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        ansatz = make_maxcut_qaoa_kernel(2, [(0, 1)], layers=1)
+        solver = VQE_Solver(backend="state_vector")
+        hamiltonian = PauliOperator("Z0 Z1")
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe", return_value=-0.75) as patched_observe:
+            energy = solver._objective_function(np.array([0.3, 0.4]), hamiltonian, ansatz, 2)
+
+        self.assertEqual(energy, -0.75)
+        args, kwargs = patched_observe.call_args
+        self.assertIs(args[0], ansatz)
+        self.assertIs(args[1], hamiltonian)
+        np.testing.assert_allclose(args[2], np.array([0.3, 0.4]))
+        self.assertEqual(kwargs, {"backend": "state_vector"})
+
 
 class TestQaoaHelpers(unittest.TestCase):
     def test_maxcut_qaoa_kernel_emits_supported_ops(self):

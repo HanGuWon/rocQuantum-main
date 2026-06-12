@@ -150,6 +150,7 @@ What is not real today:
 - Native expectation helpers exist in `hipStateVec` and are bound in `python/rocq/bindings.cpp`.
 - The canonical top-level `rocq.operator.get_expectation_value()` delegates to `rocq.observe()` for supported Pauli operators, `HermitianOperator` dense matrices, and full-state `SparseHamiltonianOperator` CSR observables; the state-vector backend prefers the low-level `get_expectation_matrix` / `rocsvGetExpectationMatrix` and `get_sparse_matrix_moments` / `rocsvGetSparseMatrixMoments` hooks when available, and the legacy `_rocq_hip_backend` binding also exposes `get_expectation_pauli_string_batch` / `rocsvGetExpectationPauliStringBatch` plus `get_expectation_matrix_batch` / `rocsvGetExpectationMatrixBatch` for local batched readouts.
 - Canonical `SumOperator` addition preserves scalar coefficients on nested sums, so VQE/QAOA-style composite observables such as `2 * (X0 + Y1) + Z0` no longer lose the outer sum weight during Pauli-term expansion.
+- `rocquantum.solvers.VQE_Solver` now passes multi-parameter arrays as one argument to single-parameter vector ansatz kernels, allowing the experimental MaxCut QAOA helper to run through the same VQE objective path instead of failing on scalar argument splatting.
 - `python/rocq/api.py::Circuit.expval()` now uses native backend Pauli expectation helpers, matching `get_expval()` for supported Pauli terms.
 
 ### Packaging and CI
@@ -169,7 +170,7 @@ What is not real today:
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling now extracts only the density diagonal on device before host-side shot drawing, reducing transfer from full density matrix to probability-vector scale, but it is still not a fully GPU-resident sampling path.
 - Stabilizer/tableau/Pauli-propagation backends were not found.
-- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, MaxCut-style QAOA helper, and one 3-qubit repetition-code syndrome round.
+- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, VQE-compatible MaxCut-style QAOA helper, and one 3-qubit repetition-code syndrome round.
 
 ## Highest-Risk Overclaims Before This Audit
 
