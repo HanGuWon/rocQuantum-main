@@ -2692,6 +2692,28 @@ class RocQDevice(QubitDevice):
     def _native_adjoint_operation_payloads(self, tape, trainable_param_set):
         payloads = []
         parameter_index = 0
+
+        def append_payload(name, rocq_name, wire_indices, params, param_indices):
+            trainable_param_indices = [
+                param_index for param_index in param_indices if param_index in trainable_param_set
+            ]
+            trainable_param_positions = [
+                position
+                for position, param_index in enumerate(param_indices)
+                if param_index in trainable_param_set
+            ]
+            payloads.append(
+                {
+                    "name": name,
+                    "rocq_name": rocq_name,
+                    "wires": wire_indices,
+                    "params": params,
+                    "param_indices": param_indices,
+                    "trainable_param_indices": trainable_param_indices,
+                    "trainable_param_positions": trainable_param_positions,
+                }
+            )
+
         for op in tape.operations:
             if op.name in {"Identity", "Snapshot"}:
                 continue
@@ -2708,25 +2730,37 @@ class RocQDevice(QubitDevice):
                     return None
 
             param_indices = list(range(parameter_index, parameter_index + len(params)))
-            trainable_param_indices = [
-                param_index for param_index in param_indices if param_index in trainable_param_set
-            ]
-            trainable_param_positions = [
-                position
-                for position, param_index in enumerate(param_indices)
-                if param_index in trainable_param_set
-            ]
             parameter_index += len(params)
-            payloads.append(
-                {
-                    "name": op.name,
-                    "rocq_name": PENNYLANE_TO_ROCQ_GATES.get(op.name, op.name),
-                    "wires": [int(self.wire_map[wire]) for wire in op.wires],
-                    "params": params,
-                    "param_indices": param_indices,
-                    "trainable_param_indices": trainable_param_indices,
-                    "trainable_param_positions": trainable_param_positions,
-                }
+            wire_indices = [int(self.wire_map[wire]) for wire in op.wires]
+
+            if op.name == "Rot":
+                if len(params) != 3 or len(wire_indices) != 1:
+                    return None
+                for primitive_name, primitive_param, primitive_index in zip(
+                    ("RZ", "RY", "RZ"),
+                    params,
+                    param_indices,
+                ):
+                    append_payload(primitive_name, primitive_name, wire_indices, [primitive_param], [primitive_index])
+                continue
+
+            if op.name == "CRot":
+                if len(params) != 3 or len(wire_indices) != 2:
+                    return None
+                for primitive_name, primitive_param, primitive_index in zip(
+                    ("CRZ", "CRY", "CRZ"),
+                    params,
+                    param_indices,
+                ):
+                    append_payload(primitive_name, primitive_name, wire_indices, [primitive_param], [primitive_index])
+                continue
+
+            append_payload(
+                op.name,
+                PENNYLANE_TO_ROCQ_GATES.get(op.name, op.name),
+                wire_indices,
+                params,
+                param_indices,
             )
         return payloads
 

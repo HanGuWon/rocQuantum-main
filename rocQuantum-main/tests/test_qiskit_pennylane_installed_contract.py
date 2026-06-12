@@ -6464,34 +6464,83 @@ def test_pennylane_native_adjoint_marks_trainable_operation_parameters(monkeypat
 
     import pennylane as qml
 
-    dev = qml.device("lightning.rocq", wires=1)
+    dev = qml.device("lightning.rocq", wires=2)
     tape = qml.tape.QuantumScript(
-        [qml.Rot(0.1, 0.2, 0.3, wires=0), qml.RZ(0.4, wires=0)],
+        [
+            qml.Rot(0.1, 0.2, 0.3, wires=0),
+            qml.CRot(0.4, 0.5, 0.6, wires=[0, 1]),
+            qml.RZ(0.7, wires=0),
+        ],
         [qml.expval(qml.PauliZ(0))],
     )
-    tape.trainable_params = [1, 3]
+    tape.trainable_params = [1, 4, 6]
 
     operations, observables, trainable_params = dev._native_adjoint_payload(tape)
 
-    assert trainable_params == [1, 3]
+    assert trainable_params == [1, 4, 6]
     assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
     assert operations == [
         {
-            "name": "Rot",
-            "rocq_name": "Rot",
+            "name": "RZ",
+            "rocq_name": "RZ",
             "wires": [0],
-            "params": [0.1, 0.2, 0.3],
-            "param_indices": [0, 1, 2],
+            "params": [0.1],
+            "param_indices": [0],
+            "trainable_param_indices": [],
+            "trainable_param_positions": [],
+        },
+        {
+            "name": "RY",
+            "rocq_name": "RY",
+            "wires": [0],
+            "params": [0.2],
+            "param_indices": [1],
             "trainable_param_indices": [1],
-            "trainable_param_positions": [1],
+            "trainable_param_positions": [0],
         },
         {
             "name": "RZ",
             "rocq_name": "RZ",
             "wires": [0],
+            "params": [0.3],
+            "param_indices": [2],
+            "trainable_param_indices": [],
+            "trainable_param_positions": [],
+        },
+        {
+            "name": "CRZ",
+            "rocq_name": "CRZ",
+            "wires": [0, 1],
             "params": [0.4],
             "param_indices": [3],
-            "trainable_param_indices": [3],
+            "trainable_param_indices": [],
+            "trainable_param_positions": [],
+        },
+        {
+            "name": "CRY",
+            "rocq_name": "CRY",
+            "wires": [0, 1],
+            "params": [0.5],
+            "param_indices": [4],
+            "trainable_param_indices": [4],
+            "trainable_param_positions": [0],
+        },
+        {
+            "name": "CRZ",
+            "rocq_name": "CRZ",
+            "wires": [0, 1],
+            "params": [0.6],
+            "param_indices": [5],
+            "trainable_param_indices": [],
+            "trainable_param_positions": [],
+        },
+        {
+            "name": "RZ",
+            "rocq_name": "RZ",
+            "wires": [0],
+            "params": [0.7],
+            "param_indices": [6],
+            "trainable_param_indices": [6],
             "trainable_param_positions": [0],
         },
     ]
