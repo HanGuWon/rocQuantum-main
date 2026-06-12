@@ -183,6 +183,34 @@ class TestSumOperatorImmutability(unittest.TestCase):
             ],
         )
 
+    def test_pauli_product_combines_distinct_qubits(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = 0.25 * PauliOperator("Z0") * PauliOperator("Z1")
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.25 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
+
+    def test_pauli_product_reduces_same_qubit_identity(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = PauliOperator("X0") * PauliOperator("X0")
+
+        self.assertEqual(iter_pauli_terms(operator), [(1 + 0j, [])])
+
+    def test_pauli_product_preserves_noncommuting_phase(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        xy = PauliOperator("X0") * PauliOperator("Y0")
+        yx = PauliOperator("Y0") * PauliOperator("X0")
+
+        self.assertEqual(iter_pauli_terms(xy), [(1j, [("Z", 0)])])
+        self.assertEqual(iter_pauli_terms(yx), [(-1j, [("Z", 0)])])
+
 
 # ===================================================================
 # 3. Expectation Value — No Placeholder, No Kernel Execution

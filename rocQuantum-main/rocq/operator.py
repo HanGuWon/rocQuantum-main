@@ -75,6 +75,15 @@ class PauliOperator(QuantumOperator):
         self.pauli_string = pauli_string
         _parse_pauli_string(pauli_string)
 
+    def __mul__(self, other):
+        if isinstance(other, PauliOperator):
+            phase, paulis = _multiply_pauli_terms(
+                _parse_pauli_string(self.pauli_string),
+                _parse_pauli_string(other.pauli_string),
+            )
+            return PauliOperator(_format_pauli_string(paulis), self.coefficient * other.coefficient * phase)
+        return super().__mul__(other)
+
     def to_string(self) -> str:
         return f"{self.coefficient} * {self.pauli_string}"
 
@@ -174,6 +183,47 @@ def _parse_pauli_string(pauli_string: str) -> List[Tuple[str, int]]:
         position = match.end()
 
     return parsed
+
+
+_PAULI_PRODUCT_TABLE = {
+    ("X", "Y"): (1j, "Z"),
+    ("Y", "X"): (-1j, "Z"),
+    ("Y", "Z"): (1j, "X"),
+    ("Z", "Y"): (-1j, "X"),
+    ("Z", "X"): (1j, "Y"),
+    ("X", "Z"): (-1j, "Y"),
+}
+
+
+def _multiply_pauli_terms(
+    left: Sequence[Tuple[str, int]],
+    right: Sequence[Tuple[str, int]],
+) -> Tuple[complex, List[Tuple[str, int]]]:
+    phase = 1.0 + 0.0j
+    by_qubit = {int(qubit): pauli for pauli, qubit in left}
+
+    for pauli, qubit in right:
+        qubit = int(qubit)
+        if qubit not in by_qubit:
+            by_qubit[qubit] = pauli
+            continue
+
+        existing = by_qubit[qubit]
+        if existing == pauli:
+            del by_qubit[qubit]
+            continue
+
+        local_phase, product_pauli = _PAULI_PRODUCT_TABLE[(existing, pauli)]
+        phase *= local_phase
+        by_qubit[qubit] = product_pauli
+
+    return phase, [(pauli, qubit) for qubit, pauli in sorted(by_qubit.items())]
+
+
+def _format_pauli_string(paulis: Sequence[Tuple[str, int]]) -> str:
+    if not paulis:
+        return "I"
+    return " ".join(f"{pauli}{int(qubit)}" for pauli, qubit in paulis)
 
 
 def iter_pauli_terms(operator: QuantumOperator) -> List[Tuple[complex, List[Tuple[str, int]]]]:
