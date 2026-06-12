@@ -104,6 +104,7 @@ class TestVqeSolverContract(unittest.TestCase):
 class TestQaoaHelpers(unittest.TestCase):
     def test_maxcut_qaoa_kernel_emits_supported_ops(self):
         from rocquantum.solvers.qaoa import make_maxcut_qaoa_kernel, maxcut_cost_operator
+        from rocq.operator import iter_pauli_terms
 
         kernel = make_maxcut_qaoa_kernel(2, [(0, 1, 2.0)], layers=1)
         mlir = kernel.mlir(np.array([0.3, 0.4]))
@@ -116,6 +117,13 @@ class TestQaoaHelpers(unittest.TestCase):
 
         operator = maxcut_cost_operator(2, [(0, 1, 2.0)])
         self.assertIn("Z0 Z1", operator.to_string())
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1 + 0j, []),
+                (-1 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
 
 
 class TestQecHelpers(unittest.TestCase):

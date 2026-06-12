@@ -34,6 +34,14 @@ class QuantumOperator(ABC):
             return SumOperator([self, other])
         raise NotImplementedError(f"Cannot add QuantumOperator to {type(other)}")
 
+    def __neg__(self):
+        return -1 * self
+
+    def __sub__(self, other):
+        if isinstance(other, QuantumOperator):
+            return self + (-other)
+        raise NotImplementedError(f"Cannot subtract {type(other)} from QuantumOperator")
+
     @abstractmethod
     def to_string(self) -> str:
         pass
@@ -99,7 +107,10 @@ class SumOperator(QuantumOperator):
         raise NotImplementedError
 
     def to_string(self) -> str:
-        return " + ".join(f"({term.to_string()})" for term in self.terms)
+        joined_terms = " + ".join(f"({term.to_string()})" for term in self.terms)
+        if self.coefficient == 1:
+            return joined_terms
+        return f"{self.coefficient} * ({joined_terms})"
 
 
 def _parse_pauli_string(pauli_string: str) -> List[Tuple[str, int]]:

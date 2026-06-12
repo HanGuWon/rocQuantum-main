@@ -82,7 +82,9 @@ def maxcut_cost_operator(num_qubits: int, edges: Iterable[Sequence[float]]):
     for u, v, weight in _normalize_edges(edges):
         if u < 0 or v < 0 or u >= num_qubits or v >= num_qubits or u == v:
             raise ValueError("QAOA edge endpoints must be distinct valid qubit indices.")
-        term = PauliOperator(f"Z{int(u)} Z{int(v)}", coefficient=-0.5 * float(weight))
+        term = 0.5 * float(weight) * (
+            PauliOperator("I") - PauliOperator(f"Z{int(u)} Z{int(v)}")
+        )
         operator = term if operator is None else operator + term
 
     if operator is None:

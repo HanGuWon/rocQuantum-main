@@ -129,6 +129,20 @@ class TestSumOperatorImmutability(unittest.TestCase):
             ],
         )
 
+    def test_subtract_preserves_operator_coefficients(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = 0.5 * (PauliOperator("I") - PauliOperator("Z0 Z1", coefficient=2.0))
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.5 + 0j, []),
+                (-1 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
+        self.assertIn("(0.5+0j)", operator.to_string())
+
 
 # ===================================================================
 # 3. Expectation Value — No Placeholder, No Kernel Execution
