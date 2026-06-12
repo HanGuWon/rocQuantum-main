@@ -281,6 +281,8 @@ def _instruction_target(num_qubits):
     target.add_instruction(CCXGate(), name="ccx")
     target.add_instruction(CCZGate(), name="ccz")
     target.add_instruction(CHGate(), name="ch")
+    target.add_instruction(HGate().control(2, annotated=False), name="cch")
+    target.add_instruction(HGate().control(3, annotated=False), name="c3h")
     target.add_instruction(CPhaseGate(0.0), name="cp")
     target.add_instruction(CSGate(), name="cs")
     target.add_instruction(CSdgGate(), name="csdg")
@@ -292,6 +294,9 @@ def _instruction_target(num_qubits):
     target.add_instruction(CU3Gate(0.0, 0.0, 0.0), name="cu3")
     target.add_instruction(CUGate(0.0, 0.0, 0.0, 0.0), name="cu")
     target.add_instruction(CYGate(), name="cy")
+    target.add_instruction(YGate().control(2, annotated=False), name="ccy")
+    target.add_instruction(YGate().control(3, annotated=False), name="c3y")
+    target.add_instruction(ZGate().control(3, annotated=False), name="c3z")
     target.add_instruction(CRXGate(0.0), name="crx")
     target.add_instruction(CRYGate(0.0), name="cry")
     target.add_instruction(CRZGate(0.0), name="crz")
@@ -1066,9 +1071,7 @@ class RocQuantumBackend(BackendV2):
             return False
         if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "p", "s", "sdg", "sx", "u1", "u3", "u"}:
             return False
-        if base_name in {"h", "y", "rx", "ry", "rz", "s", "sdg", "sx", "u1", "u3", "u"} and num_controls != 1:
-            return False
-        if base_name == "z" and num_controls not in {1, 2}:
+        if base_name in {"rx", "ry", "rz", "s", "sdg", "sx", "u1", "u3", "u"} and num_controls != 1:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
@@ -1092,9 +1095,19 @@ class RocQuantumBackend(BackendV2):
                 else:
                     self._runtime.apply_operation("mcx", controls + [target])
             elif base_name == "h":
-                self._apply_ch_gate([controls[0], target])
+                if len(controls) == 1:
+                    self._apply_ch_gate([controls[0], target])
+                else:
+                    self._runtime.apply_operation("ry", [target], [cmath.pi / 4])
+                    self._runtime.apply_operation("mcx", controls + [target])
+                    self._runtime.apply_operation("ry", [target], [-cmath.pi / 4])
             elif base_name == "y":
-                self._apply_cy_gate([controls[0], target])
+                if len(controls) == 1:
+                    self._apply_cy_gate([controls[0], target])
+                else:
+                    self._runtime.apply_operation("sdg", [target])
+                    self._runtime.apply_operation("mcx", controls + [target])
+                    self._runtime.apply_operation("s", [target])
             elif base_name in {"rx", "ry", "rz"}:
                 (theta,) = normalize_params(op.params)
                 self._runtime.apply_operation(f"c{base_name}", [controls[0], target], [theta])
@@ -1154,8 +1167,12 @@ class RocQuantumBackend(BackendV2):
                 )
             elif len(controls) == 1:
                 self._runtime.apply_operation("cz", [controls[0], target])
-            else:
+            elif len(controls) == 2:
                 self._apply_ccz_gate([controls[0], controls[1], target])
+            else:
+                self._runtime.apply_operation("h", [target])
+                self._runtime.apply_operation("mcx", controls + [target])
+                self._runtime.apply_operation("h", [target])
             for control in reversed(flipped):
                 self._runtime.apply_operation("x", [control])
             flipped.clear()

@@ -1303,6 +1303,77 @@ def test_qiskit_backend_decomposes_open_control_x_y_z_and_h_natively(monkeypatch
     assert sim.matrices == []
 
 
+def test_qiskit_backend_decomposes_multi_control_h_y_z_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import HGate, YGate, ZGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    assert {"cch", "ccy", "c3h", "c3y", "c3z"}.issubset(set(backend.target.operation_names))
+    circuit = QuantumCircuit(4)
+    circuit.append(ZGate().control(3, annotated=False), [0, 1, 2, 3])
+    circuit.append(YGate().control(2, annotated=False), [0, 1, 2])
+    circuit.append(HGate().control(2, annotated=False), [0, 1, 2])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("H", (3,), ()),
+        ("MCX", (0, 1, 2, 3), ()),
+        ("H", (3,), ()),
+        ("SDG", (2,), ()),
+        ("MCX", (0, 1, 2), ()),
+        ("S", (2,), ()),
+        ("RY", (2,), (np.pi / 4,)),
+        ("MCX", (0, 1, 2), ()),
+        ("RY", (2,), (-np.pi / 4,)),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
+def test_qiskit_backend_decomposes_open_multi_control_h_y_z_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import HGate, YGate, ZGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(4)
+    circuit.append(ZGate().control(3, ctrl_state="101", annotated=False), [0, 1, 2, 3])
+    circuit.append(YGate().control(2, ctrl_state="01", annotated=False), [0, 1, 2])
+    circuit.append(HGate().control(2, ctrl_state="01", annotated=False), [0, 1, 2])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [
+        ("X", (1,), ()),
+        ("H", (3,), ()),
+        ("MCX", (0, 1, 2, 3), ()),
+        ("H", (3,), ()),
+        ("X", (1,), ()),
+        ("X", (1,), ()),
+        ("SDG", (2,), ()),
+        ("MCX", (0, 1, 2), ()),
+        ("S", (2,), ()),
+        ("X", (1,), ()),
+        ("X", (1,), ()),
+        ("RY", (2,), (np.pi / 4,)),
+        ("MCX", (0, 1, 2), ()),
+        ("RY", (2,), (-np.pi / 4,)),
+        ("X", (1,), ()),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
 def test_qiskit_backend_decomposes_open_control_parametric_gates_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -2263,6 +2334,49 @@ def test_qiskit_native_estimator_batches_open_controlled_parameter_values(monkey
         ("CP", (0, 1), (0.1, 0.2)),
     ]
     assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_keeps_fixed_multi_control_h_y_z_batched(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.circuit.library import HGate, YGate, ZGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(4)
+    circuit.append(ZGate().control(3, annotated=False), [0, 1, 2, 3])
+    circuit.append(YGate().control(2, annotated=False), [0, 1, 2])
+    circuit.append(HGate().control(2, annotated=False), [0, 1, 2])
+    circuit.ry(theta, 3)
+    observable = SparsePauliOp.from_list([("IIIZ", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == [
+        ("H", (3,), ()),
+        ("MCX", (0, 1, 2, 3), ()),
+        ("H", (3,), ()),
+        ("SDG", (2,), ()),
+        ("MCX", (0, 1, 2), ()),
+        ("S", (2,), ()),
+        ("RY", (2,), (np.pi / 4,)),
+        ("MCX", (0, 1, 2), ()),
+        ("RY", (2,), (-np.pi / 4,)),
+    ]
+    assert sim.batch_ops == [("RY", (3,), (0.1, 0.2))]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
     assert sim.batch_expectations == [("Z", (0,))]
 
 
