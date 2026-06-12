@@ -1,4 +1,5 @@
 import cmath
+from itertools import combinations
 import uuid
 
 import numpy as np
@@ -34,6 +35,7 @@ from qiskit.circuit.library import (
     GlobalPhaseGate,
     HGate,
     IGate,
+    MCPhaseGate,
     MCXGate,
     RXGate,
     RYGate,
@@ -299,6 +301,7 @@ def _instruction_target(num_qubits):
     target.add_instruction(HGate(), name="h")
     target.add_instruction(IGate(), name="id")
     target.add_instruction(iSwapGate(), name="iswap")
+    target.add_instruction(MCPhaseGate(0.0, 2), name="mcphase")
     target.add_instruction(MCXGate(3), name="mcx")
     target.add_instruction(PhaseGate(0.0), name="p")
     target.add_instruction(RGate(0.0, 0.0), name="r")
@@ -551,6 +554,30 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation_batch("rz", [target], thetas)
         for control in reversed(q_indices[:-1]):
             self._runtime.apply_operation("cx", [control, target])
+
+    def _apply_multi_controlled_phase_gate(self, q_indices, theta, *, include_global_phase):
+        if len(q_indices) < 2:
+            raise ValueError("Qiskit multi-controlled phase requires at least two qubits.")
+
+        qubit_count = len(q_indices)
+        if include_global_phase:
+            self._apply_global_phase_value(theta / (1 << qubit_count), target=q_indices[0])
+
+        for subset_size in range(1, qubit_count + 1):
+            angle = ((-1) ** (subset_size + 1)) * theta / (1 << (qubit_count - 1))
+            for subset in combinations(q_indices, subset_size):
+                self._apply_multirz_gate(list(subset), angle)
+
+    def _apply_multi_controlled_phase_gate_batch(self, q_indices, thetas):
+        if len(q_indices) < 2:
+            raise ValueError("Qiskit multi-controlled phase requires at least two qubits.")
+
+        qubit_count = len(q_indices)
+        for subset_size in range(1, qubit_count + 1):
+            scale = ((-1) ** (subset_size + 1)) / (1 << (qubit_count - 1))
+            scaled_thetas = [scale * theta for theta in thetas]
+            for subset in combinations(q_indices, subset_size):
+                self._apply_multirz_gate_batch(list(subset), scaled_thetas)
 
     def _apply_pauli_rotation_gate(self, q_indices, label, theta):
         if len(label) != len(q_indices):
@@ -1039,7 +1066,7 @@ class RocQuantumBackend(BackendV2):
             return False
         if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "p", "s", "sdg", "sx", "u1", "u3", "u"}:
             return False
-        if base_name in {"h", "y", "rx", "ry", "rz", "p", "s", "sdg", "sx", "u1", "u3", "u"} and num_controls != 1:
+        if base_name in {"h", "y", "rx", "ry", "rz", "s", "sdg", "sx", "u1", "u3", "u"} and num_controls != 1:
             return False
         if base_name == "z" and num_controls not in {1, 2}:
             return False
@@ -1073,11 +1100,18 @@ class RocQuantumBackend(BackendV2):
                 self._runtime.apply_operation(f"c{base_name}", [controls[0], target], [theta])
             elif base_name == "p":
                 (theta,) = normalize_params(op.params)
-                self._apply_controlled_phase_gate(
-                    [controls[0], target],
-                    theta,
-                    include_global_phase=include_global_phase,
-                )
+                if len(controls) == 1:
+                    self._apply_controlled_phase_gate(
+                        [controls[0], target],
+                        theta,
+                        include_global_phase=include_global_phase,
+                    )
+                else:
+                    self._apply_multi_controlled_phase_gate(
+                        controls + [target],
+                        theta,
+                        include_global_phase=include_global_phase,
+                    )
             elif base_name == "s":
                 self._apply_controlled_phase_gate(
                     [controls[0], target],
@@ -1134,27 +1168,39 @@ class RocQuantumBackend(BackendV2):
         num_controls = int(getattr(op, "num_ctrl_qubits", 0))
         base_gate = getattr(op, "base_gate", None)
         base_name = getattr(base_gate, "name", None)
-        if num_controls != 1 or len(q_indices) != 2 or base_name not in {"rx", "ry", "rz", "p"}:
+        if num_controls < 1 or len(q_indices) != num_controls + 1 or base_name not in {"rx", "ry", "rz", "p"}:
+            return False
+        if base_name in {"rx", "ry", "rz"} and num_controls != 1:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
-        ctrl_state = 1 if ctrl_state is None else int(ctrl_state)
-        control, target = q_indices
-        flipped = False
+        ctrl_state = (1 << num_controls) - 1 if ctrl_state is None else int(ctrl_state)
+        controls = list(q_indices[:num_controls])
+        target = q_indices[num_controls]
+        open_controls = [
+            control
+            for control_index, control in enumerate(controls)
+            if not ((ctrl_state >> control_index) & 1)
+        ]
+
+        flipped = []
         try:
-            if ctrl_state == 0:
+            for control in open_controls:
                 self._runtime.apply_operation("x", [control])
-                flipped = True
-            elif ctrl_state != 1:
-                return False
+                flipped.append(control)
 
             if base_name in {"rx", "ry", "rz"}:
-                self._runtime.apply_operation_batch(f"c{base_name}", [control, target], thetas)
+                self._runtime.apply_operation_batch(f"c{base_name}", [controls[0], target], thetas)
+            elif len(controls) == 1:
+                self._apply_controlled_phase_gate_batch([controls[0], target], thetas)
             else:
-                self._apply_controlled_phase_gate_batch([control, target], thetas)
+                self._apply_multi_controlled_phase_gate_batch(controls + [target], thetas)
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+            flipped.clear()
             return True
         finally:
-            if flipped:
+            for control in reversed(flipped):
                 self._runtime.apply_operation("x", [control])
 
     def _apply_controlled_u_gate_batch(self, op, q_indices, params_by_circuit):
