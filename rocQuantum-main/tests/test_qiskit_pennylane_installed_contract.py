@@ -1445,6 +1445,73 @@ def test_qiskit_multi_control_sx_preserves_statevector_global_phase(monkeypatch)
     assert sim.controlled_matrices == []
 
 
+def test_qiskit_backend_decomposes_controlled_phase_root_gates_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import SdgGate, SGate, TGate, TdgGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    assert {
+        "ccs",
+        "c3s",
+        "ccsdg",
+        "c3sdg",
+        "ct",
+        "cct",
+        "c3t",
+        "ctdg",
+        "cctdg",
+        "c3tdg",
+    }.issubset(set(backend.target.operation_names))
+
+    circuit = QuantumCircuit(4)
+    circuit.append(TGate().control(1, annotated=False), [0, 1])
+    circuit.append(TdgGate().control(1, annotated=False), [0, 1])
+    circuit.append(SGate().control(2, annotated=False), [0, 1, 2])
+    circuit.append(SdgGate().control(2, annotated=False), [0, 1, 2])
+    circuit.append(TGate().control(3, annotated=False), [0, 1, 2, 3])
+    circuit.append(TdgGate().control(3, annotated=False), [0, 1, 2, 3])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops[:2] == [
+        ("CP", (0, 1), (np.pi / 4,)),
+        ("CP", (0, 1), (-np.pi / 4,)),
+    ]
+    assert ("RZ", (2,), (np.pi / 8,)) in sim.ops
+    assert ("RZ", (2,), (-np.pi / 8,)) in sim.ops
+    assert ("RZ", (3,), (np.pi / 32,)) in sim.ops
+    assert ("RZ", (3,), (-np.pi / 32,)) in sim.ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
+def test_qiskit_backend_decomposes_open_controlled_phase_root_gates_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import TGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(4)
+    circuit.append(TGate().control(3, ctrl_state="101", annotated=False), [0, 1, 2, 3])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops[0] == ("X", (1,), ())
+    assert sim.ops[-1] == ("X", (1,), ())
+    assert ("RZ", (3,), (np.pi / 32,)) in sim.ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
 def test_qiskit_backend_decomposes_open_control_parametric_gates_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -2478,6 +2545,37 @@ def test_qiskit_native_estimator_keeps_fixed_multi_control_sx_batched(monkeypatc
     assert sim.ops[0] == ("H", (3,), ())
     assert sim.ops[-1] == ("H", (3,), ())
     assert ("RZ", (3,), (np.pi / 16,)) in sim.ops
+    assert sim.batch_ops == [("RY", (3,), (0.1, 0.2))]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_keeps_fixed_controlled_phase_roots_batched(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.circuit.library import TGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(4)
+    circuit.append(TGate().control(3, annotated=False), [0, 1, 2, 3])
+    circuit.ry(theta, 3)
+    observable = SparsePauliOp.from_list([("IIIZ", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert ("RZ", (3,), (np.pi / 32,)) in sim.ops
     assert sim.batch_ops == [("RY", (3,), (0.1, 0.2))]
     assert sim.matrices == []
     assert sim.controlled_matrices == []

@@ -285,10 +285,20 @@ def _instruction_target(num_qubits):
     target.add_instruction(HGate().control(3, annotated=False), name="c3h")
     target.add_instruction(CPhaseGate(0.0), name="cp")
     target.add_instruction(CSGate(), name="cs")
+    target.add_instruction(SGate().control(2, annotated=False), name="ccs")
+    target.add_instruction(SGate().control(3, annotated=False), name="c3s")
     target.add_instruction(CSdgGate(), name="csdg")
+    target.add_instruction(SdgGate().control(2, annotated=False), name="ccsdg")
+    target.add_instruction(SdgGate().control(3, annotated=False), name="c3sdg")
     target.add_instruction(CSXGate(), name="csx")
     target.add_instruction(SXGate().control(2, annotated=False), name="ccsx")
     target.add_instruction(SXGate().control(3, annotated=False), name="c3sx")
+    target.add_instruction(TGate().control(1, annotated=False), name="ct")
+    target.add_instruction(TGate().control(2, annotated=False), name="cct")
+    target.add_instruction(TGate().control(3, annotated=False), name="c3t")
+    target.add_instruction(TdgGate().control(1, annotated=False), name="ctdg")
+    target.add_instruction(TdgGate().control(2, annotated=False), name="cctdg")
+    target.add_instruction(TdgGate().control(3, annotated=False), name="c3tdg")
     target.add_instruction(CSwapGate(), name="cswap")
     target.add_instruction(CXGate(), name="cx")
     target.add_instruction(CZGate(), name="cz")
@@ -1071,9 +1081,9 @@ class RocQuantumBackend(BackendV2):
         base_name = getattr(base_gate, "name", None)
         if num_controls < 1 or len(q_indices) != num_controls + 1:
             return False
-        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "p", "s", "sdg", "sx", "u1", "u3", "u"}:
+        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "p", "s", "sdg", "t", "tdg", "sx", "u1", "u3", "u"}:
             return False
-        if base_name in {"rx", "ry", "rz", "s", "sdg", "u1", "u3", "u"} and num_controls != 1:
+        if base_name in {"rx", "ry", "rz", "u1", "u3", "u"} and num_controls != 1:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
@@ -1127,18 +1137,25 @@ class RocQuantumBackend(BackendV2):
                         theta,
                         include_global_phase=include_global_phase,
                     )
-            elif base_name == "s":
-                self._apply_controlled_phase_gate(
-                    [controls[0], target],
-                    cmath.pi / 2,
-                    include_global_phase=include_global_phase,
-                )
-            elif base_name == "sdg":
-                self._apply_controlled_phase_gate(
-                    [controls[0], target],
-                    -cmath.pi / 2,
-                    include_global_phase=include_global_phase,
-                )
+            elif base_name in {"s", "sdg", "t", "tdg"}:
+                fixed_phase = {
+                    "s": cmath.pi / 2,
+                    "sdg": -cmath.pi / 2,
+                    "t": cmath.pi / 4,
+                    "tdg": -cmath.pi / 4,
+                }[base_name]
+                if len(controls) == 1:
+                    self._apply_controlled_phase_gate(
+                        [controls[0], target],
+                        fixed_phase,
+                        include_global_phase=include_global_phase,
+                    )
+                else:
+                    self._apply_multi_controlled_phase_gate(
+                        controls + [target],
+                        fixed_phase,
+                        include_global_phase=include_global_phase,
+                    )
             elif base_name == "sx":
                 if len(controls) == 1:
                     self._apply_csx_gate([controls[0], target], include_global_phase=include_global_phase)
