@@ -2606,7 +2606,10 @@ class RocQDevice(QubitDevice):
             for param in getattr(op, "parameters", ()):
                 if hasattr(param, "bind"):
                     return None
-                params.append(float(param))
+                try:
+                    params.append(float(param))
+                except (TypeError, ValueError):
+                    return None
 
             param_indices = list(range(parameter_index, parameter_index + len(params)))
             parameter_index += len(params)
