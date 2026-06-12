@@ -340,6 +340,7 @@ def _instruction_target(num_qubits):
     target.add_instruction(TGate(), name="t")
     target.add_instruction(TdgGate(), name="tdg")
     target.add_instruction(U1Gate(0.0), name="u1")
+    target.add_instruction(U1Gate(0.0).control(2, annotated=False), name="mcu1")
     target.add_instruction(U2Gate(0.0, 0.0), name="u2")
     target.add_instruction(U3Gate(0.0, 0.0, 0.0), name="u3")
     target.add_instruction(UGate(0.0, 0.0, 0.0), name="u")
@@ -1083,7 +1084,7 @@ class RocQuantumBackend(BackendV2):
             return False
         if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "p", "s", "sdg", "t", "tdg", "sx", "u1", "u3", "u"}:
             return False
-        if base_name in {"rx", "ry", "rz", "u1", "u3", "u"} and num_controls != 1:
+        if base_name in {"rx", "ry", "rz", "u3", "u"} and num_controls != 1:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
@@ -1169,11 +1170,18 @@ class RocQuantumBackend(BackendV2):
                     self._runtime.apply_operation("h", [target])
             elif base_name == "u1":
                 (theta,) = normalize_params(op.params)
-                self._apply_controlled_phase_gate(
-                    [controls[0], target],
-                    theta,
-                    include_global_phase=include_global_phase,
-                )
+                if len(controls) == 1:
+                    self._apply_controlled_phase_gate(
+                        [controls[0], target],
+                        theta,
+                        include_global_phase=include_global_phase,
+                    )
+                else:
+                    self._apply_multi_controlled_phase_gate(
+                        controls + [target],
+                        theta,
+                        include_global_phase=include_global_phase,
+                    )
             elif base_name == "u3":
                 theta, phi, lam = normalize_params(op.params)
                 self._apply_cu3_gate(
@@ -1213,7 +1221,7 @@ class RocQuantumBackend(BackendV2):
         num_controls = int(getattr(op, "num_ctrl_qubits", 0))
         base_gate = getattr(op, "base_gate", None)
         base_name = getattr(base_gate, "name", None)
-        if num_controls < 1 or len(q_indices) != num_controls + 1 or base_name not in {"rx", "ry", "rz", "p"}:
+        if num_controls < 1 or len(q_indices) != num_controls + 1 or base_name not in {"rx", "ry", "rz", "p", "u1"}:
             return False
         if base_name in {"rx", "ry", "rz"} and num_controls != 1:
             return False

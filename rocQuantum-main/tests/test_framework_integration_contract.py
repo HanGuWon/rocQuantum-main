@@ -783,6 +783,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("GlobalPhaseGate(0.0)", source)
         self.assertIn("MCPhaseGate(0.0, 2)", source)
         self.assertIn("U1Gate(0.0)", source)
+        self.assertIn("U1Gate(0.0).control(2, annotated=False)", source)
         self.assertIn("U2Gate(0.0, 0.0)", source)
         self.assertIn("U3Gate(0.0, 0.0, 0.0)", source)
         self.assertIn("reference_op.name == \"u1\"", source)

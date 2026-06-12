@@ -1139,6 +1139,30 @@ def test_qiskit_backend_decomposes_legacy_u_family_natively(monkeypatch):
     assert sim.matrices == []
 
 
+def test_qiskit_backend_decomposes_legacy_multi_control_u1_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import U1Gate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    assert "mcu1" in set(backend.target.operation_names)
+    circuit = QuantumCircuit(4)
+    circuit.append(U1Gate(0.4).control(2, annotated=False), [0, 1, 2])
+    circuit.append(U1Gate(0.6).control(3, ctrl_state="101", annotated=False), [0, 1, 2, 3])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert ("RZ", (2,), (0.1,)) in sim.ops
+    assert ("RZ", (3,), (0.075,)) in sim.ops
+    assert ("X", (1,), ()) in sim.ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
 def test_qiskit_native_multi_control_and_matrix_fallback_gates(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -2625,6 +2649,43 @@ def test_qiskit_native_estimator_batches_multi_controlled_phase_parameters(monke
         ("CNOT", (1, 2), ()),
         ("CNOT", (1, 2), ()),
         ("CNOT", (0, 2), ()),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_batches_legacy_multi_control_u1_parameters(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.circuit.library import U1Gate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(3)
+    circuit.append(U1Gate(theta).control(2, annotated=False), [0, 1, 2])
+    observable = SparsePauliOp.from_list([("IIZ", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [
+        ("RZ", (0,), (0.025, 0.05)),
+        ("RZ", (1,), (0.025, 0.05)),
+        ("RZ", (2,), (0.025, 0.05)),
+        ("RZ", (1,), (-0.025, -0.05)),
+        ("RZ", (2,), (-0.025, -0.05)),
+        ("RZ", (2,), (-0.025, -0.05)),
+        ("RZ", (2,), (0.025, 0.05)),
     ]
     assert sim.matrices == []
     assert sim.controlled_matrices == []
