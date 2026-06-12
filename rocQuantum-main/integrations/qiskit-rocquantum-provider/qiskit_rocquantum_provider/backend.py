@@ -338,6 +338,9 @@ def _instruction_target(num_qubits):
     target.add_instruction(HGate(), name="h")
     target.add_instruction(IGate(), name="id")
     target.add_instruction(iSwapGate(), name="iswap")
+    target.add_instruction(iSwapGate().control(1, annotated=False), name="ciswap")
+    target.add_instruction(iSwapGate().control(2, annotated=False), name="cciswap")
+    target.add_instruction(iSwapGate().control(3, annotated=False), name="c3iswap")
     target.add_instruction(MCPhaseGate(0.0, 2), name="mcphase")
     target.add_instruction(MCXGate(3), name="mcx")
     target.add_instruction(PhaseGate(0.0), name="p")
@@ -1210,6 +1213,20 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("cx", [control, target])
         self._runtime.apply_operation("ry", [target], [-cmath.pi / 4])
 
+    def _apply_multi_controlled_h_gate(self, q_indices):
+        if len(q_indices) < 2:
+            raise ValueError("Qiskit controlled-h gate requires at least two qubits.")
+
+        controls = list(q_indices[:-1])
+        target = q_indices[-1]
+        if len(controls) == 1:
+            self._apply_ch_gate([controls[0], target])
+            return
+
+        self._runtime.apply_operation("ry", [target], [cmath.pi / 4])
+        self._runtime.apply_operation("mcx", controls + [target])
+        self._runtime.apply_operation("ry", [target], [-cmath.pi / 4])
+
     def _apply_dcx_gate(self, q_indices):
         if len(q_indices) != 2:
             raise ValueError("Qiskit dcx gate requires exactly two qubits.")
@@ -1363,6 +1380,39 @@ class RocQuantumBackend(BackendV2):
         else:
             self._runtime.apply_operation("mcx", controls + [left])
 
+    def _apply_multi_controlled_iswap_gate(self, q_indices, *, include_global_phase):
+        if len(q_indices) < 3:
+            raise ValueError("Qiskit controlled-iswap gate requires at least three qubits.")
+
+        controls = list(q_indices[:-2])
+        left, right = q_indices[-2:]
+        if len(controls) == 1:
+            self._apply_controlled_phase_gate(
+                [controls[0], left],
+                cmath.pi / 2,
+                include_global_phase=include_global_phase,
+            )
+            self._apply_controlled_phase_gate(
+                [controls[0], right],
+                cmath.pi / 2,
+                include_global_phase=include_global_phase,
+            )
+        else:
+            self._apply_multi_controlled_phase_gate(
+                controls + [left],
+                cmath.pi / 2,
+                include_global_phase=include_global_phase,
+            )
+            self._apply_multi_controlled_phase_gate(
+                controls + [right],
+                cmath.pi / 2,
+                include_global_phase=include_global_phase,
+            )
+        self._apply_multi_controlled_h_gate(controls + [left])
+        self._runtime.apply_operation("mcx", controls + [left, right])
+        self._runtime.apply_operation("mcx", controls + [right, left])
+        self._apply_multi_controlled_h_gate(controls + [right])
+
     def _apply_controlled_global_phase_gate(self, op, q_indices, *, include_global_phase):
         num_controls = int(getattr(op, "num_ctrl_qubits", 0))
         base_gate = getattr(op, "base_gate", None)
@@ -1409,10 +1459,10 @@ class RocQuantumBackend(BackendV2):
         num_controls = int(getattr(op, "num_ctrl_qubits", 0))
         base_gate = getattr(op, "base_gate", None)
         base_name = getattr(base_gate, "name", None)
-        target_count = 2 if base_name in {"dcx", "ecr", "swap"} else 1
+        target_count = 2 if base_name in {"dcx", "ecr", "iswap", "swap"} else 1
         if num_controls < 1 or len(q_indices) != num_controls + target_count:
             return False
-        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx", "dcx", "ecr", "swap", "u1", "u2", "u3", "u"}:
+        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx", "dcx", "ecr", "iswap", "swap", "u1", "u2", "u3", "u"}:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
@@ -1437,12 +1487,7 @@ class RocQuantumBackend(BackendV2):
                 else:
                     self._runtime.apply_operation("mcx", controls + [target])
             elif base_name == "h":
-                if len(controls) == 1:
-                    self._apply_ch_gate([controls[0], target])
-                else:
-                    self._runtime.apply_operation("ry", [target], [cmath.pi / 4])
-                    self._runtime.apply_operation("mcx", controls + [target])
-                    self._runtime.apply_operation("ry", [target], [-cmath.pi / 4])
+                self._apply_multi_controlled_h_gate(controls + [target])
             elif base_name == "y":
                 if len(controls) == 1:
                     self._apply_cy_gate([controls[0], target])
@@ -1529,6 +1574,11 @@ class RocQuantumBackend(BackendV2):
                 self._apply_multi_controlled_dcx_gate(controls + targets)
             elif base_name == "ecr":
                 self._apply_multi_controlled_ecr_gate(
+                    controls + targets,
+                    include_global_phase=include_global_phase,
+                )
+            elif base_name == "iswap":
+                self._apply_multi_controlled_iswap_gate(
                     controls + targets,
                     include_global_phase=include_global_phase,
                 )

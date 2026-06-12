@@ -25,6 +25,7 @@ Audit refresh note (2026-06-10):
 - Qiskit `ecr` and PennyLane `qml.ECR` now use exact native decompositions instead of dense two-qubit matrix dispatch; PennyLane preserves the `SX` global phase with a one-qubit global-phase matrix.
 - Fixed controlled Qiskit `ECR` gates (`cecr` / `ccecr` / `c3ecr`) now lower through exact native controlled phase, controlled rotation, and `MCX` decompositions, including open-control variants, instead of falling through generic controlled-matrix dispatch.
 - Qiskit `iswap` and PennyLane `qml.ISWAP` / `qml.PSWAP` / `qml.SISWAP` / `qml.SQISW` now use exact native swap/phase decompositions instead of dense two-qubit matrix dispatch.
+- Fixed controlled Qiskit `iSWAP` gates (`ciswap` / `cciswap` / `c3iswap`) now lower through exact native controlled phase, controlled-Hadamard, and `MCX` decompositions, including open-control variants, instead of falling through generic controlled-matrix dispatch.
 - Qiskit `rccx` / `rcccx` now use exact native relative-phase `H` / `RZ` / `CNOT` decompositions instead of dense three- and four-qubit matrix dispatch.
 - Qiskit `PauliGate` now uses exact native `X` / `Y` / `Z` dispatch instead of dense Pauli-string matrix dispatch, including when it appears as a fixed operation inside Estimator parameter batches.
 - Direct Qiskit open-control controlled-X/Y/Z, controlled rotations/phase, and single-control controlled-H operations now use exact `X`-flip plus native `CX` / `MCX` / `CY` / `CZ` / `CCZ` / `CRX` / `CRY` / `CRZ` / phase `RZ` / `CX` / `CH` decomposition instead of dense matrix dispatch.

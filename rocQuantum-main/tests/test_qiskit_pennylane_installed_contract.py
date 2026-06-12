@@ -1375,6 +1375,42 @@ def test_qiskit_backend_decomposes_controlled_ecr_natively(monkeypatch):
     assert sim.controlled_matrices == []
 
 
+def test_qiskit_backend_decomposes_controlled_iswap_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import iSwapGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    assert {"ciswap", "cciswap", "c3iswap"}.issubset(set(backend.target.operation_names))
+    circuit = QuantumCircuit(5)
+    circuit.append(iSwapGate().control(1, annotated=False), [0, 1, 2])
+    circuit.append(iSwapGate().control(2, annotated=False), [0, 1, 2, 3])
+    circuit.append(iSwapGate().control(3, ctrl_state="101", annotated=False), [0, 1, 2, 3, 4])
+
+    backend.run(circuit, shots=1, statevector=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops[:9] == [
+        ("CP", (0, 1), (np.pi / 2,)),
+        ("CP", (0, 2), (np.pi / 2,)),
+        ("RY", (1,), (np.pi / 4,)),
+        ("CNOT", (0, 1), ()),
+        ("RY", (1,), (-np.pi / 4,)),
+        ("MCX", (0, 1, 2), ()),
+        ("MCX", (0, 2, 1), ()),
+        ("RY", (2,), (np.pi / 4,)),
+        ("CNOT", (0, 2), ()),
+    ]
+    assert ("X", (1,), ()) in sim.ops
+    assert ("MCX", (0, 1, 2, 3, 4), ()) in sim.ops
+    assert ("MCX", (0, 1, 2, 4, 3), ()) in sim.ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
 def test_qiskit_backend_dispatches_general_mcx_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
