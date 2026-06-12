@@ -6280,6 +6280,93 @@ def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
     assert any(sim.statevector_reads == 1 for sim in status_fallback_sims)
 
 
+def test_pennylane_native_adjoint_accepts_hermitian_payload(monkeypatch):
+    pytest.importorskip("pennylane")
+
+    class _HermitianNativeAdjointSimulator(_FakeQuantumSimulator):
+        def __init__(self, num_qubits):
+            super().__init__(num_qubits)
+            self.enable_matrix_expectation = True
+            self.native_adjoint_calls = []
+            self._state = np.zeros(1 << self._num_qubits, dtype=np.complex128)
+            self._state[0] = 1.0
+
+        def reset(self):
+            super().reset()
+            self._state = np.zeros(1 << self._num_qubits, dtype=np.complex128)
+            self._state[0] = 1.0
+
+        def apply_gate(self, name, targets, params=None):
+            super().apply_gate(name, targets, params)
+            if name != "RY" or tuple(targets) != (0,):
+                return
+            theta = float((params or ())[0])
+            c = math.cos(theta / 2.0)
+            s = math.sin(theta / 2.0)
+            old_state = self._state.copy()
+            self._state[0] = c * old_state[0] - s * old_state[1]
+            self._state[1] = s * old_state[0] + c * old_state[1]
+
+        def _peek_statevector(self):
+            return self._state.copy()
+
+        def adjoint_jacobian(self, operations, observables, trainable_params):
+            self.native_adjoint_calls.append(
+                {
+                    "operations": operations,
+                    "observables": observables,
+                    "trainable_params": trainable_params,
+                }
+            )
+            theta = float(operations[0]["params"][0])
+            return np.asarray([[-math.sin(theta)]], dtype=float)
+
+    fake = _install_fake_binding(monkeypatch)
+    fake.QuantumSimulator = _HermitianNativeAdjointSimulator
+    fake.QSim = _HermitianNativeAdjointSimulator
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane import numpy as pnp
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.Hermitian(np.diag([1.0, -1.0]).astype(np.complex128), wires=0)
+
+    @qml.qnode(dev, diff_method="adjoint")
+    def circuit(theta):
+        qml.RY(theta, wires=0)
+        return qml.expval(observable)
+
+    theta = pnp.array(0.321, requires_grad=True)
+
+    assert circuit(theta) == pytest.approx(math.cos(float(theta)))
+    assert qml.grad(circuit)(theta) == pytest.approx(-math.sin(float(theta)))
+
+    sim = [
+        instance for instance in _HermitianNativeAdjointSimulator.instances
+        if isinstance(instance, _HermitianNativeAdjointSimulator)
+    ][-1]
+    assert sim.statevector_reads == 0
+    assert len(sim.matrix_expectations) >= 1
+    assert len(sim.native_adjoint_calls) == 1
+    native_call = sim.native_adjoint_calls[0]
+    assert native_call["observables"] == [
+        [
+            {
+                "kind": "matrix",
+                "matrix": [
+                    [(1.0, 0.0), (0.0, 0.0)],
+                    [(0.0, 0.0), (-1.0, 0.0)],
+                ],
+                "targets": [0],
+            }
+        ]
+    ]
+    assert native_call["trainable_params"] == [0]
+
+
 def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

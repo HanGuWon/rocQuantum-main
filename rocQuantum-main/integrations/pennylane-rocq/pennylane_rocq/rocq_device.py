@@ -306,6 +306,14 @@ def _native_hermitian_expectation(runtime, observable, wire_map):
     return runtime.expectation_matrix(matrix, targets)
 
 
+def _complex_matrix_payload(matrix):
+    normalized = np.asarray(matrix, dtype=np.complex128)
+    return [
+        [(float(np.real(value)), float(np.imag(value))) for value in row]
+        for row in normalized
+    ]
+
+
 def _observable_batch_payload(observable, wire_map, wire_order=None):
     if observable is None:
         return None
@@ -2612,16 +2620,30 @@ class RocQDevice(QubitDevice):
         payloads = []
         for observable in tape.observables:
             terms = _pauli_terms_from_observable(observable, self.wire_map)
-            if terms is None:
+            if terms is not None:
+                payloads.append(
+                    [
+                        {
+                            "coefficient": (float(np.real(coeff)), float(np.imag(coeff))),
+                            "pauli_string": pauli_string,
+                            "targets": [int(target) for target in targets],
+                        }
+                        for coeff, pauli_string, targets in _combine_pauli_terms(terms)
+                    ]
+                )
+                continue
+
+            components = _hermitian_matrix_and_targets(observable, self.wire_map)
+            if components is None:
                 return None
+            matrix, targets = components
             payloads.append(
                 [
                     {
-                        "coefficient": (float(np.real(coeff)), float(np.imag(coeff))),
-                        "pauli_string": pauli_string,
+                        "kind": "matrix",
+                        "matrix": _complex_matrix_payload(matrix),
                         "targets": [int(target) for target in targets],
                     }
-                    for coeff, pauli_string, targets in _combine_pauli_terms(terms)
                 ]
             )
         return payloads
