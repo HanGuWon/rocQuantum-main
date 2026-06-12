@@ -1,73 +1,72 @@
 @echo off
-REM build_rocq.bat - Build script for rocQuantum-1
+setlocal
 
-REM --- User Configuration ---
-REM **IMPORTANT**: Please set the following variables to match your system.
+REM build_rocq.bat - Windows helper for configuring and building rocQuantum.
+REM Override these values in the environment before running the script when needed.
 
-REM 1. Set the path to your ROCm installation.
-REM    This is the directory containing the bin, lib, include, etc. folders.
-set "ROCM_PATH=C:\Program Files\AMD\ROCm\6.1"
-
-REM 2. Set the target AMD GPU architecture.
-REM    You can specify one or more targets, separated by semicolons.
-REM    Common targets: gfx906, gfx908, gfx90a, gfx1030, gfx1100
-set "AMDGPU_TARGETS=gfx906"
-
-REM --- End of User Configuration ---
-
-REM --- Script ---
-echo ==================================================================
-echo                rocQuantum-1 Build Script
-echo ==================================================================
-
-REM Check if ROCM_PATH exists
-if not exist "%ROCM_PATH%" (
-    echo Error: ROCM_PATH not found at "%ROCM_PATH%".
-    echo Please edit this script and set the ROCM_PATH variable.
-    goto :eof
+if not defined ROCM_PATH (
+    set "ROCM_PATH=C:\Program Files\AMD\ROCm\6.1"
 )
 
-echo ROCm Path: %ROCM_PATH%
-echo AMD GPU Targets: %AMDGPU_TARGETS%
+if not defined CMAKE_HIP_ARCHITECTURES (
+    set "CMAKE_HIP_ARCHITECTURES=gfx950;gfx942;gfx90a"
+)
 
-REM Set up the environment
+set "PROJECT_DIR=%~dp0"
+set "BUILD_DIR=%PROJECT_DIR%build"
+set "INSTALL_DIR=%PROJECT_DIR%install"
+set "CMAKE_EXE=cmake"
+
+if defined CMAKE_BIN_PATH (
+    set "CMAKE_EXE=%CMAKE_BIN_PATH%\cmake.exe"
+)
+
+echo ==================================================================
+echo                rocQuantum Build Script
+echo ==================================================================
+
+if not exist "%ROCM_PATH%" (
+    echo Error: ROCM_PATH not found at "%ROCM_PATH%".
+    echo Set ROCM_PATH to your ROCm installation directory.
+    exit /b 1
+)
+
+echo ROCm path: %ROCM_PATH%
+echo HIP architectures: %CMAKE_HIP_ARCHITECTURES%
+
 set "PATH=%ROCM_PATH%\bin;%PATH%"
 set "HIP_DEVICE_LIB_PATH=%ROCM_PATH%\lib"
 
-REM Create a build directory
-if not exist .\build (
-    mkdir build
+if not exist "%BUILD_DIR%" (
+    mkdir "%BUILD_DIR%"
 )
-cd build
 
-REM Configure the project with CMake
 echo.
-echo --- Running CMake --- 
+echo --- Running CMake ---
 echo.
-cmake .. -G "Visual Studio 17 2022" -A x64 ^
+"%CMAKE_EXE%" -S "%PROJECT_DIR%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 ^
     -DCMAKE_BUILD_TYPE=Release ^
-    -DCMAKE_CXX_COMPILER="%ROCM_PATH%/bin/hipcc.bat" ^
-    -DCMAKE_INSTALL_PREFIX="..\install" ^
-    -DAMDGPU_TARGETS="%AMDGPU_TARGETS%"
+    -DCMAKE_CXX_COMPILER="%ROCM_PATH%\bin\hipcc.bat" ^
+    -DCMAKE_INSTALL_PREFIX="%INSTALL_DIR%" ^
+    -DCMAKE_HIP_ARCHITECTURES="%CMAKE_HIP_ARCHITECTURES%"
 
 if %errorlevel% neq 0 (
     echo CMake configuration failed.
-    goto :eof
+    exit /b %errorlevel%
 )
 
-REM Build the project
 echo.
-echo --- Building Project --- 
+echo --- Building Project ---
 echo.
-cmake --build . --config Release
+"%CMAKE_EXE%" --build "%BUILD_DIR%" --config Release
 
 if %errorlevel% neq 0 (
     echo Build failed.
-    goto :eof
+    exit /b %errorlevel%
 )
 
 echo.
 echo ==================================================================
-echo                  Build completed successfully!
+echo                  Build completed successfully.
 echo ==================================================================
-echo.
+exit /b 0

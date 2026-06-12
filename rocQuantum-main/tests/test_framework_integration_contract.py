@@ -78,6 +78,8 @@ _HIPSTATEVEC_SINGLE_QUBIT_KERNELS = os.path.join(
 )
 _BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "bindings.cpp")
 _LOW_LEVEL_BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
+_WINDOWS_BUILD_BAT = os.path.join(_PROJECT_ROOT, "build.bat")
+_WINDOWS_BUILD_ROCQ_BAT = os.path.join(_PROJECT_ROOT, "build_rocq.bat")
 
 
 class TestFrameworkIntegrationContract(unittest.TestCase):
@@ -762,6 +764,19 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("metadata[\"shot_trajectory\"] = True", source)
         self.assertIn("\"batched_parameters\": True", source)
         self.assertIn("BitArray.from_bool_array", source)
+
+    def test_windows_build_helpers_use_current_cmake_contract(self):
+        with open(_WINDOWS_BUILD_BAT, "r", encoding="utf-8") as f:
+            build_source = f.read()
+        with open(_WINDOWS_BUILD_ROCQ_BAT, "r", encoding="utf-8") as f:
+            build_rocq_source = f.read()
+
+        combined = build_source + "\n" + build_rocq_source
+        self.assertIn("%~dp0", combined)
+        self.assertIn("CMAKE_HIP_ARCHITECTURES", combined)
+        self.assertIn("gfx950;gfx942;gfx90a", combined)
+        self.assertNotIn("rocQuantum-1", combined)
+        self.assertNotIn("AMDGPU_TARGETS", combined)
 
 
 if __name__ == "__main__":
