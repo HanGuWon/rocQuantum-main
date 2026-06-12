@@ -166,7 +166,7 @@ What is not real today:
 - PennyLane `diff_method="device"` now exposes a device jacobian that builds parameter-shift tapes with PennyLane's standard transform and routes compatible shift batches, including multi-circuit `compute_derivatives()` / `execute_and_compute_derivatives()` requests, through rocQuantum's batched runtime path, reducing isolated replay for supported parametric gates and Pauli/Hermitian/SparseHamiltonian expectation readouts.
 - PennyLane `diff_method="adjoint"` now probes an optional binding-level `adjoint_jacobian` / `AdjointJacobian` hook and skips Python statevector capture when that hook is present, but the shipped ROCm backend still needs a real GPU-resident adjoint Jacobian implementation behind that hook.
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
-- Density-matrix sampling is not yet a GPU-fast path; it copies probability information to host before drawing shots.
+- Density-matrix sampling now extracts only the density diagonal on device before host-side shot drawing, reducing transfer from full density matrix to probability-vector scale, but it is still not a fully GPU-resident sampling path.
 - Stabilizer/tableau/Pauli-propagation backends were not found.
 - CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, MaxCut-style QAOA helper, and one 3-qubit repetition-code syndrome round.
 

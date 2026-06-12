@@ -76,8 +76,11 @@ class TestDensityMatContract(unittest.TestCase):
             source = f.read()
 
         self.assertIn("hipDensityMatSample", source)
+        self.assertIn("extract_density_diagonal_kernel", source)
+        self.assertIn("copy_density_diagonal_to_host", source)
         self.assertIn("std::discrete_distribution<uint64_t>", source)
-        self.assertIn("density_host[basis * dim + basis]", source)
+        self.assertIn("diagonal_probs[static_cast<size_t>(basis)]", source)
+        self.assertNotIn("density_host[basis * dim + basis]", source)
         self.assertIn("validate_measured_qubits", source)
         self.assertIn("num_measured_qubits > 20", source)
 

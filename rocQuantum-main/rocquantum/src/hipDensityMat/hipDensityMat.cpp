@@ -74,6 +74,14 @@ __global__ void accumulate_kernel(hipComplex* target, const hipComplex* source, 
     }
 }
 
+__global__ void extract_density_diagonal_kernel(const hipComplex* rho, double* diagonal, int64_t dim)
+{
+    int64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < dim) {
+        diagonal[idx] = static_cast<double>(rho[idx * dim + idx].x);
+    }
+}
+
 namespace {
 
 hipDensityMatStatus_t apply_kraus_channel(
@@ -177,6 +185,51 @@ hipDensityMatStatus_t validate_measured_qubits(
         }
     }
     return HIPDENSITYMAT_STATUS_SUCCESS;
+}
+
+hipDensityMatStatus_t copy_density_diagonal_to_host(
+    hipDensityMatState* internal_state,
+    std::vector<double>& diagonal_host)
+{
+    if (internal_state == nullptr) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
+
+    const int64_t dim = 1LL << internal_state->num_qubits_;
+    diagonal_host.assign(static_cast<size_t>(dim), 0.0);
+
+    double* diagonal_device = nullptr;
+    hipError_t hip_err = hipMalloc(&diagonal_device, static_cast<size_t>(dim) * sizeof(double));
+    if (hip_err != hipSuccess) {
+        return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
+    }
+
+    const int block_size = 256;
+    const int grid_size = static_cast<int>((dim + block_size - 1) / block_size);
+    hipLaunchKernelGGL(
+        extract_density_diagonal_kernel,
+        grid_size,
+        block_size,
+        0,
+        internal_state->stream_,
+        static_cast<const hipComplex*>(internal_state->device_data_),
+        diagonal_device,
+        dim);
+
+    hip_err = hipGetLastError();
+    if (hip_err == hipSuccess) {
+        hip_err = hipStreamSynchronize(internal_state->stream_);
+    }
+    if (hip_err == hipSuccess) {
+        hip_err = hipMemcpy(
+            diagonal_host.data(),
+            diagonal_device,
+            static_cast<size_t>(dim) * sizeof(double),
+            hipMemcpyDeviceToHost);
+    }
+
+    hipFree(diagonal_device);
+    return check_hip_error(hip_err);
 }
 
 }  // namespace
@@ -890,15 +943,11 @@ hipDensityMatStatus_t hipDensityMatSample(
 
     const int64_t dim = 1LL << internal_state->num_qubits_;
     const size_t num_outcomes = size_t{1} << num_measured_qubits;
-    std::vector<hipComplex> density_host(static_cast<size_t>(internal_state->num_elements_));
+    std::vector<double> diagonal_probs;
 
-    hipError_t hip_err = hipMemcpy(
-        density_host.data(),
-        internal_state->device_data_,
-        density_host.size() * sizeof(hipComplex),
-        hipMemcpyDeviceToHost);
-    if (hip_err != hipSuccess) {
-        return HIPDENSITYMAT_STATUS_EXECUTION_FAILED;
+    status = copy_density_diagonal_to_host(internal_state, diagonal_probs);
+    if (status != HIPDENSITYMAT_STATUS_SUCCESS) {
+        return status;
     }
 
     std::vector<double> outcome_probs(num_outcomes, 0.0);
@@ -909,7 +958,7 @@ hipDensityMatStatus_t hipDensityMatSample(
                 outcome |= (size_t{1} << m);
             }
         }
-        const double prob = std::max(0.0, static_cast<double>(density_host[basis * dim + basis].x));
+        const double prob = std::max(0.0, diagonal_probs[static_cast<size_t>(basis)]);
         outcome_probs[outcome] += prob;
     }
 
