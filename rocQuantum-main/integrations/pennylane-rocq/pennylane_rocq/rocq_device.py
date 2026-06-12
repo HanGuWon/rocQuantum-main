@@ -3136,6 +3136,208 @@ class RocQDevice(QubitDevice):
                 append_fixed("CNOT", "CNOT", [control, target])
             return True
 
+        def append_phase_projector(wire_indices, theta, param_index=None, derivative_scale=1.0):
+            if not wire_indices:
+                return False
+            if len(wire_indices) == 1:
+                if param_index is None:
+                    append_fixed("PhaseShift", "P", [wire_indices[0]], [theta])
+                else:
+                    append_scaled("PhaseShift", "P", [wire_indices[0]], theta, param_index, derivative_scale)
+                return True
+
+            denominator = 1 << (len(wire_indices) - 1)
+            for subset_size in range(1, len(wire_indices) + 1):
+                scale = ((-1) ** (subset_size + 1)) / denominator
+                for subset in combinations(wire_indices, subset_size):
+                    if not append_multirz(list(subset), scale * theta, param_index, scale * derivative_scale):
+                        return False
+            return True
+
+        def append_one_parameter_gate(name, rocq_name, wire_indices, theta, param_index=None, derivative_scale=1.0):
+            if param_index is None:
+                append_fixed(name, rocq_name, wire_indices, [theta])
+            else:
+                append_scaled(name, rocq_name, wire_indices, theta, param_index, derivative_scale)
+
+        def append_mc_rz(controls, target, theta, param_index=None, derivative_scale=1.0):
+            if not controls:
+                append_rz("RZ", [target], theta, param_index, derivative_scale)
+                return True
+            if len(controls) == 1:
+                append_one_parameter_gate("CRZ", "CRZ", [controls[0], target], theta, param_index, derivative_scale)
+                return True
+
+            return append_phase_projector(
+                controls,
+                -0.5 * theta,
+                param_index,
+                -0.5 * derivative_scale,
+            ) and append_phase_projector(
+                controls + [target],
+                theta,
+                param_index,
+                derivative_scale,
+            )
+
+        def append_mc_rx(controls, target, theta, param_index=None, derivative_scale=1.0):
+            if not controls:
+                append_one_parameter_gate("RX", "RX", [target], theta, param_index, derivative_scale)
+                return True
+            if len(controls) == 1:
+                append_one_parameter_gate("CRX", "CRX", [controls[0], target], theta, param_index, derivative_scale)
+                return True
+
+            append_fixed("Hadamard", "H", [target])
+            if not append_mc_rz(controls, target, theta, param_index, derivative_scale):
+                return False
+            append_fixed("Hadamard", "H", [target])
+            return True
+
+        def append_mc_ry(controls, target, theta, param_index=None, derivative_scale=1.0):
+            if not controls:
+                append_one_parameter_gate("RY", "RY", [target], theta, param_index, derivative_scale)
+                return True
+            if len(controls) == 1:
+                append_one_parameter_gate("CRY", "CRY", [controls[0], target], theta, param_index, derivative_scale)
+                return True
+
+            append_fixed("Sdg", "SDG", [target])
+            append_fixed("Hadamard", "H", [target])
+            if not append_mc_rz(controls, target, theta, param_index, derivative_scale):
+                return False
+            append_fixed("Hadamard", "H", [target])
+            append_fixed("S", "S", [target])
+            return True
+
+        def append_mc_phase_shift(controls, target, theta, param_index=None, derivative_scale=1.0):
+            if not controls:
+                append_one_parameter_gate("PhaseShift", "P", [target], theta, param_index, derivative_scale)
+                return True
+            if len(controls) == 1:
+                append_one_parameter_gate(
+                    "ControlledPhaseShift",
+                    "CP",
+                    [controls[0], target],
+                    theta,
+                    param_index,
+                    derivative_scale,
+                )
+                return True
+
+            return append_phase_projector(controls + [target], theta, param_index, derivative_scale)
+
+        def append_mcx(controls, target):
+            if not controls:
+                append_fixed("PauliX", "X", [target])
+            elif len(controls) == 1:
+                append_fixed("CNOT", "CNOT", [controls[0], target])
+            else:
+                append_fixed("MultiControlledX", "MCX", controls + [target])
+            return True
+
+        def append_ch(wire_indices):
+            control, target = wire_indices
+            append_fixed("RY", "RY", [target], [np.pi / 4])
+            append_fixed("CNOT", "CNOT", [control, target])
+            append_fixed("RY", "RY", [target], [-np.pi / 4])
+
+        def append_mc_fixed_single_qubit_op(base_name, controls, target):
+            if base_name == "PauliX":
+                return append_mcx(controls, target)
+            if base_name == "PauliY":
+                append_fixed("Sdg", "SDG", [target])
+                append_mcx(controls, target)
+                append_fixed("S", "S", [target])
+                return True
+            if base_name == "PauliZ":
+                if not controls:
+                    append_fixed("PauliZ", "Z", [target])
+                elif len(controls) == 1:
+                    append_fixed("CZ", "CZ", [controls[0], target])
+                else:
+                    append_fixed("Hadamard", "H", [target])
+                    append_mcx(controls, target)
+                    append_fixed("Hadamard", "H", [target])
+                return True
+            if base_name == "Hadamard":
+                if not controls:
+                    append_fixed("Hadamard", "H", [target])
+                elif len(controls) == 1:
+                    append_ch([controls[0], target])
+                else:
+                    append_fixed("RY", "RY", [target], [np.pi / 4])
+                    append_mcx(controls, target)
+                    append_fixed("RY", "RY", [target], [-np.pi / 4])
+                return True
+            if base_name == "S":
+                return append_mc_phase_shift(controls, target, np.pi / 2)
+            if base_name == "T":
+                return append_mc_phase_shift(controls, target, np.pi / 4)
+            return False
+
+        def append_controlled_wrapper(op, params, param_indices):
+            base = _controlled_wrapper_base(op)
+            control_wires = _controlled_wrapper_control_wires(op)
+            control_values = _controlled_wrapper_control_values(op)
+            if base is None or not control_wires or len(control_values) != len(control_wires):
+                return False
+
+            controls = [int(self.wire_map[wire]) for wire in control_wires]
+            target_indices = [int(self.wire_map[wire]) for wire in base.wires]
+            if len(target_indices) != 1:
+                return False
+
+            selected_params = list(params)
+            selected_param_indices = list(param_indices)
+            if not selected_params:
+                try:
+                    selected_params = [float(param) for param in getattr(base, "parameters", ())]
+                except (TypeError, ValueError):
+                    return False
+                selected_param_indices = [None for _ in selected_params]
+            if len(selected_params) != len(selected_param_indices):
+                return False
+
+            base_name = base.name
+            target = target_indices[0]
+            flipped_controls = [
+                control for control, value in zip(controls, control_values) if not _control_value_is_one(value)
+            ]
+
+            if base_name in {"RX", "RY", "RZ", "PhaseShift"} and len(selected_params) == 1:
+                pass
+            elif base_name == "Rot" and len(selected_params) == 3:
+                pass
+            elif base_name in {"PauliX", "PauliY", "PauliZ", "Hadamard", "S", "T"} and not selected_params:
+                pass
+            else:
+                return False
+
+            for control in flipped_controls:
+                append_fixed("PauliX", "X", [control])
+
+            if base_name == "RX":
+                lowered = append_mc_rx(controls, target, selected_params[0], selected_param_indices[0])
+            elif base_name == "RY":
+                lowered = append_mc_ry(controls, target, selected_params[0], selected_param_indices[0])
+            elif base_name == "RZ":
+                lowered = append_mc_rz(controls, target, selected_params[0], selected_param_indices[0])
+            elif base_name == "PhaseShift":
+                lowered = append_mc_phase_shift(controls, target, selected_params[0], selected_param_indices[0])
+            elif base_name == "Rot":
+                lowered = (
+                    append_mc_rz(controls, target, selected_params[0], selected_param_indices[0])
+                    and append_mc_ry(controls, target, selected_params[1], selected_param_indices[1])
+                    and append_mc_rz(controls, target, selected_params[2], selected_param_indices[2])
+                )
+            else:
+                lowered = append_mc_fixed_single_qubit_op(base_name, controls, target)
+
+            for control in reversed(flipped_controls):
+                append_fixed("PauliX", "X", [control])
+            return lowered
+
         def append_paulirot_basis_change(active_terms, inverse=False):
             for wire_index, pauli in active_terms:
                 if pauli == "X":
@@ -3280,6 +3482,11 @@ class RocQDevice(QubitDevice):
             param_indices = list(range(parameter_index, parameter_index + len(params)))
             parameter_index += len(params)
             wire_indices = [int(self.wire_map[wire]) for wire in op.wires]
+
+            if op.name in CONTROLLED_WRAPPER_OPS:
+                if not append_controlled_wrapper(op, params, param_indices):
+                    return None
+                continue
 
             if op.name == "Rot":
                 if len(params) != 3 or len(wire_indices) != 1:
