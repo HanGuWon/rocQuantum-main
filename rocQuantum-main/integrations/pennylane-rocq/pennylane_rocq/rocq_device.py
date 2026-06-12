@@ -2733,18 +2733,24 @@ class RocQDevice(QubitDevice):
             append_fixed("CNOT", "CNOT", [control, target])
             append_fixed("S", "S", [target])
 
-        def append_multirz(wire_indices, theta, param_index, derivative_scale=1.0):
+        def append_rz(name, wire_indices, theta, param_index=None, derivative_scale=1.0):
+            if param_index is None:
+                append_fixed(name, "RZ", wire_indices, [theta])
+            else:
+                append_scaled(name, "RZ", wire_indices, theta, param_index, derivative_scale)
+
+        def append_multirz(wire_indices, theta, param_index=None, derivative_scale=1.0):
             if not wire_indices:
                 return False
             if len(wire_indices) == 1:
-                append_scaled("RZ", "RZ", [wire_indices[0]], theta, param_index, derivative_scale)
+                append_rz("RZ", [wire_indices[0]], theta, param_index, derivative_scale)
                 return True
 
             target = wire_indices[-1]
             controls = list(wire_indices[:-1])
             for control in controls:
                 append_fixed("CNOT", "CNOT", [control, target])
-            append_scaled("RZ", "RZ", [target], theta, param_index, derivative_scale)
+            append_rz("RZ", [target], theta, param_index, derivative_scale)
             for control in reversed(controls):
                 append_fixed("CNOT", "CNOT", [control, target])
             return True
@@ -2758,6 +2764,121 @@ class RocQDevice(QubitDevice):
                     append_fixed("RX", "RX", [wire_index], [angle])
                 elif pauli != "Z":
                     return False
+            return True
+
+        def append_single_excitation(wire_indices, theta, param_index=None, derivative_scale=1.0):
+            if len(wire_indices) != 2:
+                return False
+            left, right = wire_indices
+            append_fixed("Hadamard", "H", [left])
+            append_fixed("CNOT", "CNOT", [left, right])
+            if param_index is None:
+                append_fixed("RY", "RY", [left], [-theta / 2])
+                append_fixed("RY", "RY", [right], [-theta / 2])
+            else:
+                append_scaled("RY", "RY", [left], -theta / 2, param_index, -0.5 * derivative_scale)
+                append_scaled("RY", "RY", [right], -theta / 2, param_index, -0.5 * derivative_scale)
+            append_fixed("CNOT", "CNOT", [left, right])
+            append_fixed("Hadamard", "H", [left])
+            return True
+
+        def append_single_excitation_phase_variant(wire_indices, theta, param_index, sign):
+            if len(wire_indices) != 2:
+                return False
+            left, right = wire_indices
+            half_theta = theta / 2
+            append_fixed("Hadamard", "H", [right])
+            append_fixed("CNOT", "CNOT", [right, left])
+            append_scaled("RY", "RY", [left], half_theta, param_index, 0.5)
+            append_scaled("RY", "RY", [right], half_theta, param_index, 0.5)
+            append_cy([right, left])
+            append_fixed("S", "S", [right])
+            append_fixed("Hadamard", "H", [right])
+            append_scaled("RZ", "RZ", [right], -sign * half_theta, param_index, -sign * 0.5)
+            append_fixed("CNOT", "CNOT", [left, right])
+            return True
+
+        def append_double_excitation(wire_indices, theta, param_index, derivative_scale=1.0):
+            if len(wire_indices) != 4:
+                return False
+            first, second, third, fourth = wire_indices
+            angle = theta / 8
+
+            def append_ry(wire_index, signed_angle, signed_scale):
+                append_scaled("RY", "RY", [wire_index], signed_angle, param_index, signed_scale * derivative_scale)
+
+            append_fixed("CNOT", "CNOT", [third, fourth])
+            append_fixed("CNOT", "CNOT", [first, third])
+            append_fixed("Hadamard", "H", [fourth])
+            append_fixed("Hadamard", "H", [first])
+            append_fixed("CNOT", "CNOT", [third, fourth])
+            append_fixed("CNOT", "CNOT", [first, second])
+            append_ry(second, angle, 1 / 8)
+            append_ry(first, -angle, -1 / 8)
+            append_fixed("CNOT", "CNOT", [first, fourth])
+            append_fixed("Hadamard", "H", [fourth])
+            append_fixed("CNOT", "CNOT", [fourth, second])
+            append_ry(second, angle, 1 / 8)
+            append_ry(first, -angle, -1 / 8)
+            append_fixed("CNOT", "CNOT", [third, second])
+            append_fixed("CNOT", "CNOT", [third, first])
+            append_ry(second, -angle, -1 / 8)
+            append_ry(first, angle, 1 / 8)
+            append_fixed("CNOT", "CNOT", [fourth, second])
+            append_fixed("Hadamard", "H", [fourth])
+            append_fixed("CNOT", "CNOT", [first, fourth])
+            append_ry(second, -angle, -1 / 8)
+            append_ry(first, angle, 1 / 8)
+            append_fixed("CNOT", "CNOT", [first, second])
+            append_fixed("CNOT", "CNOT", [third, first])
+            append_fixed("Hadamard", "H", [first])
+            append_fixed("Hadamard", "H", [fourth])
+            append_fixed("CNOT", "CNOT", [first, third])
+            append_fixed("CNOT", "CNOT", [third, fourth])
+            return True
+
+        def append_double_excitation_phase_variant(wire_indices, theta, param_index, sign):
+            if len(wire_indices) != 4:
+                return False
+            for relative_wires, coefficient in (
+                ((0, 1), 1),
+                ((0, 2), -1),
+                ((0, 3), -1),
+                ((1, 2), -1),
+                ((1, 3), -1),
+                ((2, 3), 1),
+                ((0, 1, 2, 3), 1),
+            ):
+                derivative_scale = sign * coefficient / 8
+                angle = derivative_scale * theta
+                if not append_multirz(
+                    [wire_indices[index] for index in relative_wires],
+                    angle,
+                    param_index,
+                    derivative_scale,
+                ):
+                    return False
+            return append_double_excitation(wire_indices, theta, param_index)
+
+        def append_fermionic_swap(wire_indices, theta, param_index=None, derivative_scale=1.0):
+            if len(wire_indices) != 2:
+                return False
+            left, right = wire_indices
+            half_theta = theta / 2
+            append_fixed("Hadamard", "H", [left])
+            append_fixed("Hadamard", "H", [right])
+            if not append_multirz(wire_indices, half_theta, param_index, 0.5 * derivative_scale):
+                return False
+            append_fixed("Hadamard", "H", [left])
+            append_fixed("Hadamard", "H", [right])
+            append_fixed("RX", "RX", [left], [np.pi / 2])
+            append_fixed("RX", "RX", [right], [np.pi / 2])
+            if not append_multirz(wire_indices, half_theta, param_index, 0.5 * derivative_scale):
+                return False
+            append_fixed("RX", "RX", [left], [-np.pi / 2])
+            append_fixed("RX", "RX", [right], [-np.pi / 2])
+            append_rz("RZ", [left], half_theta, param_index, 0.5 * derivative_scale)
+            append_rz("RZ", [right], half_theta, param_index, 0.5 * derivative_scale)
             return True
 
         for op in tape.operations:
@@ -2881,32 +3002,29 @@ class RocQDevice(QubitDevice):
                 continue
 
             if op.name == "SingleExcitation":
-                if len(params) != 1 or len(wire_indices) != 2:
+                if len(params) != 1 or not append_single_excitation(wire_indices, params[0], param_indices[0]):
                     return None
-                left, right = wire_indices
-                append_fixed("Hadamard", "H", [left])
-                append_fixed("CNOT", "CNOT", [left, right])
-                append_scaled("RY", "RY", [left], -params[0] / 2, param_indices[0], -0.5)
-                append_scaled("RY", "RY", [right], -params[0] / 2, param_indices[0], -0.5)
-                append_fixed("CNOT", "CNOT", [left, right])
-                append_fixed("Hadamard", "H", [left])
                 continue
 
             if op.name in {"SingleExcitationPlus", "SingleExcitationMinus"}:
-                if len(params) != 1 or len(wire_indices) != 2:
+                if len(params) != 1:
                     return None
                 sign = 1 if op.name == "SingleExcitationPlus" else -1
-                left, right = wire_indices
-                half_theta = params[0] / 2
-                append_fixed("Hadamard", "H", [right])
-                append_fixed("CNOT", "CNOT", [right, left])
-                append_scaled("RY", "RY", [left], half_theta, param_indices[0], 0.5)
-                append_scaled("RY", "RY", [right], half_theta, param_indices[0], 0.5)
-                append_cy([right, left])
-                append_fixed("S", "S", [right])
-                append_fixed("Hadamard", "H", [right])
-                append_scaled("RZ", "RZ", [right], -sign * half_theta, param_indices[0], -sign * 0.5)
-                append_fixed("CNOT", "CNOT", [left, right])
+                if not append_single_excitation_phase_variant(wire_indices, params[0], param_indices[0], sign):
+                    return None
+                continue
+
+            if op.name == "DoubleExcitation":
+                if len(params) != 1 or not append_double_excitation(wire_indices, params[0], param_indices[0]):
+                    return None
+                continue
+
+            if op.name in {"DoubleExcitationPlus", "DoubleExcitationMinus"}:
+                if len(params) != 1:
+                    return None
+                sign = 1 if op.name == "DoubleExcitationPlus" else -1
+                if not append_double_excitation_phase_variant(wire_indices, params[0], param_indices[0], sign):
+                    return None
                 continue
 
             if op.name == "PSWAP":
@@ -2920,24 +3038,22 @@ class RocQDevice(QubitDevice):
                 continue
 
             if op.name == "FermionicSWAP":
-                if len(params) != 1 or len(wire_indices) != 2:
+                if len(params) != 1 or not append_fermionic_swap(wire_indices, params[0], param_indices[0]):
                     return None
-                left, right = wire_indices
-                half_theta = params[0] / 2
-                append_fixed("Hadamard", "H", [left])
-                append_fixed("Hadamard", "H", [right])
-                if not append_multirz(wire_indices, half_theta, param_indices[0], 0.5):
+                continue
+
+            if op.name == "OrbitalRotation":
+                if len(params) != 1 or len(wire_indices) != 4:
                     return None
-                append_fixed("Hadamard", "H", [left])
-                append_fixed("Hadamard", "H", [right])
-                append_fixed("RX", "RX", [left], [np.pi / 2])
-                append_fixed("RX", "RX", [right], [np.pi / 2])
-                if not append_multirz(wire_indices, half_theta, param_indices[0], 0.5):
+                first, second, third, fourth = wire_indices
+                if not append_fermionic_swap([second, third], np.pi):
                     return None
-                append_fixed("RX", "RX", [left], [-np.pi / 2])
-                append_fixed("RX", "RX", [right], [-np.pi / 2])
-                append_scaled("RZ", "RZ", [left], half_theta, param_indices[0], 0.5)
-                append_scaled("RZ", "RZ", [right], half_theta, param_indices[0], 0.5)
+                if not append_single_excitation([first, second], params[0], param_indices[0]):
+                    return None
+                if not append_single_excitation([third, fourth], params[0], param_indices[0]):
+                    return None
+                if not append_fermionic_swap([second, third], np.pi):
+                    return None
                 continue
 
             append_payload(

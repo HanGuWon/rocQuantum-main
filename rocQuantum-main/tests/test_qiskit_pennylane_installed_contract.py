@@ -6766,6 +6766,66 @@ def test_pennylane_native_adjoint_lowers_excitation_phase_and_fermionic_swap_pay
     ]
 
 
+def test_pennylane_native_adjoint_lowers_double_excitation_and_orbital_rotation_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=4)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.DoubleExcitation(0.8, wires=[0, 1, 2, 3]),
+            qml.DoubleExcitationPlus(1.6, wires=[0, 1, 2, 3]),
+            qml.DoubleExcitationMinus(0.6, wires=[0, 1, 2, 3]),
+            qml.OrbitalRotation(0.4, wires=[0, 1, 2, 3]),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0, 1, 2, 3]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0, 1, 2, 3]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+
+    def trainable_ops(param_index):
+        return [op for op in operations if op["param_indices"] == [param_index]]
+
+    double_ops = trainable_ops(0)
+    assert [op["rocq_name"] for op in double_ops] == ["RY"] * 8
+    assert [op["wires"] for op in double_ops] == [[1], [0], [1], [0], [1], [0], [1], [0]]
+    assert [op["params"][0] for op in double_ops] == pytest.approx(
+        [0.1, -0.1, 0.1, -0.1, -0.1, 0.1, -0.1, 0.1]
+    )
+    assert [op["param_derivative_scales"][0] for op in double_ops] == pytest.approx(
+        [0.125, -0.125, 0.125, -0.125, -0.125, 0.125, -0.125, 0.125]
+    )
+
+    double_plus_ops = trainable_ops(1)
+    assert [op["rocq_name"] for op in double_plus_ops[:7]] == ["RZ"] * 7
+    assert [op["param_derivative_scales"][0] for op in double_plus_ops[:7]] == pytest.approx(
+        [0.125, -0.125, -0.125, -0.125, -0.125, 0.125, 0.125]
+    )
+    assert [op["rocq_name"] for op in double_plus_ops[7:]] == ["RY"] * 8
+
+    double_minus_ops = trainable_ops(2)
+    assert [op["rocq_name"] for op in double_minus_ops[:7]] == ["RZ"] * 7
+    assert [op["param_derivative_scales"][0] for op in double_minus_ops[:7]] == pytest.approx(
+        [-0.125, 0.125, 0.125, 0.125, 0.125, -0.125, -0.125]
+    )
+    assert [op["rocq_name"] for op in double_minus_ops[7:]] == ["RY"] * 8
+
+    orbital_ops = trainable_ops(3)
+    assert [op["rocq_name"] for op in orbital_ops] == ["RY"] * 4
+    assert [op["wires"] for op in orbital_ops] == [[0], [1], [2], [3]]
+    assert [op["params"][0] for op in orbital_ops] == pytest.approx([-0.2, -0.2, -0.2, -0.2])
+    assert [op["param_derivative_scales"][0] for op in orbital_ops] == pytest.approx([-0.5] * 4)
+
+
 def test_pennylane_native_adjoint_accepts_hermitian_payload(monkeypatch):
     pytest.importorskip("pennylane")
 
