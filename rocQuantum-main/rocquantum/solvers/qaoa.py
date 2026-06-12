@@ -64,7 +64,7 @@ def make_maxcut_qaoa_kernel(num_qubits: int, edges: Iterable[Sequence[float]], l
             beta = float(betas[layer])
             for u, v, weight in normalized_edges:
                 rocq.cnot(q[u], q[v])
-                rocq.rz(2.0 * gamma * weight, q[v])
+                rocq.rz(-gamma * weight, q[v])
                 rocq.cnot(q[u], q[v])
             for qubit in range(num_qubits):
                 rocq.rx(2.0 * beta, q[qubit])

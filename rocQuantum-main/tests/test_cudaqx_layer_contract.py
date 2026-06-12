@@ -113,7 +113,14 @@ class TestQaoaHelpers(unittest.TestCase):
         self.assertIn('"quantum.cnot"', mlir)
         self.assertIn('"quantum.rz"', mlir)
         self.assertIn('"quantum.rx"', mlir)
-        self.assertIn("1.2", mlir)
+
+        ops = kernel.build(np.array([0.3, 0.4])).ops
+        rz_ops = [op for op in ops if op.name == "rz"]
+        rx_ops = [op for op in ops if op.name == "rx"]
+        self.assertEqual(len(rz_ops), 1)
+        self.assertEqual(len(rx_ops), 2)
+        self.assertEqual(rz_ops[0].params["phi"], -0.6)
+        self.assertTrue(all(op.params["theta"] == 0.8 for op in rx_ops))
 
         operator = maxcut_cost_operator(2, [(0, 1, 2.0)])
         self.assertIn("Z0 Z1", operator.to_string())

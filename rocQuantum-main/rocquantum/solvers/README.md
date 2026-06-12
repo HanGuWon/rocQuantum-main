@@ -8,7 +8,8 @@ Current supported subset:
 - `VQE_Solver` evaluates canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, scaled composite sums, and full-state CSR sparse observables on the state-vector backend.
 - `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`.
 - `make_maxcut_qaoa_kernel()` builds a MaxCut-style QAOA ansatz using H, CNOT,
-  RZ, and RX gates.
+  RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
+  `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.
 - `maxcut_cost_operator()` builds the weighted MaxCut cost operator as
   `0.5 * w * (I - Zi Zj)` for each edge.
 - `VQE_Solver` passes multi-parameter vectors as one ansatz argument when the target kernel has a single vector-style parameter, so the QAOA helper can be evaluated directly by the VQE objective path.
