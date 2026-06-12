@@ -6546,6 +6546,79 @@ def test_pennylane_native_adjoint_marks_trainable_operation_parameters(monkeypat
     ]
 
 
+def test_pennylane_native_adjoint_lowers_phase_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.PhaseShift(0.1, wires=0),
+            qml.ControlledPhaseShift(0.2, wires=[0, 1]),
+            qml.CPhaseShift01(0.3, wires=[0, 1]),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0, 1, 2]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0, 1, 2]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert operations == [
+        {
+            "name": "PhaseShift",
+            "rocq_name": "P",
+            "wires": [0],
+            "params": [0.1],
+            "param_indices": [0],
+            "trainable_param_indices": [0],
+            "trainable_param_positions": [0],
+        },
+        {
+            "name": "ControlledPhaseShift",
+            "rocq_name": "CP",
+            "wires": [0, 1],
+            "params": [0.2],
+            "param_indices": [1],
+            "trainable_param_indices": [1],
+            "trainable_param_positions": [0],
+        },
+        {
+            "name": "PauliX",
+            "rocq_name": "X",
+            "wires": [0],
+            "params": [],
+            "param_indices": [],
+            "trainable_param_indices": [],
+            "trainable_param_positions": [],
+        },
+        {
+            "name": "ControlledPhaseShift",
+            "rocq_name": "CP",
+            "wires": [0, 1],
+            "params": [0.3],
+            "param_indices": [2],
+            "trainable_param_indices": [2],
+            "trainable_param_positions": [0],
+        },
+        {
+            "name": "PauliX",
+            "rocq_name": "X",
+            "wires": [0],
+            "params": [],
+            "param_indices": [],
+            "trainable_param_indices": [],
+            "trainable_param_positions": [],
+        },
+    ]
+
+
 def test_pennylane_native_adjoint_accepts_hermitian_payload(monkeypatch):
     pytest.importorskip("pennylane")
 

@@ -29,6 +29,11 @@ PENNYLANE_TO_ROCQ_GATES = {
     "Hadamard": "H", "S": "S", "T": "T",
     "CNOT": "CNOT", "CZ": "CZ", "SWAP": "SWAP",
 }
+PENNYLANE_TO_ROCQ_ADJOINT_GATES = {
+    **PENNYLANE_TO_ROCQ_GATES,
+    "PhaseShift": "P",
+    "ControlledPhaseShift": "CP",
+}
 
 NATIVE_PARAMETRIC_OPS = {"RX", "RY", "RZ", "CRX", "CRY", "CRZ"}
 MATRIX_OPS = {
@@ -2755,9 +2760,27 @@ class RocQDevice(QubitDevice):
                     append_payload(primitive_name, primitive_name, wire_indices, [primitive_param], [primitive_index])
                 continue
 
+            if op.name in {"CPhaseShift00", "CPhaseShift01", "CPhaseShift10"}:
+                if len(params) != 1 or len(wire_indices) != 2:
+                    return None
+                control_state = op.name[len("CPhaseShift"):]
+                if len(control_state) != len(wire_indices):
+                    return None
+                flipped_wires = [
+                    wire_index
+                    for wire_index, state_bit in zip(wire_indices, control_state)
+                    if state_bit == "0"
+                ]
+                for wire_index in flipped_wires:
+                    append_payload("PauliX", "X", [wire_index], [], [])
+                append_payload("ControlledPhaseShift", "CP", wire_indices, params, param_indices)
+                for wire_index in reversed(flipped_wires):
+                    append_payload("PauliX", "X", [wire_index], [], [])
+                continue
+
             append_payload(
                 op.name,
-                PENNYLANE_TO_ROCQ_GATES.get(op.name, op.name),
+                PENNYLANE_TO_ROCQ_ADJOINT_GATES.get(op.name, op.name),
                 wire_indices,
                 params,
                 param_indices,

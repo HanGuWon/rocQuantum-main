@@ -77,7 +77,11 @@ class _FakeQSim:
 
 def _build_fake_pennylane_modules():
     qml = types.ModuleType("pennylane")
+    measurements_mod = types.ModuleType("pennylane.measurements")
     operation_mod = types.ModuleType("pennylane.operation")
+
+    class MeasurementProcess:
+        pass
 
     class Operation:
         pass
@@ -108,22 +112,24 @@ def _build_fake_pennylane_modules():
     def _matrix(op):
         return np.asarray(op.matrix, dtype=np.complex128)
 
+    measurements_mod.MeasurementProcess = MeasurementProcess
     operation_mod.Operation = Operation
     qml.QubitDevice = QubitDevice
     qml.matrix = _matrix
-    return qml, operation_mod
+    return qml, measurements_mod, operation_mod
 
 
 def _load_device_module():
     fake_bind = types.ModuleType("rocquantum_bind")
     fake_bind.QSim = _FakeQSim
-    qml, operation_mod = _build_fake_pennylane_modules()
+    qml, measurements_mod, operation_mod = _build_fake_pennylane_modules()
     module_name = "test_pennylane_adapter_module"
 
     with mock.patch.dict(
         sys.modules,
         {
             "pennylane": qml,
+            "pennylane.measurements": measurements_mod,
             "pennylane.operation": operation_mod,
             "rocquantum_bind": fake_bind,
         },

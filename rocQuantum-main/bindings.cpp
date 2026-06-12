@@ -558,10 +558,14 @@ char trainable_rotation_generator(const AdjointOperationPayload& operation) {
         throw_adjoint_not_implemented(
             "binding adjoint_jacobian currently supports one trainable scalar rotation parameter per operation.");
     }
-    if ((normalized == "RX" || normalized == "RY" || normalized == "RZ") && operation.wires.size() != 1) {
+    if ((normalized == "RX" || normalized == "RY" || normalized == "RZ" || normalized == "P" ||
+         normalized == "PHASE") &&
+        operation.wires.size() != 1) {
         throw_adjoint_not_implemented("single-qubit adjoint rotations require one target wire.");
     }
-    if ((normalized == "CRX" || normalized == "CRY" || normalized == "CRZ") && operation.wires.size() != 2) {
+    if ((normalized == "CRX" || normalized == "CRY" || normalized == "CRZ" || normalized == "CP" ||
+         normalized == "CPHASE" || normalized == "CONTROLLEDPHASE") &&
+        operation.wires.size() != 2) {
         throw_adjoint_not_implemented("controlled adjoint rotations require control and target wires.");
     }
     if (normalized == "RX" || normalized == "CRX") {
@@ -570,11 +574,12 @@ char trainable_rotation_generator(const AdjointOperationPayload& operation) {
     if (normalized == "RY" || normalized == "CRY") {
         return 'Y';
     }
-    if (normalized == "RZ" || normalized == "CRZ") {
+    if (normalized == "RZ" || normalized == "P" || normalized == "PHASE" || normalized == "CRZ" ||
+        normalized == "CP" || normalized == "CPHASE" || normalized == "CONTROLLEDPHASE") {
         return 'Z';
     }
     throw_adjoint_not_implemented(
-        "binding adjoint_jacobian currently differentiates trainable RX/RY/RZ/CRX/CRY/CRZ operations only.");
+        "binding adjoint_jacobian currently differentiates trainable RX/RY/RZ/P/CRX/CRY/CRZ/CP operations only.");
 }
 
 std::vector<std::complex<double>> apply_rotation_generator_to_state(
@@ -586,7 +591,8 @@ std::vector<std::complex<double>> apply_rotation_generator_to_state(
         return {};
     }
     const std::string normalized = uppercase_ascii(operation.rocq_name.empty() ? operation.name : operation.rocq_name);
-    if (normalized == "CRX" || normalized == "CRY" || normalized == "CRZ") {
+    if (normalized == "CRX" || normalized == "CRY" || normalized == "CRZ" || normalized == "CP" ||
+        normalized == "CPHASE" || normalized == "CONTROLLEDPHASE") {
         return apply_controlled_pauli_to_state(state, generator, operation.wires[0], operation.wires[1], num_qubits);
     }
     return apply_pauli_to_state(state, std::string(1, generator), operation.wires, num_qubits);
