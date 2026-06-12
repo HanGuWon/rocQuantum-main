@@ -59,14 +59,46 @@ def _observable_terms(observable, num_qubits: int | None = None):
     raise TypeError(f"Unsupported Qiskit observable type: {type(observable)!r}")
 
 
-def _dense_operator_plan(observable, num_qubits: int):
+def _dense_operator_payload(observable):
     try:
         from qiskit.quantum_info import Operator
     except ImportError as exc:
         raise ImportError("Qiskit quantum_info is required for native expectation estimation.") from exc
 
-    if not isinstance(observable, Operator):
+    if isinstance(observable, Operator):
+        return observable, None
+
+    if isinstance(observable, tuple) and len(observable) == 2 and isinstance(observable[0], Operator):
+        return observable[0], observable[1]
+
+    if isinstance(observable, Mapping) and isinstance(observable.get("operator"), Operator):
+        targets = observable.get("targets", observable.get("qargs"))
+        if targets is not None:
+            return observable["operator"], targets
+
+    return None
+
+
+def _normalize_dense_operator_targets(targets, target_qubits: int, num_qubits: int):
+    try:
+        normalized = tuple(int(qubit) for qubit in targets)
+    except TypeError as exc:
+        raise TypeError("Dense Qiskit Operator targets must be an iterable of qubit indices.") from exc
+
+    if len(normalized) != int(target_qubits):
+        raise ValueError("Dense Qiskit Operator explicit targets must match matrix qubit count.")
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("Dense Qiskit Operator explicit targets must be unique.")
+    if any(qubit < 0 or qubit >= int(num_qubits) for qubit in normalized):
+        raise ValueError("Dense Qiskit Operator explicit targets must be circuit qubit indices.")
+    return list(normalized)
+
+
+def _dense_operator_plan(observable, num_qubits: int):
+    payload = _dense_operator_payload(observable)
+    if payload is None:
         return None
+    observable, explicit_targets = payload
 
     matrix = np.ascontiguousarray(np.asarray(observable.data, dtype=np.complex128))
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
@@ -87,6 +119,9 @@ def _dense_operator_plan(observable, num_qubits: int):
         raise ValueError(
             "Dense Qiskit Operator dimension must equal 2^k for some k <= circuit qubits."
         )
+
+    if explicit_targets is not None:
+        return matrix, _normalize_dense_operator_targets(explicit_targets, target_qubits, int(num_qubits))
 
     input_dims = tuple(int(dim) for dim in observable.input_dims())
     output_dims = tuple(int(dim) for dim in observable.output_dims())
@@ -110,13 +145,22 @@ def _dense_operator_plan(observable, num_qubits: int):
 
 def _is_dense_operator_observable(observable) -> bool:
     try:
-        from qiskit.quantum_info import Operator
+        return _dense_operator_payload(observable) is not None
     except ImportError:
         return False
-    return isinstance(observable, Operator)
+
+
+def _dense_operator_object_array(observables, *, copy: bool):
+    if _is_dense_operator_observable(observables):
+        observable_array = np.empty((), dtype=object)
+        observable_array[()] = observables
+        return observable_array.copy() if copy else observable_array
+    return object_array(observables, copy=copy)
 
 
 def _contains_dense_operator_observable(observables) -> bool:
+    if _is_dense_operator_observable(observables):
+        return True
     try:
         observable_array = object_array(observables, copy=False)
     except (TypeError, ValueError):
@@ -135,7 +179,7 @@ def _validate_precision(precision: float | None) -> None:
 
 class _DenseOperatorObservablesArray:
     def __init__(self, observables):
-        self._array = object_array(observables, copy=True)
+        self._array = _dense_operator_object_array(observables, copy=True)
         self._shape = self._array.shape
 
     @property
@@ -178,16 +222,17 @@ class _DenseOperatorEstimatorPub:
 
 
 def _coerce_estimator_pub(pub, precision: float | None):
+    if isinstance(pub, EstimatorPub):
+        return pub
+
     try:
-        return EstimatorPub.coerce(pub, precision)
+        pub_len = len(pub)
     except TypeError:
-        try:
-            pub_len = len(pub)
-        except TypeError:
-            raise
-        if pub_len in [2, 3, 4] and _contains_dense_operator_observable(pub[1]):
-            return _DenseOperatorEstimatorPub.coerce(pub, precision)
-        raise
+        return EstimatorPub.coerce(pub, precision)
+
+    if pub_len in [2, 3, 4] and _contains_dense_operator_observable(pub[1]):
+        return _DenseOperatorEstimatorPub.coerce(pub, precision)
+    return EstimatorPub.coerce(pub, precision)
 
 
 def _label_to_runtime_term(label: str, num_qubits: int):
