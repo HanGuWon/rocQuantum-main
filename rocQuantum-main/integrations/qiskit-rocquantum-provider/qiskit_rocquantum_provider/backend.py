@@ -31,6 +31,7 @@ from qiskit.circuit.library import (
     CRZGate,
     DCXGate,
     ECRGate,
+    GlobalPhaseGate,
     HGate,
     IGate,
     MCXGate,
@@ -294,6 +295,7 @@ def _instruction_target(num_qubits):
     target.add_instruction(CRZGate(0.0), name="crz")
     target.add_instruction(DCXGate(), name="dcx")
     target.add_instruction(ECRGate(), name="ecr")
+    target.add_instruction(GlobalPhaseGate(0.0), name="global_phase")
     target.add_instruction(HGate(), name="h")
     target.add_instruction(IGate(), name="id")
     target.add_instruction(iSwapGate(), name="iswap")
@@ -1241,6 +1243,12 @@ class RocQuantumBackend(BackendV2):
         return True
 
     def _apply_quantum_operation(self, op, q_indices, *, include_global_phase, touched_qubits, circuit_num_qubits):
+        if op.name == "global_phase":
+            if include_global_phase and circuit_num_qubits > 0:
+                (phase,) = normalize_params(op.params)
+                self._apply_global_phase_value(phase)
+            return
+
         if op.name in {"p", "cp"} and self._supports_native_parametric_decomposition():
             (theta,) = normalize_params(op.params)
             if op.name == "p":
@@ -1417,6 +1425,12 @@ class RocQuantumBackend(BackendV2):
                     "Transpile or decompose dynamic circuits before execution."
                 )
 
+            if op.name == "global_phase":
+                if include_global_phase and circuit.num_qubits > 0:
+                    (phase,) = normalize_params(op.params)
+                    self._apply_global_phase_value(phase)
+                continue
+
             q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
 
             if measurement_started and op.name != "measure":
@@ -1505,7 +1519,7 @@ class RocQuantumBackend(BackendV2):
         touched_qubits = set()
         for position, reference_instruction in enumerate(circuits[0].data):
             reference_op = reference_instruction.operation
-            if reference_op.name in {"barrier", "delay", "save_statevector"}:
+            if reference_op.name in {"barrier", "delay", "global_phase", "save_statevector"}:
                 continue
             if reference_op.name in CONTROL_FLOW_OPS or getattr(reference_op, "blocks", None) is not None:
                 raise NotImplementedError("Batched Qiskit execution does not support control-flow operations.")
@@ -1730,7 +1744,7 @@ class RocQuantumBackend(BackendV2):
         measurement_started = False
         for instruction in circuit.data:
             op = instruction.operation
-            if op.name in {"barrier", "delay", "save_statevector"}:
+            if op.name in {"barrier", "delay", "global_phase", "save_statevector"}:
                 continue
             if op.name in CONTROL_FLOW_OPS or getattr(op, "blocks", None) is not None:
                 return True
@@ -1796,7 +1810,7 @@ class RocQuantumBackend(BackendV2):
         max_dynamic_loop_iterations=DEFAULT_MAX_DYNAMIC_LOOP_ITERATIONS,
     ):
         op = instruction.operation
-        if op.name in {"barrier", "delay", "save_statevector"}:
+        if op.name in {"barrier", "delay", "global_phase", "save_statevector"}:
             return
 
         if op.name == "break_loop":

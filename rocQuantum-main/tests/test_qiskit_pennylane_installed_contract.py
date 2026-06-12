@@ -813,6 +813,52 @@ def test_qiskit_backend_skips_global_phase_for_sampling_only(monkeypatch):
     assert _FakeQuantumSimulator.instances[-1].ops == [("H", (0,), ())]
 
 
+def test_qiskit_backend_handles_global_phase_gate_without_empty_matrix(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import GlobalPhaseGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    assert "global_phase" in set(backend.target.operation_names)
+
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+    circuit.append(GlobalPhaseGate(math.pi / 5), [])
+
+    backend.run(circuit, sampling=False, statevector=True).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    phase = np.exp(1j * math.pi / 5)
+    assert sim.ops == [("H", (0,), ())]
+    assert [(matrix.shape, targets) for matrix, targets in sim.matrices] == [((2, 2), (0,))]
+    np.testing.assert_allclose(sim.matrices[0][0], np.array([[phase, 0.0], [0.0, phase]]))
+
+
+def test_qiskit_backend_skips_global_phase_gate_for_sampling_only(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import GlobalPhaseGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1, 1)
+    circuit.h(0)
+    circuit.measure(0, 0)
+    circuit.append(GlobalPhaseGate(math.pi / 5), [])
+
+    backend.run(circuit, statevector=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("H", (0,), ())]
+    assert sim.matrices == []
+    assert sim.measurements == [((0,), 1024)]
+
+
 def test_qiskit_backend_dispatches_controlled_rotations_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -2221,6 +2267,35 @@ def test_qiskit_native_estimator_batches_legacy_u_family_parameters(monkeypatch)
         ("RY", (0,), (0.4, 1.0)),
         ("RZ", (0,), (0.5, 1.1)),
     ]
+    assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_batches_global_phase_parameters(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.circuit.library import GlobalPhaseGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1)
+    circuit.append(GlobalPhaseGate(theta), [])
+    observable = SparsePauliOp.from_list([("Z", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == []
+    assert sim.batch_ops == []
     assert sim.matrices == []
     assert sim.batch_expectations == [("Z", (0,))]
 
