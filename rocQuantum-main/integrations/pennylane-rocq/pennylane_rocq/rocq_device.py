@@ -397,6 +397,34 @@ def _counts_result_from_rows(rows, *, all_outcomes=False, num_wires=None):
     return counts
 
 
+def _measurement_targets(measurement_wires, wire_map, num_wires):
+    wires = tuple(measurement_wires)
+    if not wires:
+        return list(range(int(num_wires)))
+    return [wire_map[wire] for wire in wires]
+
+
+def _batched_measurement_plan(measurement_specs, wire_map, num_wires):
+    measure_targets = []
+    measurement_columns = []
+    for measurement_name, payload in measurement_specs:
+        if measurement_name == "CountsMP":
+            measurement_wires, all_outcomes = payload
+        else:
+            measurement_wires, all_outcomes = payload, False
+
+        columns = []
+        for target in _measurement_targets(measurement_wires, wire_map, num_wires):
+            try:
+                column = measure_targets.index(target)
+            except ValueError:
+                column = len(measure_targets)
+                measure_targets.append(target)
+            columns.append(column)
+        measurement_columns.append((measurement_name, columns, bool(all_outcomes)))
+    return measure_targets, measurement_columns
+
+
 def _basis_state_bits(op, num_wires, op_name="BasisState"):
     if not getattr(op, "parameters", None):
         raise ValueError(f"{op_name} requires a computational basis vector.")
@@ -2631,9 +2659,8 @@ class RocQDevice(QubitDevice):
         finite_shots = self.shots is not None
         if finite_shots:
             if (
-                len(reference_measurements) != 1
-                or _has_partitioned_shots(self.shots)
-                or measurement_names[0] not in {"SampleMP", "CountsMP"}
+                _has_partitioned_shots(self.shots)
+                or not all(name in {"SampleMP", "CountsMP"} for name in measurement_names)
             ):
                 return None
         elif all(name in {"ExpectationMP", "VarianceMP", "ProbabilityMP"} for name in measurement_names):
@@ -2649,7 +2676,17 @@ class RocQDevice(QubitDevice):
                 if payload is None:
                     return None
                 reference_measurement_specs.append((measurement_name, payload))
-            elif measurement_name in {"ProbabilityMP", "SampleMP", "CountsMP"}:
+            elif measurement_name == "CountsMP":
+                reference_measurement_specs.append(
+                    (
+                        measurement_name,
+                        (
+                            tuple(measurement.wires),
+                            bool(getattr(measurement, "all_outcomes", False)),
+                        ),
+                    )
+                )
+            elif measurement_name in {"ProbabilityMP", "SampleMP"}:
                 reference_measurement_specs.append((measurement_name, tuple(measurement.wires)))
             else:
                 reference_measurement_specs.append((measurement_name, None))
@@ -2672,16 +2709,17 @@ class RocQDevice(QubitDevice):
                         wire_order=self.wires,
                     ):
                         return None
-                elif measurement_name in {"ProbabilityMP", "SampleMP", "CountsMP"} and (
+                elif measurement_name == "CountsMP":
+                    reference_wires, reference_all_outcomes = reference_payload
+                    if (
+                        tuple(measurement.wires) != reference_wires
+                        or bool(getattr(measurement, "all_outcomes", False)) != reference_all_outcomes
+                    ):
+                        return None
+                elif measurement_name in {"ProbabilityMP", "SampleMP"} and (
                     tuple(measurement.wires) != reference_payload
                 ):
                     return None
-            if (
-                measurement_names[0] == "CountsMP"
-                and bool(getattr(measurements[0], "all_outcomes", False))
-                != bool(getattr(reference_measurements[0], "all_outcomes", False))
-            ):
-                return None
 
         self.reset(batch_size=len(circuits))
         self._runtime.preserve_global_phase = False
@@ -2923,28 +2961,34 @@ class RocQDevice(QubitDevice):
                 for batch_index in range(len(circuits))
             ]
 
-        if measurement_names[0] in {"SampleMP", "CountsMP"}:
+        if all(name in {"SampleMP", "CountsMP"} for name in measurement_names):
             shots = _shot_count(self.shots)
-            _, reference_probability_wires = reference_measurement_specs[0]
-            measure_targets = (
-                list(range(len(self.wires)))
-                if not reference_probability_wires
-                else [self.wire_map[wire] for wire in reference_probability_wires]
+            measure_targets, measurement_columns = _batched_measurement_plan(
+                reference_measurement_specs,
+                self.wire_map,
+                len(self.wires),
             )
             raw_samples_batch = self._runtime.measure_batch(measure_targets, shots)
             results = []
             for raw_samples in raw_samples_batch:
                 rows = samples_to_binary_rows(raw_samples, len(measure_targets))
-                if measurement_names[0] == "SampleMP":
-                    results.append(_sample_result_from_rows(rows))
-                else:
-                    results.append(
-                        _counts_result_from_rows(
-                            rows,
-                            all_outcomes=bool(getattr(reference_measurements[0], "all_outcomes", False)),
-                            num_wires=len(measure_targets),
+                measurement_results = []
+                for measurement_name, columns, all_outcomes in measurement_columns:
+                    measurement_rows = rows[:, columns]
+                    if measurement_name == "SampleMP":
+                        measurement_results.append(_sample_result_from_rows(measurement_rows))
+                    else:
+                        measurement_results.append(
+                            _counts_result_from_rows(
+                                measurement_rows,
+                                all_outcomes=all_outcomes,
+                                num_wires=len(columns),
+                            )
                         )
-                    )
+                if len(measurement_results) == 1:
+                    results.append(measurement_results[0])
+                else:
+                    results.append(tuple(measurement_results))
             return results
 
         return None
