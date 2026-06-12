@@ -859,6 +859,32 @@ def test_qiskit_backend_skips_global_phase_gate_for_sampling_only(monkeypatch):
     assert sim.measurements == [((0,), 1024)]
 
 
+def test_qiskit_backend_decomposes_controlled_global_phase_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import GlobalPhaseGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    assert {"cglobal_phase", "ccglobal_phase", "c3global_phase"}.issubset(
+        set(backend.target.operation_names)
+    )
+    circuit = QuantumCircuit(3)
+    circuit.append(GlobalPhaseGate(0.3).control(1, annotated=False), [0])
+    circuit.append(GlobalPhaseGate(0.4).control(2, ctrl_state="01", annotated=False), [0, 1])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert ("P", (0,), (0.3,)) in sim.ops
+    assert ("X", (1,), ()) in sim.ops
+    assert ("RZ", (0,), (0.2,)) in sim.ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
 def test_qiskit_backend_dispatches_controlled_rotations_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -3249,6 +3275,35 @@ def test_qiskit_native_estimator_batches_global_phase_parameters(monkeypatch):
     assert sim.ops == []
     assert sim.batch_ops == []
     assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_batches_controlled_global_phase_parameters(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.circuit.library import GlobalPhaseGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(2)
+    circuit.append(GlobalPhaseGate(theta).control(2, annotated=False), [0, 1])
+    observable = SparsePauliOp.from_list([("IZ", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.2, 0.6])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert ("RZ", (0,), (0.1, 0.3)) in sim.batch_ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
     assert sim.batch_expectations == [("Z", (0,))]
 
 

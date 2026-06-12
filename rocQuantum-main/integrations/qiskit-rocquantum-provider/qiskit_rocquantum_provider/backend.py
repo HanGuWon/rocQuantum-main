@@ -326,6 +326,9 @@ def _instruction_target(num_qubits):
     target.add_instruction(DCXGate(), name="dcx")
     target.add_instruction(ECRGate(), name="ecr")
     target.add_instruction(GlobalPhaseGate(0.0), name="global_phase")
+    target.add_instruction(GlobalPhaseGate(0.0).control(1, annotated=False), name="cglobal_phase")
+    target.add_instruction(GlobalPhaseGate(0.0).control(2, annotated=False), name="ccglobal_phase")
+    target.add_instruction(GlobalPhaseGate(0.0).control(3, annotated=False), name="c3global_phase")
     target.add_instruction(HGate(), name="h")
     target.add_instruction(IGate(), name="id")
     target.add_instruction(iSwapGate(), name="iswap")
@@ -1316,6 +1319,48 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("mcx", controls + [right, left])
         self._runtime.apply_operation("mcx", controls + [left, right])
 
+    def _apply_controlled_global_phase_gate(self, op, q_indices, *, include_global_phase):
+        num_controls = int(getattr(op, "num_ctrl_qubits", 0))
+        base_gate = getattr(op, "base_gate", None)
+        base_name = getattr(base_gate, "name", None)
+        if num_controls < 1 or len(q_indices) != num_controls or base_name != "global_phase":
+            return False
+
+        (theta,) = normalize_params(op.params)
+        ctrl_state = getattr(op, "ctrl_state", None)
+        ctrl_state = (1 << num_controls) - 1 if ctrl_state is None else int(ctrl_state)
+        controls = list(q_indices)
+        open_controls = [
+            control
+            for control_index, control in enumerate(controls)
+            if not ((ctrl_state >> control_index) & 1)
+        ]
+
+        flipped = []
+        try:
+            for control in open_controls:
+                self._runtime.apply_operation("x", [control])
+                flipped.append(control)
+            if len(controls) == 1:
+                self._apply_phase_gate(
+                    [controls[0]],
+                    theta,
+                    include_global_phase=include_global_phase,
+                )
+            else:
+                self._apply_multi_controlled_phase_gate(
+                    controls,
+                    theta,
+                    include_global_phase=include_global_phase,
+                )
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+            flipped.clear()
+            return True
+        finally:
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+
     def _apply_controlled_base_gate(self, op, q_indices, *, include_global_phase):
         num_controls = int(getattr(op, "num_ctrl_qubits", 0))
         base_gate = getattr(op, "base_gate", None)
@@ -1512,6 +1557,39 @@ class RocQuantumBackend(BackendV2):
             for control in reversed(flipped):
                 self._runtime.apply_operation("x", [control])
         return True
+
+    def _apply_controlled_global_phase_gate_batch(self, op, q_indices, thetas):
+        num_controls = int(getattr(op, "num_ctrl_qubits", 0))
+        base_gate = getattr(op, "base_gate", None)
+        base_name = getattr(base_gate, "name", None)
+        if num_controls < 1 or len(q_indices) != num_controls or base_name != "global_phase":
+            return False
+
+        ctrl_state = getattr(op, "ctrl_state", None)
+        ctrl_state = (1 << num_controls) - 1 if ctrl_state is None else int(ctrl_state)
+        controls = list(q_indices)
+        open_controls = [
+            control
+            for control_index, control in enumerate(controls)
+            if not ((ctrl_state >> control_index) & 1)
+        ]
+
+        flipped = []
+        try:
+            for control in open_controls:
+                self._runtime.apply_operation("x", [control])
+                flipped.append(control)
+            if len(controls) == 1:
+                self._apply_phase_gate_batch([controls[0]], thetas)
+            else:
+                self._apply_multi_controlled_phase_gate_batch(controls, thetas)
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+            flipped.clear()
+            return True
+        finally:
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
 
     def _apply_controlled_base_gate_batch(self, op, q_indices, thetas):
         num_controls = int(getattr(op, "num_ctrl_qubits", 0))
@@ -1877,6 +1955,13 @@ class RocQuantumBackend(BackendV2):
 
         if self._supports_native_parametric_decomposition():
             try:
+                if self._apply_controlled_global_phase_gate(
+                    op,
+                    q_indices,
+                    include_global_phase=include_global_phase,
+                ):
+                    touched_qubits.update(q_indices)
+                    return
                 if self._apply_controlled_base_gate(
                     op,
                     q_indices,
@@ -2117,6 +2202,9 @@ class RocQuantumBackend(BackendV2):
                 len(params) == 1 for params in normalized_params_by_circuit
             ):
                 thetas = [params[0] for params in normalized_params_by_circuit]
+                if self._apply_controlled_global_phase_gate_batch(reference_op, q_indices, thetas):
+                    touched_qubits.update(q_indices)
+                    continue
                 if self._apply_controlled_base_gate_batch(reference_op, q_indices, thetas):
                     touched_qubits.update(q_indices)
                     continue
