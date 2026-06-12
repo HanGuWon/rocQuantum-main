@@ -35,6 +35,25 @@ struct PauliTermPayload {
     std::vector<unsigned> targets;
 };
 
+struct DenseMatrixPayload {
+    std::vector<std::complex<double>> matrix;
+    std::vector<unsigned> targets;
+};
+
+struct SparseMatrixPayload {
+    std::vector<std::complex<double>> data;
+    std::vector<std::size_t> indices;
+    std::vector<std::size_t> indptr;
+    std::size_t rows = 0;
+    std::size_t cols = 0;
+};
+
+struct ObservablePayload {
+    std::vector<PauliTermPayload> pauli_terms;
+    std::vector<DenseMatrixPayload> dense_terms;
+    std::vector<SparseMatrixPayload> sparse_terms;
+};
+
 std::vector<std::size_t> copy_nonnegative_indices(
     py::array_t<long long, py::array::c_style | py::array::forcecast> values,
     const char* label) {
@@ -157,16 +176,71 @@ std::complex<double> parse_complex_pair(py::handle value) {
     return {pair.first, pair.second};
 }
 
-std::vector<std::vector<PauliTermPayload>> parse_adjoint_observables(py::sequence observables) {
-    std::vector<std::vector<PauliTermPayload>> out;
+std::vector<std::complex<double>> parse_complex_vector_payload(py::handle values) {
+    std::vector<std::complex<double>> out;
+    for (py::handle item : py::reinterpret_borrow<py::sequence>(values)) {
+        out.push_back(parse_complex_pair(item));
+    }
+    return out;
+}
+
+std::vector<std::complex<double>> parse_complex_matrix_payload(py::handle values) {
+    std::vector<std::complex<double>> out;
+    for (py::handle row_item : py::reinterpret_borrow<py::sequence>(values)) {
+        for (py::handle item : py::reinterpret_borrow<py::sequence>(row_item)) {
+            out.push_back(parse_complex_pair(item));
+        }
+    }
+    return out;
+}
+
+std::vector<std::size_t> parse_size_vector(py::handle values, const char* label) {
+    std::vector<std::size_t> out;
+    for (py::handle item : py::reinterpret_borrow<py::sequence>(values)) {
+        const long long value = py::reinterpret_borrow<py::object>(item).cast<long long>();
+        if (value < 0) {
+            throw std::invalid_argument(std::string(label) + " must be non-negative.");
+        }
+        out.push_back(static_cast<std::size_t>(value));
+    }
+    return out;
+}
+
+std::vector<ObservablePayload> parse_adjoint_observables(py::sequence observables) {
+    std::vector<ObservablePayload> out;
     for (py::handle observable_item : observables) {
         py::sequence observable_terms = py::reinterpret_borrow<py::sequence>(observable_item);
-        std::vector<PauliTermPayload> terms;
+        ObservablePayload observable;
         for (py::handle term_item : observable_terms) {
             py::dict term = py::reinterpret_borrow<py::dict>(term_item);
             if (dict_contains(term, "kind")) {
-                throw_adjoint_not_implemented(
-                    "binding adjoint_jacobian currently supports Pauli-term observables only.");
+                const std::string kind =
+                    required_dict_item(term, "kind", "adjoint observable").cast<std::string>();
+                if (kind == "matrix") {
+                    DenseMatrixPayload payload;
+                    payload.matrix =
+                        parse_complex_matrix_payload(required_dict_item(term, "matrix", "adjoint observable"));
+                    payload.targets =
+                        required_dict_item(term, "targets", "adjoint observable").cast<std::vector<unsigned>>();
+                    observable.dense_terms.push_back(std::move(payload));
+                    continue;
+                }
+                if (kind == "sparse") {
+                    SparseMatrixPayload payload;
+                    payload.data =
+                        parse_complex_vector_payload(required_dict_item(term, "data", "adjoint observable"));
+                    payload.indices = parse_size_vector(
+                        required_dict_item(term, "indices", "adjoint observable"), "adjoint sparse CSR indices");
+                    payload.indptr = parse_size_vector(
+                        required_dict_item(term, "indptr", "adjoint observable"), "adjoint sparse CSR indptr");
+                    auto shape = required_dict_item(term, "shape", "adjoint observable")
+                                     .cast<std::pair<std::size_t, std::size_t>>();
+                    payload.rows = shape.first;
+                    payload.cols = shape.second;
+                    observable.sparse_terms.push_back(std::move(payload));
+                    continue;
+                }
+                throw_adjoint_not_implemented("unsupported adjoint observable kind: " + kind);
             }
 
             PauliTermPayload payload;
@@ -177,12 +251,12 @@ std::vector<std::vector<PauliTermPayload>> parse_adjoint_observables(py::sequenc
             if (payload.pauli_string.size() != payload.targets.size()) {
                 throw std::invalid_argument("Pauli-string length must match the observable target count.");
             }
-            terms.push_back(std::move(payload));
+            observable.pauli_terms.push_back(std::move(payload));
         }
-        if (terms.empty()) {
+        if (observable.pauli_terms.empty() && observable.dense_terms.empty() && observable.sparse_terms.empty()) {
             throw std::invalid_argument("adjoint_jacobian observable payloads must not be empty.");
         }
-        out.push_back(std::move(terms));
+        out.push_back(std::move(observable));
     }
     return out;
 }
@@ -238,15 +312,119 @@ std::vector<std::complex<double>> apply_pauli_to_state(
     return out;
 }
 
+std::size_t extract_local_basis_index(std::size_t basis, const std::vector<unsigned>& targets, unsigned num_qubits) {
+    std::size_t local_index = 0;
+    for (std::size_t bit = 0; bit < targets.size(); ++bit) {
+        const unsigned target = targets[bit];
+        if (target >= num_qubits) {
+            throw std::invalid_argument("Dense observable target exceeds simulator qubit count.");
+        }
+        if (((basis >> target) & std::size_t{1}) != 0) {
+            local_index |= std::size_t{1} << bit;
+        }
+    }
+    return local_index;
+}
+
+std::size_t replace_local_basis_index(
+    std::size_t basis,
+    const std::vector<unsigned>& targets,
+    std::size_t local_index,
+    unsigned num_qubits) {
+    std::size_t out = basis;
+    for (std::size_t bit = 0; bit < targets.size(); ++bit) {
+        const unsigned target = targets[bit];
+        if (target >= num_qubits) {
+            throw std::invalid_argument("Dense observable target exceeds simulator qubit count.");
+        }
+        const std::size_t mask = std::size_t{1} << target;
+        if (((local_index >> bit) & std::size_t{1}) != 0) {
+            out |= mask;
+        } else {
+            out &= ~mask;
+        }
+    }
+    return out;
+}
+
+std::vector<std::complex<double>> apply_dense_matrix_to_state(
+    const std::vector<std::complex<double>>& state,
+    const DenseMatrixPayload& payload,
+    unsigned num_qubits) {
+    if (payload.targets.empty()) {
+        throw std::invalid_argument("Dense adjoint observable requires at least one target qubit.");
+    }
+    if (payload.targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+        throw std::invalid_argument("Too many dense observable target qubits.");
+    }
+    const std::size_t dim = std::size_t{1} << payload.targets.size();
+    if (payload.matrix.size() != dim * dim) {
+        throw std::invalid_argument("Dense adjoint observable matrix dimension does not match target count.");
+    }
+
+    std::vector<std::complex<double>> out(state.size(), std::complex<double>{0.0, 0.0});
+    for (std::size_t basis = 0; basis < state.size(); ++basis) {
+        const std::size_t input_local = extract_local_basis_index(basis, payload.targets, num_qubits);
+        for (std::size_t output_local = 0; output_local < dim; ++output_local) {
+            const std::size_t output_basis =
+                replace_local_basis_index(basis, payload.targets, output_local, num_qubits);
+            out[output_basis] += payload.matrix[output_local * dim + input_local] * state[basis];
+        }
+    }
+    return out;
+}
+
+std::vector<std::complex<double>> apply_sparse_matrix_to_state(
+    const std::vector<std::complex<double>>& state,
+    const SparseMatrixPayload& payload) {
+    if (payload.rows != state.size() || payload.cols != state.size()) {
+        throw_adjoint_not_implemented(
+            "binding adjoint_jacobian currently supports full-state CSR sparse observables only.");
+    }
+    if (payload.indptr.size() != payload.rows + 1) {
+        throw std::invalid_argument("Sparse adjoint observable indptr length must equal rows + 1.");
+    }
+    if (payload.data.size() != payload.indices.size()) {
+        throw std::invalid_argument("Sparse adjoint observable data and indices lengths differ.");
+    }
+
+    std::vector<std::complex<double>> out(state.size(), std::complex<double>{0.0, 0.0});
+    for (std::size_t row = 0; row < payload.rows; ++row) {
+        if (payload.indptr[row] > payload.indptr[row + 1] || payload.indptr[row + 1] > payload.data.size()) {
+            throw std::invalid_argument("Sparse adjoint observable CSR indptr is invalid.");
+        }
+        for (std::size_t offset = payload.indptr[row]; offset < payload.indptr[row + 1]; ++offset) {
+            const std::size_t col = payload.indices[offset];
+            if (col >= payload.cols) {
+                throw std::invalid_argument("Sparse adjoint observable column index is out of bounds.");
+            }
+            out[row] += payload.data[offset] * state[col];
+        }
+    }
+    return out;
+}
+
 std::vector<std::complex<double>> apply_observable_to_state(
     const std::vector<std::complex<double>>& state,
-    const std::vector<PauliTermPayload>& observable,
+    const ObservablePayload& observable,
     unsigned num_qubits) {
     std::vector<std::complex<double>> out(state.size(), std::complex<double>{0.0, 0.0});
-    for (const auto& term : observable) {
+    for (const auto& term : observable.pauli_terms) {
         auto term_state = apply_pauli_to_state(state, term.pauli_string, term.targets, num_qubits);
         for (std::size_t idx = 0; idx < out.size(); ++idx) {
             out[idx] += term.coefficient * term_state[idx];
+        }
+    }
+    for (const auto& term : observable.dense_terms) {
+        auto term_state = apply_dense_matrix_to_state(state, term, num_qubits);
+        for (std::size_t idx = 0; idx < out.size(); ++idx) {
+            out[idx] += term_state[idx];
+        }
+    }
+    for (const auto& term : observable.sparse_terms) {
+        auto term_state = apply_sparse_matrix_to_state(state, term);
+        for (std::size_t idx = 0; idx < out.size(); ++idx) {
+            out[idx] += term_state[idx];
         }
     }
     return out;
