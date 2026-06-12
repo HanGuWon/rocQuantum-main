@@ -5562,6 +5562,64 @@ def test_pennylane_device_jacobian_batches_parameter_shift_tapes(monkeypatch):
     assert sim.batch_expectations == [("Z", (0,))]
     assert sim.statevector_reads == 0
 
+    def _ry_expval_tape(angle):
+        tape = qml.tape.QuantumScript(
+            [qml.RY(angle, wires=0)],
+            [qml.expval(qml.PauliZ(0))],
+        )
+        tape.trainable_params = [0]
+        return tape
+
+    angles = (0.111, 0.456)
+    tapes = tuple(_ry_expval_tape(angle) for angle in angles)
+
+    before = len(_RYBatchSimulator.instances)
+    jacs = dev.compute_derivatives(tapes, ExecutionConfig(gradient_method="device"))
+
+    np.testing.assert_allclose(np.asarray(jacs, dtype=float), [-math.sin(angle) for angle in angles])
+    derivative_batches = [
+        sim for sim in _RYBatchSimulator.instances[before:] if sim.batch_size() == 4
+    ]
+    assert derivative_batches
+    np.testing.assert_allclose(
+        derivative_batches[-1].batch_ops[0][2],
+        (
+            angles[0] + np.pi / 2,
+            angles[0] - np.pi / 2,
+            angles[1] + np.pi / 2,
+            angles[1] - np.pi / 2,
+        ),
+    )
+    assert derivative_batches[-1].batch_expectations == [("Z", (0,))]
+    assert derivative_batches[-1].statevector_reads == 0
+
+    before = len(_RYBatchSimulator.instances)
+    results, jacs = dev.execute_and_compute_derivatives(
+        tapes,
+        ExecutionConfig(gradient_method="device"),
+    )
+
+    np.testing.assert_allclose(np.asarray(results, dtype=float), [math.cos(angle) for angle in angles])
+    np.testing.assert_allclose(np.asarray(jacs, dtype=float), [-math.sin(angle) for angle in angles])
+    execute_batches = [
+        sim for sim in _RYBatchSimulator.instances[before:] if sim.batch_size() == 2
+    ]
+    derivative_batches = [
+        sim for sim in _RYBatchSimulator.instances[before:] if sim.batch_size() == 4
+    ]
+    assert execute_batches
+    assert derivative_batches
+    np.testing.assert_allclose(execute_batches[-1].batch_ops[0][2], angles)
+    np.testing.assert_allclose(
+        derivative_batches[-1].batch_ops[0][2],
+        (
+            angles[0] + np.pi / 2,
+            angles[0] - np.pi / 2,
+            angles[1] + np.pi / 2,
+            angles[1] - np.pi / 2,
+        ),
+    )
+
 
 def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
     pytest.importorskip("pennylane")

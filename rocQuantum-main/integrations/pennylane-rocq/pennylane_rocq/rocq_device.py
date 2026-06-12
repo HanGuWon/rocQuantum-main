@@ -2437,21 +2437,54 @@ class RocQDevice(QubitDevice):
         return super()._get_diagonalizing_gates(circuit)
 
     def execute_and_gradients(self, circuits, method="jacobian", **kwargs):
-        if method != "adjoint_jacobian":
+        if method == "adjoint_jacobian":
+            previous = self._capture_pre_rotated_state
+            self._capture_pre_rotated_state = True
+            try:
+                return super().execute_and_gradients(circuits, method=method, **kwargs)
+            finally:
+                self._capture_pre_rotated_state = previous
+
+        if method != "jacobian":
             return super().execute_and_gradients(circuits, method=method, **kwargs)
 
-        previous = self._capture_pre_rotated_state
-        self._capture_pre_rotated_state = True
-        try:
-            return super().execute_and_gradients(circuits, method=method, **kwargs)
-        finally:
-            self._capture_pre_rotated_state = previous
+        circuits = list(circuits)
+        if self.tracker.active:
+            self.tracker.update(execute_and_derivative_batches=1, derivatives=len(circuits))
+            self.tracker.record()
+        if not circuits:
+            return [], []
+        return self.batch_execute(circuits), self._parameter_shift_jacobians(circuits, **kwargs)
 
     def jacobian(self, circuit, **kwargs):
-        gradient_tapes, processing_fn = qml.gradients.param_shift(circuit, **kwargs)
-        if not gradient_tapes:
-            return processing_fn([])
-        return processing_fn(self.batch_execute(gradient_tapes))
+        return self._parameter_shift_jacobians([circuit], **kwargs)[0]
+
+    def gradients(self, circuits, method="jacobian", **kwargs):
+        if method != "jacobian":
+            return super().gradients(circuits, method=method, **kwargs)
+
+        circuits = list(circuits)
+        if self.tracker.active:
+            self.tracker.update(derivatives=len(circuits))
+            self.tracker.record()
+        if not circuits:
+            return []
+        return self._parameter_shift_jacobians(circuits, **kwargs)
+
+    def _parameter_shift_jacobians(self, circuits, **kwargs):
+        gradient_jobs = []
+        all_gradient_tapes = []
+        for circuit in circuits:
+            gradient_tapes, processing_fn = qml.gradients.param_shift(circuit, **kwargs)
+            start = len(all_gradient_tapes)
+            all_gradient_tapes.extend(gradient_tapes)
+            gradient_jobs.append((processing_fn, start, len(all_gradient_tapes)))
+
+        gradient_results = self.batch_execute(all_gradient_tapes) if all_gradient_tapes else []
+        return [
+            processing_fn(gradient_results[start:end])
+            for processing_fn, start, end in gradient_jobs
+        ]
 
     def execute(self, circuit, **kwargs):
         skip_rotations = self._analytic_measurements_use_native_pauli(circuit)
