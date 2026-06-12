@@ -89,9 +89,20 @@ def _append_register_array(data, register_name, samples):
 class RocQuantumSampler(BaseSamplerV2):
     """Native Qiskit SamplerV2 backed by rocQuantum sampling."""
 
-    def __init__(self, backend, *, default_shots: int = 1024):
+    def __init__(
+        self,
+        backend,
+        *,
+        default_shots: int = 1024,
+        max_dynamic_loop_iterations: int | None = None,
+    ):
         self._backend = backend
         self._default_shots = int(default_shots)
+        self._max_dynamic_loop_iterations = (
+            None
+            if max_dynamic_loop_iterations is None
+            else int(max_dynamic_loop_iterations)
+        )
 
     def run(self, pubs, *, shots: int | None = None):
         target_shots = self._default_shots if shots is None else int(shots)
@@ -179,13 +190,7 @@ class RocQuantumSampler(BaseSamplerV2):
 
     def _sample_dynamic_circuit(self, circuit, shots):
         data = {}
-        max_iterations = int(
-            getattr(
-                getattr(self._backend, "options", None),
-                "max_dynamic_loop_iterations",
-                1024,
-            )
-        )
+        max_iterations = self._dynamic_loop_limit()
         for _ in range(int(shots)):
             measured_bits, classical_bits = self._backend._apply_circuit_trajectory(
                 circuit,
@@ -206,6 +211,17 @@ class RocQuantumSampler(BaseSamplerV2):
             register_name: np.asarray(rows, dtype=bool)
             for register_name, rows in data.items()
         }
+
+    def _dynamic_loop_limit(self):
+        if self._max_dynamic_loop_iterations is not None:
+            return self._max_dynamic_loop_iterations
+        return int(
+            getattr(
+                getattr(self._backend, "options", None),
+                "max_dynamic_loop_iterations",
+                1024,
+            )
+        )
 
     def _try_run_pub_batched_parameters(self, pub):
         if not pub.shape:

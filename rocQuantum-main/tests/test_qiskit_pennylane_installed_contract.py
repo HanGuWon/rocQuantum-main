@@ -1590,6 +1590,27 @@ def test_qiskit_native_sampler_samples_if_else_conditioned_gate(monkeypatch):
     assert sim.measurements == []
 
 
+def test_qiskit_native_sampler_limits_while_loop_iterations(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.measure_qubit_results = [1]
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1, 1)
+    if not hasattr(circuit, "while_loop"):
+        pytest.skip("Qiskit version does not expose QuantumCircuit.while_loop")
+
+    circuit.measure(0, 0)
+    with circuit.while_loop((circuit.clbits[0], True)):
+        circuit.x(0)
+
+    sampler = RocQuantumProvider().get_sampler(max_dynamic_loop_iterations=2)
+    with pytest.raises(RuntimeError, match="max_dynamic_loop_iterations"):
+        sampler.run([circuit], shots=1).result()
+
+
 def test_qiskit_native_sampler_binds_parameter_values(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

@@ -41,9 +41,15 @@ class RocQuantumProvider(_ProviderBase):
             from .sampler import RocQuantumSampler
 
             default_shots = options.pop("default_shots", 1024) if options else 1024
+            max_dynamic_loop_iterations = (
+                options.pop("max_dynamic_loop_iterations", None)
+                if options
+                else None
+            )
             return RocQuantumSampler(
                 self.get_backend(name),
                 default_shots=default_shots,
+                max_dynamic_loop_iterations=max_dynamic_loop_iterations,
             )
 
         from qiskit.primitives import BackendSamplerV2

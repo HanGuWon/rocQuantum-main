@@ -755,6 +755,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _try_run_trajectory_samples", source)
         self.assertIn("def _sample_runtime_reset_circuit", source)
         self.assertIn("def _sample_dynamic_circuit", source)
+        self.assertIn("def _dynamic_loop_limit", source)
+        self.assertIn("self._max_dynamic_loop_iterations", source)
         self.assertIn("allow_runtime_reset=True", source)
         self.assertIn("_apply_circuit_trajectory", source)
         self.assertIn("metadata[\"shot_trajectory\"] = True", source)
