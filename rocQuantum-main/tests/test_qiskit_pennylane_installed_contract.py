@@ -4267,6 +4267,32 @@ def test_pennylane_hermitian_var_prefers_native_matrix_expectation(monkeypatch):
     np.testing.assert_allclose(sim.matrix_expectations[1][0], np.eye(2))
 
 
+def test_pennylane_single_execute_caches_hermitian_moments(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.Hermitian(np.diag([1.0, -1.0]).astype(np.complex128), wires=0)
+
+    @qml.qnode(dev)
+    def hermitian_circuit():
+        return qml.expval(observable), qml.var(observable)
+
+    assert hermitian_circuit() == pytest.approx((1.0, 0.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+    assert len(sim.matrix_expectations) == 2
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], np.diag([1.0, -1.0]))
+    np.testing.assert_allclose(sim.matrix_expectations[1][0], np.eye(2))
+
+
 def test_pennylane_projector_expval_uses_native_z_projector_terms(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -4380,6 +4406,36 @@ def test_pennylane_sparse_hamiltonian_prefers_native_csr_moments(monkeypatch):
     assert len(var_sim.sparse_moments) == 1
 
     data, indices, indptr, shape = var_sim.sparse_moments[0]
+    np.testing.assert_allclose(data, np.array([1.0, -1.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+    assert shape == (2, 2)
+
+
+def test_pennylane_single_execute_caches_sparse_hamiltonian_moments(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_sparse_moments", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def sparse_circuit():
+        return qml.expval(observable), qml.var(observable)
+
+    assert sparse_circuit() == pytest.approx((1.0, 0.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.statevector_reads == 0
+    assert len(sim.sparse_moments) == 1
+    data, indices, indptr, shape = sim.sparse_moments[0]
     np.testing.assert_allclose(data, np.array([1.0, -1.0], dtype=np.complex128))
     np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))

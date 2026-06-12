@@ -285,14 +285,37 @@ def _sparse_hamiltonian_moments(state, observable, wire_order):
     return mean, second_moment
 
 
-def _native_sparse_hamiltonian_moments(runtime, observable, wire_order):
-    sparse_matrix = observable.sparse_matrix(wire_order=wire_order, format="csr")
-    return runtime.sparse_hamiltonian_moments(
-        sparse_matrix.data,
-        sparse_matrix.indices,
-        sparse_matrix.indptr,
-        sparse_matrix.shape,
+def _sparse_hamiltonian_moments_cache_key(sparse_matrix):
+    return (
+        "sparse_moments",
+        tuple(int(dim) for dim in sparse_matrix.shape),
+        _array_cache_key(sparse_matrix.data),
+        _array_cache_key(sparse_matrix.indices),
+        _array_cache_key(sparse_matrix.indptr),
     )
+
+
+def _sparse_hamiltonian_moments_cached(runtime, observable, wire_order, cache=None, fallback_state=None):
+    sparse_matrix = observable.sparse_matrix(wire_order=wire_order, format="csr")
+    cache_key = _sparse_hamiltonian_moments_cache_key(sparse_matrix)
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
+
+    try:
+        moments = runtime.sparse_hamiltonian_moments(
+            sparse_matrix.data,
+            sparse_matrix.indices,
+            sparse_matrix.indptr,
+            sparse_matrix.shape,
+        )
+    except NotImplementedError:
+        if fallback_state is None:
+            raise
+        moments = _sparse_hamiltonian_moments(fallback_state(), observable, wire_order)
+
+    if cache is not None:
+        cache[cache_key] = moments
+    return moments
 
 
 def _native_sparse_hamiltonian_moments_batch(runtime, payload):
@@ -308,12 +331,43 @@ def _hermitian_matrix_and_targets(observable, wire_map):
     return matrix, targets
 
 
-def _native_hermitian_expectation(runtime, observable, wire_map):
-    components = _hermitian_matrix_and_targets(observable, wire_map)
-    if components is None:
-        raise NotImplementedError
-    matrix, targets = components
-    return runtime.expectation_matrix(matrix, targets)
+def _matrix_expectation_cache_key(matrix, targets):
+    return "matrix_mean", tuple(int(target) for target in targets), _array_cache_key(matrix)
+
+
+def _matrix_moments_cache_key(matrix, targets):
+    return "matrix_moments", tuple(int(target) for target in targets), _array_cache_key(matrix)
+
+
+def _matrix_expectation_cached(runtime, matrix, targets, cache=None):
+    cache_key = _matrix_expectation_cache_key(matrix, targets)
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
+
+    mean = runtime.expectation_matrix(matrix, targets)
+    if cache is not None:
+        cache[cache_key] = mean
+    return mean
+
+
+def _matrix_moments_cached(runtime, matrix, targets, cache=None):
+    moments_key = _matrix_moments_cache_key(matrix, targets)
+    if cache is not None and moments_key in cache:
+        return cache[moments_key]
+
+    mean_key = _matrix_expectation_cache_key(matrix, targets)
+    if cache is not None and mean_key in cache:
+        mean = cache[mean_key]
+        second_moment = runtime.expectation_matrix(np.ascontiguousarray(matrix @ matrix), targets)
+    else:
+        mean, second_moment = runtime.expectation_matrix_moments(matrix, targets)
+        if cache is not None:
+            cache[mean_key] = mean
+
+    moments = mean, second_moment
+    if cache is not None:
+        cache[moments_key] = moments
+    return moments
 
 
 def _complex_matrix_payload(matrix):
@@ -3793,15 +3847,24 @@ class RocQDevice(QubitDevice):
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
         if observable.name == "SparseHamiltonian":
-            try:
-                mean, _ = _native_sparse_hamiltonian_moments(self._runtime, observable, self.wires)
-            except NotImplementedError:
-                mean, _ = _sparse_hamiltonian_moments(self._ensure_state(), observable, self.wires)
+            mean, _ = _sparse_hamiltonian_moments_cached(
+                self._runtime,
+                observable,
+                self.wires,
+                cache=self._analytic_measurement_cache,
+                fallback_state=self._ensure_state,
+            )
             return _real_measurement_result(mean, "Expectation value")
 
         if observable.name == "Hermitian":
             try:
-                mean = _native_hermitian_expectation(self._runtime, observable, self.wire_map)
+                matrix, targets = _hermitian_matrix_and_targets(observable, self.wire_map)
+                mean = _matrix_expectation_cached(
+                    self._runtime,
+                    matrix,
+                    targets,
+                    cache=self._analytic_measurement_cache,
+                )
             except (NotImplementedError, RuntimeError):
                 return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
             return _real_measurement_result(mean, "Expectation value")
@@ -3822,20 +3885,24 @@ class RocQDevice(QubitDevice):
             return super().var(observable, shot_range=shot_range, bin_size=bin_size)
 
         if observable.name == "SparseHamiltonian":
-            try:
-                mean, second_moment = _native_sparse_hamiltonian_moments(
-                    self._runtime,
-                    observable,
-                    self.wires,
-                )
-            except NotImplementedError:
-                mean, second_moment = _sparse_hamiltonian_moments(self._ensure_state(), observable, self.wires)
+            mean, second_moment = _sparse_hamiltonian_moments_cached(
+                self._runtime,
+                observable,
+                self.wires,
+                cache=self._analytic_measurement_cache,
+                fallback_state=self._ensure_state,
+            )
             return _real_measurement_result(second_moment - mean * mean, "Variance")
 
         if observable.name == "Hermitian":
             try:
                 matrix, targets = _hermitian_matrix_and_targets(observable, self.wire_map)
-                mean, second_moment = self._runtime.expectation_matrix_moments(matrix, targets)
+                mean, second_moment = _matrix_moments_cached(
+                    self._runtime,
+                    matrix,
+                    targets,
+                    cache=self._analytic_measurement_cache,
+                )
             except (NotImplementedError, RuntimeError):
                 return super().var(observable, shot_range=shot_range, bin_size=bin_size)
             return _real_measurement_result(second_moment - mean * mean, "Variance")
