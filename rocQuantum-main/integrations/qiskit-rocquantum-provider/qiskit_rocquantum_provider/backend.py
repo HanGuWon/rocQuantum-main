@@ -15,9 +15,15 @@ from qiskit.circuit.library import (
     CCXGate,
     CCZGate,
     CPhaseGate,
+    CSGate,
+    CSdgGate,
+    CSXGate,
     CSwapGate,
     CXGate,
     CZGate,
+    CU1Gate,
+    CU3Gate,
+    CUGate,
     CHGate,
     CYGate,
     CRXGate,
@@ -270,9 +276,15 @@ def _instruction_target(num_qubits):
     target.add_instruction(CCZGate(), name="ccz")
     target.add_instruction(CHGate(), name="ch")
     target.add_instruction(CPhaseGate(0.0), name="cp")
+    target.add_instruction(CSGate(), name="cs")
+    target.add_instruction(CSdgGate(), name="csdg")
+    target.add_instruction(CSXGate(), name="csx")
     target.add_instruction(CSwapGate(), name="cswap")
     target.add_instruction(CXGate(), name="cx")
     target.add_instruction(CZGate(), name="cz")
+    target.add_instruction(CU1Gate(0.0), name="cu1")
+    target.add_instruction(CU3Gate(0.0, 0.0, 0.0), name="cu3")
+    target.add_instruction(CUGate(0.0, 0.0, 0.0, 0.0), name="cu")
     target.add_instruction(CYGate(), name="cy")
     target.add_instruction(CRXGate(0.0), name="crx")
     target.add_instruction(CRYGate(0.0), name="cry")
@@ -779,6 +791,14 @@ class RocQuantumBackend(BackendV2):
             self._apply_global_phase_value(sign * cmath.pi / 4, target=target)
         self._runtime.apply_operation("rx", [target], [sign * cmath.pi / 2])
 
+    def _apply_csx_gate(self, q_indices, *, include_global_phase):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit csx gate requires exactly two qubits.")
+
+        control, target = q_indices
+        self._apply_phase_gate([control], cmath.pi / 4, include_global_phase=include_global_phase)
+        self._runtime.apply_operation("crx", [control, target], [cmath.pi / 2])
+
     def _apply_u_gate(self, q_indices, theta, phi, lam, *, include_global_phase):
         if len(q_indices) != 1:
             raise ValueError("Qiskit u gate requires exactly one qubit.")
@@ -798,6 +818,59 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation_batch("rz", [target], lams)
         self._runtime.apply_operation_batch("ry", [target], thetas)
         self._runtime.apply_operation_batch("rz", [target], phis)
+
+    def _apply_cu3_gate(self, q_indices, theta, phi, lam, *, include_global_phase):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit cu3 gate requires exactly two qubits.")
+
+        control, target = q_indices
+        half_sum = 0.5 * (phi + lam)
+        self._apply_phase_gate([control], half_sum, include_global_phase=include_global_phase)
+        self._apply_phase_gate([target], 0.5 * theta, include_global_phase=include_global_phase)
+        self._runtime.apply_operation("cx", [control, target])
+        self._apply_u_gate(
+            [target],
+            -0.5 * theta,
+            0.0,
+            -half_sum,
+            include_global_phase=include_global_phase,
+        )
+        self._runtime.apply_operation("cx", [control, target])
+        self._apply_u_gate([target], 0.5 * theta, phi, 0.0, include_global_phase=include_global_phase)
+
+    def _apply_cu3_gate_batch(self, q_indices, thetas, phis, lams):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit cu3 gate requires exactly two qubits.")
+
+        control, target = q_indices
+        half_sums = [0.5 * (phi + lam) for phi, lam in zip(phis, lams)]
+        half_thetas = [0.5 * theta for theta in thetas]
+        self._apply_phase_gate_batch([control], half_sums)
+        self._apply_phase_gate_batch([target], half_thetas)
+        self._runtime.apply_operation("cx", [control, target])
+        self._apply_u_gate_batch(
+            [target],
+            [-theta for theta in half_thetas],
+            [0.0 for _ in half_thetas],
+            [-value for value in half_sums],
+        )
+        self._runtime.apply_operation("cx", [control, target])
+        self._apply_u_gate_batch([target], half_thetas, phis, [0.0 for _ in half_thetas])
+
+    def _apply_cu_gate(self, q_indices, theta, phi, lam, gamma, *, include_global_phase):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit cu gate requires exactly two qubits.")
+
+        control = q_indices[0]
+        self._apply_phase_gate([control], gamma, include_global_phase=include_global_phase)
+        self._apply_cu3_gate(q_indices, theta, phi, lam, include_global_phase=include_global_phase)
+
+    def _apply_cu_gate_batch(self, q_indices, thetas, phis, lams, gammas):
+        if len(q_indices) != 2:
+            raise ValueError("Qiskit cu gate requires exactly two qubits.")
+
+        self._apply_phase_gate_batch([q_indices[0]], gammas)
+        self._apply_cu3_gate_batch(q_indices, thetas, phis, lams)
 
     def _apply_r_gate(self, q_indices, theta, phi, *, include_global_phase):
         if len(q_indices) != 1:
@@ -956,9 +1029,9 @@ class RocQuantumBackend(BackendV2):
         base_name = getattr(base_gate, "name", None)
         if num_controls < 1 or len(q_indices) != num_controls + 1:
             return False
-        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "p"}:
+        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "p", "s", "sdg", "sx", "u1", "u3", "u"}:
             return False
-        if base_name in {"h", "y", "rx", "ry", "rz", "p"} and num_controls != 1:
+        if base_name in {"h", "y", "rx", "ry", "rz", "p", "s", "sdg", "sx", "u1", "u3", "u"} and num_controls != 1:
             return False
         if base_name == "z" and num_controls not in {1, 2}:
             return False
@@ -995,6 +1068,46 @@ class RocQuantumBackend(BackendV2):
                 self._apply_controlled_phase_gate(
                     [controls[0], target],
                     theta,
+                    include_global_phase=include_global_phase,
+                )
+            elif base_name == "s":
+                self._apply_controlled_phase_gate(
+                    [controls[0], target],
+                    cmath.pi / 2,
+                    include_global_phase=include_global_phase,
+                )
+            elif base_name == "sdg":
+                self._apply_controlled_phase_gate(
+                    [controls[0], target],
+                    -cmath.pi / 2,
+                    include_global_phase=include_global_phase,
+                )
+            elif base_name == "sx":
+                self._apply_csx_gate([controls[0], target], include_global_phase=include_global_phase)
+            elif base_name == "u1":
+                (theta,) = normalize_params(op.params)
+                self._apply_controlled_phase_gate(
+                    [controls[0], target],
+                    theta,
+                    include_global_phase=include_global_phase,
+                )
+            elif base_name == "u3":
+                theta, phi, lam = normalize_params(op.params)
+                self._apply_cu3_gate(
+                    [controls[0], target],
+                    theta,
+                    phi,
+                    lam,
+                    include_global_phase=include_global_phase,
+                )
+            elif base_name == "u":
+                theta, phi, lam, gamma = normalize_params(op.params)
+                self._apply_cu_gate(
+                    [controls[0], target],
+                    theta,
+                    phi,
+                    lam,
+                    gamma,
                     include_global_phase=include_global_phase,
                 )
             elif len(controls) == 1:
@@ -1035,6 +1148,49 @@ class RocQuantumBackend(BackendV2):
         finally:
             if flipped:
                 self._runtime.apply_operation("x", [control])
+
+    def _apply_controlled_u_gate_batch(self, op, q_indices, params_by_circuit):
+        num_controls = int(getattr(op, "num_ctrl_qubits", 0))
+        base_gate = getattr(op, "base_gate", None)
+        base_name = getattr(base_gate, "name", None)
+        if num_controls != 1 or len(q_indices) != 2 or base_name not in {"u1", "u3", "u"}:
+            return False
+
+        ctrl_state = getattr(op, "ctrl_state", None)
+        ctrl_state = 1 if ctrl_state is None else int(ctrl_state)
+        control, target = q_indices
+        flipped = False
+        try:
+            if ctrl_state == 0:
+                self._runtime.apply_operation("x", [control])
+                flipped = True
+            elif ctrl_state != 1:
+                return False
+
+            if base_name == "u1" and all(len(params) == 1 for params in params_by_circuit):
+                self._apply_controlled_phase_gate_batch(
+                    [control, target],
+                    [params[0] for params in params_by_circuit],
+                )
+                return True
+            if base_name == "u3" and all(len(params) == 3 for params in params_by_circuit):
+                thetas = [params[0] for params in params_by_circuit]
+                phis = [params[1] for params in params_by_circuit]
+                lams = [params[2] for params in params_by_circuit]
+                self._apply_cu3_gate_batch([control, target], thetas, phis, lams)
+                return True
+            if base_name == "u" and all(len(params) == 4 for params in params_by_circuit):
+                thetas = [params[0] for params in params_by_circuit]
+                phis = [params[1] for params in params_by_circuit]
+                lams = [params[2] for params in params_by_circuit]
+                gammas = [params[3] for params in params_by_circuit]
+                self._apply_cu_gate_batch([control, target], thetas, phis, lams, gammas)
+                return True
+        finally:
+            if flipped:
+                self._runtime.apply_operation("x", [control])
+
+        return False
 
     def _apply_generic_controlled_matrix(self, op, q_indices):
         controlled_matrix = getattr(self._runtime, "apply_controlled_matrix", None)
@@ -1418,6 +1574,14 @@ class RocQuantumBackend(BackendV2):
                     touched_qubits.update(q_indices)
                     continue
 
+            if normalized_params_by_circuit is not None and self._apply_controlled_u_gate_batch(
+                reference_op,
+                q_indices,
+                normalized_params_by_circuit,
+            ):
+                touched_qubits.update(q_indices)
+                continue
+
             if normalized_params_by_circuit is not None and reference_op.name in {
                 "rx", "ry", "rz", "crx", "cry", "crz"
             } and all(
@@ -1500,7 +1664,7 @@ class RocQuantumBackend(BackendV2):
                 raise NotImplementedError(
                     "Batched Qiskit execution only supports varying RX/RY/RZ, CRX/CRY/CRZ, "
                     f"fixed unitary/controlled-unitary operations, open-control controlled rotations/phase, "
-                    f"p/cp, u/r, decomposed rxx/ryy/rzz/rzx/xx_plus_yy/xx_minus_yy, and PauliEvolution parameters, "
+                    f"p/cp, u/r/cu/cu1/cu3, decomposed rxx/ryy/rzz/rzx/xx_plus_yy/xx_minus_yy, and PauliEvolution parameters, "
                     f"got {reference_op.name!r}."
                 )
 
