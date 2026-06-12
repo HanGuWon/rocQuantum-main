@@ -983,27 +983,48 @@ class RocQuantumRuntime:
         normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
         normalized_shape = tuple(int(dim) for dim in shape)
 
+        def _native_sparse_unavailable(exc: Exception) -> bool:
+            message = str(exc)
+            return isinstance(exc, NotImplementedError) or "status 5" in message
+
         native = getattr(self.simulator, "sparse_hamiltonian_moments", None)
         if callable(native):
-            mean, second_moment = native(
-                normalized_data,
-                normalized_indices,
-                normalized_indptr,
-                normalized_shape,
-            )
-            return complex(mean), complex(second_moment)
+            try:
+                mean, second_moment = native(
+                    normalized_data,
+                    normalized_indices,
+                    normalized_indptr,
+                    normalized_shape,
+                )
+                return complex(mean), complex(second_moment)
+            except Exception as exc:
+                if not _native_sparse_unavailable(exc):
+                    raise
 
         legacy = getattr(self.simulator, "SparseHamiltonianMoments", None)
         if callable(legacy):
-            mean, second_moment = legacy(
-                normalized_data,
-                normalized_indices,
-                normalized_indptr,
-                normalized_shape,
-            )
-            return complex(mean), complex(second_moment)
+            try:
+                mean, second_moment = legacy(
+                    normalized_data,
+                    normalized_indices,
+                    normalized_indptr,
+                    normalized_shape,
+                )
+                return complex(mean), complex(second_moment)
+            except Exception as exc:
+                if not _native_sparse_unavailable(exc):
+                    raise
 
-        raise NotImplementedError("The active rocQuantum binding does not expose sparse Hamiltonian moments.")
+        if self.batch_size() != 1:
+            raise NotImplementedError("Use sparse_hamiltonian_moments_batch() for batched sparse fallback.")
+
+        return sparse_hamiltonian_moments_from_statevector(
+            self.statevector(),
+            normalized_data,
+            normalized_indices,
+            normalized_indptr,
+            normalized_shape,
+        )
 
     def sparse_hamiltonian_moments_batch(
         self,
@@ -1017,31 +1038,43 @@ class RocQuantumRuntime:
         normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
         normalized_shape = tuple(int(dim) for dim in shape)
 
+        def _native_sparse_unavailable(exc: Exception) -> bool:
+            message = str(exc)
+            return isinstance(exc, NotImplementedError) or "status 5" in message
+
         native = getattr(self.simulator, "sparse_hamiltonian_moments_batch", None)
         if callable(native):
-            means, second_moments = native(
-                normalized_data,
-                normalized_indices,
-                normalized_indptr,
-                normalized_shape,
-            )
-            return (
-                np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
-                np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
-            )
+            try:
+                means, second_moments = native(
+                    normalized_data,
+                    normalized_indices,
+                    normalized_indptr,
+                    normalized_shape,
+                )
+                return (
+                    np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
+                    np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
+                )
+            except Exception as exc:
+                if not _native_sparse_unavailable(exc):
+                    raise
 
         legacy = getattr(self.simulator, "SparseHamiltonianMomentsBatch", None)
         if callable(legacy):
-            means, second_moments = legacy(
-                normalized_data,
-                normalized_indices,
-                normalized_indptr,
-                normalized_shape,
-            )
-            return (
-                np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
-                np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
-            )
+            try:
+                means, second_moments = legacy(
+                    normalized_data,
+                    normalized_indices,
+                    normalized_indptr,
+                    normalized_shape,
+                )
+                return (
+                    np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
+                    np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
+                )
+            except Exception as exc:
+                if not _native_sparse_unavailable(exc):
+                    raise
 
         means = []
         second_moments = []

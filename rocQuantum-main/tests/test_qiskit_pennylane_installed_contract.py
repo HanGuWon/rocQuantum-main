@@ -6553,6 +6553,79 @@ def test_runtime_dense_expectation_falls_back_to_statevector():
     assert simulator.statevector_reads == 1
 
 
+def test_runtime_sparse_moments_fall_back_to_statevector():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _StateOnlySimulator:
+        def __init__(self):
+            self.statevector_reads = 0
+
+        def batch_size(self):
+            return 1
+
+        def sparse_hamiltonian_moments(self, data, indices, indptr, shape):
+            raise NotImplementedError("native sparse moments disabled")
+
+        def get_statevector(self):
+            self.statevector_reads += 1
+            return np.array([1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0)], dtype=np.complex128)
+
+    simulator = _StateOnlySimulator()
+    runtime = RocQuantumRuntime(simulator)
+
+    mean, second_moment = runtime.sparse_hamiltonian_moments(
+        np.array([1.0, 1.0], dtype=np.complex128),
+        np.array([1, 0], dtype=np.int64),
+        np.array([0, 1, 2], dtype=np.int64),
+        (2, 2),
+    )
+
+    assert mean == pytest.approx(1.0)
+    assert second_moment == pytest.approx(1.0)
+    assert simulator.statevector_reads == 1
+
+
+def test_runtime_sparse_moments_batch_falls_back_to_statevectors():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _BatchStateOnlySimulator:
+        def __init__(self):
+            self.statevector_reads = 0
+
+        def batch_size(self):
+            return 2
+
+        def num_qubits(self):
+            return 1
+
+        def sparse_hamiltonian_moments_batch(self, data, indices, indptr, shape):
+            raise NotImplementedError("native sparse moments batch disabled")
+
+        def get_statevectors(self):
+            self.statevector_reads += 1
+            return np.array(
+                [
+                    [1.0, 0.0],
+                    [0.0, 1.0],
+                ],
+                dtype=np.complex128,
+            )
+
+    simulator = _BatchStateOnlySimulator()
+    runtime = RocQuantumRuntime(simulator)
+
+    means, second_moments = runtime.sparse_hamiltonian_moments_batch(
+        np.array([1.0, -1.0], dtype=np.complex128),
+        np.array([0, 1], dtype=np.int64),
+        np.array([0, 1, 2], dtype=np.int64),
+        (2, 2),
+    )
+
+    np.testing.assert_allclose(means, np.array([1.0, -1.0], dtype=np.complex128))
+    np.testing.assert_allclose(second_moments, np.array([1.0, 1.0], dtype=np.complex128))
+    assert simulator.statevector_reads == 1
+
+
 def test_runtime_batch_parametric_gate_falls_back_for_equal_angles():
     from rocquantum.framework_runtime import RocQuantumRuntime
 
