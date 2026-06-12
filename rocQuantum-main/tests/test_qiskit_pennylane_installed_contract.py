@@ -3815,6 +3815,36 @@ def test_pennylane_batch_execute_uses_batched_counts(monkeypatch):
     assert sim.probability_requests == [(0,)]
 
 
+def test_pennylane_batch_execute_uses_batched_counts_all_outcomes(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane.exceptions import PennyLaneDeprecationWarning
+
+    with pytest.warns(PennyLaneDeprecationWarning):
+        dev = qml.device("lightning.rocq", wires=2, shots=4)
+    circuits = [
+        qml.tape.QuantumScript([qml.CRX(0.1, wires=[0, 1])], [qml.counts(wires=[0, 1], all_outcomes=True)]),
+        qml.tape.QuantumScript([qml.CRX(0.2, wires=[0, 1])], [qml.counts(wires=[0, 1], all_outcomes=True)]),
+    ]
+
+    results = dev.batch_execute(circuits)
+
+    assert len(results) == 2
+    for result in results:
+        assert set(result) == {"00", "01", "10", "11"}
+        assert result["00"] + result["01"] + result["10"] + result["11"] == 4
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("CRX", (0, 1), (0.1, 0.2))]
+    assert sim.measurements == []
+    assert sim.probability_requests == [(0, 1)]
+
+
 def test_pennylane_paulix_expval_skips_diagonalizing_rotation(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

@@ -378,8 +378,19 @@ def _sample_result_from_rows(rows):
     return rows
 
 
-def _counts_result_from_rows(rows):
+def _counts_result_from_rows(rows, *, all_outcomes=False, num_wires=None):
+    if num_wires is None:
+        rows_array = np.asarray(rows, dtype=int)
+        if rows_array.ndim == 1:
+            num_wires = 1
+        else:
+            num_wires = int(rows_array.shape[1])
     counts = {}
+    if all_outcomes:
+        counts = {
+            format(index, f"0{int(num_wires)}b"): 0
+            for index in range(1 << int(num_wires))
+        }
     for row in np.asarray(rows, dtype=int):
         key = "".join(str(int(bit)) for bit in np.asarray(row).reshape(-1))
         counts[key] = counts.get(key, 0) + 1
@@ -2625,8 +2636,6 @@ class RocQDevice(QubitDevice):
                 or measurement_names[0] not in {"SampleMP", "CountsMP"}
             ):
                 return None
-            if measurement_names[0] == "CountsMP" and getattr(reference_measurements[0], "all_outcomes", False):
-                return None
         elif all(name in {"ExpectationMP", "VarianceMP", "ProbabilityMP"} for name in measurement_names):
             pass
         else:
@@ -2667,7 +2676,11 @@ class RocQDevice(QubitDevice):
                     tuple(measurement.wires) != reference_payload
                 ):
                     return None
-            if measurement_names[0] == "CountsMP" and getattr(measurements[0], "all_outcomes", False):
+            if (
+                measurement_names[0] == "CountsMP"
+                and bool(getattr(measurements[0], "all_outcomes", False))
+                != bool(getattr(reference_measurements[0], "all_outcomes", False))
+            ):
                 return None
 
         self.reset(batch_size=len(circuits))
@@ -2925,7 +2938,13 @@ class RocQDevice(QubitDevice):
                 if measurement_names[0] == "SampleMP":
                     results.append(_sample_result_from_rows(rows))
                 else:
-                    results.append(_counts_result_from_rows(rows))
+                    results.append(
+                        _counts_result_from_rows(
+                            rows,
+                            all_outcomes=bool(getattr(reference_measurements[0], "all_outcomes", False)),
+                            num_wires=len(measure_targets),
+                        )
+                    )
             return results
 
         return None

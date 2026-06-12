@@ -537,6 +537,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("measurement_names[0] not in {\"SampleMP\", \"CountsMP\"}", source)
         self.assertIn("def _sample_result_from_rows", source)
         self.assertIn("def _counts_result_from_rows", source)
+        self.assertIn("all_outcomes=bool", source)
+        self.assertIn("format(index", source)
         self.assertIn("def _ensure_state", source)
         self.assertIn("self._state = self._runtime.statevector()", source)
         self.assertIn("return self._ensure_state()", source)
