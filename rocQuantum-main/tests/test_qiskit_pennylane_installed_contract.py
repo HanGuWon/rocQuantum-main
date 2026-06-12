@@ -1880,13 +1880,43 @@ def test_qiskit_backend_decomposes_controlled_r_gate_natively(monkeypatch):
     backend.run(circuit, sampling=False).result()
 
     sim = _FakeQuantumSimulator.instances[-1]
-    assert ("RY", (1,), (-0.2,)) in sim.ops
-    assert ("RY", (1,), (0.2,)) in sim.ops
-    assert ("RZ", (1,), (0.2 - np.pi / 2,)) in sim.ops
-    assert ("RY", (1,), (-0.3,)) in sim.ops
-    assert ("RY", (1,), (0.3,)) in sim.ops
-    assert sim.ops.count(("CNOT", (0, 1), ())) == 4
-    assert ("X", (0,), ()) in sim.ops
+    assert sim.ops == [
+        ("RZ", (1,), (-0.2,)),
+        ("CRX", (0, 1), (0.4,)),
+        ("RZ", (1,), (0.2,)),
+        ("X", (0,), ()),
+        ("RZ", (1,), (-0.3,)),
+        ("CRX", (0, 1), (0.6,)),
+        ("RZ", (1,), (0.3,)),
+        ("X", (0,), ()),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
+def test_qiskit_backend_decomposes_multi_controlled_r_gate_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import RGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    assert {"ccr", "c3r"}.issubset(set(backend.target.operation_names))
+    circuit = QuantumCircuit(4)
+    circuit.append(RGate(0.4, 0.2).control(2, annotated=False), [0, 1, 2])
+    circuit.append(RGate(0.6, 0.3).control(3, ctrl_state="101", annotated=False), [0, 1, 2, 3])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops[0:2] == [("RZ", (2,), (-0.2,)), ("H", (2,), ())]
+    assert ("RZ", (2,), (0.2,)) in sim.ops
+    assert ("X", (1,), ()) in sim.ops
+    assert ("RZ", (3,), (-0.3,)) in sim.ops
+    assert ("RZ", (3,), (0.3,)) in sim.ops
+    assert sim.ops[-1] == ("X", (1,), ())
     assert sim.matrices == []
     assert sim.controlled_matrices == []
 
@@ -2914,10 +2944,57 @@ def test_qiskit_native_estimator_batches_controlled_r_parameters(monkeypatch):
     assert result.metadata["batched_parameters"] is True
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
-    assert sim.ops == [("CNOT", (0, 1), ()), ("CNOT", (0, 1), ())]
-    assert ("RY", (1,), (-0.1, -0.3)) in sim.batch_ops
-    assert ("RY", (1,), (0.1, 0.3)) in sim.batch_ops
-    assert ("RZ", (1,), (0.3 - np.pi / 2, 0.7 - np.pi / 2)) in sim.batch_ops
+    assert sim.ops == []
+    assert sim.batch_ops == [
+        ("RZ", (1,), (-0.3, -0.7)),
+        ("CRX", (0, 1), (0.2, 0.6)),
+        ("RZ", (1,), (0.3, 0.7)),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_batches_multi_controlled_r_parameters(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.circuit.library import RGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    phi = Parameter("phi")
+    circuit = QuantumCircuit(3)
+    circuit.append(RGate(theta, phi).control(2, annotated=False), [0, 1, 2])
+    observable = SparsePauliOp.from_list([("IIZ", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [
+            (
+                circuit,
+                observable,
+                {
+                    (theta, phi): [
+                        [0.2, 0.3],
+                        [0.6, 0.7],
+                    ],
+                },
+            )
+        ],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops[0] == ("H", (2,), ())
+    assert sim.ops[-1] == ("H", (2,), ())
+    assert ("RZ", (2,), (-0.3, -0.7)) in sim.batch_ops
+    assert ("RZ", (2,), (0.3, 0.7)) in sim.batch_ops
+    assert ("RZ", (2,), (0.05, 0.15)) in sim.batch_ops
     assert sim.matrices == []
     assert sim.controlled_matrices == []
     assert sim.batch_expectations == [("Z", (0,))]
