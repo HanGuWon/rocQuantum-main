@@ -361,6 +361,34 @@ def _observable_batch_payload_matches(observable, wire_map, reference_payload, w
     return current[2] == reference_payload[2] and np.array_equal(current[1], reference_payload[1])
 
 
+def _array_cache_key(values):
+    array = np.ascontiguousarray(np.asarray(values))
+    return array.shape, str(array.dtype), array.tobytes()
+
+
+def _observable_batch_payload_cache_key(payload):
+    kind = payload[0]
+    if kind == "pauli":
+        return (
+            "pauli",
+            tuple(
+                (complex(coeff), str(pauli_string), tuple(int(target) for target in targets))
+                for coeff, pauli_string, targets in _combine_pauli_terms(payload[1])
+            ),
+        )
+    if kind == "matrix":
+        return "matrix", tuple(int(target) for target in payload[2]), _array_cache_key(payload[1])
+    if kind == "sparse":
+        return (
+            "sparse",
+            tuple(int(dim) for dim in payload[4]),
+            _array_cache_key(payload[1]),
+            _array_cache_key(payload[2]),
+            _array_cache_key(payload[3]),
+        )
+    raise TypeError(f"Unsupported observable batch payload kind: {kind!r}")
+
+
 def _evaluate_observable_batch_payload(runtime, payload):
     kind = payload[0]
     if kind == "pauli":
@@ -2978,6 +3006,32 @@ class RocQDevice(QubitDevice):
             for name in measurement_names
         ):
             batched_values = []
+            observable_batch_cache = {}
+            sparse_moment_batch_cache = {}
+            probability_batch_cache = {}
+
+            def cached_sparse_moments(payload):
+                cache_key = _observable_batch_payload_cache_key(payload)
+                if cache_key not in sparse_moment_batch_cache:
+                    sparse_moment_batch_cache[cache_key] = _native_sparse_hamiltonian_moments_batch(
+                        self._runtime,
+                        payload,
+                    )
+                return sparse_moment_batch_cache[cache_key]
+
+            def cached_observable(payload):
+                cache_key = _observable_batch_payload_cache_key(payload)
+                if cache_key not in observable_batch_cache:
+                    if payload[0] == "sparse":
+                        means, _ = cached_sparse_moments(payload)
+                        observable_batch_cache[cache_key] = means
+                    else:
+                        observable_batch_cache[cache_key] = _evaluate_observable_batch_payload(
+                            self._runtime,
+                            payload,
+                        )
+                return observable_batch_cache[cache_key]
+
             for measurement_name, payload in reference_measurement_specs:
                 if measurement_name == "ProbabilityMP":
                     probability_targets = (
@@ -2985,21 +3039,26 @@ class RocQDevice(QubitDevice):
                         if not payload
                         else [self.wire_map[wire] for wire in payload]
                     )
-                    batched_values.append(self._runtime.probabilities_batch(probability_targets))
+                    probability_key = None if probability_targets is None else tuple(probability_targets)
+                    if probability_key not in probability_batch_cache:
+                        probability_batch_cache[probability_key] = self._runtime.probabilities_batch(
+                            probability_targets,
+                        )
+                    batched_values.append(probability_batch_cache[probability_key])
                     continue
 
                 if measurement_name == "VarianceMP" and payload[0] == "sparse":
-                    means, second_moments = _native_sparse_hamiltonian_moments_batch(self._runtime, payload)
+                    means, second_moments = cached_sparse_moments(payload)
                     batched_values.append(second_moments - means * means)
                     continue
 
-                means = _evaluate_observable_batch_payload(self._runtime, payload)
+                means = cached_observable(payload)
                 if measurement_name == "VarianceMP":
                     if payload[0] == "pauli":
                         second_payload = ("pauli", _pauli_square_terms(payload[1]))
                     else:
                         second_payload = ("matrix", payload[1] @ payload[1], payload[2])
-                    second_moments = _evaluate_observable_batch_payload(self._runtime, second_payload)
+                    second_moments = cached_observable(second_payload)
                     batched_values.append(second_moments - means * means)
                 else:
                     batched_values.append(means)
