@@ -51,6 +51,9 @@ from qiskit.circuit.library import (
     StatePreparation,
     TGate,
     TdgGate,
+    U1Gate,
+    U2Gate,
+    U3Gate,
     PhaseGate,
     RGate,
     UGate,
@@ -314,6 +317,9 @@ def _instruction_target(num_qubits):
     target.add_instruction(SwapGate(), name="swap")
     target.add_instruction(TGate(), name="t")
     target.add_instruction(TdgGate(), name="tdg")
+    target.add_instruction(U1Gate(0.0), name="u1")
+    target.add_instruction(U2Gate(0.0, 0.0), name="u2")
+    target.add_instruction(U3Gate(0.0, 0.0, 0.0), name="u3")
     target.add_instruction(UGate(0.0, 0.0, 0.0), name="u")
     target.add_instruction(UnitaryGate([[1, 0], [0, 1]]), name="unitary")
     target.add_instruction(XGate(), name="x")
@@ -1293,13 +1299,24 @@ class RocQuantumBackend(BackendV2):
             except (NotImplementedError, RuntimeError, TypeError, ValueError):
                 pass
 
-        if op.name in {"sx", "sxdg", "u", "r"} and self._supports_native_phase_decomposition(include_global_phase):
+        if op.name in {
+            "sx", "sxdg", "u", "u1", "u2", "u3", "r"
+        } and self._supports_native_phase_decomposition(include_global_phase):
             params = normalize_params(op.params)
             if op.name == "sx":
                 self._apply_sx_gate(q_indices, inverse=False, include_global_phase=include_global_phase)
             elif op.name == "sxdg":
                 self._apply_sx_gate(q_indices, inverse=True, include_global_phase=include_global_phase)
             elif op.name == "u":
+                theta, phi, lam = params
+                self._apply_u_gate(q_indices, theta, phi, lam, include_global_phase=include_global_phase)
+            elif op.name == "u1":
+                (theta,) = params
+                self._apply_phase_gate(q_indices, theta, include_global_phase=include_global_phase)
+            elif op.name == "u2":
+                phi, lam = params
+                self._apply_u_gate(q_indices, cmath.pi / 2, phi, lam, include_global_phase=include_global_phase)
+            elif op.name == "u3":
                 theta, phi, lam = params
                 self._apply_u_gate(q_indices, theta, phi, lam, include_global_phase=include_global_phase)
             else:
@@ -1636,6 +1653,32 @@ class RocQuantumBackend(BackendV2):
                 touched_qubits.update(q_indices)
                 continue
 
+            if normalized_params_by_circuit is not None and reference_op.name == "u1" and all(
+                len(params) == 1 for params in normalized_params_by_circuit
+            ):
+                self._apply_phase_gate_batch(q_indices, [params[0] for params in normalized_params_by_circuit])
+                touched_qubits.update(q_indices)
+                continue
+
+            if normalized_params_by_circuit is not None and reference_op.name == "u2" and all(
+                len(params) == 2 for params in normalized_params_by_circuit
+            ):
+                phis = [params[0] for params in normalized_params_by_circuit]
+                lams = [params[1] for params in normalized_params_by_circuit]
+                self._apply_u_gate_batch(q_indices, [cmath.pi / 2 for _ in phis], phis, lams)
+                touched_qubits.update(q_indices)
+                continue
+
+            if normalized_params_by_circuit is not None and reference_op.name == "u3" and all(
+                len(params) == 3 for params in normalized_params_by_circuit
+            ):
+                thetas = [params[0] for params in normalized_params_by_circuit]
+                phis = [params[1] for params in normalized_params_by_circuit]
+                lams = [params[2] for params in normalized_params_by_circuit]
+                self._apply_u_gate_batch(q_indices, thetas, phis, lams)
+                touched_qubits.update(q_indices)
+                continue
+
             if normalized_params_by_circuit is not None and reference_op.name == "r" and all(
                 len(params) == 2 for params in normalized_params_by_circuit
             ):
@@ -1664,7 +1707,7 @@ class RocQuantumBackend(BackendV2):
                 raise NotImplementedError(
                     "Batched Qiskit execution only supports varying RX/RY/RZ, CRX/CRY/CRZ, "
                     f"fixed unitary/controlled-unitary operations, open-control controlled rotations/phase, "
-                    f"p/cp, u/r/cu/cu1/cu3, decomposed rxx/ryy/rzz/rzx/xx_plus_yy/xx_minus_yy, and PauliEvolution parameters, "
+                    f"p/cp, u/u1/u2/u3/r/cu/cu1/cu3, decomposed rxx/ryy/rzz/rzx/xx_plus_yy/xx_minus_yy, and PauliEvolution parameters, "
                     f"got {reference_op.name!r}."
                 )
 
