@@ -240,13 +240,23 @@ def _pauli_square_terms(terms):
     )
 
 
-def _evaluate_pauli_terms(runtime, terms):
+def _expectation_pauli_string_cached(runtime, pauli_string, targets, cache=None):
+    if cache is None:
+        return runtime.expectation_pauli_string(pauli_string, targets)
+
+    key = ("pauli", str(pauli_string), tuple(int(target) for target in targets))
+    if key not in cache:
+        cache[key] = runtime.expectation_pauli_string(pauli_string, targets)
+    return cache[key]
+
+
+def _evaluate_pauli_terms(runtime, terms, cache=None):
     result = 0.0 + 0.0j
     for coeff, pauli_string, targets in _combine_pauli_terms(terms):
         if not targets:
             result += coeff
         else:
-            result += coeff * runtime.expectation_pauli_string(pauli_string, targets)
+            result += coeff * _expectation_pauli_string_cached(runtime, pauli_string, targets, cache=cache)
     return result
 
 
@@ -2475,6 +2485,7 @@ class RocQDevice(QubitDevice):
         self._capture_pre_rotated_state = False
         self._pre_rotated_state = None
         self._preserve_global_phase = True
+        self._analytic_measurement_cache = None
         self.reset()
 
     def reset(self, batch_size=1):
@@ -2712,13 +2723,16 @@ class RocQDevice(QubitDevice):
         preserve_global_phase = self._circuit_preserves_global_phase(circuit)
         previous = self._skip_diagonalizing_rotations
         previous_global_phase = self._preserve_global_phase
+        previous_cache = self._analytic_measurement_cache
         self._skip_diagonalizing_rotations = skip_rotations
         self._preserve_global_phase = preserve_global_phase
+        self._analytic_measurement_cache = {}
         try:
             return super().execute(circuit, **kwargs)
         finally:
             self._skip_diagonalizing_rotations = previous
             self._preserve_global_phase = previous_global_phase
+            self._analytic_measurement_cache = previous_cache
             if getattr(self, "_runtime", None) is not None:
                 self._runtime.preserve_global_phase = previous_global_phase
 
@@ -3796,7 +3810,10 @@ class RocQDevice(QubitDevice):
         if terms is None:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
-        return _real_measurement_result(_evaluate_pauli_terms(self._runtime, terms), "Expectation value")
+        return _real_measurement_result(
+            _evaluate_pauli_terms(self._runtime, terms, cache=self._analytic_measurement_cache),
+            "Expectation value",
+        )
 
     def var(self, observable, shot_range=None, bin_size=None):
         if self.shots is not None or shot_range is not None or bin_size is not None:
@@ -3827,25 +3844,40 @@ class RocQDevice(QubitDevice):
         if terms is None:
             return super().var(observable, shot_range=shot_range, bin_size=bin_size)
 
-        mean = _evaluate_pauli_terms(self._runtime, terms)
-        second_moment = _evaluate_pauli_terms(self._runtime, _pauli_square_terms(terms))
+        mean = _evaluate_pauli_terms(self._runtime, terms, cache=self._analytic_measurement_cache)
+        second_moment = _evaluate_pauli_terms(
+            self._runtime,
+            _pauli_square_terms(terms),
+            cache=self._analytic_measurement_cache,
+        )
         return _real_measurement_result(second_moment - mean * mean, "Variance")
 
     def analytic_probability(self, wires=None):
         requested_labels = list(self.wires if wires is None or len(wires) == 0 else getattr(wires, "labels", wires))
         wire_indices = [self.wire_map[wire] for wire in requested_labels]
+        cache_key = ("probabilities", tuple(int(wire_index) for wire_index in wire_indices))
+        if self._analytic_measurement_cache is not None and cache_key in self._analytic_measurement_cache:
+            return self._analytic_measurement_cache[cache_key]
+
         has_native_probabilities = callable(getattr(self.sim, "probabilities", None)) or callable(
             getattr(self.sim, "Probabilities", None)
         )
         if has_native_probabilities:
             try:
-                return self._runtime.probabilities(wire_indices)
+                probabilities = self._runtime.probabilities(wire_indices)
+                if self._analytic_measurement_cache is not None:
+                    self._analytic_measurement_cache[cache_key] = probabilities
+                return probabilities
             except NotImplementedError:
                 pass
 
         all_probs = np.abs(self._ensure_state()) ** 2
-        if wires is None or len(wires) == 0: return all_probs
-        requested_wires = set(getattr(wires, "labels", wires))
-        wires_to_trace = [i for i, w in enumerate(self.wires) if w not in requested_wires]
-        if not wires_to_trace: return all_probs
-        return self.marginal_prob(all_probs, wires_to_trace)
+        if wires is None or len(wires) == 0:
+            probabilities = all_probs
+        else:
+            requested_wires = set(getattr(wires, "labels", wires))
+            wires_to_trace = [i for i, w in enumerate(self.wires) if w not in requested_wires]
+            probabilities = all_probs if not wires_to_trace else self.marginal_prob(all_probs, wires_to_trace)
+        if self._analytic_measurement_cache is not None:
+            self._analytic_measurement_cache[cache_key] = probabilities
+        return probabilities

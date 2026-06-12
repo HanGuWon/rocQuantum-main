@@ -2817,6 +2817,53 @@ def test_pennylane_var_uses_native_pauli_expectation(monkeypatch):
     assert sim.statevector_reads == 0
 
 
+def test_pennylane_single_execute_caches_duplicate_analytic_measurements(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.RY(0.123, wires=0)
+        return qml.expval(qml.PauliZ(0)), qml.var(qml.PauliZ(0)), qml.expval(qml.PauliZ(0))
+
+    assert circuit() == pytest.approx((0.5, 0.75, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.statevector_reads == 0
+
+
+def test_pennylane_single_execute_caches_duplicate_probabilities(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_probabilities", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.RY(0.123, wires=0)
+        return qml.probs(wires=[0]), qml.probs(wires=[0])
+
+    first, second = circuit()
+    np.testing.assert_allclose(first, np.array([1 / 3, 2 / 3]))
+    np.testing.assert_allclose(second, np.array([1 / 3, 2 / 3]))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.probability_requests == [(0,)]
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_pauli_terms_combine_batched_expectations(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -4262,10 +4309,7 @@ def test_pennylane_projector_var_uses_native_z_projector_terms(monkeypatch):
 
     assert projector_var_circuit() == pytest.approx(0.1875)
     sim = _FakeQuantumSimulator.instances[-1]
-    assert sim.expectations == [
-        ("Z", (0,)),
-        ("Z", (0,)),
-    ]
+    assert sim.expectations == [("Z", (0,))]
     assert sim.statevector_reads == 0
 
 
@@ -7065,8 +7109,6 @@ def test_pennylane_hamiltonian_var_uses_native_pauli_products(monkeypatch):
     assert circuit() == pytest.approx(1.464375)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.expectations == [
-        ("Z", (0,)),
-        ("XZ", (0, 1)),
         ("Z", (0,)),
         ("XZ", (0, 1)),
     ]
