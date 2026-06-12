@@ -312,6 +312,8 @@ def _instruction_target(num_qubits):
     target.add_instruction(CRXGate(0.0), name="crx")
     target.add_instruction(CRYGate(0.0), name="cry")
     target.add_instruction(CRZGate(0.0), name="crz")
+    target.add_instruction(RZGate(0.0).control(2, annotated=False), name="ccrz")
+    target.add_instruction(RZGate(0.0).control(3, annotated=False), name="c3rz")
     target.add_instruction(RGate(0.0, 0.0).control(1, annotated=False), name="cr")
     target.add_instruction(DCXGate(), name="dcx")
     target.add_instruction(ECRGate(), name="ecr")
@@ -597,6 +599,43 @@ class RocQuantumBackend(BackendV2):
             scaled_thetas = [scale * theta for theta in thetas]
             for subset in combinations(q_indices, subset_size):
                 self._apply_multirz_gate_batch(list(subset), scaled_thetas)
+
+    def _apply_multi_controlled_rz_gate(self, q_indices, theta, *, include_global_phase):
+        if len(q_indices) < 2:
+            raise ValueError("Qiskit controlled-rz gate requires at least two qubits.")
+
+        controls = list(q_indices[:-1])
+        target = q_indices[-1]
+        if len(controls) == 1:
+            self._runtime.apply_operation("crz", [controls[0], target], [theta])
+            return
+
+        self._apply_multi_controlled_phase_gate(
+            controls,
+            -0.5 * theta,
+            include_global_phase=include_global_phase,
+        )
+        self._apply_multi_controlled_phase_gate(
+            controls + [target],
+            theta,
+            include_global_phase=include_global_phase,
+        )
+
+    def _apply_multi_controlled_rz_gate_batch(self, q_indices, thetas):
+        if len(q_indices) < 2:
+            raise ValueError("Qiskit controlled-rz gate requires at least two qubits.")
+
+        controls = list(q_indices[:-1])
+        target = q_indices[-1]
+        if len(controls) == 1:
+            self._runtime.apply_operation_batch("crz", [controls[0], target], thetas)
+            return
+
+        self._apply_multi_controlled_phase_gate_batch(
+            controls,
+            [-0.5 * theta for theta in thetas],
+        )
+        self._apply_multi_controlled_phase_gate_batch(controls + [target], thetas)
 
     def _apply_pauli_rotation_gate(self, q_indices, label, theta):
         if len(label) != len(q_indices):
@@ -1085,7 +1124,7 @@ class RocQuantumBackend(BackendV2):
             return False
         if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx", "u1", "u3", "u"}:
             return False
-        if base_name in {"rx", "ry", "rz", "r", "u3", "u"} and num_controls != 1:
+        if base_name in {"rx", "ry", "r", "u3", "u"} and num_controls != 1:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
@@ -1122,9 +1161,16 @@ class RocQuantumBackend(BackendV2):
                     self._runtime.apply_operation("sdg", [target])
                     self._runtime.apply_operation("mcx", controls + [target])
                     self._runtime.apply_operation("s", [target])
-            elif base_name in {"rx", "ry", "rz"}:
+            elif base_name in {"rx", "ry"}:
                 (theta,) = normalize_params(op.params)
                 self._runtime.apply_operation(f"c{base_name}", [controls[0], target], [theta])
+            elif base_name == "rz":
+                (theta,) = normalize_params(op.params)
+                self._apply_multi_controlled_rz_gate(
+                    controls + [target],
+                    theta,
+                    include_global_phase=include_global_phase,
+                )
             elif base_name == "r":
                 theta, phi = normalize_params(op.params)
                 self._apply_cu3_gate(
@@ -1233,7 +1279,7 @@ class RocQuantumBackend(BackendV2):
         base_name = getattr(base_gate, "name", None)
         if num_controls < 1 or len(q_indices) != num_controls + 1 or base_name not in {"rx", "ry", "rz", "p", "u1"}:
             return False
-        if base_name in {"rx", "ry", "rz"} and num_controls != 1:
+        if base_name in {"rx", "ry"} and num_controls != 1:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
@@ -1252,8 +1298,10 @@ class RocQuantumBackend(BackendV2):
                 self._runtime.apply_operation("x", [control])
                 flipped.append(control)
 
-            if base_name in {"rx", "ry", "rz"}:
+            if base_name in {"rx", "ry"}:
                 self._runtime.apply_operation_batch(f"c{base_name}", [controls[0], target], thetas)
+            elif base_name == "rz":
+                self._apply_multi_controlled_rz_gate_batch(controls + [target], thetas)
             elif len(controls) == 1:
                 self._apply_controlled_phase_gate_batch([controls[0], target], thetas)
             else:
