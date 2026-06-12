@@ -21,6 +21,7 @@ Audit refresh note (2026-06-10):
 - Fixed multi-control Qiskit `SWAP` gates (`ccswap` / `c3swap`) now lower through exact native `MCX` swap decompositions, including open-control variants, instead of falling through generic controlled-matrix dispatch.
 - `QuantumSimulator.set_statevector()` is exposed through the Python binding, and Qiskit/PennyLane full-wire initial state preparation now uses native statevector upload instead of state-preparation matrix fallback.
 - Qiskit `ch` / `cy` / `ccz` / `dcx` and PennyLane `qml.CH` / `qml.CY` / `qml.CCZ` now use exact native controlled-Pauli decompositions instead of dense matrix dispatch.
+- Fixed controlled Qiskit `DCX` gates (`cdcx` / `ccdcx` / `c3dcx`) now lower through exact native `MCX` decompositions, including open-control variants, instead of falling through generic controlled-matrix dispatch.
 - Qiskit `ecr` and PennyLane `qml.ECR` now use exact native decompositions instead of dense two-qubit matrix dispatch; PennyLane preserves the `SX` global phase with a one-qubit global-phase matrix.
 - Qiskit `iswap` and PennyLane `qml.ISWAP` / `qml.PSWAP` / `qml.SISWAP` / `qml.SQISW` now use exact native swap/phase decompositions instead of dense two-qubit matrix dispatch.
 - Qiskit `rccx` / `rcccx` now use exact native relative-phase `H` / `RZ` / `CNOT` decompositions instead of dense three- and four-qubit matrix dispatch.
