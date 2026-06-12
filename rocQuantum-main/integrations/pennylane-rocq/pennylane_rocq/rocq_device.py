@@ -397,6 +397,20 @@ def _counts_result_from_rows(rows, *, all_outcomes=False, num_wires=None):
     return counts
 
 
+def _probability_result_from_rows(rows, num_wires):
+    rows_array = np.asarray(rows, dtype=int)
+    if rows_array.ndim == 1:
+        rows_array = rows_array.reshape(-1, 1)
+    outcome_count = 1 << int(num_wires)
+    probabilities = np.zeros(outcome_count, dtype=float)
+    if rows_array.shape[0] == 0:
+        return probabilities
+    for row in rows_array:
+        bitstring = "".join(str(int(bit)) for bit in np.asarray(row).reshape(-1))
+        probabilities[int(bitstring or "0", 2)] += 1.0
+    return probabilities / float(rows_array.shape[0])
+
+
 def _measurement_targets(measurement_wires, wire_map, num_wires):
     wires = tuple(measurement_wires)
     if not wires:
@@ -2660,7 +2674,7 @@ class RocQDevice(QubitDevice):
         if finite_shots:
             if (
                 _has_partitioned_shots(self.shots)
-                or not all(name in {"SampleMP", "CountsMP"} for name in measurement_names)
+                or not all(name in {"ProbabilityMP", "SampleMP", "CountsMP"} for name in measurement_names)
             ):
                 return None
         elif all(name in {"ExpectationMP", "VarianceMP", "ProbabilityMP"} for name in measurement_names):
@@ -2915,7 +2929,10 @@ class RocQDevice(QubitDevice):
                 continue
             return None
 
-        if all(name in {"ExpectationMP", "VarianceMP", "ProbabilityMP"} for name in measurement_names):
+        if not finite_shots and all(
+            name in {"ExpectationMP", "VarianceMP", "ProbabilityMP"}
+            for name in measurement_names
+        ):
             batched_values = []
             for measurement_name, payload in reference_measurement_specs:
                 if measurement_name == "ProbabilityMP":
@@ -2961,7 +2978,7 @@ class RocQDevice(QubitDevice):
                 for batch_index in range(len(circuits))
             ]
 
-        if all(name in {"SampleMP", "CountsMP"} for name in measurement_names):
+        if all(name in {"ProbabilityMP", "SampleMP", "CountsMP"} for name in measurement_names):
             shots = _shot_count(self.shots)
             measure_targets, measurement_columns = _batched_measurement_plan(
                 reference_measurement_specs,
@@ -2977,13 +2994,17 @@ class RocQDevice(QubitDevice):
                     measurement_rows = rows[:, columns]
                     if measurement_name == "SampleMP":
                         measurement_results.append(_sample_result_from_rows(measurement_rows))
-                    else:
+                    elif measurement_name == "CountsMP":
                         measurement_results.append(
                             _counts_result_from_rows(
                                 measurement_rows,
                                 all_outcomes=all_outcomes,
                                 num_wires=len(columns),
                             )
+                        )
+                    else:
+                        measurement_results.append(
+                            _probability_result_from_rows(measurement_rows, len(columns))
                         )
                 if len(measurement_results) == 1:
                     results.append(measurement_results[0])

@@ -3814,6 +3814,46 @@ def test_pennylane_batch_execute_uses_batched_probabilities(monkeypatch):
     assert sim.probability_requests == [(0,)]
 
 
+def test_pennylane_batch_execute_uses_batched_finite_shot_probabilities(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane.exceptions import PennyLaneDeprecationWarning
+
+    with pytest.warns(PennyLaneDeprecationWarning):
+        dev = qml.device("lightning.rocq", wires=2, shots=8)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.CRX(0.1, wires=[0, 1])],
+            [qml.probs(wires=[0, 1]), qml.probs(wires=[0])],
+        ),
+        qml.tape.QuantumScript(
+            [qml.CRX(0.2, wires=[0, 1])],
+            [qml.probs(wires=[0, 1]), qml.probs(wires=[0])],
+        ),
+    ]
+
+    results = dev.batch_execute(circuits)
+
+    assert len(results) == 2
+    for full_probs, marginal_probs in results:
+        assert full_probs.shape == (4,)
+        assert marginal_probs.shape == (2,)
+        np.testing.assert_allclose(np.sum(full_probs), 1.0)
+        np.testing.assert_allclose(np.sum(marginal_probs), 1.0)
+        np.testing.assert_allclose(full_probs * 8, np.rint(full_probs * 8))
+        np.testing.assert_allclose(marginal_probs * 8, np.rint(marginal_probs * 8))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("CRX", (0, 1), (0.1, 0.2))]
+    assert sim.measurements == []
+    assert sim.probability_requests == [(0, 1)]
+
+
 def test_pennylane_batch_execute_uses_batched_samples(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
