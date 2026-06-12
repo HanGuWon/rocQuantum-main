@@ -971,6 +971,40 @@ def test_qiskit_target_supports_transpile_native_phase_and_matrix_fallback_gates
     assert sim.matrices == []
 
 
+def test_qiskit_backend_decomposes_controlled_two_qubit_rotations_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import RXXGate, RYYGate, RZXGate, RZZGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    assert {
+        "crxx", "ccrxx", "c3rxx",
+        "cryy", "ccryy", "c3ryy",
+        "crzz", "ccrzz", "c3rzz",
+        "crzx", "ccrzx", "c3rzx",
+    }.issubset(set(backend.target.operation_names))
+    circuit = QuantumCircuit(4)
+    circuit.append(RZZGate(0.4).control(1, annotated=False), [0, 1, 2])
+    circuit.append(RXXGate(0.6).control(2, annotated=False), [0, 1, 2, 3])
+    circuit.append(RYYGate(0.8).control(2, ctrl_state="01", annotated=False), [0, 1, 2, 3])
+    circuit.append(RZXGate(1.0).control(1, annotated=False), [0, 1, 2])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert ("RZ", (2,), (0.2,)) in sim.ops
+    assert ("RZ", (2,), (-0.2,)) in sim.ops
+    assert ("H", (2,), ()) in sim.ops
+    assert ("H", (3,), ()) in sim.ops
+    assert ("RX", (2,), (np.pi / 2,)) in sim.ops
+    assert ("X", (1,), ()) in sim.ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
 def test_qiskit_pauli_evolution_decomposes_single_pauli_string_natively(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -3623,6 +3657,50 @@ def test_qiskit_native_estimator_batches_parametric_values(monkeypatch):
     assert ("RX", (0,), (0.1, 0.2)) in sim.batch_ops
     assert sim.batch_ops.count(("RZ", (1,), (0.1, 0.2))) == 3
     assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_batches_controlled_two_qubit_rotation_parameters(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.circuit.library import RXXGate, RZZGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    phi = Parameter("phi")
+    circuit = QuantumCircuit(4)
+    circuit.append(RZZGate(theta).control(1, annotated=False), [0, 1, 2])
+    circuit.append(RXXGate(phi).control(2, annotated=False), [0, 1, 2, 3])
+    observable = SparsePauliOp.from_list([("IIIZ", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [
+            (
+                circuit,
+                observable,
+                {
+                    (theta, phi): [
+                        [0.4, 0.8],
+                        [0.6, 1.0],
+                    ],
+                },
+            )
+        ],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert ("RZ", (2,), (0.2, 0.3)) in sim.batch_ops
+    assert ("RZ", (2,), (-0.2, -0.3)) in sim.batch_ops
+    assert ("RZ", (3,), (0.2, 0.25)) in sim.batch_ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
     assert sim.batch_expectations == [("Z", (0,))]
 
 

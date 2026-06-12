@@ -351,10 +351,22 @@ def _instruction_target(num_qubits):
     target.add_instruction(RYGate(0.0), name="ry")
     target.add_instruction(RZGate(0.0), name="rz")
     target.add_instruction(RZXGate(0.0), name="rzx")
+    target.add_instruction(RZXGate(0.0).control(1, annotated=False), name="crzx")
+    target.add_instruction(RZXGate(0.0).control(2, annotated=False), name="ccrzx")
+    target.add_instruction(RZXGate(0.0).control(3, annotated=False), name="c3rzx")
     target.add_instruction(Reset(), name="reset")
     target.add_instruction(RXXGate(0.0), name="rxx")
+    target.add_instruction(RXXGate(0.0).control(1, annotated=False), name="crxx")
+    target.add_instruction(RXXGate(0.0).control(2, annotated=False), name="ccrxx")
+    target.add_instruction(RXXGate(0.0).control(3, annotated=False), name="c3rxx")
     target.add_instruction(RYYGate(0.0), name="ryy")
+    target.add_instruction(RYYGate(0.0).control(1, annotated=False), name="cryy")
+    target.add_instruction(RYYGate(0.0).control(2, annotated=False), name="ccryy")
+    target.add_instruction(RYYGate(0.0).control(3, annotated=False), name="c3ryy")
     target.add_instruction(RZZGate(0.0), name="rzz")
+    target.add_instruction(RZZGate(0.0).control(1, annotated=False), name="crzz")
+    target.add_instruction(RZZGate(0.0).control(2, annotated=False), name="ccrzz")
+    target.add_instruction(RZZGate(0.0).control(3, annotated=False), name="c3rzz")
     target.add_instruction(SGate(), name="s")
     target.add_instruction(SdgGate(), name="sdg")
     target.add_instruction(SXGate(), name="sx")
@@ -917,6 +929,63 @@ class RocQuantumBackend(BackendV2):
 
         return True
 
+    def _apply_controlled_pauli_rotation_gate(self, controls, targets, pauli_word, theta):
+        if not controls:
+            return self._apply_pauli_rotation_gate(targets, pauli_word, theta)
+        if len(targets) != len(pauli_word):
+            raise ValueError("Controlled Pauli rotation target count must match the Pauli word.")
+
+        for target, pauli in zip(targets, pauli_word):
+            if pauli == "X":
+                self._runtime.apply_operation("h", [target])
+            elif pauli == "Y":
+                self._runtime.apply_operation("rx", [target], [cmath.pi / 2])
+            elif pauli != "Z":
+                raise ValueError("Controlled Pauli rotations may only contain X, Y, or Z.")
+
+        control_count = len(controls)
+        for subset_size in range(control_count + 1):
+            for subset in combinations(controls, subset_size):
+                angle = ((-1) ** subset_size) * theta / (1 << control_count)
+                self._apply_multirz_gate(list(subset) + list(targets), angle)
+
+        for target, pauli in zip(targets, pauli_word):
+            if pauli == "X":
+                self._runtime.apply_operation("h", [target])
+            elif pauli == "Y":
+                self._runtime.apply_operation("rx", [target], [-cmath.pi / 2])
+
+        return True
+
+    def _apply_controlled_pauli_rotation_gate_batch(self, controls, targets, pauli_word, thetas):
+        if not controls:
+            return self._apply_pauli_rotation_gate_batch(targets, pauli_word, thetas)
+        if len(targets) != len(pauli_word):
+            raise ValueError("Controlled Pauli rotation target count must match the Pauli word.")
+
+        for target, pauli in zip(targets, pauli_word):
+            if pauli == "X":
+                self._runtime.apply_operation("h", [target])
+            elif pauli == "Y":
+                self._runtime.apply_operation("rx", [target], [cmath.pi / 2])
+            elif pauli != "Z":
+                raise ValueError("Controlled Pauli rotations may only contain X, Y, or Z.")
+
+        control_count = len(controls)
+        for subset_size in range(control_count + 1):
+            scale = ((-1) ** subset_size) / (1 << control_count)
+            scaled_thetas = [scale * theta for theta in thetas]
+            for subset in combinations(controls, subset_size):
+                self._apply_multirz_gate_batch(list(subset) + list(targets), scaled_thetas)
+
+        for target, pauli in zip(targets, pauli_word):
+            if pauli == "X":
+                self._runtime.apply_operation("h", [target])
+            elif pauli == "Y":
+                self._runtime.apply_operation("rx", [target], [-cmath.pi / 2])
+
+        return True
+
     def _apply_rxx_gate(self, q_indices, theta):
         if len(q_indices) != 2:
             raise ValueError("Qiskit rxx gate requires exactly two qubits.")
@@ -1459,10 +1528,10 @@ class RocQuantumBackend(BackendV2):
         num_controls = int(getattr(op, "num_ctrl_qubits", 0))
         base_gate = getattr(op, "base_gate", None)
         base_name = getattr(base_gate, "name", None)
-        target_count = 2 if base_name in {"dcx", "ecr", "iswap", "swap"} else 1
+        target_count = 2 if base_name in {"dcx", "ecr", "iswap", "rxx", "ryy", "rzz", "rzx", "swap"} else 1
         if num_controls < 1 or len(q_indices) != num_controls + target_count:
             return False
-        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx", "dcx", "ecr", "iswap", "swap", "u1", "u2", "u3", "u"}:
+        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx", "dcx", "ecr", "iswap", "rxx", "ryy", "rzz", "rzx", "swap", "u1", "u2", "u3", "u"}:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
@@ -1523,6 +1592,20 @@ class RocQuantumBackend(BackendV2):
                     theta,
                     phi,
                     include_global_phase=include_global_phase,
+                )
+            elif base_name in {"rxx", "ryy", "rzz", "rzx"}:
+                (theta,) = normalize_params(op.params)
+                pauli_word = {
+                    "rxx": "XX",
+                    "ryy": "YY",
+                    "rzz": "ZZ",
+                    "rzx": "ZX",
+                }[base_name]
+                self._apply_controlled_pauli_rotation_gate(
+                    controls,
+                    targets,
+                    pauli_word,
+                    theta,
                 )
             elif base_name == "p":
                 (theta,) = normalize_params(op.params)
@@ -1762,6 +1845,43 @@ class RocQuantumBackend(BackendV2):
                 self._runtime.apply_operation("x", [control])
                 flipped.append(control)
             self._apply_multi_controlled_r_gate_batch(controls + [target], thetas, phis)
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+            flipped.clear()
+            return True
+        finally:
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+
+    def _apply_controlled_two_qubit_rotation_gate_batch(self, op, q_indices, thetas):
+        num_controls = int(getattr(op, "num_ctrl_qubits", 0))
+        base_gate = getattr(op, "base_gate", None)
+        base_name = getattr(base_gate, "name", None)
+        if num_controls < 1 or len(q_indices) != num_controls + 2 or base_name not in {"rxx", "ryy", "rzz", "rzx"}:
+            return False
+
+        ctrl_state = getattr(op, "ctrl_state", None)
+        ctrl_state = (1 << num_controls) - 1 if ctrl_state is None else int(ctrl_state)
+        controls = list(q_indices[:num_controls])
+        targets = list(q_indices[num_controls:])
+        open_controls = [
+            control
+            for control_index, control in enumerate(controls)
+            if not ((ctrl_state >> control_index) & 1)
+        ]
+        pauli_word = {
+            "rxx": "XX",
+            "ryy": "YY",
+            "rzz": "ZZ",
+            "rzx": "ZX",
+        }[base_name]
+
+        flipped = []
+        try:
+            for control in open_controls:
+                self._runtime.apply_operation("x", [control])
+                flipped.append(control)
+            self._apply_controlled_pauli_rotation_gate_batch(controls, targets, pauli_word, thetas)
             for control in reversed(flipped):
                 self._runtime.apply_operation("x", [control])
             flipped.clear()
@@ -2304,6 +2424,9 @@ class RocQuantumBackend(BackendV2):
             ):
                 thetas = [params[0] for params in normalized_params_by_circuit]
                 if self._apply_controlled_global_phase_gate_batch(reference_op, q_indices, thetas):
+                    touched_qubits.update(q_indices)
+                    continue
+                if self._apply_controlled_two_qubit_rotation_gate_batch(reference_op, q_indices, thetas):
                     touched_qubits.update(q_indices)
                     continue
                 if self._apply_controlled_base_gate_batch(reference_op, q_indices, thetas):
