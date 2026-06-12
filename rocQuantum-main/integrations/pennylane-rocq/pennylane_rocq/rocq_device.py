@@ -3715,8 +3715,7 @@ class RocQDevice(QubitDevice):
         if observable.name == "Hermitian":
             try:
                 matrix, targets = _hermitian_matrix_and_targets(observable, self.wire_map)
-                mean = self._runtime.expectation_matrix(matrix, targets)
-                second_moment = self._runtime.expectation_matrix(matrix @ matrix, targets)
+                mean, second_moment = self._runtime.expectation_matrix_moments(matrix, targets)
             except (NotImplementedError, RuntimeError):
                 return super().var(observable, shot_range=shot_range, bin_size=bin_size)
             return _real_measurement_result(second_moment - mean * mean, "Variance")

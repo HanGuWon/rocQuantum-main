@@ -107,6 +107,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def expectation_pauli_string_batch", source)
         self.assertIn("def apply_operation_batch", source)
         self.assertIn("def expectation_matrix(self, matrix", source)
+        self.assertIn("def expectation_matrix_moments", source)
         self.assertIn("def set_statevector", source)
         self.assertIn("def supports_adjoint_jacobian", source)
         self.assertIn("def adjoint_jacobian", source)

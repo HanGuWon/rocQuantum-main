@@ -4105,6 +4105,29 @@ def test_pennylane_hermitian_observable_uses_statevector_fallback(monkeypatch):
     assert sim.statevector_reads == 1
 
 
+def test_pennylane_hermitian_var_uses_single_runtime_statevector_fallback(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.Hermitian(np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128), wires=0)
+
+    @qml.qnode(dev)
+    def hermitian_var_circuit():
+        return qml.var(observable)
+
+    assert hermitian_var_circuit() == pytest.approx(1.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == []
+    assert sim.matrix_expectations == []
+    assert sim.statevector_reads == 1
+
+
 def test_pennylane_hermitian_expval_prefers_native_matrix_expectation(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -6550,6 +6573,33 @@ def test_runtime_dense_expectation_falls_back_to_statevector():
     runtime = RocQuantumRuntime(simulator)
 
     assert runtime.expectation_matrix(np.array([[0.0, 1.0], [1.0, 0.0]]), [0]) == pytest.approx(1.0)
+    assert simulator.statevector_reads == 1
+
+
+def test_runtime_dense_expectation_moments_fallback_reads_state_once():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _StateOnlySimulator:
+        def __init__(self):
+            self.statevector_reads = 0
+
+        def batch_size(self):
+            return 1
+
+        def expectation_matrix(self, matrix, targets):
+            raise NotImplementedError("native dense expectation disabled")
+
+        def get_statevector(self):
+            self.statevector_reads += 1
+            return np.array([1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0)], dtype=np.complex128)
+
+    simulator = _StateOnlySimulator()
+    runtime = RocQuantumRuntime(simulator)
+
+    mean, second_moment = runtime.expectation_matrix_moments(np.array([[0.0, 1.0], [1.0, 0.0]]), [0])
+
+    assert mean == pytest.approx(1.0)
+    assert second_moment == pytest.approx(1.0)
     assert simulator.statevector_reads == 1
 
 

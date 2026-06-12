@@ -903,10 +903,7 @@ class RocQuantumRuntime:
             dtype=float,
         )
 
-    def expectation_matrix(self, matrix: object, targets: Iterable[int]) -> complex:
-        normalized_targets = normalize_targets(targets)
-        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
-
+    def _native_expectation_matrix(self, normalized_matrix, normalized_targets):
         def _native_expectation_unavailable(exc: Exception) -> bool:
             message = str(exc)
             return isinstance(exc, NotImplementedError) or "status 5" in message
@@ -927,10 +924,40 @@ class RocQuantumRuntime:
                 if not _native_expectation_unavailable(exc):
                     raise
 
+        return None
+
+    def expectation_matrix(self, matrix: object, targets: Iterable[int]) -> complex:
+        normalized_targets = normalize_targets(targets)
+        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+
+        native_result = self._native_expectation_matrix(normalized_matrix, normalized_targets)
+        if native_result is not None:
+            return native_result
+
         if self.batch_size() != 1:
             raise NotImplementedError("Use expectation_matrix_batch() for batched dense matrix fallback.")
 
         return expectation_matrix_from_statevector(self.statevector(), normalized_matrix, normalized_targets)
+
+    def expectation_matrix_moments(self, matrix: object, targets: Iterable[int]) -> tuple[complex, complex]:
+        normalized_targets = normalize_targets(targets)
+        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+        squared_matrix = np.ascontiguousarray(normalized_matrix @ normalized_matrix)
+
+        mean = self._native_expectation_matrix(normalized_matrix, normalized_targets)
+        if mean is not None:
+            second_moment = self._native_expectation_matrix(squared_matrix, normalized_targets)
+            if second_moment is not None:
+                return mean, second_moment
+
+        if self.batch_size() != 1:
+            raise NotImplementedError("Use expectation_matrix_batch() for batched dense matrix moments.")
+
+        state = self.statevector()
+        return (
+            expectation_matrix_from_statevector(state, normalized_matrix, normalized_targets),
+            expectation_matrix_from_statevector(state, squared_matrix, normalized_targets),
+        )
 
     def expectation_matrix_batch(self, matrix: object, targets: Iterable[int]) -> np.ndarray:
         normalized_targets = normalize_targets(targets)
