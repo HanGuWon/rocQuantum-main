@@ -300,6 +300,8 @@ def _instruction_target(num_qubits):
     target.add_instruction(TdgGate().control(2, annotated=False), name="cctdg")
     target.add_instruction(TdgGate().control(3, annotated=False), name="c3tdg")
     target.add_instruction(CSwapGate(), name="cswap")
+    target.add_instruction(SwapGate().control(2, annotated=False), name="ccswap")
+    target.add_instruction(SwapGate().control(3, annotated=False), name="c3swap")
     target.add_instruction(CXGate(), name="cx")
     target.add_instruction(CZGate(), name="cz")
     target.add_instruction(CU1Gate(0.0), name="cu1")
@@ -1300,19 +1302,35 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("rz", [target], [-quarter_pi])
         self._runtime.apply_operation("h", [target])
 
+    def _apply_multi_controlled_swap_gate(self, q_indices):
+        if len(q_indices) < 3:
+            raise ValueError("Qiskit controlled-swap gate requires at least three qubits.")
+
+        controls = list(q_indices[:-2])
+        left, right = q_indices[-2:]
+        if len(controls) == 1:
+            self._runtime.apply_operation("cswap", [controls[0], left, right])
+            return
+
+        self._runtime.apply_operation("mcx", controls + [left, right])
+        self._runtime.apply_operation("mcx", controls + [right, left])
+        self._runtime.apply_operation("mcx", controls + [left, right])
+
     def _apply_controlled_base_gate(self, op, q_indices, *, include_global_phase):
         num_controls = int(getattr(op, "num_ctrl_qubits", 0))
         base_gate = getattr(op, "base_gate", None)
         base_name = getattr(base_gate, "name", None)
-        if num_controls < 1 or len(q_indices) != num_controls + 1:
+        target_count = 2 if base_name == "swap" else 1
+        if num_controls < 1 or len(q_indices) != num_controls + target_count:
             return False
-        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx", "u1", "u2", "u3", "u"}:
+        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx", "swap", "u1", "u2", "u3", "u"}:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
         ctrl_state = (1 << num_controls) - 1 if ctrl_state is None else int(ctrl_state)
         controls = list(q_indices[:num_controls])
-        target = q_indices[num_controls]
+        targets = list(q_indices[num_controls:])
+        target = targets[0]
         open_controls = [
             control
             for control_index, control in enumerate(controls)
@@ -1416,6 +1434,8 @@ class RocQuantumBackend(BackendV2):
                         include_global_phase=include_global_phase,
                     )
                     self._runtime.apply_operation("h", [target])
+            elif base_name == "swap":
+                self._apply_multi_controlled_swap_gate(controls + targets)
             elif base_name == "u1":
                 (theta,) = normalize_params(op.params)
                 if len(controls) == 1:
