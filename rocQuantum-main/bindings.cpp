@@ -25,6 +25,7 @@ struct AdjointOperationPayload {
     std::vector<unsigned> wires;
     std::vector<double> params;
     std::vector<int> param_indices;
+    std::vector<double> param_derivative_scales;
     std::vector<int> trainable_param_indices;
     std::vector<int> trainable_param_positions;
 };
@@ -145,6 +146,17 @@ std::vector<AdjointOperationPayload> parse_adjoint_operations(
         payload.params = required_dict_item(op, "params", "adjoint operation").cast<std::vector<double>>();
         payload.param_indices =
             required_dict_item(op, "param_indices", "adjoint operation").cast<std::vector<int>>();
+        if (dict_contains(op, "param_derivative_scales")) {
+            payload.param_derivative_scales =
+                py::reinterpret_borrow<py::object>(op[py::str("param_derivative_scales")])
+                    .cast<std::vector<double>>();
+        } else {
+            payload.param_derivative_scales.assign(payload.param_indices.size(), 1.0);
+        }
+        if (payload.param_derivative_scales.size() != payload.param_indices.size()) {
+            throw std::invalid_argument(
+                "adjoint operation param_derivative_scales and param_indices lengths differ.");
+        }
 
         if (dict_contains(op, "trainable_param_indices")) {
             payload.trainable_param_indices =
@@ -649,11 +661,21 @@ py::array_t<double> compute_binding_adjoint_jacobian(
                     amplitude *= std::complex<double>{0.0, -0.5};
                 }
                 const double contribution = 2.0 * std::real(inner_product(lambda, generator_state));
-                for (int param_index : operation.trainable_param_indices) {
+                for (std::size_t trainable_idx = 0; trainable_idx < operation.trainable_param_indices.size();
+                     ++trainable_idx) {
+                    const int param_index = operation.trainable_param_indices[trainable_idx];
                     auto column_it = trainable_columns.find(param_index);
                     if (column_it != trainable_columns.end()) {
+                        const int param_position = operation.trainable_param_positions[trainable_idx];
+                        if (param_position < 0 ||
+                            static_cast<std::size_t>(param_position) >= operation.param_derivative_scales.size()) {
+                            throw std::invalid_argument(
+                                "adjoint operation trainable_param_positions entry is out of range.");
+                        }
+                        const double derivative_scale =
+                            operation.param_derivative_scales[static_cast<std::size_t>(param_position)];
                         out(static_cast<py::ssize_t>(observable_idx),
-                            static_cast<py::ssize_t>(column_it->second)) += contribution;
+                            static_cast<py::ssize_t>(column_it->second)) += derivative_scale * contribution;
                     }
                 }
             }

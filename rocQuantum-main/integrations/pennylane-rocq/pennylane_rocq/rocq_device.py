@@ -2698,7 +2698,7 @@ class RocQDevice(QubitDevice):
         payloads = []
         parameter_index = 0
 
-        def append_payload(name, rocq_name, wire_indices, params, param_indices):
+        def append_payload(name, rocq_name, wire_indices, params, param_indices, param_derivative_scales=None):
             trainable_param_indices = [
                 param_index for param_index in param_indices if param_index in trainable_param_set
             ]
@@ -2707,17 +2707,58 @@ class RocQDevice(QubitDevice):
                 for position, param_index in enumerate(param_indices)
                 if param_index in trainable_param_set
             ]
-            payloads.append(
-                {
-                    "name": name,
-                    "rocq_name": rocq_name,
-                    "wires": wire_indices,
-                    "params": params,
-                    "param_indices": param_indices,
-                    "trainable_param_indices": trainable_param_indices,
-                    "trainable_param_positions": trainable_param_positions,
-                }
-            )
+            payload = {
+                "name": name,
+                "rocq_name": rocq_name,
+                "wires": wire_indices,
+                "params": params,
+                "param_indices": param_indices,
+                "trainable_param_indices": trainable_param_indices,
+                "trainable_param_positions": trainable_param_positions,
+            }
+            if param_derivative_scales is not None:
+                payload["param_derivative_scales"] = param_derivative_scales
+            payloads.append(payload)
+
+        def append_fixed(name, rocq_name, wire_indices, params=None):
+            append_payload(name, rocq_name, wire_indices, list(params or []), [])
+
+        def append_scaled(name, rocq_name, wire_indices, param, param_index, derivative_scale):
+            scales = None if derivative_scale == 1.0 else [float(derivative_scale)]
+            append_payload(name, rocq_name, wire_indices, [param], [param_index], scales)
+
+        def append_cy(wire_indices):
+            control, target = wire_indices
+            append_fixed("Sdg", "SDG", [target])
+            append_fixed("CNOT", "CNOT", [control, target])
+            append_fixed("S", "S", [target])
+
+        def append_multirz(wire_indices, theta, param_index, derivative_scale=1.0):
+            if not wire_indices:
+                return False
+            if len(wire_indices) == 1:
+                append_scaled("RZ", "RZ", [wire_indices[0]], theta, param_index, derivative_scale)
+                return True
+
+            target = wire_indices[-1]
+            controls = list(wire_indices[:-1])
+            for control in controls:
+                append_fixed("CNOT", "CNOT", [control, target])
+            append_scaled("RZ", "RZ", [target], theta, param_index, derivative_scale)
+            for control in reversed(controls):
+                append_fixed("CNOT", "CNOT", [control, target])
+            return True
+
+        def append_paulirot_basis_change(active_terms, inverse=False):
+            for wire_index, pauli in active_terms:
+                if pauli == "X":
+                    append_fixed("Hadamard", "H", [wire_index])
+                elif pauli == "Y":
+                    angle = -np.pi / 2 if inverse else np.pi / 2
+                    append_fixed("RX", "RX", [wire_index], [angle])
+                elif pauli != "Z":
+                    return False
+            return True
 
         for op in tape.operations:
             if op.name in {"Identity", "Snapshot"}:
@@ -2776,6 +2817,89 @@ class RocQDevice(QubitDevice):
                 append_payload("ControlledPhaseShift", "CP", wire_indices, params, param_indices)
                 for wire_index in reversed(flipped_wires):
                     append_payload("PauliX", "X", [wire_index], [], [])
+                continue
+
+            if op.name == "MultiRZ":
+                if len(params) != 1 or not append_multirz(wire_indices, params[0], param_indices[0]):
+                    return None
+                continue
+
+            if op.name == "PauliRot":
+                if len(params) != 1:
+                    return None
+                try:
+                    active_terms = _paulirot_active_terms(wire_indices, _paulirot_pauli_word(op))
+                except ValueError:
+                    return None
+                if not active_terms:
+                    continue
+                if not append_paulirot_basis_change(active_terms):
+                    return None
+                if not append_multirz([wire_index for wire_index, _ in active_terms], params[0], param_indices[0]):
+                    return None
+                if not append_paulirot_basis_change(active_terms, inverse=True):
+                    return None
+                continue
+
+            if op.name == "IsingXX":
+                if len(params) != 1 or len(wire_indices) != 2:
+                    return None
+                control, target = wire_indices
+                append_fixed("CNOT", "CNOT", [control, target])
+                append_scaled("RX", "RX", [control], params[0], param_indices[0], 1.0)
+                append_fixed("CNOT", "CNOT", [control, target])
+                continue
+
+            if op.name == "IsingYY":
+                if len(params) != 1 or len(wire_indices) != 2:
+                    return None
+                for wire_index in wire_indices:
+                    append_fixed("RX", "RX", [wire_index], [np.pi / 2])
+                if not append_multirz(wire_indices, params[0], param_indices[0]):
+                    return None
+                for wire_index in wire_indices:
+                    append_fixed("RX", "RX", [wire_index], [-np.pi / 2])
+                continue
+
+            if op.name == "IsingZZ":
+                if len(params) != 1 or len(wire_indices) != 2:
+                    return None
+                if not append_multirz(wire_indices, params[0], param_indices[0]):
+                    return None
+                continue
+
+            if op.name == "IsingXY":
+                if len(params) != 1 or len(wire_indices) != 2:
+                    return None
+                left, right = wire_indices
+                append_fixed("Hadamard", "H", [left])
+                append_cy(wire_indices)
+                append_scaled("RY", "RY", [left], params[0] / 2, param_indices[0], 0.5)
+                append_scaled("RX", "RX", [right], -params[0] / 2, param_indices[0], -0.5)
+                append_cy(wire_indices)
+                append_fixed("Hadamard", "H", [left])
+                continue
+
+            if op.name == "SingleExcitation":
+                if len(params) != 1 or len(wire_indices) != 2:
+                    return None
+                left, right = wire_indices
+                append_fixed("Hadamard", "H", [left])
+                append_fixed("CNOT", "CNOT", [left, right])
+                append_scaled("RY", "RY", [left], -params[0] / 2, param_indices[0], -0.5)
+                append_scaled("RY", "RY", [right], -params[0] / 2, param_indices[0], -0.5)
+                append_fixed("CNOT", "CNOT", [left, right])
+                append_fixed("Hadamard", "H", [left])
+                continue
+
+            if op.name == "PSWAP":
+                if len(params) != 1 or len(wire_indices) != 2:
+                    return None
+                left, right = wire_indices
+                append_fixed("SWAP", "SWAP", [left, right])
+                append_fixed("CNOT", "CNOT", [left, right])
+                append_scaled("PhaseShift", "P", [right], params[0], param_indices[0], 1.0)
+                append_fixed("CNOT", "CNOT", [left, right])
                 continue
 
             append_payload(

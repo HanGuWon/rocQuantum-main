@@ -6619,6 +6619,102 @@ def test_pennylane_native_adjoint_lowers_phase_payloads(monkeypatch):
     ]
 
 
+def test_pennylane_native_adjoint_lowers_decomposition_payloads_with_scales(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=4)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.MultiRZ(0.1, wires=[0, 1, 2]),
+            qml.PauliRot(0.2, "XYZ", wires=[0, 1, 2]),
+            qml.IsingXY(0.3, wires=[0, 1]),
+            qml.SingleExcitation(0.4, wires=[0, 1]),
+            qml.PSWAP(0.5, wires=[0, 1]),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0, 1, 2, 3, 4]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0, 1, 2, 3, 4]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert [op["rocq_name"] for op in operations[:5]] == ["CNOT", "CNOT", "RZ", "CNOT", "CNOT"]
+    assert operations[2] == {
+        "name": "RZ",
+        "rocq_name": "RZ",
+        "wires": [2],
+        "params": [0.1],
+        "param_indices": [0],
+        "trainable_param_indices": [0],
+        "trainable_param_positions": [0],
+    }
+
+    pauli_rot_rz = [
+        op
+        for op in operations
+        if op["rocq_name"] == "RZ" and op["wires"] == [2] and op["param_indices"] == [1]
+    ]
+    assert len(pauli_rot_rz) == 1
+    assert pauli_rot_rz[0]["params"] == [0.2]
+    assert "param_derivative_scales" not in pauli_rot_rz[0]
+
+    scaled_ops = [
+        {
+            "rocq_name": op["rocq_name"],
+            "wires": op["wires"],
+            "params": op["params"],
+            "param_indices": op["param_indices"],
+            "param_derivative_scales": op.get("param_derivative_scales"),
+        }
+        for op in operations
+        if op.get("param_derivative_scales") is not None
+    ]
+    assert scaled_ops == [
+        {
+            "rocq_name": "RY",
+            "wires": [0],
+            "params": [0.15],
+            "param_indices": [2],
+            "param_derivative_scales": [0.5],
+        },
+        {
+            "rocq_name": "RX",
+            "wires": [1],
+            "params": [-0.15],
+            "param_indices": [2],
+            "param_derivative_scales": [-0.5],
+        },
+        {
+            "rocq_name": "RY",
+            "wires": [0],
+            "params": [-0.2],
+            "param_indices": [3],
+            "param_derivative_scales": [-0.5],
+        },
+        {
+            "rocq_name": "RY",
+            "wires": [1],
+            "params": [-0.2],
+            "param_indices": [3],
+            "param_derivative_scales": [-0.5],
+        },
+    ]
+    assert any(
+        op["rocq_name"] == "P"
+        and op["wires"] == [1]
+        and op["params"] == [0.5]
+        and op["param_indices"] == [4]
+        for op in operations
+    )
+
+
 def test_pennylane_native_adjoint_accepts_hermitian_payload(monkeypatch):
     pytest.importorskip("pennylane")
 
