@@ -944,6 +944,31 @@ class RocQuantumRuntime:
 
         return None
 
+    def _native_expectation_matrix_moments(self, normalized_matrix, normalized_targets):
+        def _native_expectation_unavailable(exc: Exception) -> bool:
+            message = str(exc)
+            return isinstance(exc, NotImplementedError) or "status 5" in message
+
+        native = getattr(self.simulator, "expectation_matrix_moments", None)
+        if callable(native):
+            try:
+                mean, second_moment = native(normalized_matrix, normalized_targets)
+                return complex(mean), complex(second_moment)
+            except Exception as exc:
+                if not _native_expectation_unavailable(exc):
+                    raise
+
+        legacy = getattr(self.simulator, "ExpectationMatrixMoments", None)
+        if callable(legacy):
+            try:
+                mean, second_moment = legacy(normalized_matrix, normalized_targets)
+                return complex(mean), complex(second_moment)
+            except Exception as exc:
+                if not _native_expectation_unavailable(exc):
+                    raise
+
+        return None
+
     def expectation_matrix(self, matrix: object, targets: Iterable[int]) -> complex:
         normalized_targets = normalize_targets(targets)
         normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
@@ -960,13 +985,18 @@ class RocQuantumRuntime:
     def expectation_matrix_moments(self, matrix: object, targets: Iterable[int]) -> tuple[complex, complex]:
         normalized_targets = normalize_targets(targets)
         normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
-        squared_matrix = np.ascontiguousarray(normalized_matrix @ normalized_matrix)
 
+        native_moments = self._native_expectation_matrix_moments(normalized_matrix, normalized_targets)
+        if native_moments is not None:
+            return native_moments
+
+        squared_matrix = np.ascontiguousarray(normalized_matrix @ normalized_matrix)
         mean = self._native_expectation_matrix(normalized_matrix, normalized_targets)
-        if mean is not None:
-            second_moment = self._native_expectation_matrix(squared_matrix, normalized_targets)
-            if second_moment is not None:
-                return mean, second_moment
+        second_moment = (
+            self._native_expectation_matrix(squared_matrix, normalized_targets) if mean is not None else None
+        )
+        if mean is not None and second_moment is not None:
+            return mean, second_moment
 
         if self.batch_size() != 1:
             raise NotImplementedError("Use expectation_matrix_batch() for batched dense matrix moments.")
@@ -1014,6 +1044,44 @@ class RocQuantumRuntime:
                 for state in self.statevectors()
             ],
             dtype=np.complex128,
+        )
+
+    def expectation_matrix_moments_batch(self, matrix: object, targets: Iterable[int]) -> tuple[np.ndarray, np.ndarray]:
+        normalized_targets = normalize_targets(targets)
+        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+
+        def _native_expectation_unavailable(exc: Exception) -> bool:
+            message = str(exc)
+            return isinstance(exc, NotImplementedError) or "status 5" in message
+
+        native = getattr(self.simulator, "expectation_matrix_moments_batch", None)
+        if callable(native):
+            try:
+                means, second_moments = native(normalized_matrix, normalized_targets)
+                return (
+                    np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
+                    np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
+                )
+            except Exception as exc:
+                if not _native_expectation_unavailable(exc):
+                    raise
+
+        legacy = getattr(self.simulator, "ExpectationMatrixMomentsBatch", None)
+        if callable(legacy):
+            try:
+                means, second_moments = legacy(normalized_matrix, normalized_targets)
+                return (
+                    np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
+                    np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
+                )
+            except Exception as exc:
+                if not _native_expectation_unavailable(exc):
+                    raise
+
+        squared_matrix = np.ascontiguousarray(normalized_matrix @ normalized_matrix)
+        return (
+            self.expectation_matrix_batch(normalized_matrix, normalized_targets),
+            self.expectation_matrix_batch(squared_matrix, normalized_targets),
         )
 
     def sparse_hamiltonian_moments(

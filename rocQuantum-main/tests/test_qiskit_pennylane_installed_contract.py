@@ -6994,6 +6994,76 @@ def test_runtime_dense_expectation_moments_fallback_reads_state_once():
     assert simulator.statevector_reads == 1
 
 
+def test_runtime_dense_expectation_moments_prefers_native_hook():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _NativeMomentsSimulator:
+        def __init__(self):
+            self.calls = []
+
+        def batch_size(self):
+            return 1
+
+        def expectation_matrix_moments(self, matrix, targets):
+            self.calls.append((np.asarray(matrix, dtype=np.complex128).copy(), tuple(targets)))
+            return 0.25 + 0.0j, 1.25 + 0.0j
+
+        def expectation_matrix(self, matrix, targets):
+            raise AssertionError("single expectation should not be used when moments hook exists")
+
+        def get_statevector(self):
+            raise AssertionError("statevector fallback should not be used when moments hook exists")
+
+    simulator = _NativeMomentsSimulator()
+    runtime = RocQuantumRuntime(simulator)
+
+    mean, second_moment = runtime.expectation_matrix_moments(np.array([[1.0, 0.0], [0.0, -1.0]]), [0])
+
+    assert mean == pytest.approx(0.25)
+    assert second_moment == pytest.approx(1.25)
+    assert len(simulator.calls) == 1
+    np.testing.assert_allclose(simulator.calls[0][0], np.diag([1.0, -1.0]))
+    assert simulator.calls[0][1] == (0,)
+
+
+def test_runtime_dense_expectation_moments_batch_prefers_native_hook():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _NativeBatchMomentsSimulator:
+        def __init__(self):
+            self.calls = []
+
+        def batch_size(self):
+            return 2
+
+        def expectation_matrix_moments_batch(self, matrix, targets):
+            self.calls.append((np.asarray(matrix, dtype=np.complex128).copy(), tuple(targets)))
+            return (
+                np.array([0.25, -0.5], dtype=np.complex128),
+                np.array([1.25, 1.5], dtype=np.complex128),
+            )
+
+        def expectation_matrix_batch(self, matrix, targets):
+            raise AssertionError("batched expectation should not be used when moments hook exists")
+
+        def get_statevectors(self):
+            raise AssertionError("statevector fallback should not be used when moments hook exists")
+
+    simulator = _NativeBatchMomentsSimulator()
+    runtime = RocQuantumRuntime(simulator)
+
+    means, second_moments = runtime.expectation_matrix_moments_batch(
+        np.array([[1.0, 0.0], [0.0, -1.0]]),
+        [0],
+    )
+
+    np.testing.assert_allclose(means, np.array([0.25, -0.5]))
+    np.testing.assert_allclose(second_moments, np.array([1.25, 1.5]))
+    assert len(simulator.calls) == 1
+    np.testing.assert_allclose(simulator.calls[0][0], np.diag([1.0, -1.0]))
+    assert simulator.calls[0][1] == (0,)
+
+
 def test_runtime_sparse_moments_fall_back_to_statevector():
     from rocquantum.framework_runtime import RocQuantumRuntime
 

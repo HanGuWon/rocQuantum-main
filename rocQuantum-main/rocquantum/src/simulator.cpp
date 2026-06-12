@@ -69,6 +69,22 @@ std::vector<rocComplex> row_major_to_column_major(const std::vector<std::complex
     return out;
 }
 
+std::vector<std::complex<double>> square_matrix_row_major(
+    const std::vector<std::complex<double>>& matrix,
+    std::size_t matrix_dim) {
+    std::vector<std::complex<double>> out(matrix.size(), std::complex<double>{0.0, 0.0});
+    for (std::size_t row = 0; row < matrix_dim; ++row) {
+        for (std::size_t col = 0; col < matrix_dim; ++col) {
+            std::complex<double> value{0.0, 0.0};
+            for (std::size_t inner = 0; inner < matrix_dim; ++inner) {
+                value += matrix[row * matrix_dim + inner] * matrix[inner * matrix_dim + col];
+            }
+            out[row * matrix_dim + col] = value;
+        }
+    }
+    return out;
+}
+
 std::size_t extract_local_sparse_row(std::size_t state_index, const std::vector<unsigned>& targets) {
     std::size_t local_row = 0;
     for (std::size_t output_bit = 0; output_bit < targets.size(); ++output_bit) {
@@ -1087,6 +1103,28 @@ std::complex<double> QuantumSimulator::expectation_matrix(
     return {static_cast<double>(raw_result.x), static_cast<double>(raw_result.y)};
 }
 
+std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::expectation_matrix_moments(
+    const std::vector<std::complex<double>>& matrix,
+    const std::vector<unsigned>& targets) const {
+    if (targets.empty()) {
+        throw std::invalid_argument("expectation_matrix_moments requires at least one target qubit.");
+    }
+    if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+        throw std::invalid_argument("Too many target qubits for expectation_matrix_moments.");
+    }
+
+    const std::size_t matrix_dim = std::size_t{1} << targets.size();
+    if (matrix.size() != matrix_dim * matrix_dim) {
+        throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
+    }
+
+    const auto squared_matrix = square_matrix_row_major(matrix, matrix_dim);
+    return {
+        expectation_matrix(matrix, targets),
+        expectation_matrix(squared_matrix, targets),
+    };
+}
+
 std::vector<std::complex<double>> QuantumSimulator::expectation_matrix_batch(
     const std::vector<std::complex<double>>& matrix,
     const std::vector<unsigned>& targets) const {
@@ -1142,6 +1180,29 @@ std::vector<std::complex<double>> QuantumSimulator::expectation_matrix_batch(
         out[idx] = {static_cast<double>(raw_results[idx].x), static_cast<double>(raw_results[idx].y)};
     }
     return out;
+}
+
+std::pair<std::vector<std::complex<double>>, std::vector<std::complex<double>>>
+QuantumSimulator::expectation_matrix_moments_batch(
+    const std::vector<std::complex<double>>& matrix,
+    const std::vector<unsigned>& targets) const {
+    if (targets.empty()) {
+        throw std::invalid_argument("expectation_matrix_moments_batch requires at least one target qubit.");
+    }
+    if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+        throw std::invalid_argument("Too many target qubits for expectation_matrix_moments_batch.");
+    }
+
+    const std::size_t matrix_dim = std::size_t{1} << targets.size();
+    if (matrix.size() != matrix_dim * matrix_dim) {
+        throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
+    }
+
+    const auto squared_matrix = square_matrix_row_major(matrix, matrix_dim);
+    return {
+        expectation_matrix_batch(matrix, targets),
+        expectation_matrix_batch(squared_matrix, targets),
+    };
 }
 
 std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::sparse_hamiltonian_moments(
@@ -1485,10 +1546,23 @@ std::complex<double> QuantumSimulator::ExpectationMatrix(
     return expectation_matrix(matrix, targets);
 }
 
+std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::ExpectationMatrixMoments(
+    const std::vector<std::complex<double>>& matrix,
+    const std::vector<unsigned>& targets) const {
+    return expectation_matrix_moments(matrix, targets);
+}
+
 std::vector<std::complex<double>> QuantumSimulator::ExpectationMatrixBatch(
     const std::vector<std::complex<double>>& matrix,
     const std::vector<unsigned>& targets) const {
     return expectation_matrix_batch(matrix, targets);
+}
+
+std::pair<std::vector<std::complex<double>>, std::vector<std::complex<double>>>
+QuantumSimulator::ExpectationMatrixMomentsBatch(
+    const std::vector<std::complex<double>>& matrix,
+    const std::vector<unsigned>& targets) const {
+    return expectation_matrix_moments_batch(matrix, targets);
 }
 
 std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::SparseHamiltonianMoments(

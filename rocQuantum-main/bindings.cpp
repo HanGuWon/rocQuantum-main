@@ -286,6 +286,33 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("matrix"),
              py::arg("targets"),
              "Return <M_targets> for a dense matrix observable.")
+        .def("expectation_matrix_moments",
+             [](const rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
+                const std::vector<unsigned>& targets) {
+                 if (targets.empty()) {
+                     throw std::invalid_argument("expectation_matrix_moments requires at least one target qubit.");
+                 }
+                 if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                     throw std::invalid_argument("expectation_matrix_moments expects a square complex matrix.");
+                 }
+                 if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+                     throw std::invalid_argument("Too many target qubits for expectation_matrix_moments.");
+                 }
+
+                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
+                 if (actual_dim != expected_dim) {
+                     throw std::invalid_argument("expectation_matrix_moments dimension must be 2^len(targets).");
+                 }
+
+                 std::vector<std::complex<double>> host(actual_dim * actual_dim);
+                 std::memcpy(host.data(), matrix.data(), host.size() * sizeof(std::complex<double>));
+                 return self.expectation_matrix_moments(host, targets);
+             },
+             py::arg("matrix"),
+             py::arg("targets"),
+             "Return (<M>, <M^2>) for a dense matrix observable.")
         .def("expectation_matrix_batch",
              [](const rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
@@ -318,6 +345,43 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("matrix"),
              py::arg("targets"),
              "Return batch-major <M_targets> values for a dense matrix observable.")
+        .def("expectation_matrix_moments_batch",
+             [](const rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
+                const std::vector<unsigned>& targets) {
+                 if (targets.empty()) {
+                     throw std::invalid_argument("expectation_matrix_moments_batch requires at least one target qubit.");
+                 }
+                 if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                     throw std::invalid_argument("expectation_matrix_moments_batch expects a square complex matrix.");
+                 }
+                 if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+                     throw std::invalid_argument("Too many target qubits for expectation_matrix_moments_batch.");
+                 }
+
+                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
+                 if (actual_dim != expected_dim) {
+                     throw std::invalid_argument(
+                         "expectation_matrix_moments_batch dimension must be 2^len(targets).");
+                 }
+
+                 std::vector<std::complex<double>> host(actual_dim * actual_dim);
+                 std::memcpy(host.data(), matrix.data(), host.size() * sizeof(std::complex<double>));
+                 auto moments = self.expectation_matrix_moments_batch(host, targets);
+                 py::array_t<std::complex<double>> means(moments.first.size());
+                 py::array_t<std::complex<double>> second_moments(moments.second.size());
+                 std::memcpy(means.mutable_data(),
+                             moments.first.data(),
+                             moments.first.size() * sizeof(std::complex<double>));
+                 std::memcpy(second_moments.mutable_data(),
+                             moments.second.data(),
+                             moments.second.size() * sizeof(std::complex<double>));
+                 return py::make_tuple(means, second_moments);
+             },
+             py::arg("matrix"),
+             py::arg("targets"),
+             "Return batch-major (<M>, <M^2>) arrays for a dense matrix observable.")
         .def("sparse_hamiltonian_moments",
              [](const rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> data,
@@ -545,6 +609,32 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("matrix"),
              py::arg("targets"))
+        .def("ExpectationMatrixMoments",
+             [](const rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
+                const std::vector<unsigned>& targets) {
+                 if (targets.empty()) {
+                     throw std::invalid_argument("ExpectationMatrixMoments requires at least one target qubit.");
+                 }
+                 if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                     throw std::invalid_argument("ExpectationMatrixMoments expects a square complex matrix.");
+                 }
+                 if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+                     throw std::invalid_argument("Too many target qubits for ExpectationMatrixMoments.");
+                 }
+
+                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
+                 if (actual_dim != expected_dim) {
+                     throw std::invalid_argument("ExpectationMatrixMoments dimension must be 2^len(targets).");
+                 }
+
+                 std::vector<std::complex<double>> host(actual_dim * actual_dim);
+                 std::memcpy(host.data(), matrix.data(), host.size() * sizeof(std::complex<double>));
+                 return self.ExpectationMatrixMoments(host, targets);
+             },
+             py::arg("matrix"),
+             py::arg("targets"))
         .def("ExpectationMatrixBatch",
              [](const rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
@@ -573,6 +663,41 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                              expectations.data(),
                              expectations.size() * sizeof(std::complex<double>));
                  return result;
+             },
+             py::arg("matrix"),
+             py::arg("targets"))
+        .def("ExpectationMatrixMomentsBatch",
+             [](const rocquantum::QuantumSimulator& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
+                const std::vector<unsigned>& targets) {
+                 if (targets.empty()) {
+                     throw std::invalid_argument("ExpectationMatrixMomentsBatch requires at least one target qubit.");
+                 }
+                 if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                     throw std::invalid_argument("ExpectationMatrixMomentsBatch expects a square complex matrix.");
+                 }
+                 if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+                     throw std::invalid_argument("Too many target qubits for ExpectationMatrixMomentsBatch.");
+                 }
+
+                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
+                 if (actual_dim != expected_dim) {
+                     throw std::invalid_argument("ExpectationMatrixMomentsBatch dimension must be 2^len(targets).");
+                 }
+
+                 std::vector<std::complex<double>> host(actual_dim * actual_dim);
+                 std::memcpy(host.data(), matrix.data(), host.size() * sizeof(std::complex<double>));
+                 auto moments = self.ExpectationMatrixMomentsBatch(host, targets);
+                 py::array_t<std::complex<double>> means(moments.first.size());
+                 py::array_t<std::complex<double>> second_moments(moments.second.size());
+                 std::memcpy(means.mutable_data(),
+                             moments.first.data(),
+                             moments.first.size() * sizeof(std::complex<double>));
+                 std::memcpy(second_moments.mutable_data(),
+                             moments.second.data(),
+                             moments.second.size() * sizeof(std::complex<double>));
+                 return py::make_tuple(means, second_moments);
              },
              py::arg("matrix"),
              py::arg("targets"))

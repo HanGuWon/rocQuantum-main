@@ -50,7 +50,13 @@ public:
                                                        const std::vector<unsigned>& targets);
     std::complex<double> expectation_matrix(const std::vector<std::complex<double>>& matrix,
                                             const std::vector<unsigned>& targets) const;
+    std::pair<std::complex<double>, std::complex<double>> expectation_matrix_moments(
+        const std::vector<std::complex<double>>& matrix,
+        const std::vector<unsigned>& targets) const;
     std::vector<std::complex<double>> expectation_matrix_batch(
+        const std::vector<std::complex<double>>& matrix,
+        const std::vector<unsigned>& targets) const;
+    std::pair<std::vector<std::complex<double>>, std::vector<std::complex<double>>> expectation_matrix_moments_batch(
         const std::vector<std::complex<double>>& matrix,
         const std::vector<unsigned>& targets) const;
     std::pair<std::complex<double>, std::complex<double>> sparse_hamiltonian_moments(
@@ -99,7 +105,13 @@ public:
                                                        const std::vector<unsigned>& targets);
     std::complex<double> ExpectationMatrix(const std::vector<std::complex<double>>& matrix,
                                            const std::vector<unsigned>& targets) const;
+    std::pair<std::complex<double>, std::complex<double>> ExpectationMatrixMoments(
+        const std::vector<std::complex<double>>& matrix,
+        const std::vector<unsigned>& targets) const;
     std::vector<std::complex<double>> ExpectationMatrixBatch(
+        const std::vector<std::complex<double>>& matrix,
+        const std::vector<unsigned>& targets) const;
+    std::pair<std::vector<std::complex<double>>, std::vector<std::complex<double>>> ExpectationMatrixMomentsBatch(
         const std::vector<std::complex<double>>& matrix,
         const std::vector<unsigned>& targets) const;
     std::pair<std::complex<double>, std::complex<double>> SparseHamiltonianMoments(
