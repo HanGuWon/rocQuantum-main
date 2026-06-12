@@ -5944,6 +5944,114 @@ def test_pennylane_device_jacobian_batches_parameter_shift_tapes(monkeypatch):
     )
 
 
+def test_pennylane_device_jacobian_batches_probability_shift_tapes(monkeypatch):
+    pytest.importorskip("pennylane")
+
+    class _RYProbabilityBatchSimulator(_FakeQuantumSimulator):
+        def __init__(self, num_qubits, batch_size=1):
+            super().__init__(num_qubits, batch_size=batch_size)
+            self._reset_states()
+
+        def reset(self):
+            super().reset()
+            self._reset_states()
+
+        def _reset_states(self):
+            self._states = np.zeros((self._batch_size, 1 << self._num_qubits), dtype=np.complex128)
+            self._states[:, 0] = 1.0
+
+        def apply_gate(self, name, targets, params=None):
+            super().apply_gate(name, targets, params)
+            if name == "RY" and tuple(targets) == (0,):
+                self._apply_ry_to_batch([float((params or ())[0])])
+
+        def apply_gate_batch(self, name, targets, params_by_batch):
+            super().apply_gate_batch(name, targets, params_by_batch)
+            if name == "RY" and tuple(targets) == (0,):
+                self._apply_ry_to_batch([float(theta) for theta in params_by_batch])
+
+        def _apply_ry_to_batch(self, angles):
+            if len(angles) == 1:
+                angles = angles * self._batch_size
+            for batch_index, theta in enumerate(angles):
+                c = math.cos(theta / 2.0)
+                s = math.sin(theta / 2.0)
+                old_state = self._states[batch_index].copy()
+                self._states[batch_index, 0] = c * old_state[0] - s * old_state[1]
+                self._states[batch_index, 1] = s * old_state[0] + c * old_state[1]
+
+        def probabilities(self, qubits):
+            qubits = tuple(int(qubit) for qubit in qubits)
+            self.probability_requests.append(qubits)
+            return self._probabilities_for_state(self._states[0], qubits)
+
+        def probabilities_batch(self, qubits):
+            qubits = tuple(int(qubit) for qubit in qubits)
+            self.probability_requests.append(qubits)
+            return np.asarray(
+                [self._probabilities_for_state(state, qubits) for state in self._states],
+                dtype=float,
+            )
+
+        def _probabilities_for_state(self, state, qubits):
+            qubits = tuple(int(qubit) for qubit in qubits)
+            probabilities = np.zeros(1 << len(qubits), dtype=float)
+            for basis_index, amplitude in enumerate(state):
+                outcome = 0
+                for output_bit, qubit in enumerate(qubits):
+                    if (basis_index >> qubit) & 1:
+                        outcome |= 1 << output_bit
+                probabilities[outcome] += float(abs(amplitude) ** 2)
+            return probabilities
+
+    fake = _install_fake_binding(monkeypatch)
+    fake.QuantumSimulator = _RYProbabilityBatchSimulator
+    fake.QSim = _RYProbabilityBatchSimulator
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane import numpy as pnp
+    from pennylane.devices import ExecutionConfig
+
+    dev = qml.device("lightning.rocq", wires=1)
+    assert dev.supports_derivatives(ExecutionConfig(gradient_method="device"))
+
+    @qml.qnode(dev, diff_method="device")
+    def circuit(theta):
+        qml.RY(theta, wires=0)
+        return qml.probs(wires=[0])
+
+    theta = pnp.array(0.321, requires_grad=True)
+    expected_probabilities = np.asarray(
+        [math.cos(float(theta) / 2.0) ** 2, math.sin(float(theta) / 2.0) ** 2],
+        dtype=float,
+    )
+
+    np.testing.assert_allclose(np.asarray(circuit(theta), dtype=float), expected_probabilities)
+
+    before = len(_RYProbabilityBatchSimulator.instances)
+    jacobian = qml.jacobian(circuit)(theta)
+
+    np.testing.assert_allclose(
+        np.asarray(jacobian, dtype=float).reshape(-1),
+        [-0.5 * math.sin(float(theta)), 0.5 * math.sin(float(theta))],
+    )
+    batched_sims = [
+        sim
+        for sim in _RYProbabilityBatchSimulator.instances[before:]
+        if sim.batch_size() == 2
+    ]
+    assert batched_sims
+    sim = batched_sims[-1]
+    assert len(sim.batch_ops) == 1
+    assert sim.batch_ops[0][:2] == ("RY", (0,))
+    np.testing.assert_allclose(sim.batch_ops[0][2], (float(theta) + np.pi / 2, float(theta) - np.pi / 2))
+    assert sim.probability_requests == [(0,)]
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
     pytest.importorskip("pennylane")
 
