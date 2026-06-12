@@ -32,7 +32,18 @@ class QuantumOperator(ABC):
     def __add__(self, other):
         if isinstance(other, QuantumOperator):
             return SumOperator([self, other])
+        if isinstance(other, Number):
+            if other == 0:
+                return self
+            return SumOperator([self, _identity_operator(other)])
         raise NotImplementedError(f"Cannot add QuantumOperator to {type(other)}")
+
+    def __radd__(self, other):
+        if isinstance(other, Number):
+            if other == 0:
+                return self
+            return SumOperator([_identity_operator(other), self])
+        raise NotImplementedError(f"Cannot add {type(other)} to QuantumOperator")
 
     def __neg__(self):
         return -1 * self
@@ -40,7 +51,16 @@ class QuantumOperator(ABC):
     def __sub__(self, other):
         if isinstance(other, QuantumOperator):
             return self + (-other)
+        if isinstance(other, Number):
+            if other == 0:
+                return self
+            return self + _identity_operator(-other)
         raise NotImplementedError(f"Cannot subtract {type(other)} from QuantumOperator")
+
+    def __rsub__(self, other):
+        if isinstance(other, Number):
+            return _identity_operator(other) + (-self)
+        raise NotImplementedError(f"Cannot subtract QuantumOperator from {type(other)}")
 
     @abstractmethod
     def to_string(self) -> str:
@@ -57,6 +77,10 @@ class PauliOperator(QuantumOperator):
 
     def to_string(self) -> str:
         return f"{self.coefficient} * {self.pauli_string}"
+
+
+def _identity_operator(coefficient: Number) -> PauliOperator:
+    return PauliOperator("I", coefficient=coefficient)
 
 
 class HermitianOperator(QuantumOperator):
@@ -104,6 +128,10 @@ class SumOperator(QuantumOperator):
             return SumOperator(self._add_terms() + other._add_terms())
         if isinstance(other, QuantumOperator):
             return SumOperator(self._add_terms() + [other])
+        if isinstance(other, Number):
+            if other == 0:
+                return self
+            return SumOperator(self._add_terms() + [_identity_operator(other)])
         raise NotImplementedError
 
     def to_string(self) -> str:

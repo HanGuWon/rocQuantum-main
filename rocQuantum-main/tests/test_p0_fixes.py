@@ -143,6 +143,46 @@ class TestSumOperatorImmutability(unittest.TestCase):
         )
         self.assertIn("(0.5+0j)", operator.to_string())
 
+    def test_numeric_constants_expand_to_identity_terms(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = 0.5 + PauliOperator("X0") - 0.25 * PauliOperator("Z1")
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.5 + 0j, []),
+                (1 + 0j, [("X", 0)]),
+                (-0.25 + 0j, [("Z", 1)]),
+            ],
+        )
+
+    def test_numeric_left_subtraction_expands_to_identity_term(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = 1.5 - PauliOperator("Z0")
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1.5 + 0j, []),
+                (-1 + 0j, [("Z", 0)]),
+            ],
+        )
+
+    def test_python_sum_works_for_operator_terms(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = sum([0.25 * PauliOperator("X0"), 0.75 * PauliOperator("Z1")])
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.25 + 0j, [("X", 0)]),
+                (0.75 + 0j, [("Z", 1)]),
+            ],
+        )
+
 
 # ===================================================================
 # 3. Expectation Value — No Placeholder, No Kernel Execution

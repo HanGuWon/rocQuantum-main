@@ -102,6 +102,19 @@ class TestVqeSolverContract(unittest.TestCase):
 
 
 class TestQaoaHelpers(unittest.TestCase):
+    def test_observable_arithmetic_accepts_numeric_identity_constants(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = 0.5 - 0.5 * PauliOperator("Z0 Z1")
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.5 + 0j, []),
+                (-0.5 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
+
     def test_maxcut_qaoa_kernel_emits_supported_ops(self):
         from rocquantum.solvers.qaoa import make_maxcut_qaoa_kernel, maxcut_cost_operator
         from rocq.operator import iter_pauli_terms
