@@ -312,6 +312,49 @@ std::vector<std::complex<double>> apply_pauli_to_state(
     return out;
 }
 
+std::vector<std::complex<double>> apply_controlled_pauli_to_state(
+    const std::vector<std::complex<double>>& state,
+    char pauli,
+    unsigned control,
+    unsigned target,
+    unsigned num_qubits) {
+    if (control >= num_qubits || target >= num_qubits) {
+        throw std::invalid_argument("Controlled Pauli generator qubit exceeds simulator qubit count.");
+    }
+    if (control == target) {
+        throw std::invalid_argument("Controlled Pauli generator control and target must differ.");
+    }
+
+    std::vector<std::complex<double>> out(state.size(), std::complex<double>{0.0, 0.0});
+    const std::complex<double> imag{0.0, 1.0};
+    const std::size_t control_mask = std::size_t{1} << control;
+    const std::size_t target_mask = std::size_t{1} << target;
+    pauli = static_cast<char>(std::toupper(static_cast<unsigned char>(pauli)));
+
+    for (std::size_t basis = 0; basis < state.size(); ++basis) {
+        if ((basis & control_mask) == 0) {
+            continue;
+        }
+        const bool target_bit_is_one = (basis & target_mask) != 0;
+        std::size_t mapped_basis = basis;
+        std::complex<double> phase{1.0, 0.0};
+        if (pauli == 'X') {
+            mapped_basis ^= target_mask;
+        } else if (pauli == 'Y') {
+            phase *= target_bit_is_one ? -imag : imag;
+            mapped_basis ^= target_mask;
+        } else if (pauli == 'Z') {
+            if (target_bit_is_one) {
+                phase *= -1.0;
+            }
+        } else {
+            throw std::invalid_argument("Unsupported controlled Pauli generator character.");
+        }
+        out[mapped_basis] += phase * state[basis];
+    }
+    return out;
+}
+
 std::size_t extract_local_basis_index(std::size_t basis, const std::vector<unsigned>& targets, unsigned num_qubits) {
     std::size_t local_index = 0;
     for (std::size_t bit = 0; bit < targets.size(); ++bit) {
@@ -511,21 +554,42 @@ char trainable_rotation_generator(const AdjointOperationPayload& operation) {
         return '\0';
     }
     if (operation.trainable_param_positions.size() != 1 || operation.trainable_param_positions[0] != 0 ||
-        operation.params.size() != 1 || operation.wires.size() != 1) {
+        operation.params.size() != 1) {
         throw_adjoint_not_implemented(
-            "binding adjoint_jacobian currently supports one trainable scalar parameter per RX/RY/RZ operation.");
+            "binding adjoint_jacobian currently supports one trainable scalar rotation parameter per operation.");
     }
-    if (normalized == "RX") {
+    if ((normalized == "RX" || normalized == "RY" || normalized == "RZ") && operation.wires.size() != 1) {
+        throw_adjoint_not_implemented("single-qubit adjoint rotations require one target wire.");
+    }
+    if ((normalized == "CRX" || normalized == "CRY" || normalized == "CRZ") && operation.wires.size() != 2) {
+        throw_adjoint_not_implemented("controlled adjoint rotations require control and target wires.");
+    }
+    if (normalized == "RX" || normalized == "CRX") {
         return 'X';
     }
-    if (normalized == "RY") {
+    if (normalized == "RY" || normalized == "CRY") {
         return 'Y';
     }
-    if (normalized == "RZ") {
+    if (normalized == "RZ" || normalized == "CRZ") {
         return 'Z';
     }
     throw_adjoint_not_implemented(
-        "binding adjoint_jacobian currently differentiates trainable RX/RY/RZ operations only.");
+        "binding adjoint_jacobian currently differentiates trainable RX/RY/RZ/CRX/CRY/CRZ operations only.");
+}
+
+std::vector<std::complex<double>> apply_rotation_generator_to_state(
+    const AdjointOperationPayload& operation,
+    const std::vector<std::complex<double>>& state,
+    unsigned num_qubits) {
+    const char generator = trainable_rotation_generator(operation);
+    if (generator == '\0') {
+        return {};
+    }
+    const std::string normalized = uppercase_ascii(operation.rocq_name.empty() ? operation.name : operation.rocq_name);
+    if (normalized == "CRX" || normalized == "CRY" || normalized == "CRZ") {
+        return apply_controlled_pauli_to_state(state, generator, operation.wires[0], operation.wires[1], num_qubits);
+    }
+    return apply_pauli_to_state(state, std::string(1, generator), operation.wires, num_qubits);
 }
 
 py::array_t<double> compute_binding_adjoint_jacobian(
@@ -572,13 +636,9 @@ py::array_t<double> compute_binding_adjoint_jacobian(
         for (std::size_t reverse_idx = parsed_operations.size(); reverse_idx > 0; --reverse_idx) {
             const std::size_t operation_idx = reverse_idx - 1;
             const auto& operation = parsed_operations[operation_idx];
-            const char generator = trainable_rotation_generator(operation);
-            if (generator != '\0') {
-                auto generator_state = apply_pauli_to_state(
-                    forward_states[operation_idx + 1],
-                    std::string(1, generator),
-                    operation.wires,
-                    self.num_qubits());
+            auto generator_state =
+                apply_rotation_generator_to_state(operation, forward_states[operation_idx + 1], self.num_qubits());
+            if (!generator_state.empty()) {
                 for (auto& amplitude : generator_state) {
                     amplitude *= std::complex<double>{0.0, -0.5};
                 }
@@ -822,7 +882,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("operations"),
              py::arg("observables"),
              py::arg("trainable_params"),
-             "Return an exact adjoint Jacobian for supported RX/RY/RZ and Pauli-observable payloads.")
+             "Return an exact adjoint Jacobian for supported RX/RY/RZ/CRX/CRY/CRZ observable payloads.")
         .def("expectation_matrix",
              [](const rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
