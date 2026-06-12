@@ -773,6 +773,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("YGate().control(2, annotated=False)", source)
         self.assertIn("ZGate().control(3, annotated=False)", source)
         self.assertIn("CSXGate()", source)
+        self.assertIn("SXGate().control(2, annotated=False)", source)
+        self.assertIn("SXGate().control(3, annotated=False)", source)
         self.assertIn("CUGate(0.0, 0.0, 0.0, 0.0)", source)
         self.assertIn("GlobalPhaseGate(0.0)", source)
         self.assertIn("MCPhaseGate(0.0, 2)", source)
