@@ -64,6 +64,14 @@ DECOMPOSED_OPS = {
     "Select",
     "SelectPauliRot",
 }
+CONTROLLED_WRAPPER_OPS = {
+    "C(PauliX)",
+    "C(PauliY)",
+    "C(PauliZ)",
+    "C(Hadamard)",
+    "C(S)",
+    "C(T)",
+}
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
     "PauliX": "X",
@@ -1248,6 +1256,63 @@ def _select_signature(op):
     )
 
 
+def _controlled_wrapper_base(op):
+    base = getattr(op, "base", None)
+    if base is None:
+        base = getattr(op, "hyperparameters", {}).get("base")
+    return base
+
+
+def _controlled_wrapper_control_wires(op):
+    control_wires = getattr(op, "control_wires", None)
+    if control_wires is None:
+        control_wires = getattr(op, "hyperparameters", {}).get("control_wires", ())
+    return list(control_wires)
+
+
+def _controlled_wrapper_control_values(op):
+    control_values = getattr(op, "control_values", None)
+    if control_values is None:
+        control_values = getattr(op, "hyperparameters", {}).get("control_values")
+    control_wires = _controlled_wrapper_control_wires(op)
+    if control_values is None:
+        control_values = [True for _ in control_wires]
+    return list(control_values)
+
+
+def _controlled_wrapper_signature(op):
+    base = _controlled_wrapper_base(op)
+    if base is None:
+        return None
+    return (
+        base.name,
+        tuple(base.wires),
+        tuple(_controlled_wrapper_control_wires(op)),
+        tuple(bool(_control_value_is_one(value)) for value in _controlled_wrapper_control_values(op)),
+    )
+
+
+def _apply_controlled_wrapper(runtime, op, wire_map, params=None):
+    base = _controlled_wrapper_base(op)
+    control_wires = _controlled_wrapper_control_wires(op)
+    control_values = _controlled_wrapper_control_values(op)
+    if base is None or not control_wires or len(control_values) != len(control_wires):
+        return False
+
+    selected_params = list(getattr(op, "parameters", [])) if params is None else list(params)
+    if params is None and not selected_params:
+        selected_params = list(getattr(base, "parameters", []))
+
+    return _apply_controlled_selected_op(
+        runtime,
+        base,
+        [wire_map[wire] for wire in control_wires],
+        control_values,
+        wire_map,
+        params=selected_params,
+    )
+
+
 def _select_control_values(index, control_count):
     return [
         bool((index >> (control_count - bit_index - 1)) & 1)
@@ -1268,6 +1333,44 @@ def _select_partial_control_specs(selected_count, control_wires):
                 selected_values.append(bool(value))
         specs.append((selected_controls, selected_values))
     return specs
+
+
+def _apply_multi_controlled_fixed_single_qubit_op(runtime, base_name, controls, target, control_values):
+    if len(controls) < 2 or len(control_values) != len(controls):
+        return False
+    if base_name not in {"PauliX", "PauliY", "PauliZ", "Hadamard"}:
+        return False
+
+    flipped = []
+    try:
+        for control, value in zip(controls, control_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [control])
+                flipped.append(control)
+
+        wires = controls + [target]
+        if base_name == "PauliX":
+            runtime.apply_operation("MCX", wires)
+        elif base_name == "PauliY":
+            runtime.apply_operation("SDG", [target])
+            runtime.apply_operation("MCX", wires)
+            runtime.apply_operation("S", [target])
+        elif base_name == "PauliZ":
+            runtime.apply_operation("H", [target])
+            runtime.apply_operation("MCX", wires)
+            runtime.apply_operation("H", [target])
+        elif base_name == "Hadamard":
+            runtime.apply_operation("RY", [target], [np.pi / 4])
+            runtime.apply_operation("MCX", wires)
+            runtime.apply_operation("RY", [target], [-np.pi / 4])
+
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+        flipped.clear()
+        return True
+    finally:
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
 
 
 def _apply_single_controlled_native_op(runtime, base_name, control, target, control_value, params):
@@ -1656,6 +1759,16 @@ def _apply_controlled_selected_op(runtime, selected_op, controls, control_values
             target_indices[0],
             control_values[0],
             selected_params,
+        ):
+            return True
+
+    if len(target_indices) == 1 and not selected_params:
+        if _apply_multi_controlled_fixed_single_qubit_op(
+            runtime,
+            selected_op.name,
+            controls,
+            target_indices[0],
+            control_values,
         ):
             return True
 
@@ -2350,6 +2463,9 @@ def _apply_static_batch_operation(runtime, gate_name, wire_indices, params, op=N
         _apply_controlled_qubit_unitary(runtime, *payload)
         return True
 
+    if gate_name in CONTROLLED_WRAPPER_OPS and op is not None and wire_map is not None:
+        return _apply_controlled_wrapper(runtime, op, wire_map, params=params)
+
     if gate_name in PENNYLANE_TO_ROCQ_GATES and not params:
         runtime.apply_operation(PENNYLANE_TO_ROCQ_GATES[gate_name], wire_indices)
         return True
@@ -2513,6 +2629,7 @@ class RocQDevice(QubitDevice):
         | NATIVE_PARAMETRIC_OPS
         | MATRIX_OPS
         | DECOMPOSED_OPS
+        | CONTROLLED_WRAPPER_OPS
         | {"BasisState", "StatePrep", "Rot"}
     )
     observables = {
@@ -3258,6 +3375,12 @@ class RocQDevice(QubitDevice):
             ):
                 return None
 
+            if gate_name in CONTROLLED_WRAPPER_OPS and any(
+                _controlled_wrapper_signature(op) != _controlled_wrapper_signature(reference_op)
+                for op in ops[1:]
+            ):
+                return None
+
             if gate_name == "BasisState":
                 if op_index != 0:
                     return None
@@ -3285,6 +3408,18 @@ class RocQDevice(QubitDevice):
                 continue
 
             params_by_op = [list(getattr(op, "parameters", [])) for op in ops]
+            if gate_name in CONTROLLED_WRAPPER_OPS:
+                if any(not _parameter_lists_match(params, params_by_op[0]) for params in params_by_op[1:]):
+                    return None
+                if _apply_controlled_wrapper(
+                    self._runtime,
+                    reference_op,
+                    self.wire_map,
+                    params=params_by_op[0],
+                ):
+                    continue
+                return None
+
             if gate_name in {"RX", "RY", "RZ", "CRX", "CRY", "CRZ"} and all(
                 len(params) == 1 for params in params_by_op
             ):
@@ -4122,6 +4257,18 @@ class RocQDevice(QubitDevice):
                 operation_applied = True
             elif gate_name == "BlockEncode":
                 _apply_block_encode(self._runtime, wire_indices, op)
+                operation_applied = True
+            elif gate_name in CONTROLLED_WRAPPER_OPS:
+                try:
+                    if not _apply_controlled_wrapper(self._runtime, op, self.wire_map):
+                        raise NotImplementedError
+                except (NotImplementedError, RuntimeError, TypeError, ValueError):
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                    self._runtime.apply_operation(
+                        gate_name,
+                        wire_indices,
+                        matrix=matrix,
+                    )
                 operation_applied = True
             elif gate_name in MATRIX_OPS:
                 matrix = matrix_to_little_endian_wires(qml.matrix(op))
