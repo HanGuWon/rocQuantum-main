@@ -1990,6 +1990,33 @@ def test_qiskit_backend_decomposes_controlled_u_family_natively(monkeypatch):
     assert ("RY", (1,), (0.1,)) in sim.ops
 
 
+def test_qiskit_backend_decomposes_controlled_u2_u3_natively(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import U2Gate, U3Gate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    assert {"cu2", "ccu2", "c3u2", "ccu3", "c3u3"}.issubset(set(backend.target.operation_names))
+    circuit = QuantumCircuit(4)
+    circuit.append(U2Gate(0.2, 0.3).control(1, annotated=False), [0, 1])
+    circuit.append(U2Gate(0.4, 0.5).control(2, annotated=False), [0, 1, 2])
+    circuit.append(U3Gate(0.6, 0.7, 0.8).control(2, annotated=False), [0, 1, 2])
+    circuit.append(U3Gate(0.9, 1.0, 1.1).control(3, ctrl_state="101", annotated=False), [0, 1, 2, 3])
+
+    backend.run(circuit, sampling=False).result()
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert ("P", (0,), (0.25,)) in sim.ops
+    assert ("CRZ", (0, 1), (0.3,)) in sim.ops
+    assert ("CRY", (0, 1), (np.pi / 2,)) in sim.ops
+    assert ("X", (1,), ()) in sim.ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
 def test_qiskit_backend_uses_native_controlled_matrix_for_generic_controlled_unitary(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -3052,6 +3079,53 @@ def test_qiskit_native_estimator_batches_legacy_u_family_parameters(monkeypatch)
         ("RZ", (0,), (0.5, 1.1)),
     ]
     assert sim.matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_batches_controlled_u2_u3_parameters(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.circuit.library import U2Gate, U3Gate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    phi2 = Parameter("phi2")
+    lam2 = Parameter("lam2")
+    theta3 = Parameter("theta3")
+    phi3 = Parameter("phi3")
+    lam3 = Parameter("lam3")
+    circuit = QuantumCircuit(3)
+    circuit.append(U2Gate(phi2, lam2).control(1, annotated=False), [0, 2])
+    circuit.append(U3Gate(theta3, phi3, lam3).control(2, annotated=False), [0, 1, 2])
+    observable = SparsePauliOp.from_list([("IIZ", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [
+            (
+                circuit,
+                observable,
+                {
+                    (phi2, lam2, theta3, phi3, lam3): [
+                        [0.2, 0.3, 0.4, 0.5, 0.6],
+                        [0.7, 0.8, 0.9, 1.0, 1.1],
+                    ],
+                },
+            )
+        ],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert ("P", (0,), (0.25, 0.75)) in sim.batch_ops
+    assert ("CRY", (0, 2), (np.pi / 2, np.pi / 2)) in sim.batch_ops
+    assert ("RZ", (0,), (0.275, 0.525)) in sim.batch_ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
     assert sim.batch_expectations == [("Z", (0,))]
 
 

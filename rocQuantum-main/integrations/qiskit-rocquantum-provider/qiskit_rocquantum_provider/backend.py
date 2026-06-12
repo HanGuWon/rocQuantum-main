@@ -351,7 +351,12 @@ def _instruction_target(num_qubits):
     target.add_instruction(U1Gate(0.0), name="u1")
     target.add_instruction(U1Gate(0.0).control(2, annotated=False), name="mcu1")
     target.add_instruction(U2Gate(0.0, 0.0), name="u2")
+    target.add_instruction(U2Gate(0.0, 0.0).control(1, annotated=False), name="cu2")
+    target.add_instruction(U2Gate(0.0, 0.0).control(2, annotated=False), name="ccu2")
+    target.add_instruction(U2Gate(0.0, 0.0).control(3, annotated=False), name="c3u2")
     target.add_instruction(U3Gate(0.0, 0.0, 0.0), name="u3")
+    target.add_instruction(U3Gate(0.0, 0.0, 0.0).control(2, annotated=False), name="ccu3")
+    target.add_instruction(U3Gate(0.0, 0.0, 0.0).control(3, annotated=False), name="c3u3")
     target.add_instruction(UGate(0.0, 0.0, 0.0), name="u")
     target.add_instruction(UnitaryGate([[1, 0], [0, 1]]), name="unitary")
     target.add_instruction(XGate(), name="x")
@@ -728,6 +733,42 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation_batch("rz", [target], [-phi for phi in phis])
         self._apply_multi_controlled_rx_gate_batch(q_indices, thetas)
         self._runtime.apply_operation_batch("rz", [target], phis)
+
+    def _apply_multi_controlled_u3_gate(self, q_indices, theta, phi, lam, *, include_global_phase):
+        if len(q_indices) < 2:
+            raise ValueError("Qiskit controlled-u3 gate requires at least two qubits.")
+
+        controls = list(q_indices[:-1])
+        half_sum = 0.5 * (phi + lam)
+        if len(controls) == 1:
+            self._apply_phase_gate(
+                [controls[0]],
+                half_sum,
+                include_global_phase=include_global_phase,
+            )
+        else:
+            self._apply_multi_controlled_phase_gate(
+                controls,
+                half_sum,
+                include_global_phase=include_global_phase,
+            )
+        self._apply_multi_controlled_rz_gate(q_indices, lam, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_ry_gate(q_indices, theta, include_global_phase=include_global_phase)
+        self._apply_multi_controlled_rz_gate(q_indices, phi, include_global_phase=include_global_phase)
+
+    def _apply_multi_controlled_u3_gate_batch(self, q_indices, thetas, phis, lams):
+        if len(q_indices) < 2:
+            raise ValueError("Qiskit controlled-u3 gate requires at least two qubits.")
+
+        controls = list(q_indices[:-1])
+        half_sums = [0.5 * (phi + lam) for phi, lam in zip(phis, lams)]
+        if len(controls) == 1:
+            self._apply_phase_gate_batch([controls[0]], half_sums)
+        else:
+            self._apply_multi_controlled_phase_gate_batch(controls, half_sums)
+        self._apply_multi_controlled_rz_gate_batch(q_indices, lams)
+        self._apply_multi_controlled_ry_gate_batch(q_indices, thetas)
+        self._apply_multi_controlled_rz_gate_batch(q_indices, phis)
 
     def _apply_pauli_rotation_gate(self, q_indices, label, theta):
         if len(label) != len(q_indices):
@@ -1214,9 +1255,9 @@ class RocQuantumBackend(BackendV2):
         base_name = getattr(base_gate, "name", None)
         if num_controls < 1 or len(q_indices) != num_controls + 1:
             return False
-        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx", "u1", "u3", "u"}:
+        if base_name not in {"x", "h", "y", "z", "rx", "ry", "rz", "r", "p", "s", "sdg", "t", "tdg", "sx", "u1", "u2", "u3", "u"}:
             return False
-        if base_name in {"u3", "u"} and num_controls != 1:
+        if base_name == "u" and num_controls != 1:
             return False
 
         ctrl_state = getattr(op, "ctrl_state", None)
@@ -1340,15 +1381,33 @@ class RocQuantumBackend(BackendV2):
                         theta,
                         include_global_phase=include_global_phase,
                     )
-            elif base_name == "u3":
-                theta, phi, lam = normalize_params(op.params)
-                self._apply_cu3_gate(
-                    [controls[0], target],
-                    theta,
+            elif base_name == "u2":
+                phi, lam = normalize_params(op.params)
+                self._apply_multi_controlled_u3_gate(
+                    controls + [target],
+                    cmath.pi / 2,
                     phi,
                     lam,
                     include_global_phase=include_global_phase,
                 )
+            elif base_name == "u3":
+                theta, phi, lam = normalize_params(op.params)
+                if len(controls) == 1:
+                    self._apply_cu3_gate(
+                        [controls[0], target],
+                        theta,
+                        phi,
+                        lam,
+                        include_global_phase=include_global_phase,
+                    )
+                else:
+                    self._apply_multi_controlled_u3_gate(
+                        controls + [target],
+                        theta,
+                        phi,
+                        lam,
+                        include_global_phase=include_global_phase,
+                    )
             elif base_name == "u":
                 theta, phi, lam, gamma = normalize_params(op.params)
                 self._apply_cu_gate(
@@ -1445,6 +1504,50 @@ class RocQuantumBackend(BackendV2):
                 self._runtime.apply_operation("x", [control])
                 flipped.append(control)
             self._apply_multi_controlled_r_gate_batch(controls + [target], thetas, phis)
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+            flipped.clear()
+            return True
+        finally:
+            for control in reversed(flipped):
+                self._runtime.apply_operation("x", [control])
+
+    def _apply_controlled_u2_u3_gate_batch(self, op, q_indices, params_by_circuit):
+        num_controls = int(getattr(op, "num_ctrl_qubits", 0))
+        base_gate = getattr(op, "base_gate", None)
+        base_name = getattr(base_gate, "name", None)
+        if num_controls < 1 or len(q_indices) != num_controls + 1 or base_name not in {"u2", "u3"}:
+            return False
+        if base_name == "u3" and num_controls == 1:
+            return False
+
+        ctrl_state = getattr(op, "ctrl_state", None)
+        ctrl_state = (1 << num_controls) - 1 if ctrl_state is None else int(ctrl_state)
+        controls = list(q_indices[:num_controls])
+        target = q_indices[num_controls]
+        open_controls = [
+            control
+            for control_index, control in enumerate(controls)
+            if not ((ctrl_state >> control_index) & 1)
+        ]
+
+        if base_name == "u2" and all(len(params) == 2 for params in params_by_circuit):
+            phis = [params[0] for params in params_by_circuit]
+            lams = [params[1] for params in params_by_circuit]
+            thetas = [cmath.pi / 2 for _ in phis]
+        elif base_name == "u3" and all(len(params) == 3 for params in params_by_circuit):
+            thetas = [params[0] for params in params_by_circuit]
+            phis = [params[1] for params in params_by_circuit]
+            lams = [params[2] for params in params_by_circuit]
+        else:
+            return False
+
+        flipped = []
+        try:
+            for control in open_controls:
+                self._runtime.apply_operation("x", [control])
+                flipped.append(control)
+            self._apply_multi_controlled_u3_gate_batch(controls + [target], thetas, phis, lams)
             for control in reversed(flipped):
                 self._runtime.apply_operation("x", [control])
             flipped.clear()
@@ -1910,6 +2013,14 @@ class RocQuantumBackend(BackendV2):
                 continue
 
             if normalized_params_by_circuit is not None and self._apply_controlled_r_gate_batch(
+                reference_op,
+                q_indices,
+                normalized_params_by_circuit,
+            ):
+                touched_qubits.update(q_indices)
+                continue
+
+            if normalized_params_by_circuit is not None and self._apply_controlled_u2_u3_gate_batch(
                 reference_op,
                 q_indices,
                 normalized_params_by_circuit,
