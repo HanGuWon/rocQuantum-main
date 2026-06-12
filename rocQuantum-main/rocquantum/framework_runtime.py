@@ -907,15 +907,30 @@ class RocQuantumRuntime:
         normalized_targets = normalize_targets(targets)
         normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
 
+        def _native_expectation_unavailable(exc: Exception) -> bool:
+            message = str(exc)
+            return isinstance(exc, NotImplementedError) or "status 5" in message
+
         native = getattr(self.simulator, "expectation_matrix", None)
         if callable(native):
-            return complex(native(normalized_matrix, normalized_targets))
+            try:
+                return complex(native(normalized_matrix, normalized_targets))
+            except Exception as exc:
+                if not _native_expectation_unavailable(exc):
+                    raise
 
         legacy = getattr(self.simulator, "ExpectationMatrix", None)
         if callable(legacy):
-            return complex(legacy(normalized_matrix, normalized_targets))
+            try:
+                return complex(legacy(normalized_matrix, normalized_targets))
+            except Exception as exc:
+                if not _native_expectation_unavailable(exc):
+                    raise
 
-        raise NotImplementedError("The active rocQuantum binding does not expose dense matrix expectations.")
+        if self.batch_size() != 1:
+            raise NotImplementedError("Use expectation_matrix_batch() for batched dense matrix fallback.")
+
+        return expectation_matrix_from_statevector(self.statevector(), normalized_matrix, normalized_targets)
 
     def expectation_matrix_batch(self, matrix: object, targets: Iterable[int]) -> np.ndarray:
         normalized_targets = normalize_targets(targets)

@@ -2450,6 +2450,28 @@ def test_qiskit_native_estimator_accepts_dense_operator(monkeypatch):
     assert sim.statevector_reads == 0
 
 
+def test_qiskit_native_estimator_dense_operator_uses_runtime_statevector_fallback(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1)
+    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable)],
+    ).result()[0]
+
+    assert float(result.data.evs) == pytest.approx(1.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.matrix_expectations == []
+    assert sim.expectations == []
+    assert sim.statevector_reads == 1
+
+
 def test_qiskit_native_estimator_accepts_partial_dense_operator(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -6505,6 +6527,30 @@ def test_runtime_can_create_and_read_batched_bindings():
     assert runtime.simulator.batch_ops == [("P", (0,), (0.7, 0.8, 0.9))]
     runtime.apply_operation_batch("cp", [0, 1], [1.0, 1.1, 1.2])
     assert runtime.simulator.batch_ops == [("CP", (0, 1), (1.0, 1.1, 1.2))]
+
+
+def test_runtime_dense_expectation_falls_back_to_statevector():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _StateOnlySimulator:
+        def __init__(self):
+            self.statevector_reads = 0
+
+        def batch_size(self):
+            return 1
+
+        def expectation_matrix(self, matrix, targets):
+            raise NotImplementedError("native dense expectation disabled")
+
+        def get_statevector(self):
+            self.statevector_reads += 1
+            return np.array([1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0)], dtype=np.complex128)
+
+    simulator = _StateOnlySimulator()
+    runtime = RocQuantumRuntime(simulator)
+
+    assert runtime.expectation_matrix(np.array([[0.0, 1.0], [1.0, 0.0]]), [0]) == pytest.approx(1.0)
+    assert simulator.statevector_reads == 1
 
 
 def test_runtime_batch_parametric_gate_falls_back_for_equal_angles():
