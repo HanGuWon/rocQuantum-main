@@ -6247,6 +6247,38 @@ def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
     assert sum(sim.native_adjoint_calls for sim in fallback_sims) >= 1
     assert any(sim.statevector_reads == 1 for sim in fallback_sims)
 
+    class _StatusRejectingNativeAdjointSimulator(_RYPreservingSimulator):
+        def __init__(self, num_qubits):
+            super().__init__(num_qubits)
+            self.native_adjoint_calls = 0
+
+        def adjoint_jacobian(self, operations, observables, trainable_params):
+            self.native_adjoint_calls += 1
+            raise RuntimeError("rocQuantum status 5: adjoint payload unsupported")
+
+    fake = _install_fake_binding(monkeypatch)
+    fake.QuantumSimulator = _StatusRejectingNativeAdjointSimulator
+    fake.QSim = _StatusRejectingNativeAdjointSimulator
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    status_fallback_dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(status_fallback_dev, diff_method="adjoint")
+    def status_fallback_circuit(theta):
+        qml.RY(theta, wires=0)
+        return qml.expval(qml.PauliZ(0))
+
+    assert status_fallback_circuit(theta) == pytest.approx(math.cos(float(theta)))
+    assert qml.grad(status_fallback_circuit)(theta) == pytest.approx(-math.sin(float(theta)))
+    status_fallback_sims = [
+        sim for sim in _StatusRejectingNativeAdjointSimulator.instances
+        if isinstance(sim, _StatusRejectingNativeAdjointSimulator)
+    ]
+    assert sum(sim.native_adjoint_calls for sim in status_fallback_sims) >= 1
+    assert any(sim.statevector_reads == 1 for sim in status_fallback_sims)
+
 
 def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch):
     pytest.importorskip("pennylane")

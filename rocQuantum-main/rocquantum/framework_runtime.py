@@ -699,14 +699,32 @@ class RocQuantumRuntime:
         observables: Sequence[Sequence[dict]],
         trainable_params: Sequence[int],
     ):
+        def _native_adjoint_unavailable(exc: Exception) -> bool:
+            message = str(exc)
+            return isinstance(exc, NotImplementedError) or "status 5" in message
+
+        unavailable_error = None
+
         native = getattr(self.simulator, "adjoint_jacobian", None)
         if callable(native):
-            return native(list(operations), list(observables), [int(param) for param in trainable_params])
+            try:
+                return native(list(operations), list(observables), [int(param) for param in trainable_params])
+            except Exception as exc:
+                if not _native_adjoint_unavailable(exc):
+                    raise
+                unavailable_error = exc
 
         legacy = getattr(self.simulator, "AdjointJacobian", None)
         if callable(legacy):
-            return legacy(list(operations), list(observables), [int(param) for param in trainable_params])
+            try:
+                return legacy(list(operations), list(observables), [int(param) for param in trainable_params])
+            except Exception as exc:
+                if not _native_adjoint_unavailable(exc):
+                    raise
+                unavailable_error = exc
 
+        if unavailable_error is not None:
+            raise NotImplementedError("Native adjoint Jacobian is unavailable for this payload.") from unavailable_error
         raise NotImplementedError("The active rocQuantum binding does not expose native adjoint Jacobian.")
 
     def set_statevector(self, statevector: object) -> None:
