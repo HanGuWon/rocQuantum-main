@@ -79,7 +79,7 @@ Use those files as the authoritative capability summary for the current codebase
 | `hipTensorNet` | Real contraction core with explicit optimizer/dtype/slicing capabilities, narrower than a full cuTensorNet analogue |
 | `hipDensityMat` | Real but limited; generic channels and sampling are correctness-first paths |
 | `rocqCompiler` | Partial codegen path plus a narrow compile-and-execute MVP for qalloc/H/X/Y/Z/S/Sdg/T/Tdg/CNOT/CZ/SWAP/CCX/MCX/CSWAP/RX/RY/RZ/P/CRX/CRY/CRZ/CP |
-| Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring, coefficient-preserving composite observable sums, numeric identity constants, and Pauli sum/product terms in operator arithmetic |
+| Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring, duplicate-combined Pauli expectations, coefficient-preserving composite observable sums, numeric identity constants, and Pauli sum/product terms in operator arithmetic |
 | Higher-level helpers | Experimental VQE objective/gradient, VQE-compatible MaxCut-style QAOA helper, and 3-qubit repetition-code single-round helper |
 | `python/rocq` | Top-level CMake-built legacy compatibility surface; Pauli expectations, batched state allocation/readback, and CNOT-adjacent GateFusion now use native helpers, while broader fusion and runtime unification still need consolidation |
 

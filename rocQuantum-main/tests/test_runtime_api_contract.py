@@ -184,6 +184,40 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(result, 0.5)
         self.assertEqual(calls[0], (1, np.dtype("complex64"), [0, 1], [0, 1, 2], 2, 2))
 
+    def test_hip_statevector_backend_combines_duplicate_pauli_terms(self):
+        from rocq.backends import _HipStateVectorState
+
+        calls = []
+
+        class _FakeHipBackend:
+            def get_expectation_value_z(self, handle, d_state, num_qubits, qubit):
+                calls.append((handle, d_state, num_qubits, qubit))
+                return 0.25
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+        operator = PauliOperator("Z0") + 2 * PauliOperator("Z0") + 0.5
+
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
+            result = state.expectation(operator)
+
+        self.assertEqual(result, 1.25)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][2:], (1, 0))
+
+    def test_mock_statevector_sum_keeps_matrix_fallback(self):
+        from rocq.backends import StateVectorBackend
+
+        with mock.patch("rocq.backends.hip_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                backend = StateVectorBackend(1)
+
+        operator = HermitianOperator(np.diag([1.0, -1.0]), targets=[0]) + 0.5
+
+        self.assertEqual(backend.expectation(operator), 1.5)
+
     def test_framework_runtime_exposes_native_adjoint_jacobian_hook(self):
         from rocquantum.framework_runtime import RocQuantumRuntime
 

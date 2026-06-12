@@ -52,6 +52,22 @@ def _finalize_expectation(value: complex):
     return value.real if abs(value.imag) < 1e-12 else value
 
 
+def _combined_pauli_terms(operator):
+    combined = {}
+    order = []
+    for coefficient, paulis in iter_pauli_terms(operator):
+        key = tuple((pauli, int(qubit)) for pauli, qubit in paulis)
+        if key not in combined:
+            combined[key] = 0.0 + 0.0j
+            order.append(key)
+        combined[key] += coefficient
+    return [
+        (combined[key], list(key))
+        for key in order
+        if combined[key] != 0
+    ]
+
+
 def _normalize_matrix_targets(matrix, targets, num_qubits: int):
     matrix_array = np.asarray(matrix, dtype=np.complex128)
     if matrix_array.ndim != 2 or matrix_array.shape[0] != matrix_array.shape[1]:
@@ -169,12 +185,6 @@ class _MockStateVectorState:
         return np.zeros(num_shots, dtype=np.uint64)
 
     def expectation(self, operator):
-        if isinstance(operator, SumOperator):
-            total = 0.0 + 0.0j
-            for term in operator.terms:
-                total += operator.coefficient * self.expectation(term)
-            return _finalize_expectation(total)
-
         if isinstance(operator, HermitianOperator):
             matrix, targets = _normalize_matrix_targets(operator.matrix, operator.targets, self._num_qubits)
             value = _statevector_expectation_matrix(self._state, matrix, targets, self._num_qubits)
@@ -185,8 +195,19 @@ class _MockStateVectorState:
             mean, _ = _statevector_sparse_hamiltonian_moments(self._state, data, indices, indptr)
             return _finalize_expectation(operator.coefficient * mean)
 
+        if isinstance(operator, SumOperator):
+            try:
+                terms = _combined_pauli_terms(operator)
+            except NotImplementedError:
+                total = 0.0 + 0.0j
+                for term in operator.terms:
+                    total += operator.coefficient * self.expectation(term)
+                return _finalize_expectation(total)
+        else:
+            terms = _combined_pauli_terms(operator)
+
         total = 0.0 + 0.0j
-        for coefficient, paulis in iter_pauli_terms(operator):
+        for coefficient, paulis in terms:
             if not paulis:
                 total += coefficient
         return _finalize_expectation(total)
@@ -440,12 +461,6 @@ class _HipStateVectorState:
         return mean, second_moment
 
     def expectation(self, operator):
-        if isinstance(operator, SumOperator):
-            total = 0.0 + 0.0j
-            for term in operator.terms:
-                total += operator.coefficient * self.expectation(term)
-            return _finalize_expectation(total)
-
         if isinstance(operator, HermitianOperator):
             return self._expectation_matrix(operator)
 
@@ -453,8 +468,19 @@ class _HipStateVectorState:
             mean, _ = self._sparse_hamiltonian_moments(operator)
             return _finalize_expectation(operator.coefficient * mean)
 
+        if isinstance(operator, SumOperator):
+            try:
+                terms = _combined_pauli_terms(operator)
+            except NotImplementedError:
+                total = 0.0 + 0.0j
+                for term in operator.terms:
+                    total += operator.coefficient * self.expectation(term)
+                return _finalize_expectation(total)
+        else:
+            terms = _combined_pauli_terms(operator)
+
         total = 0.0 + 0.0j
-        for coefficient, paulis in iter_pauli_terms(operator):
+        for coefficient, paulis in terms:
             if not paulis:
                 total += coefficient
                 continue
@@ -793,7 +819,7 @@ class DensityMatrixBackend(_BaseBackend):
 
     def expectation(self, operator):
         total = 0.0 + 0.0j
-        for coefficient, paulis in iter_pauli_terms(operator):
+        for coefficient, paulis in _combined_pauli_terms(operator):
             if not paulis:
                 total += coefficient
                 continue
