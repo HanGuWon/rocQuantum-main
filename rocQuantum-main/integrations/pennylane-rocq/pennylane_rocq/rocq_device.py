@@ -80,6 +80,7 @@ CONTROLLED_WRAPPER_OPS = {
     "C(T)",
     "C(SWAP)",
     "C(ISWAP)",
+    "C(PSWAP)",
 }
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
@@ -1331,6 +1332,15 @@ def _apply_controlled_wrapper_batch(runtime, reference_op, wire_map, params_by_o
 
     controls = [wire_map[wire] for wire in control_wires]
     target_indices = [wire_map[wire] for wire in base.wires]
+    if base.name == "PSWAP" and len(target_indices) == 2 and all(len(params) == 1 for params in params_by_op):
+        return _apply_multi_controlled_pswap_batch(
+            runtime,
+            controls,
+            control_values,
+            target_indices,
+            [params[0] for params in params_by_op],
+        )
+
     if len(target_indices) == 1:
         if len(controls) == 1 and _apply_single_controlled_native_op_batch(
             runtime,
@@ -1483,6 +1493,32 @@ def _apply_multi_controlled_iswap(runtime, controls, control_values, target_indi
             runtime.apply_operation("X", [control])
 
 
+def _apply_multi_controlled_pswap(runtime, controls, control_values, target_indices, phi):
+    if not controls or len(control_values) != len(controls) or len(target_indices) != 2:
+        return False
+
+    left, right = target_indices
+    flipped = []
+    try:
+        for control, value in zip(controls, control_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [control])
+                flipped.append(control)
+
+        _apply_multi_controlled_swap(runtime, controls, [True for _ in controls], target_indices)
+        runtime.apply_operation("MCX", controls + [left, right])
+        _apply_multi_controlled_phase_shift(runtime, controls, right, phi)
+        runtime.apply_operation("MCX", controls + [left, right])
+
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+        flipped.clear()
+        return True
+    finally:
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+
+
 def _apply_multi_controlled_phase_projector(runtime, wire_indices, theta):
     if not wire_indices:
         raise ValueError("Controlled phase projector requires at least one wire.")
@@ -1615,6 +1651,32 @@ def _apply_multi_controlled_phase_shift_batch(runtime, controls, target, thetas)
         return
 
     _apply_multi_controlled_phase_projector_batch(runtime, controls + [target], thetas)
+
+
+def _apply_multi_controlled_pswap_batch(runtime, controls, control_values, target_indices, phis):
+    if not controls or len(control_values) != len(controls) or len(target_indices) != 2:
+        return False
+
+    left, right = target_indices
+    flipped = []
+    try:
+        for control, value in zip(controls, control_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [control])
+                flipped.append(control)
+
+        _apply_multi_controlled_swap(runtime, controls, [True for _ in controls], target_indices)
+        runtime.apply_operation("MCX", controls + [left, right])
+        _apply_multi_controlled_phase_shift_batch(runtime, controls, right, phis)
+        runtime.apply_operation("MCX", controls + [left, right])
+
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+        flipped.clear()
+        return True
+    finally:
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
 
 
 def _apply_multi_controlled_parametric_single_qubit_op(runtime, base_name, controls, target, control_values, params):
@@ -2104,6 +2166,9 @@ def _apply_controlled_selected_op(runtime, selected_op, controls, control_values
             control_values,
         ):
             return True
+
+    if selected_op.name == "PSWAP" and len(target_indices) == 2 and len(selected_params) == 1:
+        return _apply_multi_controlled_pswap(runtime, controls, control_values, target_indices, selected_params[0])
 
     if selected_params:
         return False
@@ -3337,6 +3402,17 @@ class RocQDevice(QubitDevice):
                 and append_mc_h(controls, right)
             )
 
+        def append_mc_pswap(controls, target_indices, phi, param_index=None):
+            if len(target_indices) != 2:
+                return False
+            left, right = target_indices
+            return (
+                append_mc_swap(controls, target_indices)
+                and append_mcx(controls + [left], right)
+                and append_mc_phase_shift(controls, right, phi, param_index)
+                and append_mcx(controls + [left], right)
+            )
+
         def append_ch(wire_indices):
             control, target = wire_indices
             append_fixed("RY", "RY", [target], [np.pi / 4])
@@ -3386,7 +3462,7 @@ class RocQDevice(QubitDevice):
 
             controls = [int(self.wire_map[wire]) for wire in control_wires]
             target_indices = [int(self.wire_map[wire]) for wire in base.wires]
-            if base.name in {"SWAP", "ISWAP"}:
+            if base.name in {"SWAP", "ISWAP", "PSWAP"}:
                 if len(target_indices) != 2:
                     return False
             elif len(target_indices) != 1:
@@ -3417,6 +3493,8 @@ class RocQDevice(QubitDevice):
                 pass
             elif base_name == "ISWAP" and len(target_indices) == 2 and not selected_params:
                 pass
+            elif base_name == "PSWAP" and len(target_indices) == 2 and len(selected_params) == 1:
+                pass
             elif base_name in {"PauliX", "PauliY", "PauliZ", "Hadamard", "S", "T"} and not selected_params:
                 pass
             else:
@@ -3443,6 +3521,8 @@ class RocQDevice(QubitDevice):
                 lowered = append_mc_swap(controls, target_indices)
             elif base_name == "ISWAP":
                 lowered = append_mc_iswap(controls, target_indices)
+            elif base_name == "PSWAP":
+                lowered = append_mc_pswap(controls, target_indices, selected_params[0], selected_param_indices[0])
             else:
                 lowered = append_mc_fixed_single_qubit_op(base_name, controls, target)
 

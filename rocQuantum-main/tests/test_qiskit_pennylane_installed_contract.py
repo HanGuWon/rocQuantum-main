@@ -4630,13 +4630,14 @@ def test_pennylane_batch_execute_batches_parametric_controlled_wrappers(monkeypa
 
     import pennylane as qml
 
-    dev = qml.device("lightning.rocq", wires=3)
+    dev = qml.device("lightning.rocq", wires=4)
     circuits = [
         qml.tape.QuantumScript(
             [
                 qml.ctrl(qml.RX(0.1, wires=2), control=[0, 1]),
                 qml.ctrl(qml.PhaseShift(0.2, wires=2), control=[0, 1], control_values=[True, False]),
                 qml.ctrl(qml.Rot(0.3, 0.4, 0.5, wires=2), control=[0, 1]),
+                qml.ctrl(qml.PSWAP(0.6, wires=[2, 3]), control=[0, 1]),
             ],
             [qml.expval(qml.PauliZ(0))],
         ),
@@ -4645,6 +4646,7 @@ def test_pennylane_batch_execute_batches_parametric_controlled_wrappers(monkeypa
                 qml.ctrl(qml.RX(0.7, wires=2), control=[0, 1]),
                 qml.ctrl(qml.PhaseShift(0.8, wires=2), control=[0, 1], control_values=[True, False]),
                 qml.ctrl(qml.Rot(0.9, 1.0, 1.1, wires=2), control=[0, 1]),
+                qml.ctrl(qml.PSWAP(1.2, wires=[2, 3]), control=[0, 1]),
             ],
             [qml.expval(qml.PauliZ(0))],
         ),
@@ -4660,6 +4662,7 @@ def test_pennylane_batch_execute_batches_parametric_controlled_wrappers(monkeypa
     assert all(name == "RZ" for name, _, _ in sim.batch_ops)
     assert any(params == (-0.025, -0.175) for _, _, params in sim.batch_ops)
     assert any(params == (0.05, 0.2) for _, _, params in sim.batch_ops)
+    assert any(params == (0.15, 0.3) for _, _, params in sim.batch_ops)
 
 
 def test_pennylane_batch_execute_keeps_static_qft_batched(monkeypatch):
@@ -6589,6 +6592,35 @@ def test_pennylane_multi_controlled_iswap_wrapper_decomposes_natively(monkeypatc
     assert sim.expectations == [("Z", (0,))]
 
 
+def test_pennylane_multi_controlled_pswap_wrapper_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=4)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.ctrl(qml.PSWAP(0.45, wires=[2, 3]), control=[0, 1], control_values=[True, False])
+        return qml.expval(qml.PauliZ(0))
+
+    assert circuit() == pytest.approx(0.5)
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops[0] == ("X", (1,), ())
+    assert sim.ops[-1] == ("X", (1,), ())
+    assert ("MCX", (0, 1, 2, 3), ()) in sim.ops
+    assert ("MCX", (0, 1, 3, 2), ()) in sim.ops
+    assert any(name == "RZ" and wires == (3,) for name, wires, _ in sim.ops)
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.expectations == [("Z", (0,))]
+
+
 def test_pennylane_multi_controlled_parametric_wrappers_decompose_natively(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -8376,14 +8408,15 @@ def test_pennylane_native_adjoint_lowers_controlled_wrapper_payloads(monkeypatch
             qml.ctrl(qml.T(wires=2), control=[0, 1]),
             qml.ctrl(qml.SWAP(wires=[2, 3]), control=[0, 1], control_values=[True, False]),
             qml.ctrl(qml.ISWAP(wires=[2, 3]), control=[0, 1]),
+            qml.ctrl(qml.PSWAP(0.9, wires=[2, 3]), control=[0, 1]),
         ],
         [qml.expval(qml.PauliZ(0))],
     )
-    tape.trainable_params = list(range(7))
+    tape.trainable_params = list(range(8))
 
     operations, observables, trainable_params = dev._native_adjoint_payload(tape)
 
-    assert trainable_params == list(range(7))
+    assert trainable_params == list(range(8))
     assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
     assert all(not op["name"].startswith("C(") for op in operations)
     assert all(not op["rocq_name"].startswith("C(") for op in operations)
@@ -8400,7 +8433,7 @@ def test_pennylane_native_adjoint_lowers_controlled_wrapper_payloads(monkeypatch
         for op in operations
         for index in op["trainable_param_indices"]
     }
-    assert trainable_indices_in_payload == set(range(7))
+    assert trainable_indices_in_payload == set(range(8))
 
     scaled_ops = [
         (
@@ -8414,6 +8447,7 @@ def test_pennylane_native_adjoint_lowers_controlled_wrapper_payloads(monkeypatch
     ]
     assert ("RZ", (0,), (0,), (-0.25,)) in scaled_ops
     assert ("RZ", (2,), (3,), (0.25,)) in scaled_ops
+    assert any(rocq_name == "RZ" and param_indices == (7,) for rocq_name, _, param_indices, _ in scaled_ops)
     assert any(op["rocq_name"] == "RY" and op["params"] == [np.pi / 4] for op in operations)
 
 
