@@ -1,5 +1,6 @@
 # pennylane_rocq/rocq_device.py
 import pennylane as qml
+from pennylane.measurements import MeasurementProcess
 from pennylane.operation import Operation
 import numpy as np
 
@@ -2439,7 +2440,7 @@ class RocQDevice(QubitDevice):
     def execute_and_gradients(self, circuits, method="jacobian", **kwargs):
         if method == "adjoint_jacobian":
             previous = self._capture_pre_rotated_state
-            self._capture_pre_rotated_state = True
+            self._capture_pre_rotated_state = not self._runtime.supports_adjoint_jacobian()
             try:
                 return super().execute_and_gradients(circuits, method=method, **kwargs)
             finally:
@@ -2485,6 +2486,101 @@ class RocQDevice(QubitDevice):
             processing_fn(gradient_results[start:end])
             for processing_fn, start, end in gradient_jobs
         ]
+
+    def adjoint_jacobian(self, tape, starting_state=None, use_device_state=False):
+        if starting_state is None and self._runtime.supports_adjoint_jacobian():
+            payload = self._native_adjoint_payload(tape)
+            if payload is not None:
+                operations, observables, trainable_params = payload
+                try:
+                    jac = self._runtime.adjoint_jacobian(operations, observables, trainable_params)
+                except NotImplementedError:
+                    pass
+                else:
+                    return self._adjoint_jacobian_processing(np.asarray(jac, dtype=float))
+
+        fallback_use_device_state = use_device_state and self._pre_rotated_state is not None
+        if starting_state is None and not fallback_use_device_state:
+            previous = self._capture_pre_rotated_state
+            self._capture_pre_rotated_state = True
+            try:
+                return super().adjoint_jacobian(tape, use_device_state=False)
+            finally:
+                self._capture_pre_rotated_state = previous
+
+        return super().adjoint_jacobian(
+            tape,
+            starting_state=starting_state,
+            use_device_state=fallback_use_device_state,
+        )
+
+    def _native_adjoint_payload(self, tape):
+        if getattr(tape, "batch_size", None) is not None:
+            return None
+        if self.shots is not None or self.shot_vector is not None:
+            return None
+
+        operations = self._native_adjoint_operation_payloads(tape)
+        observables = self._native_adjoint_observable_payloads(tape)
+        trainable_params = self._native_adjoint_trainable_params(tape)
+        if operations is None or observables is None or trainable_params is None:
+            return None
+        return operations, observables, trainable_params
+
+    def _native_adjoint_operation_payloads(self, tape):
+        payloads = []
+        parameter_index = 0
+        for op in tape.operations:
+            if op.name in {"Identity", "Snapshot"}:
+                continue
+            if op.name in {"StatePrep", "BasisState"}:
+                return None
+
+            params = []
+            for param in getattr(op, "parameters", ()):
+                if hasattr(param, "bind"):
+                    return None
+                params.append(float(param))
+
+            param_indices = list(range(parameter_index, parameter_index + len(params)))
+            parameter_index += len(params)
+            payloads.append(
+                {
+                    "name": op.name,
+                    "rocq_name": PENNYLANE_TO_ROCQ_GATES.get(op.name, op.name),
+                    "wires": [int(self.wire_map[wire]) for wire in op.wires],
+                    "params": params,
+                    "param_indices": param_indices,
+                }
+            )
+        return payloads
+
+    def _native_adjoint_observable_payloads(self, tape):
+        payloads = []
+        for observable in tape.observables:
+            terms = _pauli_terms_from_observable(observable, self.wire_map)
+            if terms is None:
+                return None
+            payloads.append(
+                [
+                    {
+                        "coefficient": (float(np.real(coeff)), float(np.imag(coeff))),
+                        "pauli_string": pauli_string,
+                        "targets": [int(target) for target in targets],
+                    }
+                    for coeff, pauli_string, targets in _combine_pauli_terms(terms)
+                ]
+            )
+        return payloads
+
+    def _native_adjoint_trainable_params(self, tape):
+        trainable_params = []
+        for param_index in tape.trainable_params:
+            info = tape.par_info[param_index]
+            if isinstance(tape[info["op_idx"]], MeasurementProcess):
+                return None
+            trainable_params.append(int(param_index))
+        return trainable_params
 
     def execute(self, circuit, **kwargs):
         skip_rotations = self._analytic_measurements_use_native_pauli(circuit)

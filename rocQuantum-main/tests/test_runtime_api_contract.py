@@ -184,6 +184,27 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(result, 0.5)
         self.assertEqual(calls[0], (1, np.dtype("complex64"), [0, 1], [0, 1, 2], 2, 2))
 
+    def test_framework_runtime_exposes_native_adjoint_jacobian_hook(self):
+        from rocquantum.framework_runtime import RocQuantumRuntime
+
+        class _FakeSimulator:
+            def __init__(self):
+                self.calls = []
+
+            def adjoint_jacobian(self, operations, observables, trainable_params):
+                self.calls.append((operations, observables, trainable_params))
+                return np.asarray([[-0.25]], dtype=float)
+
+        sim = _FakeSimulator()
+        runtime = RocQuantumRuntime(sim)
+
+        operations = [{"name": "RY", "wires": [0], "params": [0.5], "param_indices": [0]}]
+        observables = [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+
+        self.assertTrue(runtime.supports_adjoint_jacobian())
+        np.testing.assert_allclose(runtime.adjoint_jacobian(operations, observables, [0]), [[-0.25]])
+        self.assertEqual(sim.calls, [(operations, observables, [0])])
+
 
 if __name__ == "__main__":
     unittest.main()

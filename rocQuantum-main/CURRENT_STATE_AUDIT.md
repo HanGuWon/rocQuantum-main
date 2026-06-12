@@ -164,6 +164,7 @@ What is not real today:
 - Public `QuantumSimulator` now exposes Pauli, dense-matrix, batched dense-matrix, and sparse-CSR expectation helpers through `expectation_value()`, `expectation_pauli_string()`, `expectation_matrix()`, `expectation_matrix_batch()`, and `sparse_hamiltonian_moments()`, with root pybind coverage for framework adapters.
 - Public `QuantumSimulator` named APIs now route `MCX` and `CSWAP`; `apply_controlled_matrix()` exposes a generic controlled-unitary surface, but breadth and native ROCm E2E validation remain partial.
 - PennyLane `diff_method="device"` now exposes a device jacobian that builds parameter-shift tapes with PennyLane's standard transform and routes compatible shift batches, including multi-circuit `compute_derivatives()` / `execute_and_compute_derivatives()` requests, through rocQuantum's batched runtime path, reducing isolated replay for supported parametric gates and Pauli/Hermitian/SparseHamiltonian expectation readouts.
+- PennyLane `diff_method="adjoint"` now probes an optional binding-level `adjoint_jacobian` / `AdjointJacobian` hook and skips Python statevector capture when that hook is present, but the shipped ROCm backend still needs a real GPU-resident adjoint Jacobian implementation behind that hook.
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling is not yet a GPU-fast path; it copies probability information to host before drawing shots.
 - Stabilizer/tableau/Pauli-propagation backends were not found.

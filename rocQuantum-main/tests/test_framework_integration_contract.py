@@ -108,6 +108,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def apply_operation_batch", source)
         self.assertIn("def expectation_matrix(self, matrix", source)
         self.assertIn("def set_statevector", source)
+        self.assertIn("def supports_adjoint_jacobian", source)
+        self.assertIn("def adjoint_jacobian", source)
 
     def test_public_simulator_dispatches_native_multi_control_gates(self):
         with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
@@ -612,6 +614,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _parameter_shift_jacobians", source)
         self.assertIn("qml.gradients.param_shift", source)
         self.assertIn("self.batch_execute(all_gradient_tapes)", source)
+        self.assertIn("def adjoint_jacobian", source)
+        self.assertIn("supports_adjoint_jacobian", source)
+        self.assertIn("def _native_adjoint_payload", source)
+        self.assertIn("def _native_adjoint_observable_payloads", source)
         self.assertIn("_capture_adjoint_reference_state", source)
         self.assertIn("def _apply_unitary", source)
         self.assertIn("_pauli_square_terms", source)

@@ -688,6 +688,27 @@ class RocQuantumRuntime:
             ]
         )
 
+    def supports_adjoint_jacobian(self) -> bool:
+        return callable(getattr(self.simulator, "adjoint_jacobian", None)) or callable(
+            getattr(self.simulator, "AdjointJacobian", None)
+        )
+
+    def adjoint_jacobian(
+        self,
+        operations: Sequence[dict],
+        observables: Sequence[Sequence[dict]],
+        trainable_params: Sequence[int],
+    ):
+        native = getattr(self.simulator, "adjoint_jacobian", None)
+        if callable(native):
+            return native(list(operations), list(observables), [int(param) for param in trainable_params])
+
+        legacy = getattr(self.simulator, "AdjointJacobian", None)
+        if callable(legacy):
+            return legacy(list(operations), list(observables), [int(param) for param in trainable_params])
+
+        raise NotImplementedError("The active rocQuantum binding does not expose native adjoint Jacobian.")
+
     def set_statevector(self, statevector: object) -> None:
         normalized_state = np.ascontiguousarray(np.asarray(statevector, dtype=np.complex128).reshape(-1))
         setter = getattr(self.simulator, "set_statevector", None)

@@ -5683,6 +5683,94 @@ def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
     assert sim.expectations == [("Z", (0,))]
     assert sim.statevector_reads == 1
 
+    class _NativeAdjointSimulator(_RYPreservingSimulator):
+        def __init__(self, num_qubits):
+            super().__init__(num_qubits)
+            self.native_adjoint_calls = []
+
+        def adjoint_jacobian(self, operations, observables, trainable_params):
+            self.native_adjoint_calls.append(
+                {
+                    "operations": operations,
+                    "observables": observables,
+                    "trainable_params": trainable_params,
+                }
+            )
+            theta = float(operations[0]["params"][0])
+            return np.asarray([[-math.sin(theta)]], dtype=float)
+
+    fake = _install_fake_binding(monkeypatch)
+    fake.QuantumSimulator = _NativeAdjointSimulator
+    fake.QSim = _NativeAdjointSimulator
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    native_dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(native_dev, diff_method="adjoint")
+    def native_circuit(theta):
+        qml.RY(theta, wires=0)
+        return qml.expval(qml.PauliZ(0))
+
+    assert native_circuit(theta) == pytest.approx(math.cos(float(theta)))
+    assert qml.grad(native_circuit)(theta) == pytest.approx(-math.sin(float(theta)))
+    native_sim = _NativeAdjointSimulator.instances[-1]
+    assert native_sim.statevector_reads == 0
+    assert len(native_sim.native_adjoint_calls) == 1
+    native_call = native_sim.native_adjoint_calls[0]
+    assert native_call["operations"] == [
+        {
+            "name": "RY",
+            "rocq_name": "RY",
+            "wires": [0],
+            "params": [float(theta)],
+            "param_indices": [0],
+        }
+    ]
+    assert native_call["observables"] == [
+        [
+            {
+                "coefficient": (1.0, 0.0),
+                "pauli_string": "Z",
+                "targets": [0],
+            }
+        ]
+    ]
+    assert native_call["trainable_params"] == [0]
+
+    class _RejectingNativeAdjointSimulator(_RYPreservingSimulator):
+        def __init__(self, num_qubits):
+            super().__init__(num_qubits)
+            self.native_adjoint_calls = 0
+
+        def adjoint_jacobian(self, operations, observables, trainable_params):
+            self.native_adjoint_calls += 1
+            raise NotImplementedError("unsupported native adjoint payload")
+
+    fake = _install_fake_binding(monkeypatch)
+    fake.QuantumSimulator = _RejectingNativeAdjointSimulator
+    fake.QSim = _RejectingNativeAdjointSimulator
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    fallback_dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(fallback_dev, diff_method="adjoint")
+    def fallback_circuit(theta):
+        qml.RY(theta, wires=0)
+        return qml.expval(qml.PauliZ(0))
+
+    assert fallback_circuit(theta) == pytest.approx(math.cos(float(theta)))
+    assert qml.grad(fallback_circuit)(theta) == pytest.approx(-math.sin(float(theta)))
+    fallback_sims = [
+        sim for sim in _RejectingNativeAdjointSimulator.instances
+        if isinstance(sim, _RejectingNativeAdjointSimulator)
+    ]
+    assert sum(sim.native_adjoint_calls for sim in fallback_sims) >= 1
+    assert any(sim.statevector_reads == 1 for sim in fallback_sims)
+
 
 def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch):
     pytest.importorskip("pennylane")
