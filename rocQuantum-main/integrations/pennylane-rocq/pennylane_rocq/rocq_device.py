@@ -78,6 +78,7 @@ CONTROLLED_WRAPPER_OPS = {
     "C(Hadamard)",
     "C(S)",
     "C(T)",
+    "C(SWAP)",
 }
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
@@ -1414,6 +1415,34 @@ def _apply_multi_controlled_fixed_single_qubit_op(runtime, base_name, controls, 
             runtime.apply_operation("X", [control])
 
 
+def _apply_multi_controlled_swap(runtime, controls, control_values, target_indices):
+    if not controls or len(control_values) != len(controls) or len(target_indices) != 2:
+        return False
+
+    left, right = target_indices
+    flipped = []
+    try:
+        for control, value in zip(controls, control_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [control])
+                flipped.append(control)
+
+        if len(controls) == 1:
+            runtime.apply_operation("CSWAP", [controls[0], left, right])
+        else:
+            runtime.apply_operation("MCX", controls + [left, right])
+            runtime.apply_operation("MCX", controls + [right, left])
+            runtime.apply_operation("MCX", controls + [left, right])
+
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+        flipped.clear()
+        return True
+    finally:
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+
+
 def _apply_multi_controlled_phase_projector(runtime, wire_indices, theta):
     if not wire_indices:
         raise ValueError("Controlled phase projector requires at least one wire.")
@@ -2043,17 +2072,8 @@ def _apply_controlled_selected_op(runtime, selected_op, controls, control_values
         _apply_mcx_with_control_values(runtime, controls + target_indices, control_values)
         return True
 
-    if selected_op.name == "SWAP" and len(controls) == 1 and len(target_indices) == 2 and not selected_params:
-        flipped = False
-        try:
-            if not _control_value_is_one(control_values[0]):
-                runtime.apply_operation("X", [controls[0]])
-                flipped = True
-            runtime.apply_operation("CSWAP", [controls[0], *target_indices])
-            return True
-        finally:
-            if flipped:
-                runtime.apply_operation("X", [controls[0]])
+    if selected_op.name == "SWAP" and len(target_indices) == 2 and not selected_params:
+        return _apply_multi_controlled_swap(runtime, controls, control_values, target_indices)
 
     try:
         matrix = matrix_to_little_endian_wires(qml.matrix(selected_op))
@@ -3236,6 +3256,20 @@ class RocQDevice(QubitDevice):
                 append_fixed("MultiControlledX", "MCX", controls + [target])
             return True
 
+        def append_mc_swap(controls, target_indices):
+            if len(target_indices) != 2:
+                return False
+            left, right = target_indices
+            if not controls:
+                append_fixed("SWAP", "SWAP", [left, right])
+            elif len(controls) == 1:
+                append_fixed("CSWAP", "CSWAP", [controls[0], left, right])
+            else:
+                append_mcx(controls + [left], right)
+                append_mcx(controls + [right], left)
+                append_mcx(controls + [left], right)
+            return True
+
         def append_ch(wire_indices):
             control, target = wire_indices
             append_fixed("RY", "RY", [target], [np.pi / 4])
@@ -3285,7 +3319,10 @@ class RocQDevice(QubitDevice):
 
             controls = [int(self.wire_map[wire]) for wire in control_wires]
             target_indices = [int(self.wire_map[wire]) for wire in base.wires]
-            if len(target_indices) != 1:
+            if base.name == "SWAP":
+                if len(target_indices) != 2:
+                    return False
+            elif len(target_indices) != 1:
                 return False
 
             selected_params = list(params)
@@ -3309,6 +3346,8 @@ class RocQDevice(QubitDevice):
                 pass
             elif base_name == "Rot" and len(selected_params) == 3:
                 pass
+            elif base_name == "SWAP" and len(target_indices) == 2 and not selected_params:
+                pass
             elif base_name in {"PauliX", "PauliY", "PauliZ", "Hadamard", "S", "T"} and not selected_params:
                 pass
             else:
@@ -3331,6 +3370,8 @@ class RocQDevice(QubitDevice):
                     and append_mc_ry(controls, target, selected_params[1], selected_param_indices[1])
                     and append_mc_rz(controls, target, selected_params[2], selected_param_indices[2])
                 )
+            elif base_name == "SWAP":
+                lowered = append_mc_swap(controls, target_indices)
             else:
                 lowered = append_mc_fixed_single_qubit_op(base_name, controls, target)
 
