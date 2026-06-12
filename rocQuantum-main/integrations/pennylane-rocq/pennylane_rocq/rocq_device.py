@@ -1,4 +1,6 @@
 # pennylane_rocq/rocq_device.py
+from itertools import combinations
+
 import pennylane as qml
 from pennylane.measurements import MeasurementProcess
 from pennylane.operation import Operation
@@ -65,6 +67,11 @@ DECOMPOSED_OPS = {
     "SelectPauliRot",
 }
 CONTROLLED_WRAPPER_OPS = {
+    "C(RX)",
+    "C(RY)",
+    "C(RZ)",
+    "C(PhaseShift)",
+    "C(Rot)",
     "C(PauliX)",
     "C(PauliY)",
     "C(PauliZ)",
@@ -1313,6 +1320,40 @@ def _apply_controlled_wrapper(runtime, op, wire_map, params=None):
     )
 
 
+def _apply_controlled_wrapper_batch(runtime, reference_op, wire_map, params_by_op):
+    base = _controlled_wrapper_base(reference_op)
+    control_wires = _controlled_wrapper_control_wires(reference_op)
+    control_values = _controlled_wrapper_control_values(reference_op)
+    if base is None or not control_wires or len(control_values) != len(control_wires):
+        return False
+
+    controls = [wire_map[wire] for wire in control_wires]
+    target_indices = [wire_map[wire] for wire in base.wires]
+    if len(target_indices) == 1:
+        if len(controls) == 1 and _apply_single_controlled_native_op_batch(
+            runtime,
+            base.name,
+            controls[0],
+            target_indices[0],
+            control_values[0],
+            params_by_op,
+        ):
+            return True
+        if _apply_multi_controlled_parametric_single_qubit_op_batch(
+            runtime,
+            base.name,
+            controls,
+            target_indices[0],
+            control_values,
+            params_by_op,
+        ):
+            return True
+
+    if any(not _parameter_lists_match(params, params_by_op[0]) for params in params_by_op[1:]):
+        return False
+    return _apply_controlled_wrapper(runtime, reference_op, wire_map, params=params_by_op[0])
+
+
 def _select_control_values(index, control_count):
     return [
         bool((index >> (control_count - bit_index - 1)) & 1)
@@ -1363,6 +1404,218 @@ def _apply_multi_controlled_fixed_single_qubit_op(runtime, base_name, controls, 
             runtime.apply_operation("RY", [target], [np.pi / 4])
             runtime.apply_operation("MCX", wires)
             runtime.apply_operation("RY", [target], [-np.pi / 4])
+
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+        flipped.clear()
+        return True
+    finally:
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+
+
+def _apply_multi_controlled_phase_projector(runtime, wire_indices, theta):
+    if not wire_indices:
+        raise ValueError("Controlled phase projector requires at least one wire.")
+    if len(wire_indices) == 1:
+        _apply_phase_shift(runtime, [wire_indices[0]], theta)
+        return
+
+    wire_count = len(wire_indices)
+    if getattr(runtime, "preserve_global_phase", True):
+        _apply_global_phase(runtime, wire_indices[0], theta / (1 << wire_count))
+
+    for subset_size in range(1, wire_count + 1):
+        angle = ((-1) ** (subset_size + 1)) * theta / (1 << (wire_count - 1))
+        for subset in combinations(wire_indices, subset_size):
+            _apply_multirz(runtime, list(subset), angle)
+
+
+def _apply_multi_controlled_phase_projector_batch(runtime, wire_indices, thetas):
+    if not wire_indices:
+        raise ValueError("Controlled phase projector requires at least one wire.")
+    if len(wire_indices) == 1:
+        _apply_phase_shift_batch(runtime, [wire_indices[0]], thetas)
+        return
+
+    wire_count = len(wire_indices)
+    for subset_size in range(1, wire_count + 1):
+        scale = ((-1) ** (subset_size + 1)) / (1 << (wire_count - 1))
+        scaled_thetas = [scale * theta for theta in thetas]
+        for subset in combinations(wire_indices, subset_size):
+            _apply_multirz_batch(runtime, list(subset), scaled_thetas)
+
+
+def _apply_multi_controlled_rz_rotation(runtime, controls, target, theta):
+    if not controls:
+        runtime.apply_operation("RZ", [target], [theta])
+        return
+    if len(controls) == 1:
+        runtime.apply_operation("CRZ", [controls[0], target], [theta])
+        return
+
+    _apply_multi_controlled_phase_projector(runtime, controls, -0.5 * theta)
+    _apply_multi_controlled_phase_projector(runtime, controls + [target], theta)
+
+
+def _apply_multi_controlled_rz_rotation_batch(runtime, controls, target, thetas):
+    if not controls:
+        runtime.apply_operation_batch("RZ", [target], thetas)
+        return
+    if len(controls) == 1:
+        runtime.apply_operation_batch("CRZ", [controls[0], target], thetas)
+        return
+
+    _apply_multi_controlled_phase_projector_batch(runtime, controls, [-0.5 * theta for theta in thetas])
+    _apply_multi_controlled_phase_projector_batch(runtime, controls + [target], thetas)
+
+
+def _apply_multi_controlled_rx_rotation(runtime, controls, target, theta):
+    if not controls:
+        runtime.apply_operation("RX", [target], [theta])
+        return
+    if len(controls) == 1:
+        runtime.apply_operation("CRX", [controls[0], target], [theta])
+        return
+
+    runtime.apply_operation("H", [target])
+    _apply_multi_controlled_rz_rotation(runtime, controls, target, theta)
+    runtime.apply_operation("H", [target])
+
+
+def _apply_multi_controlled_rx_rotation_batch(runtime, controls, target, thetas):
+    if not controls:
+        runtime.apply_operation_batch("RX", [target], thetas)
+        return
+    if len(controls) == 1:
+        runtime.apply_operation_batch("CRX", [controls[0], target], thetas)
+        return
+
+    runtime.apply_operation("H", [target])
+    _apply_multi_controlled_rz_rotation_batch(runtime, controls, target, thetas)
+    runtime.apply_operation("H", [target])
+
+
+def _apply_multi_controlled_ry_rotation(runtime, controls, target, theta):
+    if not controls:
+        runtime.apply_operation("RY", [target], [theta])
+        return
+    if len(controls) == 1:
+        runtime.apply_operation("CRY", [controls[0], target], [theta])
+        return
+
+    runtime.apply_operation("SDG", [target])
+    runtime.apply_operation("H", [target])
+    _apply_multi_controlled_rz_rotation(runtime, controls, target, theta)
+    runtime.apply_operation("H", [target])
+    runtime.apply_operation("S", [target])
+
+
+def _apply_multi_controlled_ry_rotation_batch(runtime, controls, target, thetas):
+    if not controls:
+        runtime.apply_operation_batch("RY", [target], thetas)
+        return
+    if len(controls) == 1:
+        runtime.apply_operation_batch("CRY", [controls[0], target], thetas)
+        return
+
+    runtime.apply_operation("SDG", [target])
+    runtime.apply_operation("H", [target])
+    _apply_multi_controlled_rz_rotation_batch(runtime, controls, target, thetas)
+    runtime.apply_operation("H", [target])
+    runtime.apply_operation("S", [target])
+
+
+def _apply_multi_controlled_phase_shift(runtime, controls, target, theta):
+    if not controls:
+        _apply_phase_shift(runtime, [target], theta)
+        return
+    if len(controls) == 1:
+        _apply_controlled_phase_shift(runtime, [controls[0], target], theta)
+        return
+
+    _apply_multi_controlled_phase_projector(runtime, controls + [target], theta)
+
+
+def _apply_multi_controlled_phase_shift_batch(runtime, controls, target, thetas):
+    if not controls:
+        _apply_phase_shift_batch(runtime, [target], thetas)
+        return
+    if len(controls) == 1:
+        _apply_controlled_phase_shift_batch(runtime, [controls[0], target], thetas)
+        return
+
+    _apply_multi_controlled_phase_projector_batch(runtime, controls + [target], thetas)
+
+
+def _apply_multi_controlled_parametric_single_qubit_op(runtime, base_name, controls, target, control_values, params):
+    if len(control_values) != len(controls):
+        return False
+
+    flipped = []
+    try:
+        for control, value in zip(controls, control_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [control])
+                flipped.append(control)
+
+        if base_name == "RX" and len(params) == 1:
+            _apply_multi_controlled_rx_rotation(runtime, controls, target, params[0])
+        elif base_name == "RY" and len(params) == 1:
+            _apply_multi_controlled_ry_rotation(runtime, controls, target, params[0])
+        elif base_name == "RZ" and len(params) == 1:
+            _apply_multi_controlled_rz_rotation(runtime, controls, target, params[0])
+        elif base_name == "PhaseShift" and len(params) == 1:
+            _apply_multi_controlled_phase_shift(runtime, controls, target, params[0])
+        elif base_name == "Rot" and len(params) == 3:
+            phi, theta, omega = params
+            _apply_multi_controlled_rz_rotation(runtime, controls, target, phi)
+            _apply_multi_controlled_ry_rotation(runtime, controls, target, theta)
+            _apply_multi_controlled_rz_rotation(runtime, controls, target, omega)
+        else:
+            return False
+
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+        flipped.clear()
+        return True
+    finally:
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+
+
+def _apply_multi_controlled_parametric_single_qubit_op_batch(
+    runtime,
+    base_name,
+    controls,
+    target,
+    control_values,
+    params_by_op,
+):
+    if len(control_values) != len(controls):
+        return False
+
+    flipped = []
+    try:
+        for control, value in zip(controls, control_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [control])
+                flipped.append(control)
+
+        if base_name == "RX" and all(len(params) == 1 for params in params_by_op):
+            _apply_multi_controlled_rx_rotation_batch(runtime, controls, target, [params[0] for params in params_by_op])
+        elif base_name == "RY" and all(len(params) == 1 for params in params_by_op):
+            _apply_multi_controlled_ry_rotation_batch(runtime, controls, target, [params[0] for params in params_by_op])
+        elif base_name == "RZ" and all(len(params) == 1 for params in params_by_op):
+            _apply_multi_controlled_rz_rotation_batch(runtime, controls, target, [params[0] for params in params_by_op])
+        elif base_name == "PhaseShift" and all(len(params) == 1 for params in params_by_op):
+            _apply_multi_controlled_phase_shift_batch(runtime, controls, target, [params[0] for params in params_by_op])
+        elif base_name == "Rot" and all(len(params) == 3 for params in params_by_op):
+            _apply_multi_controlled_rz_rotation_batch(runtime, controls, target, [params[0] for params in params_by_op])
+            _apply_multi_controlled_ry_rotation_batch(runtime, controls, target, [params[1] for params in params_by_op])
+            _apply_multi_controlled_rz_rotation_batch(runtime, controls, target, [params[2] for params in params_by_op])
+        else:
+            return False
 
         for control in reversed(flipped):
             runtime.apply_operation("X", [control])
@@ -1758,6 +2011,17 @@ def _apply_controlled_selected_op(runtime, selected_op, controls, control_values
             controls[0],
             target_indices[0],
             control_values[0],
+            selected_params,
+        ):
+            return True
+
+    if len(target_indices) == 1 and selected_params:
+        if _apply_multi_controlled_parametric_single_qubit_op(
+            runtime,
+            selected_op.name,
+            controls,
+            target_indices[0],
+            control_values,
             selected_params,
         ):
             return True
@@ -3409,13 +3673,11 @@ class RocQDevice(QubitDevice):
 
             params_by_op = [list(getattr(op, "parameters", [])) for op in ops]
             if gate_name in CONTROLLED_WRAPPER_OPS:
-                if any(not _parameter_lists_match(params, params_by_op[0]) for params in params_by_op[1:]):
-                    return None
-                if _apply_controlled_wrapper(
+                if _apply_controlled_wrapper_batch(
                     self._runtime,
                     reference_op,
                     self.wire_map,
-                    params=params_by_op[0],
+                    params_by_op,
                 ):
                     continue
                 return None

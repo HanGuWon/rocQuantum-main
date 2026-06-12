@@ -4616,6 +4616,47 @@ def test_pennylane_batch_execute_keeps_static_controlled_wrappers_batched(monkey
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_batches_parametric_controlled_wrappers(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    circuits = [
+        qml.tape.QuantumScript(
+            [
+                qml.ctrl(qml.RX(0.1, wires=2), control=[0, 1]),
+                qml.ctrl(qml.PhaseShift(0.2, wires=2), control=[0, 1], control_values=[True, False]),
+                qml.ctrl(qml.Rot(0.3, 0.4, 0.5, wires=2), control=[0, 1]),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [
+                qml.ctrl(qml.RX(0.7, wires=2), control=[0, 1]),
+                qml.ctrl(qml.PhaseShift(0.8, wires=2), control=[0, 1], control_values=[True, False]),
+                qml.ctrl(qml.Rot(0.9, 1.0, 1.1, wires=2), control=[0, 1]),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+    assert len(sim.batch_ops) >= 8
+    assert all(name == "RZ" for name, _, _ in sim.batch_ops)
+    assert any(params == (-0.025, -0.175) for _, _, params in sim.batch_ops)
+    assert any(params == (0.05, 0.2) for _, _, params in sim.batch_ops)
+
+
 def test_pennylane_batch_execute_keeps_static_qft_batched(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -6480,6 +6521,37 @@ def test_pennylane_multi_controlled_single_qubit_wrappers_decompose_natively(mon
     np.testing.assert_allclose(t_matrix, np.diag([1.0, np.exp(1j * np.pi / 4)]))
     assert s_controls == t_controls == (0, 1)
     assert s_targets == t_targets == (2,)
+
+
+def test_pennylane_multi_controlled_parametric_wrappers_decompose_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.ctrl(qml.RX(0.31, wires=2), control=[0, 1])
+        qml.ctrl(qml.RY(0.32, wires=2), control=[0, 1], control_values=[True, False])
+        qml.ctrl(qml.RZ(0.33, wires=2), control=[0, 1])
+        qml.ctrl(qml.PhaseShift(0.34, wires=2), control=[0, 1])
+        qml.ctrl(qml.Rot(0.1, 0.2, 0.3, wires=2), control=[0, 1])
+        return qml.expval(qml.PauliZ(0))
+
+    assert circuit() == pytest.approx(0.5)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.expectations == [("Z", (0,))]
+    assert any(op == ("X", (1,), ()) for op in sim.ops)
+    assert any(name == "H" and wires == (2,) for name, wires, _ in sim.ops)
+    assert any(name == "SDG" and wires == (2,) for name, wires, _ in sim.ops)
+    assert any(name == "RZ" and wires == (2,) for name, wires, _ in sim.ops)
 
 
 def test_pennylane_select_decomposes_natively(monkeypatch):
