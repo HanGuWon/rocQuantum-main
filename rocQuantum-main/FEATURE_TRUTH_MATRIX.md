@@ -2,6 +2,8 @@
 
 Status legend: `IMPLEMENTED`, `PARTIAL`, `STUB`, `ABSENT`, `UNKNOWN`
 
+Recent adapter note: Qiskit native Sampler and Estimator parameter batches now keep no-op initial `reset` instructions in the batched simulator path instead of falling back to per-parameter replay. Runtime reset after prior operations remains a shot-trajectory-only path.
+
 | Area | Feature | Current Status | Evidence | Native Or Fallback | Comparison Target | Impact If Missing | Priority |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Build / Packaging | Native CMake build root | IMPLEMENTED | `CMakeLists.txt`; CMake `3.21`; `find_package(hip CONFIG REQUIRED)`, `roc::rocblas`, `roc::rocsolver`, `hip::host`, component subdirectories | Native | cuQuantum / CUDA-Q | Required for all native use | P0 |

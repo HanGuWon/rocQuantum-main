@@ -1643,6 +1643,35 @@ def test_qiskit_native_sampler_binds_parameter_values(monkeypatch):
     assert sim.probability_requests == [(0,)]
 
 
+def test_qiskit_native_sampler_batches_initial_reset_parameter_values(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1, 1)
+    circuit.reset(0)
+    circuit.ry(theta, 0)
+    circuit.measure(0, 0)
+
+    result = RocQuantumProvider().get_sampler().run(
+        [(circuit, [0.1, 0.2])],
+        shots=3,
+    ).result()[0]
+
+    assert result.data.c.shape == (2,)
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.reset_qubits == []
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.measurements == []
+    assert sim.probability_requests == [(0,)]
+
+
 def test_qiskit_native_sampler_batches_controlled_parameter_values(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -1781,6 +1810,34 @@ def test_qiskit_native_estimator_binds_parameter_values(monkeypatch):
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
     assert sim.ops == []
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_qiskit_native_estimator_batches_initial_reset_parameters(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1)
+    circuit.reset(0)
+    circuit.ry(theta, 0)
+    observable = SparsePauliOp.from_list([("Z", 1.0)])
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 0.5]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.reset_qubits == []
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
     assert sim.batch_expectations == [("Z", (0,))]
 

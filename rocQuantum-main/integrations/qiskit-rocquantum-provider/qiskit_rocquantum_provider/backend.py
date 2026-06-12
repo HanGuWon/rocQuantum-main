@@ -1334,8 +1334,6 @@ class RocQuantumBackend(BackendV2):
             reference_op = reference_instruction.operation
             if reference_op.name in {"barrier", "delay", "save_statevector"}:
                 continue
-            if reference_op.name == "reset":
-                raise NotImplementedError(f"Batched Qiskit execution does not support {reference_op.name!r}.")
             if reference_op.name in CONTROL_FLOW_OPS or getattr(reference_op, "blocks", None) is not None:
                 raise NotImplementedError("Batched Qiskit execution does not support control-flow operations.")
             if _instruction_condition(reference_instruction) is not None:
@@ -1344,6 +1342,19 @@ class RocQuantumBackend(BackendV2):
             q_indices = [circuits[0].find_bit(q).index for q in reference_instruction.qubits]
             if measurement_started and reference_op.name != "measure":
                 raise NotImplementedError("Batched Qiskit execution only supports terminal measurements.")
+
+            if reference_op.name == "reset":
+                if touched_qubits & set(q_indices):
+                    raise NotImplementedError("Batched Qiskit execution does not support runtime reset.")
+                for circuit in circuits[1:]:
+                    instruction = circuit.data[position]
+                    current_op = instruction.operation
+                    current_q_indices = [circuit.find_bit(q).index for q in instruction.qubits]
+                    if current_op.name != "reset" or current_q_indices != q_indices:
+                        raise NotImplementedError("Batched Qiskit execution requires identical reset layout.")
+                    if _instruction_condition(instruction) is not None:
+                        raise NotImplementedError("Batched Qiskit execution does not support conditioned operations.")
+                continue
 
             if reference_op.name == "measure":
                 measurement_started = True
