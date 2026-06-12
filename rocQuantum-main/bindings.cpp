@@ -2,9 +2,13 @@
 #include <pybind11/stl.h>
 #include <pybind11/complex.h>
 #include <pybind11/numpy.h>
+#include <algorithm>
+#include <cctype>
+#include <complex>
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include "rocqCompiler/MLIRCompiler.h"
@@ -14,6 +18,22 @@
 namespace py = pybind11;
 
 namespace {
+
+struct AdjointOperationPayload {
+    std::string name;
+    std::string rocq_name;
+    std::vector<unsigned> wires;
+    std::vector<double> params;
+    std::vector<int> param_indices;
+    std::vector<int> trainable_param_indices;
+    std::vector<int> trainable_param_positions;
+};
+
+struct PauliTermPayload {
+    std::complex<double> coefficient;
+    std::string pauli_string;
+    std::vector<unsigned> targets;
+};
 
 std::vector<std::size_t> copy_nonnegative_indices(
     py::array_t<long long, py::array::c_style | py::array::forcecast> values,
@@ -42,6 +62,366 @@ void apply_sparse_matrix_from_python(
     auto host_indices = copy_nonnegative_indices(indices, "Sparse operation CSR indices");
     auto host_indptr = copy_nonnegative_indices(indptr, "Sparse operation CSR indptr");
     self.apply_sparse_matrix(host_data, host_indices, host_indptr, shape.first, shape.second, targets);
+}
+
+std::string uppercase_ascii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
+    });
+    return value;
+}
+
+py::object required_dict_item(py::dict dict, const char* key, const char* context) {
+    const py::str py_key(key);
+    if (!dict.contains(py_key)) {
+        throw std::invalid_argument(std::string(context) + " payload is missing '" + key + "'.");
+    }
+    return py::reinterpret_borrow<py::object>(dict[py_key]);
+}
+
+bool dict_contains(py::dict dict, const char* key) {
+    return dict.contains(py::str(key));
+}
+
+[[noreturn]] void throw_adjoint_not_implemented(const std::string& message) {
+    const std::string full_message = "rocQuantum status 5: " + message;
+    PyErr_SetString(PyExc_NotImplementedError, full_message.c_str());
+    throw py::error_already_set();
+}
+
+std::vector<int> trainable_intersection(
+    const std::vector<int>& param_indices,
+    const std::unordered_map<int, std::size_t>& trainable_columns) {
+    std::vector<int> out;
+    for (int param_index : param_indices) {
+        if (trainable_columns.find(param_index) != trainable_columns.end()) {
+            out.push_back(param_index);
+        }
+    }
+    return out;
+}
+
+std::vector<int> trainable_positions(
+    const std::vector<int>& param_indices,
+    const std::unordered_map<int, std::size_t>& trainable_columns) {
+    std::vector<int> out;
+    for (std::size_t idx = 0; idx < param_indices.size(); ++idx) {
+        if (trainable_columns.find(param_indices[idx]) != trainable_columns.end()) {
+            out.push_back(static_cast<int>(idx));
+        }
+    }
+    return out;
+}
+
+std::vector<AdjointOperationPayload> parse_adjoint_operations(
+    py::sequence operations,
+    const std::unordered_map<int, std::size_t>& trainable_columns) {
+    std::vector<AdjointOperationPayload> out;
+    for (py::handle item : operations) {
+        py::dict op = py::reinterpret_borrow<py::dict>(item);
+        AdjointOperationPayload payload;
+        payload.name = required_dict_item(op, "name", "adjoint operation").cast<std::string>();
+        payload.rocq_name = required_dict_item(op, "rocq_name", "adjoint operation").cast<std::string>();
+        payload.wires = required_dict_item(op, "wires", "adjoint operation").cast<std::vector<unsigned>>();
+        payload.params = required_dict_item(op, "params", "adjoint operation").cast<std::vector<double>>();
+        payload.param_indices =
+            required_dict_item(op, "param_indices", "adjoint operation").cast<std::vector<int>>();
+
+        if (dict_contains(op, "trainable_param_indices")) {
+            payload.trainable_param_indices =
+                py::reinterpret_borrow<py::object>(op[py::str("trainable_param_indices")])
+                    .cast<std::vector<int>>();
+        } else {
+            payload.trainable_param_indices = trainable_intersection(payload.param_indices, trainable_columns);
+        }
+
+        if (dict_contains(op, "trainable_param_positions")) {
+            payload.trainable_param_positions =
+                py::reinterpret_borrow<py::object>(op[py::str("trainable_param_positions")])
+                    .cast<std::vector<int>>();
+        } else {
+            payload.trainable_param_positions = trainable_positions(payload.param_indices, trainable_columns);
+        }
+
+        if (payload.trainable_param_indices.size() != payload.trainable_param_positions.size()) {
+            throw std::invalid_argument(
+                "adjoint operation trainable_param_indices and trainable_param_positions lengths differ.");
+        }
+        out.push_back(std::move(payload));
+    }
+    return out;
+}
+
+std::complex<double> parse_complex_pair(py::handle value) {
+    const auto pair = py::reinterpret_borrow<py::object>(value).cast<std::pair<double, double>>();
+    return {pair.first, pair.second};
+}
+
+std::vector<std::vector<PauliTermPayload>> parse_adjoint_observables(py::sequence observables) {
+    std::vector<std::vector<PauliTermPayload>> out;
+    for (py::handle observable_item : observables) {
+        py::sequence observable_terms = py::reinterpret_borrow<py::sequence>(observable_item);
+        std::vector<PauliTermPayload> terms;
+        for (py::handle term_item : observable_terms) {
+            py::dict term = py::reinterpret_borrow<py::dict>(term_item);
+            if (dict_contains(term, "kind")) {
+                throw_adjoint_not_implemented(
+                    "binding adjoint_jacobian currently supports Pauli-term observables only.");
+            }
+
+            PauliTermPayload payload;
+            payload.coefficient = parse_complex_pair(required_dict_item(term, "coefficient", "adjoint observable"));
+            payload.pauli_string =
+                required_dict_item(term, "pauli_string", "adjoint observable").cast<std::string>();
+            payload.targets = required_dict_item(term, "targets", "adjoint observable").cast<std::vector<unsigned>>();
+            if (payload.pauli_string.size() != payload.targets.size()) {
+                throw std::invalid_argument("Pauli-string length must match the observable target count.");
+            }
+            terms.push_back(std::move(payload));
+        }
+        if (terms.empty()) {
+            throw std::invalid_argument("adjoint_jacobian observable payloads must not be empty.");
+        }
+        out.push_back(std::move(terms));
+    }
+    return out;
+}
+
+std::vector<std::complex<double>> apply_pauli_to_state(
+    const std::vector<std::complex<double>>& state,
+    const std::string& pauli_string,
+    const std::vector<unsigned>& targets,
+    unsigned num_qubits) {
+    const std::size_t expected_size = std::size_t{1} << num_qubits;
+    if (state.size() != expected_size) {
+        throw std::invalid_argument("Statevector size does not match the simulator qubit count.");
+    }
+    if (pauli_string.size() != targets.size()) {
+        throw std::invalid_argument("Pauli-string length must match target count.");
+    }
+
+    std::vector<std::complex<double>> out(state.size(), std::complex<double>{0.0, 0.0});
+    const std::complex<double> imag{0.0, 1.0};
+    for (std::size_t basis = 0; basis < state.size(); ++basis) {
+        std::size_t mapped_basis = basis;
+        std::complex<double> phase{1.0, 0.0};
+        for (std::size_t idx = 0; idx < targets.size(); ++idx) {
+            const unsigned target = targets[idx];
+            if (target >= num_qubits) {
+                throw std::invalid_argument("Pauli observable target exceeds simulator qubit count.");
+            }
+            const char pauli = static_cast<char>(std::toupper(static_cast<unsigned char>(pauli_string[idx])));
+            const std::size_t mask = std::size_t{1} << target;
+            const bool bit_is_one = (basis & mask) != 0;
+            if (pauli == 'I') {
+                continue;
+            }
+            if (pauli == 'X') {
+                mapped_basis ^= mask;
+                continue;
+            }
+            if (pauli == 'Y') {
+                phase *= bit_is_one ? -imag : imag;
+                mapped_basis ^= mask;
+                continue;
+            }
+            if (pauli == 'Z') {
+                if (bit_is_one) {
+                    phase *= -1.0;
+                }
+                continue;
+            }
+            throw std::invalid_argument("Unsupported Pauli observable character.");
+        }
+        out[mapped_basis] += phase * state[basis];
+    }
+    return out;
+}
+
+std::vector<std::complex<double>> apply_observable_to_state(
+    const std::vector<std::complex<double>>& state,
+    const std::vector<PauliTermPayload>& observable,
+    unsigned num_qubits) {
+    std::vector<std::complex<double>> out(state.size(), std::complex<double>{0.0, 0.0});
+    for (const auto& term : observable) {
+        auto term_state = apply_pauli_to_state(state, term.pauli_string, term.targets, num_qubits);
+        for (std::size_t idx = 0; idx < out.size(); ++idx) {
+            out[idx] += term.coefficient * term_state[idx];
+        }
+    }
+    return out;
+}
+
+std::complex<double> inner_product(
+    const std::vector<std::complex<double>>& left,
+    const std::vector<std::complex<double>>& right) {
+    if (left.size() != right.size()) {
+        throw std::invalid_argument("Statevector inner product operands must have the same size.");
+    }
+    std::complex<double> out{0.0, 0.0};
+    for (std::size_t idx = 0; idx < left.size(); ++idx) {
+        out += std::conj(left[idx]) * right[idx];
+    }
+    return out;
+}
+
+std::string inverse_gate_name(const std::string& gate_name, std::vector<double>& params) {
+    const std::string normalized = uppercase_ascii(gate_name);
+    if (normalized == "I" || normalized == "IDENTITY" || normalized == "H" || normalized == "HADAMARD" ||
+        normalized == "X" || normalized == "PAULIX" || normalized == "Y" || normalized == "PAULIY" ||
+        normalized == "Z" || normalized == "PAULIZ" || normalized == "CNOT" || normalized == "CX" ||
+        normalized == "CZ" || normalized == "SWAP" || normalized == "MCX" || normalized == "CCX" ||
+        normalized == "TOFFOLI" || normalized == "CSWAP" || normalized == "FREDKIN") {
+        return gate_name;
+    }
+    if (normalized == "S") {
+        return "SDG";
+    }
+    if (normalized == "SDG" || normalized == "SDAG") {
+        return "S";
+    }
+    if (normalized == "T") {
+        return "TDG";
+    }
+    if (normalized == "TDG" || normalized == "TDAG") {
+        return "T";
+    }
+    if (normalized == "RX" || normalized == "RY" || normalized == "RZ" || normalized == "P" ||
+        normalized == "PHASE" || normalized == "CRX" || normalized == "CRY" || normalized == "CRZ" ||
+        normalized == "CP" || normalized == "CPHASE" || normalized == "CONTROLLEDPHASE") {
+        if (params.empty()) {
+            throw std::invalid_argument("Parametric adjoint operation payload is missing its angle.");
+        }
+        params[0] = -params[0];
+        return gate_name;
+    }
+
+    throw_adjoint_not_implemented("unsupported operation in binding adjoint_jacobian: " + gate_name);
+}
+
+void apply_adjoint_operation(
+    rocquantum::QuantumSimulator& simulator,
+    const AdjointOperationPayload& operation,
+    bool inverse) {
+    std::string gate_name = operation.rocq_name.empty() ? operation.name : operation.rocq_name;
+    std::vector<double> params = operation.params;
+    if (inverse) {
+        gate_name = inverse_gate_name(gate_name, params);
+    } else {
+        const std::string normalized = uppercase_ascii(gate_name);
+        const bool supported =
+            normalized == "I" || normalized == "IDENTITY" || normalized == "H" || normalized == "HADAMARD" ||
+            normalized == "X" || normalized == "PAULIX" || normalized == "Y" || normalized == "PAULIY" ||
+            normalized == "Z" || normalized == "PAULIZ" || normalized == "S" || normalized == "SDG" ||
+            normalized == "SDAG" || normalized == "T" || normalized == "TDG" || normalized == "TDAG" ||
+            normalized == "CNOT" || normalized == "CX" || normalized == "CZ" || normalized == "SWAP" ||
+            normalized == "RX" || normalized == "RY" || normalized == "RZ" || normalized == "P" ||
+            normalized == "PHASE" || normalized == "CRX" || normalized == "CRY" || normalized == "CRZ" ||
+            normalized == "CP" || normalized == "CPHASE" || normalized == "CONTROLLEDPHASE" ||
+            normalized == "MCX" || normalized == "CCX" || normalized == "TOFFOLI" || normalized == "CSWAP" ||
+            normalized == "FREDKIN";
+        if (!supported) {
+            throw_adjoint_not_implemented("unsupported operation in binding adjoint_jacobian: " + gate_name);
+        }
+    }
+    simulator.apply_gate(gate_name, operation.wires, params);
+}
+
+char trainable_rotation_generator(const AdjointOperationPayload& operation) {
+    const std::string normalized = uppercase_ascii(operation.rocq_name.empty() ? operation.name : operation.rocq_name);
+    if (operation.trainable_param_positions.empty()) {
+        return '\0';
+    }
+    if (operation.trainable_param_positions.size() != 1 || operation.trainable_param_positions[0] != 0 ||
+        operation.params.size() != 1 || operation.wires.size() != 1) {
+        throw_adjoint_not_implemented(
+            "binding adjoint_jacobian currently supports one trainable scalar parameter per RX/RY/RZ operation.");
+    }
+    if (normalized == "RX") {
+        return 'X';
+    }
+    if (normalized == "RY") {
+        return 'Y';
+    }
+    if (normalized == "RZ") {
+        return 'Z';
+    }
+    throw_adjoint_not_implemented(
+        "binding adjoint_jacobian currently differentiates trainable RX/RY/RZ operations only.");
+}
+
+py::array_t<double> compute_binding_adjoint_jacobian(
+    const rocquantum::QuantumSimulator& self,
+    py::sequence operations,
+    py::sequence observables,
+    const std::vector<int>& trainable_params) {
+    if (self.batch_size() != 1) {
+        throw_adjoint_not_implemented("adjoint_jacobian requires a single-state simulator.");
+    }
+
+    std::unordered_map<int, std::size_t> trainable_columns;
+    for (std::size_t idx = 0; idx < trainable_params.size(); ++idx) {
+        trainable_columns[trainable_params[idx]] = idx;
+    }
+
+    auto parsed_operations = parse_adjoint_operations(operations, trainable_columns);
+    auto parsed_observables = parse_adjoint_observables(observables);
+
+    rocquantum::QuantumSimulator forward(self.num_qubits());
+    std::vector<std::vector<std::complex<double>>> forward_states;
+    forward_states.push_back(forward.get_statevector());
+    for (const auto& operation : parsed_operations) {
+        apply_adjoint_operation(forward, operation, false);
+        forward_states.push_back(forward.get_statevector());
+    }
+
+    py::array_t<double> jacobian({
+        static_cast<py::ssize_t>(parsed_observables.size()),
+        static_cast<py::ssize_t>(trainable_params.size()),
+    });
+    auto out = jacobian.mutable_unchecked<2>();
+    for (py::ssize_t row = 0; row < out.shape(0); ++row) {
+        for (py::ssize_t col = 0; col < out.shape(1); ++col) {
+            out(row, col) = 0.0;
+        }
+    }
+
+    const auto final_state = forward_states.back();
+    for (std::size_t observable_idx = 0; observable_idx < parsed_observables.size(); ++observable_idx) {
+        std::vector<std::complex<double>> lambda =
+            apply_observable_to_state(final_state, parsed_observables[observable_idx], self.num_qubits());
+
+        for (std::size_t reverse_idx = parsed_operations.size(); reverse_idx > 0; --reverse_idx) {
+            const std::size_t operation_idx = reverse_idx - 1;
+            const auto& operation = parsed_operations[operation_idx];
+            const char generator = trainable_rotation_generator(operation);
+            if (generator != '\0') {
+                auto generator_state = apply_pauli_to_state(
+                    forward_states[operation_idx + 1],
+                    std::string(1, generator),
+                    operation.wires,
+                    self.num_qubits());
+                for (auto& amplitude : generator_state) {
+                    amplitude *= std::complex<double>{0.0, -0.5};
+                }
+                const double contribution = 2.0 * std::real(inner_product(lambda, generator_state));
+                for (int param_index : operation.trainable_param_indices) {
+                    auto column_it = trainable_columns.find(param_index);
+                    if (column_it != trainable_columns.end()) {
+                        out(static_cast<py::ssize_t>(observable_idx),
+                            static_cast<py::ssize_t>(column_it->second)) += contribution;
+                    }
+                }
+            }
+
+            rocquantum::QuantumSimulator reverse_state(self.num_qubits());
+            reverse_state.set_statevector(lambda);
+            apply_adjoint_operation(reverse_state, operation, true);
+            lambda = reverse_state.get_statevector();
+        }
+    }
+
+    return jacobian;
 }
 
 } // namespace
@@ -259,6 +639,12 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("pauli_string"),
              py::arg("targets"),
              "Return batch-major Pauli-string expectation values.")
+        .def("adjoint_jacobian",
+             &compute_binding_adjoint_jacobian,
+             py::arg("operations"),
+             py::arg("observables"),
+             py::arg("trainable_params"),
+             "Return an exact adjoint Jacobian for supported RX/RY/RZ and Pauli-observable payloads.")
         .def("expectation_matrix",
              [](const rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
@@ -583,6 +969,11 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("pauli_string"),
              py::arg("targets"))
+        .def("AdjointJacobian",
+             &compute_binding_adjoint_jacobian,
+             py::arg("operations"),
+             py::arg("observables"),
+             py::arg("trainable_params"))
         .def("ExpectationMatrix",
              [](const rocquantum::QuantumSimulator& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> matrix,
