@@ -8982,6 +8982,73 @@ def test_pennylane_native_adjoint_rejects_trainable_diagonal_qubit_unitary(monke
     assert dev._native_adjoint_payload(tape) is None
 
 
+def test_pennylane_native_adjoint_lowers_fixed_template_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=4)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.QFT(wires=[0, 1]),
+            qml.BasisEmbedding(np.array([1, 0, 1]), wires=[0, 1, 2]),
+            qml.Permute([2, 0, 1], wires=[0, 1, 2]),
+            qml.QubitSum(wires=[0, 1, 2]),
+            qml.QubitCarry(wires=[0, 1, 2, 3]),
+            qml.GroverOperator(wires=[0, 1, 2]),
+            qml.RY(0.321, wires=0),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [1]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [1]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert all(
+        op["rocq_name"]
+        not in {"QFT", "BasisEmbedding", "Permute", "QubitSum", "QubitCarry", "GroverOperator"}
+        for op in operations
+    )
+    assert [(op["rocq_name"], op["wires"]) for op in operations] == [
+        ("H", [0]),
+        ("CP", [1, 0]),
+        ("H", [1]),
+        ("SWAP", [0, 1]),
+        ("X", [0]),
+        ("X", [2]),
+        ("SWAP", [0, 2]),
+        ("SWAP", [1, 2]),
+        ("CNOT", [1, 2]),
+        ("CNOT", [0, 2]),
+        ("MCX", [1, 2, 3]),
+        ("CNOT", [1, 2]),
+        ("MCX", [0, 2, 3]),
+        ("H", [0]),
+        ("H", [1]),
+        ("Z", [2]),
+        ("X", [0]),
+        ("X", [1]),
+        ("MCX", [0, 1, 2]),
+        ("X", [1]),
+        ("X", [0]),
+        ("Z", [2]),
+        ("H", [0]),
+        ("H", [1]),
+        ("RY", [0]),
+    ]
+    np.testing.assert_allclose(operations[1]["params"], [np.pi / 2])
+    assert all(not op["params"] for index, op in enumerate(operations) if index not in {1, 24})
+    assert operations[-1]["params"] == [0.321]
+    assert operations[-1]["param_indices"] == [1]
+    assert operations[-1]["trainable_param_indices"] == [1]
+
+
 def test_pennylane_native_adjoint_marks_trainable_operation_parameters(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

@@ -3590,6 +3590,83 @@ class RocQDevice(QubitDevice):
                 diffs,
             )
 
+        def append_qft(wire_indices):
+            if not wire_indices:
+                return False
+            for target_position, target in enumerate(wire_indices):
+                append_fixed("Hadamard", "H", [target])
+                for control_position in range(target_position + 1, len(wire_indices)):
+                    control = wire_indices[control_position]
+                    angle = float(np.pi / (2 ** (control_position - target_position)))
+                    append_fixed("ControlledPhaseShift", "CP", [control, target], [angle])
+            for left_position in range(len(wire_indices) // 2):
+                append_fixed("SWAP", "SWAP", [wire_indices[left_position], wire_indices[-left_position - 1]])
+            return True
+
+        def append_basis_embedding(wire_indices, bits):
+            if len(bits) != len(wire_indices):
+                return False
+            for bit, wire_index in zip(bits, wire_indices):
+                if int(bit):
+                    append_fixed("PauliX", "X", [wire_index])
+            return True
+
+        def append_permute(wire_indices, op):
+            permutation = _permute_permutation(op)
+            wire_labels = list(getattr(op, "wires", ()))
+            if len(permutation) != len(wire_indices) or len(wire_labels) != len(wire_indices):
+                return False
+
+            working_order = list(wire_labels)
+            for current_index, target_label in enumerate(permutation):
+                if working_order[current_index] == target_label:
+                    continue
+                try:
+                    swap_index = working_order.index(target_label)
+                except ValueError:
+                    return False
+                append_fixed("SWAP", "SWAP", [wire_indices[current_index], wire_indices[swap_index]])
+                working_order[current_index], working_order[swap_index] = (
+                    working_order[swap_index],
+                    working_order[current_index],
+                )
+            return True
+
+        def append_qubit_sum(wire_indices):
+            if len(wire_indices) != 3:
+                return False
+            first, second, output = wire_indices
+            append_fixed("CNOT", "CNOT", [second, output])
+            append_fixed("CNOT", "CNOT", [first, output])
+            return True
+
+        def append_qubit_carry(wire_indices):
+            if len(wire_indices) != 4:
+                return False
+            first, second, third, output = wire_indices
+            append_mcx([second, third], output)
+            append_fixed("CNOT", "CNOT", [second, third])
+            append_mcx([first, third], output)
+            return True
+
+        def append_grover_operator(wire_indices):
+            if len(wire_indices) < 2:
+                return False
+            target = wire_indices[-1]
+            controls = wire_indices[:-1]
+            for wire_index in controls:
+                append_fixed("Hadamard", "H", [wire_index])
+            append_fixed("PauliZ", "Z", [target])
+            for wire_index in controls:
+                append_fixed("PauliX", "X", [wire_index])
+            append_mcx(controls, target)
+            for wire_index in reversed(controls):
+                append_fixed("PauliX", "X", [wire_index])
+            append_fixed("PauliZ", "Z", [target])
+            for wire_index in controls:
+                append_fixed("Hadamard", "H", [wire_index])
+            return True
+
         def append_one_parameter_gate(name, rocq_name, wire_indices, theta, param_index=None, derivative_scale=1.0):
             if param_index is None:
                 append_fixed(name, rocq_name, wire_indices, [theta])
@@ -4115,6 +4192,19 @@ class RocQDevice(QubitDevice):
                     return None
                 continue
 
+            if op.name == "BasisEmbedding":
+                if len(raw_params) != 1 or any(
+                    param_index in trainable_param_set for param_index in raw_param_indices
+                ):
+                    return None
+                try:
+                    bits = _basis_state_bits(op, len(wire_indices), op_name="BasisEmbedding")
+                except Exception:
+                    return None
+                if not append_basis_embedding(wire_indices, bits):
+                    return None
+                continue
+
             for param in raw_params:
                 if hasattr(param, "bind"):
                     return None
@@ -4127,6 +4217,31 @@ class RocQDevice(QubitDevice):
 
             if op.name in CONTROLLED_WRAPPER_OPS:
                 if not append_controlled_wrapper(op, params, param_indices):
+                    return None
+                continue
+
+            if op.name == "QFT":
+                if params or not append_qft(wire_indices):
+                    return None
+                continue
+
+            if op.name == "Permute":
+                if params or not append_permute(wire_indices, op):
+                    return None
+                continue
+
+            if op.name == "QubitSum":
+                if params or not append_qubit_sum(wire_indices):
+                    return None
+                continue
+
+            if op.name == "QubitCarry":
+                if params or not append_qubit_carry(wire_indices):
+                    return None
+                continue
+
+            if op.name == "GroverOperator":
+                if params or not append_grover_operator(wire_indices):
                     return None
                 continue
 
