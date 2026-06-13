@@ -4806,6 +4806,46 @@ def test_pennylane_batch_execute_skips_global_phase_sweeps(monkeypatch):
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_batches_controlled_global_phase_wrappers(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    circuits = [
+        qml.tape.QuantumScript(
+            [
+                qml.ctrl(qml.GlobalPhase(0.2, wires=[]), control=[0, 1], control_values=[True, False]),
+                qml.RY(0.4, wires=2),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [
+                qml.ctrl(qml.GlobalPhase(0.6, wires=[]), control=[0, 1], control_values=[True, False]),
+                qml.RY(0.8, wires=2),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.batch_size() == 2
+    assert ("RY", (2,), (0.4, 0.8)) in sim.batch_ops
+    assert any(params == (-0.1, -0.3) for _, _, params in sim.batch_ops)
+    assert sim.ops[0] == ("X", (1,), ())
+    assert sim.ops[-1] == ("X", (1,), ())
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_batches_diagonal_qubit_unitary_sweeps(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -6409,6 +6449,33 @@ def test_pennylane_global_phase_uses_single_wire_phase_matrix(monkeypatch):
     assert targets == (0,)
 
 
+def test_pennylane_controlled_global_phase_wrapper_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.ctrl(qml.GlobalPhase(0.4, wires=[]), control=[0, 1], control_values=[True, False])
+        return qml.expval(qml.PauliZ(0))
+
+    assert circuit() == pytest.approx(0.5)
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops[0] == ("X", (1,), ())
+    assert sim.ops[-1] == ("X", (1,), ())
+    assert any(name == "RZ" for name, _, _ in sim.ops)
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.expectations == [("Z", (0,))]
+
+
 def test_pennylane_diagonal_qubit_unitary_decomposes_natively(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -6928,7 +6995,7 @@ def test_pennylane_prep_sel_prep_signed_coefficients_decompose_controlled_phase_
         assert sim.controlled_matrices == []
 
 
-def test_pennylane_select_global_phase_uses_small_controlled_matrix(monkeypatch):
+def test_pennylane_select_global_phase_decomposes_natively(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
     for name in list(sys.modules):
@@ -6955,13 +7022,13 @@ def test_pennylane_select_global_phase_uses_small_controlled_matrix(monkeypatch)
     circuit()
     sim = _FakeQuantumSimulator.instances[-1]
 
-    assert sim.ops == []
-    assert sim.matrices == []
-    assert len(sim.controlled_matrices) == 1
-    matrix, controls, targets = sim.controlled_matrices[0]
-    np.testing.assert_allclose(matrix, np.diag([1.0, np.exp(-0.4j)]))
-    assert controls == (0,)
-    assert targets == (1,)
+    assert any(name == "RZ" for name, _, _ in sim.ops)
+    assert any(name in {"CNOT", "CX"} for name, _, _ in sim.ops)
+    assert len(sim.matrices) == 1
+    matrix, targets = sim.matrices[0]
+    np.testing.assert_allclose(matrix, np.eye(2) * matrix[0, 0])
+    assert targets == (0,)
+    assert sim.controlled_matrices == []
 
 
 def test_pennylane_qrom_select_product_decomposes_natively(monkeypatch):
@@ -8517,6 +8584,40 @@ def test_pennylane_native_adjoint_lowers_phase_payloads(monkeypatch):
             "trainable_param_positions": [],
         },
     ]
+
+
+def test_pennylane_native_adjoint_lowers_controlled_global_phase_wrapper(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.ctrl(qml.GlobalPhase(0.7, wires=[]), control=[0, 1], control_values=[True, False]),
+        ],
+        [qml.expval(qml.PauliZ(2))],
+    )
+    tape.trainable_params = [0]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [2]}]]
+    assert all(not op["name"].startswith("C(") for op in operations)
+    assert all(not op["rocq_name"].startswith("C(") for op in operations)
+    assert operations[0]["rocq_name"] == "X"
+    assert operations[-1]["rocq_name"] == "X"
+    assert any(
+        op["rocq_name"] == "RZ"
+        and op["param_indices"] == [0]
+        and op.get("param_derivative_scales") is not None
+        for op in operations
+    )
 
 
 def test_pennylane_native_adjoint_lowers_controlled_wrapper_payloads(monkeypatch):

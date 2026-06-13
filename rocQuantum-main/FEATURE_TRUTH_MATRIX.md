@@ -6,6 +6,8 @@ Recent adapter note: Qiskit native Sampler and Estimator parameter batches now k
 
 Recent PennyLane note: general multi-control `qml.ctrl(...)` wrappers for single-qubit `RX` / `RY` / `RZ` / `PhaseShift` / `Rot` / `PauliX` / `PauliY` / `PauliZ` / `Hadamard` / `S` / `T` bases plus `SWAP` / `ISWAP` / `PSWAP` / `SISWAP` / `SQISW` / `ECR` are accepted directly; parametric rotation/phase, Pauli/Hadamard, and swap-family/ECR cases use native `RZ` / `CNOT` / `MCX`-backed decompositions, phase-root cases use the small controlled-matrix hook in execution paths, open controls use exact `X` wrapping, compatible wrappers remain in `batch_execute`, including varying parametric sweeps, and explicit `diff_method="adjoint"` lowers the same covered wrapper set into primitive payloads instead of sending raw `C(...)` operations to the root adjoint hook.
 
+Recent PennyLane controlled-global-phase note: targetless controlled `qml.GlobalPhase` wrappers now use native phase-projector decomposition for execution, compatible `batch_execute` sweeps, and explicit adjoint payloads, including open controls, instead of the previous small controlled-matrix fallback for multi-control cases.
+
 | Area | Feature | Current Status | Evidence | Native Or Fallback | Comparison Target | Impact If Missing | Priority |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Build / Packaging | Native CMake build root | IMPLEMENTED | `CMakeLists.txt`; CMake `3.21`; `find_package(hip CONFIG REQUIRED)`, `roc::rocblas`, `roc::rocsolver`, `hip::host`, component subdirectories | Native | cuQuantum / CUDA-Q | Required for all native use | P0 |

@@ -84,6 +84,7 @@ CONTROLLED_WRAPPER_OPS = {
     "C(SISWAP)",
     "C(SQISW)",
     "C(ECR)",
+    "C(GlobalPhase)",
 }
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
@@ -1335,6 +1336,14 @@ def _apply_controlled_wrapper_batch(runtime, reference_op, wire_map, params_by_o
 
     controls = [wire_map[wire] for wire in control_wires]
     target_indices = [wire_map[wire] for wire in base.wires]
+    if base.name == "GlobalPhase" and not target_indices and all(len(params) == 1 for params in params_by_op):
+        return _apply_controlled_global_phase_batch(
+            runtime,
+            controls,
+            control_values,
+            [params[0] for params in params_by_op],
+        )
+
     if base.name == "PSWAP" and len(target_indices) == 2 and all(len(params) == 1 for params in params_by_op):
         return _apply_multi_controlled_pswap_batch(
             runtime,
@@ -2012,17 +2021,39 @@ def _apply_controlled_global_phase(runtime, controls, control_values, theta, fal
         if len(controls) == 1:
             _apply_phase_shift(runtime, [controls[0]], -theta)
         else:
-            matrix = np.array(
-                [[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, np.exp(-1j * theta)]],
-                dtype=np.complex128,
-            )
-            _apply_controlled_qubit_unitary(
-                runtime,
-                matrix,
-                controls[:-1],
-                [controls[-1]],
-                [True for _ in controls[:-1]],
-            )
+            _apply_multi_controlled_phase_projector(runtime, controls, -theta)
+
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+        flipped.clear()
+        return True
+    finally:
+        for control in reversed(flipped):
+            runtime.apply_operation("X", [control])
+
+
+def _apply_controlled_global_phase_batch(runtime, controls, control_values, thetas, fallback_wire=None):
+    if len(control_values) != len(controls):
+        return False
+    if not controls:
+        if any(not np.isclose(theta, thetas[0]) for theta in thetas[1:]):
+            return False
+        wire_indices = [] if fallback_wire is None else [fallback_wire]
+        _apply_global_phase_operation(runtime, wire_indices, thetas[0], fallback_wire=fallback_wire)
+        return True
+
+    flipped = []
+    try:
+        for control, value in zip(controls, control_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [control])
+                flipped.append(control)
+
+        negated_thetas = [-theta for theta in thetas]
+        if len(controls) == 1:
+            _apply_phase_shift_batch(runtime, [controls[0]], negated_thetas)
+        else:
+            _apply_multi_controlled_phase_projector_batch(runtime, controls, negated_thetas)
 
         for control in reversed(flipped):
             runtime.apply_operation("X", [control])
@@ -3581,6 +3612,9 @@ class RocQDevice(QubitDevice):
                 and append_mc_rx(controls, left, np.pi / 2)
             )
 
+        def append_controlled_global_phase(controls, theta, param_index=None):
+            return append_phase_projector(controls, -theta, param_index, -1.0)
+
         def append_controlled_wrapper(op, params, param_indices):
             base = _controlled_wrapper_base(op)
             control_wires = _controlled_wrapper_control_wires(op)
@@ -3590,7 +3624,10 @@ class RocQDevice(QubitDevice):
 
             controls = [int(self.wire_map[wire]) for wire in control_wires]
             target_indices = [int(self.wire_map[wire]) for wire in base.wires]
-            if base.name in {"SWAP", "ISWAP", "PSWAP", "SISWAP", "SQISW", "ECR"}:
+            if base.name == "GlobalPhase":
+                if target_indices:
+                    return False
+            elif base.name in {"SWAP", "ISWAP", "PSWAP", "SISWAP", "SQISW", "ECR"}:
                 if len(target_indices) != 2:
                     return False
             elif len(target_indices) != 1:
@@ -3608,7 +3645,7 @@ class RocQDevice(QubitDevice):
                 return False
 
             base_name = base.name
-            target = target_indices[0]
+            target = target_indices[0] if target_indices else None
             flipped_controls = [
                 control for control, value in zip(controls, control_values) if not _control_value_is_one(value)
             ]
@@ -3616,6 +3653,8 @@ class RocQDevice(QubitDevice):
             if base_name in {"RX", "RY", "RZ", "PhaseShift"} and len(selected_params) == 1:
                 pass
             elif base_name == "Rot" and len(selected_params) == 3:
+                pass
+            elif base_name == "GlobalPhase" and not target_indices and len(selected_params) == 1:
                 pass
             elif base_name == "SWAP" and len(target_indices) == 2 and not selected_params:
                 pass
@@ -3649,6 +3688,8 @@ class RocQDevice(QubitDevice):
                     and append_mc_ry(controls, target, selected_params[1], selected_param_indices[1])
                     and append_mc_rz(controls, target, selected_params[2], selected_param_indices[2])
                 )
+            elif base_name == "GlobalPhase":
+                lowered = append_controlled_global_phase(controls, selected_params[0], selected_param_indices[0])
             elif base_name == "SWAP":
                 lowered = append_mc_swap(controls, target_indices)
             elif base_name == "ISWAP":
