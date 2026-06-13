@@ -4024,6 +4024,58 @@ class RocQDevice(QubitDevice):
                 append_fixed("PauliX", "X", [wire])
             return lowered
 
+        def append_controlled_sequence(op, params):
+            base = _controlled_sequence_base(op)
+            control_wires = _controlled_sequence_control_wires(op)
+            if base is None or len(base.wires) != 1 or not control_wires:
+                return False
+
+            try:
+                controls = [int(self.wire_map[wire]) for wire in control_wires]
+                target = int(self.wire_map[base.wires[0]])
+            except KeyError:
+                return False
+
+            base_params = list(params)
+            if base.name in {"RX", "RY", "RZ", "PhaseShift"}:
+                if len(base_params) != 1:
+                    return False
+            elif base_params:
+                return False
+
+            def append_controlled_sequence_power(control, power):
+                if base.name == "RX":
+                    return append_mc_rx([control], target, base_params[0] * power)
+                if base.name == "RY":
+                    return append_mc_ry([control], target, base_params[0] * power)
+                if base.name == "RZ":
+                    return append_mc_rz([control], target, base_params[0] * power)
+                if base.name == "PhaseShift":
+                    return append_mc_phase_shift([control], target, base_params[0] * power)
+                if base.name == "PauliX":
+                    return True if power % 2 == 0 else append_mc_fixed_single_qubit_op("PauliX", [control], target)
+                if base.name == "PauliY":
+                    return True if power % 2 == 0 else append_mc_fixed_single_qubit_op("PauliY", [control], target)
+                if base.name == "PauliZ":
+                    return True if power % 2 == 0 else append_mc_fixed_single_qubit_op("PauliZ", [control], target)
+                if base.name == "Hadamard":
+                    return True if power % 2 == 0 else append_mc_fixed_single_qubit_op("Hadamard", [control], target)
+                if base.name == "S":
+                    return append_mc_phase_shift([control], target, power * np.pi / 2)
+                if base.name == "T":
+                    return append_mc_phase_shift([control], target, power * np.pi / 4)
+                if base.name == "Adjoint(S)":
+                    return append_mc_phase_shift([control], target, -power * np.pi / 2)
+                if base.name == "Adjoint(T)":
+                    return append_mc_phase_shift([control], target, -power * np.pi / 4)
+                return False
+
+            powers = [2**index for index in range(len(controls))]
+            for power, control in zip(reversed(powers), controls):
+                if not append_controlled_sequence_power(control, power):
+                    return False
+            return True
+
         def append_paulirot_basis_change(active_terms, inverse=False):
             for wire_index, pauli in active_terms:
                 if pauli == "X":
@@ -4253,6 +4305,13 @@ class RocQDevice(QubitDevice):
 
             if op.name in CONTROLLED_WRAPPER_OPS:
                 if not append_controlled_wrapper(op, params, param_indices):
+                    return None
+                continue
+
+            if op.name == "ControlledSequence":
+                if any(param_index in trainable_param_set for param_index in raw_param_indices):
+                    return None
+                if not append_controlled_sequence(op, params):
                     return None
                 continue
 
