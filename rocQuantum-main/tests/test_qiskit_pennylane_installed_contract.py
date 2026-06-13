@@ -9303,6 +9303,121 @@ def test_pennylane_native_adjoint_lowers_partial_select_payloads(monkeypatch):
     assert operations[-1]["trainable_param_indices"] == [0]
 
 
+def test_pennylane_native_adjoint_lowers_select_basis_embedding_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.Select(
+                [
+                    qml.BasisEmbedding(np.array([1, 0]), wires=[1, 2]),
+                    qml.BasisEmbedding(np.array([0, 1]), wires=[1, 2]),
+                ],
+                control=[0],
+            ),
+            qml.RY(0.321, wires=0),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [2]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [2]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert [(op["rocq_name"], op["wires"]) for op in operations] == [
+        ("X", [0]),
+        ("CNOT", [0, 1]),
+        ("X", [0]),
+        ("CNOT", [0, 2]),
+        ("RY", [0]),
+    ]
+    assert all(not op["params"] for op in operations[:-1])
+    assert operations[-1]["params"] == [0.321]
+    assert operations[-1]["param_indices"] == [2]
+    assert operations[-1]["trainable_param_indices"] == [2]
+
+
+def test_pennylane_native_adjoint_lowers_select_product_basis_phase_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    selected_product = qml.prod(
+        qml.BasisEmbedding(np.array([1, 0]), wires=[1, 2]),
+        qml.GlobalPhase(0.4, wires=[]),
+    )
+    dev = qml.device("lightning.rocq", wires=3)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.Select([selected_product, qml.PauliX(wires=1)], control=[0]),
+            qml.RY(0.321, wires=2),
+        ],
+        [qml.expval(qml.PauliZ(2))],
+    )
+    tape.trainable_params = [2]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [2]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [2]}]]
+    assert [(op["rocq_name"], op["wires"]) for op in operations] == [
+        ("X", [0]),
+        ("CNOT", [0, 1]),
+        ("X", [0]),
+        ("X", [0]),
+        ("P", [0]),
+        ("X", [0]),
+        ("CNOT", [0, 1]),
+        ("RY", [2]),
+    ]
+    assert operations[4]["params"] == [-0.4]
+    assert operations[4]["param_indices"] == [1]
+    assert operations[4]["trainable_param_indices"] == []
+    assert operations[-1]["params"] == [0.321]
+    assert operations[-1]["param_indices"] == [2]
+    assert operations[-1]["trainable_param_indices"] == [2]
+
+
+def test_pennylane_native_adjoint_rejects_trainable_select_basis_embedding_payload(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.Select(
+                [
+                    qml.BasisEmbedding(np.array([1, 0]), wires=[1, 2]),
+                    qml.BasisEmbedding(np.array([0, 1]), wires=[1, 2]),
+                ],
+                control=[0],
+            ),
+            qml.RY(0.321, wires=0),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0, 2]
+
+    assert dev._native_adjoint_payload(tape) is None
+
+
 def test_pennylane_native_adjoint_marks_trainable_operation_parameters(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

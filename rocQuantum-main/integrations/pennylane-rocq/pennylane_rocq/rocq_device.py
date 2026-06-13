@@ -4053,20 +4053,169 @@ class RocQDevice(QubitDevice):
                     self.control_wires = list(controls)
                     self.control_values = list(values)
 
+            def scalar_params(selected_params):
+                converted = []
+                for selected_param in selected_params:
+                    try:
+                        array_param = np.asarray(selected_param)
+                        if array_param.shape:
+                            return None
+                        converted.append(float(array_param))
+                    except (TypeError, ValueError):
+                        return None
+                return converted
+
+            def append_controlled_x_targets(control_wires, control_values, target_indices):
+                if len(control_values) != len(control_wires):
+                    return False
+                if not target_indices:
+                    return True
+                try:
+                    controls = [int(self.wire_map[wire]) for wire in control_wires]
+                except KeyError:
+                    return False
+                if not controls:
+                    for target_index in target_indices:
+                        append_fixed("PauliX", "X", [target_index])
+                    return True
+                flipped_wires = [
+                    control for control, value in zip(controls, control_values) if not _control_value_is_one(value)
+                ]
+                for wire in flipped_wires:
+                    append_fixed("PauliX", "X", [wire])
+                for target_index in target_indices:
+                    append_mcx(controls, target_index)
+                for wire in reversed(flipped_wires):
+                    append_fixed("PauliX", "X", [wire])
+                return True
+
+            def append_selected_basis_embedding(selected_op, selected_controls, selected_values, selected_params, selected_indices):
+                if len(selected_params) != 1 or any(index in trainable_param_set for index in selected_indices):
+                    return False
+                try:
+                    bits = np.asarray(selected_params[0], dtype=int).reshape(-1)
+                    target_indices = [int(self.wire_map[wire]) for wire in selected_op.wires]
+                except (KeyError, TypeError, ValueError):
+                    return False
+                if len(bits) != len(target_indices):
+                    return False
+                active_targets = [
+                    target_index
+                    for bit, target_index in zip(bits, target_indices)
+                    if int(bit)
+                ]
+                return append_controlled_x_targets(selected_controls, selected_values, active_targets)
+
+            def append_selected_product(selected_op, selected_controls, selected_values, selected_params, selected_indices):
+                operands = _operation_operands(selected_op)
+                if not operands:
+                    return False
+                split_params = _split_operand_parameters(operands, selected_params)
+                split_indices = _split_operand_parameters(operands, selected_indices)
+                if split_params is None or split_indices is None:
+                    return False
+
+                active_targets = []
+                native_operands = []
+                phase_operands = []
+                for operand, operand_params, operand_indices in zip(operands, split_params, split_indices):
+                    if operand.name in {"Identity", "I"}:
+                        if operand_params:
+                            return False
+                        continue
+                    if operand.name == "GlobalPhase":
+                        phase_operands.append((operand, operand_params, operand_indices))
+                        continue
+                    if operand.name != "BasisEmbedding":
+                        native_operands.append((operand, operand_params, operand_indices))
+                        continue
+                    if len(operand_params) != 1 or any(index in trainable_param_set for index in operand_indices):
+                        return False
+                    try:
+                        bits = np.asarray(operand_params[0], dtype=int).reshape(-1)
+                        target_indices = [int(self.wire_map[wire]) for wire in operand.wires]
+                    except (KeyError, TypeError, ValueError):
+                        return False
+                    if len(bits) != len(target_indices):
+                        return False
+                    active_targets.extend(
+                        target_index
+                        for bit, target_index in zip(bits, target_indices)
+                        if int(bit)
+                    )
+
+                if active_targets and native_operands:
+                    return False
+                if len(native_operands) > 1:
+                    return False
+
+                if native_operands:
+                    operand, operand_params, operand_indices = native_operands[0]
+                    if not append_selected_op(
+                        operand,
+                        selected_controls,
+                        selected_values,
+                        operand_params,
+                        operand_indices,
+                    ):
+                        return False
+                elif active_targets and not append_controlled_x_targets(
+                    selected_controls,
+                    selected_values,
+                    active_targets,
+                ):
+                    return False
+
+                for operand, operand_params, operand_indices in phase_operands:
+                    if not append_selected_op(
+                        operand,
+                        selected_controls,
+                        selected_values,
+                        operand_params,
+                        operand_indices,
+                    ):
+                        return False
+                return True
+
+            def append_selected_op(selected_op, selected_controls, selected_values, selected_params, selected_param_indices):
+                if selected_op.name in {"Identity", "I"}:
+                    return not selected_params
+                if selected_op.name in {"Prod", "Tensor"}:
+                    return append_selected_product(
+                        selected_op,
+                        selected_controls,
+                        selected_values,
+                        selected_params,
+                        selected_param_indices,
+                    )
+                if selected_op.name == "BasisEmbedding":
+                    return append_selected_basis_embedding(
+                        selected_op,
+                        selected_controls,
+                        selected_values,
+                        selected_params,
+                        selected_param_indices,
+                    )
+                if not selected_controls:
+                    return False
+                converted_params = scalar_params(selected_params)
+                if converted_params is None:
+                    return False
+                wrapper = _SelectedControlledWrapper(selected_op, selected_controls, selected_values)
+                return append_controlled_wrapper(wrapper, converted_params, selected_param_indices)
+
             for index, selected_op in enumerate(selected_ops):
                 start, end = slices[index]
                 selected_params = params[start:end]
                 selected_param_indices = param_indices[start:end]
-                if selected_op.name in {"Identity", "I"}:
-                    if selected_params:
-                        return False
-                    continue
-
                 selected_controls, selected_values = control_specs[index]
-                if not selected_controls:
-                    return False
-                wrapper = _SelectedControlledWrapper(selected_op, selected_controls, selected_values)
-                if not append_controlled_wrapper(wrapper, selected_params, selected_param_indices):
+                if not append_selected_op(
+                    selected_op,
+                    selected_controls,
+                    selected_values,
+                    selected_params,
+                    selected_param_indices,
+                ):
                     return False
             return True
 
@@ -4342,6 +4491,11 @@ class RocQDevice(QubitDevice):
                     return None
                 continue
 
+            if op.name == "Select":
+                if not append_select(op, raw_params, raw_param_indices):
+                    return None
+                continue
+
             for param in raw_params:
                 if hasattr(param, "bind"):
                     return None
@@ -4359,11 +4513,6 @@ class RocQDevice(QubitDevice):
 
             if op.name == "ControlledSequence":
                 if not append_controlled_sequence(op, params, param_indices):
-                    return None
-                continue
-
-            if op.name == "Select":
-                if not append_select(op, params, param_indices):
                     return None
                 continue
 
