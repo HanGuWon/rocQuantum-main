@@ -30,6 +30,8 @@ struct AdjointOperationPayload {
     std::vector<int> trainable_param_positions;
     bool has_matrix = false;
     std::vector<std::complex<double>> matrix;
+    std::vector<unsigned> controls;
+    std::vector<bool> control_values;
 };
 
 struct PauliTermPayload {
@@ -187,6 +189,20 @@ std::vector<AdjointOperationPayload> parse_adjoint_operations(
             payload.has_matrix = true;
             payload.matrix =
                 parse_complex_matrix_payload(py::reinterpret_borrow<py::object>(op[py::str("matrix")]));
+            if (dict_contains(op, "controls")) {
+                payload.controls =
+                    py::reinterpret_borrow<py::object>(op[py::str("controls")]).cast<std::vector<unsigned>>();
+                if (dict_contains(op, "control_values")) {
+                    payload.control_values =
+                        py::reinterpret_borrow<py::object>(op[py::str("control_values")]).cast<std::vector<bool>>();
+                } else {
+                    payload.control_values.assign(payload.controls.size(), true);
+                }
+                if (payload.control_values.size() != payload.controls.size()) {
+                    throw std::invalid_argument(
+                        "Matrix adjoint operation control_values length must match controls length.");
+                }
+            }
             if (!payload.trainable_param_positions.empty()) {
                 throw_adjoint_not_implemented(
                     "binding adjoint_jacobian does not differentiate trainable matrix operation payloads.");
@@ -612,10 +628,32 @@ void apply_adjoint_operation(
         if (operation.matrix.size() != dim * dim) {
             throw std::invalid_argument("Matrix adjoint operation dimension does not match target count.");
         }
+        std::vector<std::complex<double>> matrix = operation.matrix;
         if (inverse) {
-            simulator.apply_matrix(conjugate_transpose_matrix(operation.matrix, dim), operation.wires);
+            matrix = conjugate_transpose_matrix(operation.matrix, dim);
+        }
+        if (operation.controls.empty()) {
+            simulator.apply_matrix(matrix, operation.wires);
         } else {
-            simulator.apply_matrix(operation.matrix, operation.wires);
+            std::vector<unsigned> flipped_controls;
+            try {
+                for (std::size_t idx = 0; idx < operation.controls.size(); ++idx) {
+                    if (!operation.control_values[idx]) {
+                        simulator.apply_gate("X", std::vector<unsigned>{operation.controls[idx]}, std::vector<double>{});
+                        flipped_controls.push_back(operation.controls[idx]);
+                    }
+                }
+                simulator.apply_controlled_matrix(matrix, operation.controls, operation.wires);
+                for (auto it = flipped_controls.rbegin(); it != flipped_controls.rend(); ++it) {
+                    simulator.apply_gate("X", std::vector<unsigned>{*it}, std::vector<double>{});
+                }
+                flipped_controls.clear();
+            } catch (...) {
+                for (auto it = flipped_controls.rbegin(); it != flipped_controls.rend(); ++it) {
+                    simulator.apply_gate("X", std::vector<unsigned>{*it}, std::vector<double>{});
+                }
+                throw;
+            }
         }
         return;
     }

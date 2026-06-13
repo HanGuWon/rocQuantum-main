@@ -3463,21 +3463,25 @@ class RocQDevice(QubitDevice):
                 payload["param_derivative_scales"] = param_derivative_scales
             payloads.append(payload)
 
-        def append_matrix_payload(name, wire_indices, matrix, param_indices):
+        def append_matrix_payload(name, wire_indices, matrix, param_indices, controls=None, control_values=None):
             if any(param_index in trainable_param_set for param_index in param_indices):
                 return False
-            payloads.append(
-                {
-                    "name": name,
-                    "rocq_name": "matrix",
-                    "wires": wire_indices,
-                    "params": [],
-                    "param_indices": list(param_indices),
-                    "trainable_param_indices": [],
-                    "trainable_param_positions": [],
-                    "matrix": _complex_matrix_payload(matrix),
-                }
-            )
+            payload = {
+                "name": name,
+                "rocq_name": "matrix",
+                "wires": wire_indices,
+                "params": [],
+                "param_indices": list(param_indices),
+                "trainable_param_indices": [],
+                "trainable_param_positions": [],
+                "matrix": _complex_matrix_payload(matrix),
+            }
+            if controls is not None:
+                payload["controls"] = [int(control) for control in controls]
+                payload["control_values"] = [bool(_control_value_is_one(value)) for value in (control_values or [])]
+                if len(payload["control_values"]) != len(payload["controls"]):
+                    return False
+            payloads.append(payload)
             return True
 
         def append_fixed(name, rocq_name, wire_indices, params=None):
@@ -4009,6 +4013,22 @@ class RocQDevice(QubitDevice):
                 except Exception:
                     return None
                 if not append_matrix_payload(op.name, wire_indices, matrix, raw_param_indices):
+                    return None
+                continue
+
+            if op.name == "ControlledQubitUnitary":
+                controlled_payload = _controlled_qubit_unitary_components(op, self.wire_map)
+                if controlled_payload is None:
+                    return None
+                matrix, controls, targets, control_values = controlled_payload
+                if not append_matrix_payload(
+                    op.name,
+                    [int(target) for target in targets],
+                    matrix,
+                    raw_param_indices,
+                    controls=[int(control) for control in controls],
+                    control_values=control_values,
+                ):
                     return None
                 continue
 
