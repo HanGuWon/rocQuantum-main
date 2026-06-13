@@ -45,6 +45,7 @@ struct SparseMatrixPayload {
     std::vector<std::complex<double>> data;
     std::vector<std::size_t> indices;
     std::vector<std::size_t> indptr;
+    std::vector<unsigned> targets;
     std::size_t rows = 0;
     std::size_t cols = 0;
 };
@@ -249,6 +250,10 @@ std::vector<ObservablePayload> parse_adjoint_observables(py::sequence observable
                                      .cast<std::pair<std::size_t, std::size_t>>();
                     payload.rows = shape.first;
                     payload.cols = shape.second;
+                    if (dict_contains(term, "targets")) {
+                        payload.targets =
+                            py::reinterpret_borrow<py::object>(term[py::str("targets")]).cast<std::vector<unsigned>>();
+                    }
                     observable.sparse_terms.push_back(std::move(payload));
                     continue;
                 }
@@ -431,28 +436,63 @@ std::vector<std::complex<double>> apply_dense_matrix_to_state(
 
 std::vector<std::complex<double>> apply_sparse_matrix_to_state(
     const std::vector<std::complex<double>>& state,
-    const SparseMatrixPayload& payload) {
-    if (payload.rows != state.size() || payload.cols != state.size()) {
-        throw_adjoint_not_implemented(
-            "binding adjoint_jacobian currently supports full-state CSR sparse observables only.");
-    }
+    const SparseMatrixPayload& payload,
+    unsigned num_qubits) {
     if (payload.indptr.size() != payload.rows + 1) {
         throw std::invalid_argument("Sparse adjoint observable indptr length must equal rows + 1.");
     }
     if (payload.data.size() != payload.indices.size()) {
         throw std::invalid_argument("Sparse adjoint observable data and indices lengths differ.");
     }
-
-    std::vector<std::complex<double>> out(state.size(), std::complex<double>{0.0, 0.0});
     for (std::size_t row = 0; row < payload.rows; ++row) {
         if (payload.indptr[row] > payload.indptr[row + 1] || payload.indptr[row + 1] > payload.data.size()) {
             throw std::invalid_argument("Sparse adjoint observable CSR indptr is invalid.");
         }
         for (std::size_t offset = payload.indptr[row]; offset < payload.indptr[row + 1]; ++offset) {
-            const std::size_t col = payload.indices[offset];
-            if (col >= payload.cols) {
+            if (payload.indices[offset] >= payload.cols) {
                 throw std::invalid_argument("Sparse adjoint observable column index is out of bounds.");
             }
+        }
+    }
+
+    std::vector<std::complex<double>> out(state.size(), std::complex<double>{0.0, 0.0});
+    if (!payload.targets.empty()) {
+        if (payload.targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+            throw std::invalid_argument("Too many sparse observable target qubits.");
+        }
+        const std::size_t expected_state_size = std::size_t{1} << num_qubits;
+        if (state.size() != expected_state_size) {
+            throw std::invalid_argument("Statevector size does not match the simulator qubit count.");
+        }
+        const std::size_t dim = std::size_t{1} << payload.targets.size();
+        if (payload.rows != dim || payload.cols != dim) {
+            throw std::invalid_argument("Sparse adjoint observable matrix dimension does not match target count.");
+        }
+
+        for (std::size_t basis = 0; basis < state.size(); ++basis) {
+            if (extract_local_basis_index(basis, payload.targets, num_qubits) != 0) {
+                continue;
+            }
+            for (std::size_t row = 0; row < payload.rows; ++row) {
+                const std::size_t output_basis = replace_local_basis_index(basis, payload.targets, row, num_qubits);
+                for (std::size_t offset = payload.indptr[row]; offset < payload.indptr[row + 1]; ++offset) {
+                    const std::size_t input_basis =
+                        replace_local_basis_index(basis, payload.targets, payload.indices[offset], num_qubits);
+                    out[output_basis] += payload.data[offset] * state[input_basis];
+                }
+            }
+        }
+        return out;
+    }
+
+    if (payload.rows != state.size() || payload.cols != state.size()) {
+        throw_adjoint_not_implemented(
+            "binding adjoint_jacobian full-state CSR sparse observables must match the state dimension.");
+    }
+
+    for (std::size_t row = 0; row < payload.rows; ++row) {
+        for (std::size_t offset = payload.indptr[row]; offset < payload.indptr[row + 1]; ++offset) {
+            const std::size_t col = payload.indices[offset];
             out[row] += payload.data[offset] * state[col];
         }
     }
@@ -477,7 +517,7 @@ std::vector<std::complex<double>> apply_observable_to_state(
         }
     }
     for (const auto& term : observable.sparse_terms) {
-        auto term_state = apply_sparse_matrix_to_state(state, term);
+        auto term_state = apply_sparse_matrix_to_state(state, term, num_qubits);
         for (std::size_t idx = 0; idx < out.size(); ++idx) {
             out[idx] += term_state[idx];
         }

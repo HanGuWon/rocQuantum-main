@@ -4235,18 +4235,23 @@ class RocQDevice(QubitDevice):
             if components is None:
                 if observable.name != "SparseHamiltonian":
                     return None
-                sparse_matrix = observable.sparse_matrix(wire_order=self.wires, format="csr")
-                payloads.append(
-                    [
-                        {
-                            "kind": "sparse",
-                            "data": _complex_vector_payload(sparse_matrix.data),
-                            "indices": [int(index) for index in sparse_matrix.indices],
-                            "indptr": [int(offset) for offset in sparse_matrix.indptr],
-                            "shape": [int(dim) for dim in sparse_matrix.shape],
-                        }
-                    ]
-                )
+                observable_wires = list(observable.wires)
+                partial_targets = None
+                if len(observable_wires) < len(self.wires):
+                    sparse_matrix = observable.sparse_matrix(wire_order=observable.wires, format="csr")
+                    partial_targets = [int(self.wire_map[wire]) for wire in observable_wires]
+                else:
+                    sparse_matrix = observable.sparse_matrix(wire_order=self.wires, format="csr")
+                sparse_payload = {
+                    "kind": "sparse",
+                    "data": _complex_vector_payload(sparse_matrix.data),
+                    "indices": [int(index) for index in sparse_matrix.indices],
+                    "indptr": [int(offset) for offset in sparse_matrix.indptr],
+                    "shape": [int(dim) for dim in sparse_matrix.shape],
+                }
+                if partial_targets is not None:
+                    sparse_payload["targets"] = partial_targets
+                payloads.append([sparse_payload])
                 continue
             matrix, targets = components
             payloads.append(

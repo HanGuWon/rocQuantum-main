@@ -9494,6 +9494,53 @@ def test_pennylane_native_adjoint_accepts_sparse_hamiltonian_payload(monkeypatch
     assert native_call["trainable_params"] == [0]
 
 
+def test_pennylane_native_adjoint_uses_partial_sparse_hamiltonian_payload(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[1])
+    tape = qml.tape.QuantumScript(
+        [qml.RY(0.321, wires=1)],
+        [qml.expval(observable)],
+    )
+    tape.trainable_params = [0]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0]
+    assert operations == [
+        {
+            "name": "RY",
+            "rocq_name": "RY",
+            "wires": [1],
+            "params": [0.321],
+            "param_indices": [0],
+            "trainable_param_indices": [0],
+            "trainable_param_positions": [0],
+        }
+    ]
+    assert observables == [
+        [
+            {
+                "kind": "sparse",
+                "data": [(1.0, 0.0), (-1.0, 0.0)],
+                "indices": [0, 1],
+                "indptr": [0, 1, 2],
+                "shape": [2, 2],
+                "targets": [1],
+            }
+        ]
+    ]
+
+
 def test_pennylane_finite_shot_sample_and_counts_use_native_measure(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
