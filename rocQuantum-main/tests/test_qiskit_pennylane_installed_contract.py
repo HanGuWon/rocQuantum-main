@@ -9390,6 +9390,54 @@ def test_pennylane_native_adjoint_lowers_select_product_basis_phase_payloads(mon
     assert operations[-1]["trainable_param_indices"] == [2]
 
 
+def test_pennylane_native_adjoint_lowers_select_multi_native_product_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    selected_product = qml.prod(
+        qml.PauliX(wires=1),
+        qml.PauliZ(wires=2),
+        qml.GlobalPhase(0.4, wires=[]),
+    )
+    dev = qml.device("lightning.rocq", wires=3)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.Select([selected_product, qml.Identity(wires=1)], control=[0]),
+            qml.RY(0.321, wires=2),
+        ],
+        [qml.expval(qml.PauliZ(2))],
+    )
+    tape.trainable_params = [1]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [1]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [2]}]]
+    assert [(op["rocq_name"], op["wires"]) for op in operations] == [
+        ("X", [0]),
+        ("CNOT", [0, 1]),
+        ("X", [0]),
+        ("X", [0]),
+        ("CZ", [0, 2]),
+        ("X", [0]),
+        ("X", [0]),
+        ("P", [0]),
+        ("X", [0]),
+        ("RY", [2]),
+    ]
+    assert operations[7]["params"] == [-0.4]
+    assert operations[7]["param_indices"] == [0]
+    assert operations[7]["trainable_param_indices"] == []
+    assert operations[-1]["params"] == [0.321]
+    assert operations[-1]["param_indices"] == [1]
+    assert operations[-1]["trainable_param_indices"] == [1]
+
+
 def test_pennylane_native_adjoint_lowers_select_qubit_unitary_payloads(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

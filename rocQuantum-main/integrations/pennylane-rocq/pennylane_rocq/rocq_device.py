@@ -4116,18 +4116,19 @@ class RocQDevice(QubitDevice):
                     return False
 
                 active_targets = []
-                native_operands = []
-                phase_operands = []
+                ordered_operands = []
+                has_native_operands = False
                 for operand, operand_params, operand_indices in zip(operands, split_params, split_indices):
                     if operand.name in {"Identity", "I"}:
                         if operand_params:
                             return False
                         continue
                     if operand.name == "GlobalPhase":
-                        phase_operands.append((operand, operand_params, operand_indices))
+                        ordered_operands.append((operand, operand_params, operand_indices))
                         continue
                     if operand.name != "BasisEmbedding":
-                        native_operands.append((operand, operand_params, operand_indices))
+                        has_native_operands = True
+                        ordered_operands.append((operand, operand_params, operand_indices))
                         continue
                     if len(operand_params) != 1 or any(index in trainable_param_set for index in operand_indices):
                         return False
@@ -4144,29 +4145,16 @@ class RocQDevice(QubitDevice):
                         if int(bit)
                     )
 
-                if active_targets and native_operands:
+                if active_targets and has_native_operands:
                     return False
-                if len(native_operands) > 1:
-                    return False
-
-                if native_operands:
-                    operand, operand_params, operand_indices = native_operands[0]
-                    if not append_selected_op(
-                        operand,
-                        selected_controls,
-                        selected_values,
-                        operand_params,
-                        operand_indices,
-                    ):
-                        return False
-                elif active_targets and not append_controlled_x_targets(
+                if active_targets and not append_controlled_x_targets(
                     selected_controls,
                     selected_values,
                     active_targets,
                 ):
                     return False
 
-                for operand, operand_params, operand_indices in phase_operands:
+                for operand, operand_params, operand_indices in ordered_operands:
                     if not append_selected_op(
                         operand,
                         selected_controls,
