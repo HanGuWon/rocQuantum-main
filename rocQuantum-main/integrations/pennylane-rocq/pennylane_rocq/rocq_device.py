@@ -4177,6 +4177,29 @@ class RocQDevice(QubitDevice):
                         return False
                 return True
 
+            def append_selected_matrix_payload(selected_op, selected_controls, selected_values, selected_param_indices):
+                if not selected_controls or any(index in trainable_param_set for index in selected_param_indices):
+                    return False
+                try:
+                    target_indices = [int(self.wire_map[wire]) for wire in selected_op.wires]
+                    controls = [int(self.wire_map[wire]) for wire in selected_controls]
+                    matrix = matrix_to_little_endian_wires(qml.matrix(selected_op))
+                except (KeyError, TypeError, ValueError, RuntimeError):
+                    return False
+                if not target_indices:
+                    return False
+                expected_dimension = 1 << len(target_indices)
+                if matrix.shape != (expected_dimension, expected_dimension):
+                    return False
+                return append_matrix_payload(
+                    selected_op.name,
+                    target_indices,
+                    matrix,
+                    selected_param_indices,
+                    controls=controls,
+                    control_values=selected_values,
+                )
+
             def append_selected_op(selected_op, selected_controls, selected_values, selected_params, selected_param_indices):
                 if selected_op.name in {"Identity", "I"}:
                     return not selected_params
@@ -4199,10 +4222,16 @@ class RocQDevice(QubitDevice):
                 if not selected_controls:
                     return False
                 converted_params = scalar_params(selected_params)
-                if converted_params is None:
-                    return False
-                wrapper = _SelectedControlledWrapper(selected_op, selected_controls, selected_values)
-                return append_controlled_wrapper(wrapper, converted_params, selected_param_indices)
+                if converted_params is not None:
+                    wrapper = _SelectedControlledWrapper(selected_op, selected_controls, selected_values)
+                    if append_controlled_wrapper(wrapper, converted_params, selected_param_indices):
+                        return True
+                return append_selected_matrix_payload(
+                    selected_op,
+                    selected_controls,
+                    selected_values,
+                    selected_param_indices,
+                )
 
             for index, selected_op in enumerate(selected_ops):
                 start, end = slices[index]
