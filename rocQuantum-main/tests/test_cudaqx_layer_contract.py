@@ -224,6 +224,20 @@ class TestQaoaHelpers(unittest.TestCase):
             ],
         )
 
+    def test_observable_arithmetic_accepts_scalar_division(self):
+        import rocq
+        from rocq.operator import iter_pauli_terms
+
+        operator = (rocq.spin.i(0) - rocq.spin.z(0) * rocq.spin.z(1)) / 2
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.5 + 0j, []),
+                (-0.5 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
+
     def test_observable_arithmetic_accepts_chained_pauli_products(self):
         from rocq.operator import PauliOperator, iter_pauli_terms
 

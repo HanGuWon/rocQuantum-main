@@ -31,6 +31,11 @@ class QuantumOperator(ABC):
     def __rmul__(self, other):
         return self.__mul__(other)
 
+    def __truediv__(self, other):
+        if isinstance(other, Number):
+            return self * (1 / other)
+        raise NotImplementedError(f"Cannot divide QuantumOperator by {type(other)}")
+
     def __add__(self, other):
         if isinstance(other, QuantumOperator):
             return SumOperator([self, other])

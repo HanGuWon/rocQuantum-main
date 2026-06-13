@@ -218,6 +218,17 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         self.assertEqual(backend.expectation(operator), 1.5)
 
+    def test_mock_statevector_observable_division_scales_matrix_fallback(self):
+        from rocq.backends import StateVectorBackend
+
+        with mock.patch("rocq.backends.hip_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                backend = StateVectorBackend(1)
+
+        operator = HermitianOperator(np.diag([1.0, -1.0]), targets=[0]) / 2
+
+        self.assertEqual(backend.expectation(operator), 0.5)
+
     def test_mock_density_backend_evaluates_hermitian_sum(self):
         from rocq.backends import DensityMatrixBackend
 
