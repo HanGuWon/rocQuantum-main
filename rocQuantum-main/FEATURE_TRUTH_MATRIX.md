@@ -8,6 +8,8 @@ Recent PennyLane note: general multi-control `qml.ctrl(...)` wrappers for single
 
 Recent PennyLane controlled-global-phase note: targetless controlled `qml.GlobalPhase` wrappers now use native phase-projector decomposition for execution, compatible `batch_execute` sweeps, and explicit adjoint payloads, including open controls, instead of the previous small controlled-matrix fallback for multi-control cases.
 
+Recent PennyLane controlled-sequence note: `qml.ControlledSequence` also covers adjoint phase-root bases (`Adjoint(S)` / `Adjoint(T)`) through native controlled-phase decomposition, including fixed blocks inside compatible `batch_execute`.
+
 | Area | Feature | Current Status | Evidence | Native Or Fallback | Comparison Target | Impact If Missing | Priority |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Build / Packaging | Native CMake build root | IMPLEMENTED | `CMakeLists.txt`; CMake `3.21`; `find_package(hip CONFIG REQUIRED)`, `roc::rocblas`, `roc::rocsolver`, `hip::host`, component subdirectories | Native | cuQuantum / CUDA-Q | Required for all native use | P0 |
