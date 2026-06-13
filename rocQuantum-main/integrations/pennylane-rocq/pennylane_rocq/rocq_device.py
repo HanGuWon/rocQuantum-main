@@ -624,6 +624,32 @@ def _evaluate_observable_payload(runtime, payload, cache=None):
     raise TypeError(f"Unsupported observable payload kind: {kind!r}")
 
 
+def _observable_payload_contains_kind(payload, target_kind):
+    if payload[0] == target_kind:
+        return True
+    if payload[0] == "sum":
+        return any(_observable_payload_contains_kind(component, target_kind) for component in payload[1])
+    return False
+
+
+def _mixed_dense_matrix_and_targets(observable, wire_map, payload):
+    if payload is None or payload[0] != "sum":
+        return None
+    if _observable_payload_contains_kind(payload, "sparse"):
+        return None
+    if not _observable_payload_contains_kind(payload, "matrix"):
+        return None
+
+    wires = list(observable.wires)
+    if not wires or len(wires) > 4:
+        return None
+    try:
+        matrix = qml.matrix(observable, wire_order=wires)
+    except (TypeError, ValueError, NotImplementedError):
+        return None
+    return matrix_to_little_endian_wires(matrix), [wire_map[wire] for wire in wires]
+
+
 def _complex_matrix_payload(matrix):
     normalized = np.asarray(matrix, dtype=np.complex128)
     return [
@@ -746,6 +772,18 @@ def _observable_batch_payload(observable, wire_map, wire_order=None, include_sum
         wire_order=wire_order,
         include_sums=include_sums,
     )
+
+
+def _observable_variance_batch_payload(observable, wire_map, wire_order=None):
+    payload = _observable_batch_payload(observable, wire_map, wire_order=wire_order)
+    if payload is None or payload[0] != "sum":
+        return payload
+
+    components = _mixed_dense_matrix_and_targets(observable, wire_map, payload)
+    if components is None:
+        return None
+    matrix, targets = components
+    return "matrix", matrix, tuple(targets)
 
 
 def _observable_payload_matches(current, reference_payload):
@@ -3658,12 +3696,13 @@ class RocQDevice(QubitDevice):
             observable = getattr(measurement, "obs", None)
             if observable is None:
                 return False
-            payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
+            if measurement_name == "VarianceMP":
+                payload = _observable_variance_batch_payload(observable, self.wire_map, wire_order=self.wires)
+            else:
+                payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
             if payload is None:
                 return False
             if observable.name == "Hermitian" and payload[0] != "matrix":
-                return False
-            if measurement_name == "VarianceMP" and payload[0] == "sum":
                 return False
         return True
 
@@ -5180,10 +5219,11 @@ class RocQDevice(QubitDevice):
         for measurement_name, measurement in zip(measurement_names, reference_measurements):
             if measurement_name in {"ExpectationMP", "VarianceMP"}:
                 observable = getattr(measurement, "obs", None)
-                payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
+                if measurement_name == "VarianceMP":
+                    payload = _observable_variance_batch_payload(observable, self.wire_map, wire_order=self.wires)
+                else:
+                    payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
                 if payload is None:
-                    return None
-                if measurement_name == "VarianceMP" and payload[0] == "sum":
                     return None
                 reference_measurement_specs.append((measurement_name, payload))
             elif measurement_name == "CountsMP":
@@ -5212,12 +5252,20 @@ class RocQDevice(QubitDevice):
                 return None
             for measurement, (measurement_name, reference_payload) in zip(measurements, reference_measurement_specs):
                 if measurement_name in {"ExpectationMP", "VarianceMP"}:
-                    if not _observable_batch_payload_matches(
-                        getattr(measurement, "obs", None),
-                        self.wire_map,
-                        reference_payload,
-                        wire_order=self.wires,
-                    ):
+                    observable = getattr(measurement, "obs", None)
+                    if measurement_name == "VarianceMP":
+                        current_payload = _observable_variance_batch_payload(
+                            observable,
+                            self.wire_map,
+                            wire_order=self.wires,
+                        )
+                    else:
+                        current_payload = _observable_batch_payload(
+                            observable,
+                            self.wire_map,
+                            wire_order=self.wires,
+                        )
+                    if not _observable_payload_matches(current_payload, reference_payload):
                         return None
                 elif measurement_name == "CountsMP":
                     reference_wires, reference_all_outcomes = reference_payload
@@ -6266,6 +6314,21 @@ class RocQDevice(QubitDevice):
                 matrix, targets = _hermitian_matrix_and_targets(observable, self.wire_map)
                 if matrix is None:
                     raise NotImplementedError
+                mean, second_moment = _matrix_moments_cached(
+                    self._runtime,
+                    matrix,
+                    targets,
+                    cache=self._analytic_measurement_cache,
+                )
+            except (NotImplementedError, RuntimeError):
+                return super().var(observable, shot_range=shot_range, bin_size=bin_size)
+            return _real_measurement_result(second_moment - mean * mean, "Variance")
+
+        payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
+        components = _mixed_dense_matrix_and_targets(observable, self.wire_map, payload)
+        if components is not None:
+            matrix, targets = components
+            try:
                 mean, second_moment = _matrix_moments_cached(
                     self._runtime,
                     matrix,

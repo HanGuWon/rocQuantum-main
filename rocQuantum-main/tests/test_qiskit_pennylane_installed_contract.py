@@ -5568,6 +5568,36 @@ def test_pennylane_batch_execute_uses_batched_mixed_matrix_sum_expval(monkeypatc
     assert sim.statevector_reads == 0
 
 
+def test_pennylane_batch_execute_uses_batched_mixed_matrix_sum_variance(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    matrix = np.diag([1.0, -1.0]).astype(np.complex128)
+    observable = qml.sum(qml.Hermitian(matrix, wires=0), 0.5 * qml.PauliZ(0))
+    circuits = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.var(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.var(observable)]),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.0, 0.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == []
+    assert len(sim.matrix_batch_expectations) == 2
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], np.diag([1.5, -1.5]))
+    np.testing.assert_allclose(sim.matrix_batch_expectations[1][0], 2.25 * np.eye(2))
+    assert sim.matrix_expectations == []
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_batch_execute_uses_batched_hermitian_variance(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -6318,6 +6348,35 @@ def test_pennylane_mixed_matrix_sum_expval_uses_native_readouts(monkeypatch):
         assert len(sim.matrix_expectations) == 1
         np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
         assert sim.matrix_expectations[0][1] == (0,)
+
+
+def test_pennylane_mixed_matrix_sum_variance_uses_native_dense_moments(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    matrix = np.diag([1.0, -1.0]).astype(np.complex128)
+    observable = qml.sum(qml.Hermitian(matrix, wires=0), 0.5 * qml.PauliZ(0))
+
+    @qml.qnode(dev)
+    def circuit():
+        return qml.var(observable)
+
+    assert circuit() == pytest.approx(0.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+    assert len(sim.matrix_expectations) == 2
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], np.diag([1.5, -1.5]))
+    np.testing.assert_allclose(sim.matrix_expectations[1][0], 2.25 * np.eye(2))
+    assert sim.matrix_expectations[0][1] == (0,)
+    assert sim.matrix_expectations[1][1] == (0,)
 
 
 def test_pennylane_projector_expval_uses_native_z_projector_terms(monkeypatch):
