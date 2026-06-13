@@ -3557,6 +3557,39 @@ class RocQDevice(QubitDevice):
                         return False
             return True
 
+        def append_uniform_rz(control_indices, target, angles):
+            thetas = _uniform_rz_thetas(angles)
+            tolerance = np.finfo(np.asarray(thetas).dtype).eps
+            if not np.any(np.abs(thetas) > tolerance):
+                return True
+            if not control_indices:
+                append_fixed("RZ", "RZ", [target], [float(thetas[0])])
+                return True
+
+            code = _gray_code(len(control_indices))
+            control_indexes = np.log2(code ^ np.roll(code, -1)).astype(int)
+            for theta, control_index in zip(thetas, control_indexes):
+                if abs(theta) > tolerance:
+                    append_fixed("RZ", "RZ", [target], [float(theta)])
+                append_fixed("CNOT", "CNOT", [control_indices[int(control_index)], target])
+            return True
+
+        def append_diagonal_phases(wire_indices, phases):
+            if not wire_indices:
+                return False
+            if len(wire_indices) == 1:
+                diff = float(phases[1] - phases[0])
+                append_fixed("RZ", "RZ", [wire_indices[0]], [diff])
+                return True
+
+            means = 0.5 * (phases[::2] + phases[1::2])
+            diffs = phases[1::2] - phases[::2]
+            return append_diagonal_phases(wire_indices[:-1], means) and append_uniform_rz(
+                wire_indices[:-1],
+                wire_indices[-1],
+                diffs,
+            )
+
         def append_one_parameter_gate(name, rocq_name, wire_indices, theta, param_index=None, derivative_scale=1.0):
             if param_index is None:
                 append_fixed(name, rocq_name, wire_indices, [theta])
@@ -4066,6 +4099,19 @@ class RocQDevice(QubitDevice):
                 except Exception:
                     return None
                 if not append_matrix_payload(op.name, wire_indices, matrix, raw_param_indices):
+                    return None
+                continue
+
+            if op.name == "DiagonalQubitUnitary":
+                if len(raw_params) != 1 or any(
+                    param_index in trainable_param_set for param_index in raw_param_indices
+                ):
+                    return None
+                try:
+                    phases = _diagonal_unitary_phases(raw_params[0], len(wire_indices))
+                except Exception:
+                    return None
+                if not append_diagonal_phases(wire_indices, phases):
                     return None
                 continue
 

@@ -8909,6 +8909,79 @@ def test_pennylane_native_adjoint_rejects_trainable_sparse_block_encode_matrix(m
     assert dev._native_adjoint_payload(tape) is None
 
 
+def test_pennylane_native_adjoint_lowers_diagonal_qubit_unitary_payload(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    diagonal = np.exp(1j * np.array([0.1, 0.3, 0.6, 1.2]))
+    dev = qml.device("lightning.rocq", wires=2)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.DiagonalQubitUnitary(diagonal, wires=[0, 1]),
+            qml.RY(0.321, wires=0),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [1]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [1]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert [
+        (
+            op["name"],
+            op["rocq_name"],
+            op["wires"],
+            op["param_indices"],
+            op["trainable_param_indices"],
+            op["trainable_param_positions"],
+        )
+        for op in operations
+    ] == [
+        ("RZ", "RZ", [0], [], [], []),
+        ("RZ", "RZ", [1], [], [], []),
+        ("CNOT", "CNOT", [0, 1], [], [], []),
+        ("RZ", "RZ", [1], [], [], []),
+        ("CNOT", "CNOT", [0, 1], [], [], []),
+        ("RY", "RY", [0], [1], [1], [0]),
+    ]
+    np.testing.assert_allclose(
+        [operations[index]["params"][0] for index in (0, 1, 3, 5)],
+        [0.7, 0.4, -0.2, 0.321],
+    )
+    assert operations[2]["params"] == []
+    assert operations[4]["params"] == []
+
+
+def test_pennylane_native_adjoint_rejects_trainable_diagonal_qubit_unitary(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    diagonal = np.exp(1j * np.array([0.1, 0.3, 0.6, 1.2]))
+    dev = qml.device("lightning.rocq", wires=2)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.DiagonalQubitUnitary(diagonal, wires=[0, 1]),
+            qml.RY(0.321, wires=0),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0, 1]
+
+    assert dev._native_adjoint_payload(tape) is None
+
+
 def test_pennylane_native_adjoint_marks_trainable_operation_parameters(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

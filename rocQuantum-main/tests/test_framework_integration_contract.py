@@ -712,6 +712,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("(\"CRZ\", \"CRY\", \"CRZ\")", source)
         self.assertIn("\"PhaseShift\": \"P\"", source)
         self.assertIn("\"ControlledPhaseShift\": \"CP\"", source)
+        self.assertIn("def append_diagonal_phases", source)
+        self.assertIn("op.name == \"DiagonalQubitUnitary\"", source)
         self.assertIn("\"Adjoint(S)\": \"SDG\"", source)
         self.assertIn("\"Adjoint(T)\": \"TDG\"", source)
         self.assertIn("\"MultiControlledX\": \"MCX\"", source)
