@@ -4097,6 +4097,56 @@ def test_qiskit_native_estimator_reuses_duplicate_dense_operator_batch(monkeypat
     assert sim.expectations == []
 
 
+def test_qiskit_native_estimator_accepts_dense_scalar_operator_without_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+    observable = Operator(np.array([[2.0]], dtype=np.complex128))
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable)],
+    ).result()[0]
+
+    assert result.data.evs == pytest.approx(2.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("H", (0,), ())]
+    assert sim.matrix_expectations == []
+    assert sim.expectations == []
+
+
+def test_qiskit_native_estimator_batches_dense_scalar_operator_without_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1)
+    circuit.ry(theta, 0)
+    observable = Operator(np.array([[2.0]], dtype=np.complex128))
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([2.0, 2.0]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.matrix_batch_expectations == []
+    assert sim.batch_expectations == []
+
+
 def test_qiskit_native_estimator_reuses_bound_circuit_for_observable_batch(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

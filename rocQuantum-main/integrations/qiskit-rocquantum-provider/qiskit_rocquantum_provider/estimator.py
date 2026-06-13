@@ -110,7 +110,7 @@ def _dense_operator_plan(observable, num_qubits: int):
 
     target_qubits = dimension.bit_length() - 1
     if target_qubits == 0:
-        raise ValueError("Dense Qiskit Operator observables must act on at least one qubit.")
+        return "constant", complex(matrix[0, 0])
     if target_qubits > int(num_qubits):
         raise ValueError("Dense Qiskit Operator observable acts on more qubits than the circuit.")
 
@@ -121,7 +121,7 @@ def _dense_operator_plan(observable, num_qubits: int):
         )
 
     if explicit_targets is not None:
-        return matrix, _normalize_dense_operator_targets(explicit_targets, target_qubits, int(num_qubits))
+        return "matrix", matrix, _normalize_dense_operator_targets(explicit_targets, target_qubits, int(num_qubits))
 
     input_dims = tuple(int(dim) for dim in observable.input_dims())
     output_dims = tuple(int(dim) for dim in observable.output_dims())
@@ -140,7 +140,7 @@ def _dense_operator_plan(observable, num_qubits: int):
     if len(targets) != target_qubits:
         raise ValueError("Dense Qiskit Operator dimension metadata does not match matrix size.")
 
-    return matrix, targets
+    return "matrix", matrix, targets
 
 
 def _is_dense_operator_observable(observable) -> bool:
@@ -295,7 +295,10 @@ def _observable_signature(observable, num_qubits: int):
 def _observable_plan(observable, num_qubits: int):
     dense_plan = _dense_operator_plan(observable, int(num_qubits))
     if dense_plan is not None:
-        matrix, targets = dense_plan
+        if dense_plan[0] == "constant":
+            scalar = complex(dense_plan[1])
+            return ("constant", scalar), ("constant", scalar)
+        _, matrix, targets = dense_plan
         cache_key = _dense_matrix_cache_key(matrix, targets)
         return cache_key, ("matrix", (matrix, tuple(targets)))
 
@@ -335,6 +338,12 @@ def _estimate_combined_observable_terms_batch(runtime, terms, num_qubits: int) -
 
 def _estimate_observable_plan(runtime, plan, num_qubits: int) -> float:
     kind, payload = plan
+    if kind == "constant":
+        real_result = np.real_if_close(payload)
+        if np.iscomplexobj(real_result):
+            raise ValueError("Observable expectation has a non-negligible imaginary component.")
+        return float(real_result)
+
     if kind == "pauli":
         return _estimate_combined_observable_terms(runtime, payload, int(num_qubits))
 
@@ -351,6 +360,12 @@ def _estimate_observable_plan(runtime, plan, num_qubits: int) -> float:
 
 def _estimate_observable_plan_batch(runtime, plan, num_qubits: int) -> np.ndarray:
     kind, payload = plan
+    if kind == "constant":
+        real_result = np.real_if_close(payload)
+        if np.iscomplexobj(real_result):
+            raise ValueError("Observable expectation has a non-negligible imaginary component.")
+        return np.full(runtime.batch_size(), float(real_result), dtype=float)
+
     if kind == "pauli":
         return _estimate_combined_observable_terms_batch(runtime, payload, int(num_qubits))
 

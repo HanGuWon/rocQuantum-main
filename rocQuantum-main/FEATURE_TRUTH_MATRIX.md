@@ -22,6 +22,8 @@ Recent PennyLane mixed-observable note: expectation sums that combine Pauli-repr
 
 Recent runtime dense-moments note: shared dense-matrix moment fallback now reads batched statevectors once when native dense moments and native dense batch expectation hooks are unavailable, avoiding duplicate readback for PennyLane Hermitian variance batches on older bindings.
 
+Recent Qiskit scalar-observable note: native Estimator now folds dense scalar `Operator([[c]])` observables into constant expectation values for single and batched pubs, avoiding dense expectation hooks or statevector readback for CUDA-Q-style numeric constant observables.
+
 Recent PennyLane matrix-adjoint note: fixed `qml.QubitUnitary`, `qml.ControlledQubitUnitary`, dense `qml.BlockEncode`, and sparse `qml.BlockEncode` operations now enter native adjoint payloads as dense matrix or CSR operation payloads, with conjugate-transpose inverse application and open-control wrapping in the root binding; trainable matrix-parameter differentiation remains an explicit fallback boundary.
 
 Recent PennyLane diagonal-adjoint note: fixed `qml.DiagonalQubitUnitary` operations now lower into primitive `RZ` / `CNOT` adjoint payloads, eliding expectation-invisible global phase, so supported trainable rotations around fixed diagonal unitaries avoid Python adjoint fallback. Trainable diagonal payloads remain an explicit fallback boundary.
