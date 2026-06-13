@@ -653,8 +653,6 @@ def _mixed_dense_matrix_and_targets(observable, wire_map, payload):
 def _mixed_sparse_matrix_payload(observable, payload, wire_order):
     if payload is None or payload[0] != "sum":
         return None
-    if _observable_payload_contains_kind(payload, "matrix"):
-        return None
     if not _observable_payload_contains_kind(payload, "sparse"):
         return None
     sparse_matrix = getattr(observable, "sparse_matrix", None)
