@@ -4889,6 +4889,73 @@ def test_pennylane_batch_execute_keeps_controlled_phase_root_wrappers_native(mon
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_controlled_phase_variant_wrappers_decompose_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.ctrl(qml.CPhaseShift00(0.3, wires=[1, 2]), control=[0], control_values=[False])
+        return qml.expval(qml.PauliZ(0))
+
+    assert circuit() == pytest.approx(0.5)
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops[:3] == [("X", (0,), ()), ("X", (1,), ()), ("X", (2,), ())]
+    assert sim.ops[-3:] == [("X", (2,), ()), ("X", (1,), ()), ("X", (0,), ())]
+    assert any(name == "RZ" and params == (0.075,) for name, _, params in sim.ops)
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.expectations == [("Z", (0,))]
+
+
+def test_pennylane_batch_execute_batches_controlled_phase_variant_wrappers(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    circuits = [
+        qml.tape.QuantumScript(
+            [
+                qml.ctrl(qml.CPhaseShift01(0.2, wires=[1, 2]), control=[0], control_values=[False]),
+                qml.RY(0.4, wires=2),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [
+                qml.ctrl(qml.CPhaseShift01(0.6, wires=[1, 2]), control=[0], control_values=[False]),
+                qml.RY(0.8, wires=2),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.batch_size() == 2
+    assert sim.ops[:2] == [("X", (0,), ()), ("X", (1,), ())]
+    assert sim.ops[-2:] == [("X", (1,), ()), ("X", (0,), ())]
+    assert ("RZ", (0,), (0.05, 0.15)) in sim.batch_ops
+    assert ("RY", (2,), (0.4, 0.8)) in sim.batch_ops
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_controlled_adjoint_phase_root_wrappers_decompose_natively(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -8753,6 +8820,55 @@ def test_pennylane_native_adjoint_lowers_controlled_global_phase_wrapper(monkeyp
     assert all(not op["rocq_name"].startswith("C(") for op in operations)
     assert operations[0]["rocq_name"] == "X"
     assert operations[-1]["rocq_name"] == "X"
+    assert any(
+        op["rocq_name"] == "RZ"
+        and op["param_indices"] == [0]
+        and op.get("param_derivative_scales") is not None
+        for op in operations
+    )
+
+
+def test_pennylane_native_adjoint_lowers_controlled_phase_variant_wrappers(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=4)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.ctrl(
+                qml.CPhaseShift10(0.7, wires=[2, 3]),
+                control=[0, 1],
+                control_values=[True, False],
+            ),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert all(not op["name"].startswith("C(") for op in operations)
+    assert all(not op["rocq_name"].startswith("C(") for op in operations)
+    assert operations[0]["rocq_name"] == "X"
+    assert operations[0]["wires"] == [1]
+    assert operations[1]["rocq_name"] == "X"
+    assert operations[1]["wires"] == [3]
+    assert operations[-2]["rocq_name"] == "X"
+    assert operations[-2]["wires"] == [3]
+    assert operations[-1]["rocq_name"] == "X"
+    assert operations[-1]["wires"] == [1]
+    assert {
+        index
+        for op in operations
+        for index in op["trainable_param_indices"]
+    } == {0}
     assert any(
         op["rocq_name"] == "RZ"
         and op["param_indices"] == [0]

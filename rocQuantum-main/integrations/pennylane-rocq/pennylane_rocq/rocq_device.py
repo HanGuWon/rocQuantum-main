@@ -66,6 +66,7 @@ DECOMPOSED_OPS = {
     "Select",
     "SelectPauliRot",
 }
+CONTROLLED_PHASE_VARIANT_OPS = {"CPhaseShift00", "CPhaseShift01", "CPhaseShift10"}
 CONTROLLED_WRAPPER_OPS = {
     "C(RX)",
     "C(RY)",
@@ -87,6 +88,9 @@ CONTROLLED_WRAPPER_OPS = {
     "C(SQISW)",
     "C(ECR)",
     "C(GlobalPhase)",
+    "C(CPhaseShift00)",
+    "C(CPhaseShift01)",
+    "C(CPhaseShift10)",
 }
 PENNYLANE_PAULI_TO_CHAR = {
     "Identity": "I",
@@ -1361,6 +1365,20 @@ def _apply_controlled_wrapper_batch(runtime, reference_op, wire_map, params_by_o
             [params[0] for params in params_by_op],
         )
 
+    if (
+        base.name in CONTROLLED_PHASE_VARIANT_OPS
+        and len(target_indices) == 2
+        and all(len(params) == 1 for params in params_by_op)
+    ):
+        return _apply_multi_controlled_phase_variant_batch(
+            runtime,
+            controls,
+            control_values,
+            target_indices,
+            [params[0] for params in params_by_op],
+            base.name[len("CPhaseShift"):],
+        )
+
     if len(target_indices) == 1:
         if len(controls) == 1 and _apply_single_controlled_native_op_batch(
             runtime,
@@ -1761,6 +1779,61 @@ def _apply_multi_controlled_phase_shift_batch(runtime, controls, target, thetas)
         return
 
     _apply_multi_controlled_phase_projector_batch(runtime, controls + [target], thetas)
+
+
+def _apply_multi_controlled_phase_variant(runtime, controls, control_values, target_indices, theta, control_state):
+    if len(control_values) != len(controls) or len(target_indices) != len(control_state):
+        return False
+
+    wires = list(controls) + list(target_indices)
+    active_values = list(control_values) + [state_bit == "1" for state_bit in control_state]
+    flipped = []
+    try:
+        for wire_index, value in zip(wires, active_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [wire_index])
+                flipped.append(wire_index)
+
+        _apply_multi_controlled_phase_projector(runtime, wires, theta)
+
+        for wire_index in reversed(flipped):
+            runtime.apply_operation("X", [wire_index])
+        flipped.clear()
+        return True
+    finally:
+        for wire_index in reversed(flipped):
+            runtime.apply_operation("X", [wire_index])
+
+
+def _apply_multi_controlled_phase_variant_batch(
+    runtime,
+    controls,
+    control_values,
+    target_indices,
+    thetas,
+    control_state,
+):
+    if len(control_values) != len(controls) or len(target_indices) != len(control_state):
+        return False
+
+    wires = list(controls) + list(target_indices)
+    active_values = list(control_values) + [state_bit == "1" for state_bit in control_state]
+    flipped = []
+    try:
+        for wire_index, value in zip(wires, active_values):
+            if not _control_value_is_one(value):
+                runtime.apply_operation("X", [wire_index])
+                flipped.append(wire_index)
+
+        _apply_multi_controlled_phase_projector_batch(runtime, wires, thetas)
+
+        for wire_index in reversed(flipped):
+            runtime.apply_operation("X", [wire_index])
+        flipped.clear()
+        return True
+    finally:
+        for wire_index in reversed(flipped):
+            runtime.apply_operation("X", [wire_index])
 
 
 def _apply_multi_controlled_pswap_batch(runtime, controls, control_values, target_indices, phis):
@@ -2307,6 +2380,20 @@ def _apply_controlled_selected_op(runtime, selected_op, controls, control_values
 
     if selected_op.name == "PSWAP" and len(target_indices) == 2 and len(selected_params) == 1:
         return _apply_multi_controlled_pswap(runtime, controls, control_values, target_indices, selected_params[0])
+
+    if (
+        selected_op.name in CONTROLLED_PHASE_VARIANT_OPS
+        and len(target_indices) == 2
+        and len(selected_params) == 1
+    ):
+        return _apply_multi_controlled_phase_variant(
+            runtime,
+            controls,
+            control_values,
+            target_indices,
+            selected_params[0],
+            selected_op.name[len("CPhaseShift"):],
+        )
 
     if selected_params:
         return False
@@ -3653,6 +3740,9 @@ class RocQDevice(QubitDevice):
             if base.name == "GlobalPhase":
                 if target_indices:
                     return False
+            elif base.name in CONTROLLED_PHASE_VARIANT_OPS:
+                if len(target_indices) != 2:
+                    return False
             elif base.name in {"SWAP", "ISWAP", "PSWAP", "SISWAP", "SQISW", "ECR"}:
                 if len(target_indices) != 2:
                     return False
@@ -3672,15 +3762,28 @@ class RocQDevice(QubitDevice):
 
             base_name = base.name
             target = target_indices[0] if target_indices else None
-            flipped_controls = [
-                control for control, value in zip(controls, control_values) if not _control_value_is_one(value)
-            ]
+            if base_name in CONTROLLED_PHASE_VARIANT_OPS:
+                control_state = base_name[len("CPhaseShift"):]
+                flipped_wires = [
+                    wire
+                    for wire, value in zip(
+                        controls + target_indices,
+                        list(control_values) + [state_bit == "1" for state_bit in control_state],
+                    )
+                    if not _control_value_is_one(value)
+                ]
+            else:
+                flipped_wires = [
+                    control for control, value in zip(controls, control_values) if not _control_value_is_one(value)
+                ]
 
             if base_name in {"RX", "RY", "RZ", "PhaseShift"} and len(selected_params) == 1:
                 pass
             elif base_name == "Rot" and len(selected_params) == 3:
                 pass
             elif base_name == "GlobalPhase" and not target_indices and len(selected_params) == 1:
+                pass
+            elif base_name in CONTROLLED_PHASE_VARIANT_OPS and len(target_indices) == 2 and len(selected_params) == 1:
                 pass
             elif base_name == "SWAP" and len(target_indices) == 2 and not selected_params:
                 pass
@@ -3697,8 +3800,8 @@ class RocQDevice(QubitDevice):
             else:
                 return False
 
-            for control in flipped_controls:
-                append_fixed("PauliX", "X", [control])
+            for wire in flipped_wires:
+                append_fixed("PauliX", "X", [wire])
 
             if base_name == "RX":
                 lowered = append_mc_rx(controls, target, selected_params[0], selected_param_indices[0])
@@ -3716,6 +3819,12 @@ class RocQDevice(QubitDevice):
                 )
             elif base_name == "GlobalPhase":
                 lowered = append_controlled_global_phase(controls, selected_params[0], selected_param_indices[0])
+            elif base_name in CONTROLLED_PHASE_VARIANT_OPS:
+                lowered = append_phase_projector(
+                    controls + target_indices,
+                    selected_params[0],
+                    selected_param_indices[0],
+                )
             elif base_name == "SWAP":
                 lowered = append_mc_swap(controls, target_indices)
             elif base_name == "ISWAP":
@@ -3729,8 +3838,8 @@ class RocQDevice(QubitDevice):
             else:
                 lowered = append_mc_fixed_single_qubit_op(base_name, controls, target)
 
-            for control in reversed(flipped_controls):
-                append_fixed("PauliX", "X", [control])
+            for wire in reversed(flipped_wires):
+                append_fixed("PauliX", "X", [wire])
             return lowered
 
         def append_paulirot_basis_change(active_terms, inverse=False):
