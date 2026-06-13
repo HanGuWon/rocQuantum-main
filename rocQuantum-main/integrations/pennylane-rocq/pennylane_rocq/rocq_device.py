@@ -650,6 +650,32 @@ def _mixed_dense_matrix_and_targets(observable, wire_map, payload):
     return matrix_to_little_endian_wires(matrix), [wire_map[wire] for wire in wires]
 
 
+def _mixed_sparse_matrix_payload(observable, payload, wire_order):
+    if payload is None or payload[0] != "sum":
+        return None
+    if _observable_payload_contains_kind(payload, "matrix"):
+        return None
+    if not _observable_payload_contains_kind(payload, "sparse"):
+        return None
+    sparse_matrix = getattr(observable, "sparse_matrix", None)
+    if not callable(sparse_matrix):
+        return None
+    try:
+        matrix = sparse_matrix(wire_order=wire_order, format="csr")
+    except (TypeError, ValueError, NotImplementedError):
+        return None
+    dimension = 1 << len(wire_order)
+    if tuple(int(dim) for dim in matrix.shape) != (dimension, dimension):
+        return None
+    return (
+        "sparse",
+        np.asarray(matrix.data, dtype=np.complex128),
+        np.asarray(matrix.indices, dtype=np.int64),
+        np.asarray(matrix.indptr, dtype=np.int64),
+        tuple(int(dim) for dim in matrix.shape),
+    )
+
+
 def _complex_matrix_payload(matrix):
     normalized = np.asarray(matrix, dtype=np.complex128)
     return [
@@ -781,7 +807,7 @@ def _observable_variance_batch_payload(observable, wire_map, wire_order=None):
 
     components = _mixed_dense_matrix_and_targets(observable, wire_map, payload)
     if components is None:
-        return None
+        return _mixed_sparse_matrix_payload(observable, payload, wire_order or tuple(wire_map.keys()))
     matrix, targets = components
     return "matrix", matrix, tuple(targets)
 
@@ -6325,19 +6351,32 @@ class RocQDevice(QubitDevice):
             return _real_measurement_result(second_moment - mean * mean, "Variance")
 
         payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
-        components = _mixed_dense_matrix_and_targets(observable, self.wire_map, payload)
-        if components is not None:
-            matrix, targets = components
-            try:
-                mean, second_moment = _matrix_moments_cached(
-                    self._runtime,
-                    matrix,
-                    targets,
-                    cache=self._analytic_measurement_cache,
-                )
-            except (NotImplementedError, RuntimeError):
-                return super().var(observable, shot_range=shot_range, bin_size=bin_size)
-            return _real_measurement_result(second_moment - mean * mean, "Variance")
+        if payload is not None and payload[0] == "sum":
+            variance_payload = _observable_variance_batch_payload(
+                observable,
+                self.wire_map,
+                wire_order=self.wires,
+            )
+            if variance_payload is not None:
+                try:
+                    if variance_payload[0] == "matrix":
+                        mean, second_moment = _matrix_moments_cached(
+                            self._runtime,
+                            variance_payload[1],
+                            variance_payload[2],
+                            cache=self._analytic_measurement_cache,
+                        )
+                    elif variance_payload[0] == "sparse":
+                        mean, second_moment = _sparse_payload_moments_cached(
+                            self._runtime,
+                            variance_payload,
+                            cache=self._analytic_measurement_cache,
+                        )
+                    else:
+                        raise NotImplementedError
+                except (NotImplementedError, RuntimeError):
+                    return super().var(observable, shot_range=shot_range, bin_size=bin_size)
+                return _real_measurement_result(second_moment - mean * mean, "Variance")
 
         terms = _pauli_terms_from_observable(observable, self.wire_map)
         if terms is None:
