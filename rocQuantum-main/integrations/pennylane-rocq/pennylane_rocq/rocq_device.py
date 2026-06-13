@@ -1403,7 +1403,7 @@ def _select_partial_control_specs(selected_count, control_wires):
 def _apply_multi_controlled_fixed_single_qubit_op(runtime, base_name, controls, target, control_values):
     if len(controls) < 2 or len(control_values) != len(controls):
         return False
-    if base_name not in {"PauliX", "PauliY", "PauliZ", "Hadamard"}:
+    if base_name not in {"PauliX", "PauliY", "PauliZ", "Hadamard", "S", "T"}:
         return False
 
     flipped = []
@@ -1428,6 +1428,10 @@ def _apply_multi_controlled_fixed_single_qubit_op(runtime, base_name, controls, 
             runtime.apply_operation("RY", [target], [np.pi / 4])
             runtime.apply_operation("MCX", wires)
             runtime.apply_operation("RY", [target], [-np.pi / 4])
+        elif base_name == "S":
+            _apply_multi_controlled_phase_shift(runtime, controls, target, np.pi / 2)
+        elif base_name == "T":
+            _apply_multi_controlled_phase_shift(runtime, controls, target, np.pi / 4)
 
         for control in reversed(flipped):
             runtime.apply_operation("X", [control])

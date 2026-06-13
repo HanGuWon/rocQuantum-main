@@ -4846,6 +4846,46 @@ def test_pennylane_batch_execute_batches_controlled_global_phase_wrappers(monkey
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_keeps_controlled_phase_root_wrappers_native(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    circuits = [
+        qml.tape.QuantumScript(
+            [
+                qml.ctrl(qml.S(wires=2), control=[0, 1], control_values=[False, True]),
+                qml.RY(0.4, wires=2),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [
+                qml.ctrl(qml.S(wires=2), control=[0, 1], control_values=[False, True]),
+                qml.RY(0.8, wires=2),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert ("RY", (2,), (0.4, 0.8)) in sim.batch_ops
+    assert any(name == "RZ" for name, _, _ in sim.ops)
+    assert any(name in {"CNOT", "CX"} for name, _, _ in sim.ops)
+    assert sim.ops[0] == ("X", (0,), ())
+    assert sim.ops[-1] == ("X", (0,), ())
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_batches_diagonal_qubit_unitary_sweeps(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -6649,7 +6689,7 @@ def test_pennylane_multi_controlled_single_qubit_wrappers_decompose_natively(mon
     circuit()
     sim = _FakeQuantumSimulator.instances[-1]
 
-    assert sim.ops[:12] == [
+    assert sim.ops[:11] == [
         ("SDG", (2,), ()),
         ("MCX", (0, 1, 2), ()),
         ("S", (2,), ()),
@@ -6661,17 +6701,16 @@ def test_pennylane_multi_controlled_single_qubit_wrappers_decompose_natively(mon
         ("RY", (2,), (np.pi / 4,)),
         ("MCX", (0, 1, 2), ()),
         ("RY", (2,), (-np.pi / 4,)),
-        ("X", (0,), ()),
     ]
-    assert sim.ops[12:] == [("X", (0,), ())]
-    assert sim.matrices == []
-    assert len(sim.controlled_matrices) == 2
-    s_matrix, s_controls, s_targets = sim.controlled_matrices[0]
-    t_matrix, t_controls, t_targets = sim.controlled_matrices[1]
-    np.testing.assert_allclose(s_matrix, np.diag([1.0, 1.0j]))
-    np.testing.assert_allclose(t_matrix, np.diag([1.0, np.exp(1j * np.pi / 4)]))
-    assert s_controls == t_controls == (0, 1)
-    assert s_targets == t_targets == (2,)
+    assert any(name == "RZ" and targets == (0,) and params == (np.pi / 8,) for name, targets, params in sim.ops)
+    assert any(name == "RZ" and targets == (0,) and params == (np.pi / 16,) for name, targets, params in sim.ops)
+    assert any(name in {"CNOT", "CX"} for name, _, _ in sim.ops[11:])
+    assert sim.ops[-1] == ("X", (0,), ())
+    assert len(sim.matrices) == 2
+    for matrix, targets in sim.matrices:
+        np.testing.assert_allclose(matrix, np.eye(2) * matrix[0, 0])
+        assert targets == (0,)
+    assert sim.controlled_matrices == []
 
 
 def test_pennylane_multi_controlled_swap_wrapper_decomposes_natively(monkeypatch):
