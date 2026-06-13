@@ -9174,7 +9174,7 @@ def test_pennylane_native_adjoint_lowers_fixed_controlled_sequence_payloads(monk
     assert operations[-1]["trainable_param_indices"] == [2]
 
 
-def test_pennylane_native_adjoint_rejects_trainable_controlled_sequence_base(monkeypatch):
+def test_pennylane_native_adjoint_lowers_trainable_controlled_sequence_base(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
     for name in list(sys.modules):
@@ -9187,13 +9187,31 @@ def test_pennylane_native_adjoint_rejects_trainable_controlled_sequence_base(mon
     tape = qml.tape.QuantumScript(
         [
             qml.ControlledSequence(qml.RX(0.2, wires=2), control=[0, 1]),
+            qml.ControlledSequence(qml.PhaseShift(0.3, wires=2), control=[0, 1]),
             qml.RY(0.321, wires=0),
         ],
         [qml.expval(qml.PauliZ(0))],
     )
-    tape.trainable_params = [0, 1]
+    tape.trainable_params = [0, 1, 2]
 
-    assert dev._native_adjoint_payload(tape) is None
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0, 1, 2]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert [(op["rocq_name"], op["wires"], op["params"]) for op in operations] == [
+        ("CRX", [0, 2], [0.4]),
+        ("CRX", [1, 2], [0.2]),
+        ("CP", [0, 2], [0.6]),
+        ("CP", [1, 2], [0.3]),
+        ("RY", [0], [0.321]),
+    ]
+    assert [op["param_indices"] for op in operations] == [[0], [0], [1], [1], [2]]
+    assert [op["trainable_param_indices"] for op in operations] == [[0], [0], [1], [1], [2]]
+    assert operations[0]["param_derivative_scales"] == [2.0]
+    assert "param_derivative_scales" not in operations[1]
+    assert operations[2]["param_derivative_scales"] == [2.0]
+    assert "param_derivative_scales" not in operations[3]
+    assert "param_derivative_scales" not in operations[4]
 
 
 def test_pennylane_native_adjoint_marks_trainable_operation_parameters(monkeypatch):

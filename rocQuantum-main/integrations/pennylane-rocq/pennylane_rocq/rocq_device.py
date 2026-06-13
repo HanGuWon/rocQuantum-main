@@ -4024,7 +4024,7 @@ class RocQDevice(QubitDevice):
                 append_fixed("PauliX", "X", [wire])
             return lowered
 
-        def append_controlled_sequence(op, params):
+        def append_controlled_sequence(op, params, param_indices):
             base = _controlled_sequence_base(op)
             control_wires = _controlled_sequence_control_wires(op)
             if base is None or len(base.wires) != 1 or not control_wires:
@@ -4037,21 +4037,24 @@ class RocQDevice(QubitDevice):
                 return False
 
             base_params = list(params)
+            base_param_index = None
             if base.name in {"RX", "RY", "RZ", "PhaseShift"}:
-                if len(base_params) != 1:
+                if len(base_params) != 1 or len(param_indices) != 1:
                     return False
+                if param_indices[0] in trainable_param_set:
+                    base_param_index = param_indices[0]
             elif base_params:
                 return False
 
             def append_controlled_sequence_power(control, power):
                 if base.name == "RX":
-                    return append_mc_rx([control], target, base_params[0] * power)
+                    return append_mc_rx([control], target, base_params[0] * power, base_param_index, power)
                 if base.name == "RY":
-                    return append_mc_ry([control], target, base_params[0] * power)
+                    return append_mc_ry([control], target, base_params[0] * power, base_param_index, power)
                 if base.name == "RZ":
-                    return append_mc_rz([control], target, base_params[0] * power)
+                    return append_mc_rz([control], target, base_params[0] * power, base_param_index, power)
                 if base.name == "PhaseShift":
-                    return append_mc_phase_shift([control], target, base_params[0] * power)
+                    return append_mc_phase_shift([control], target, base_params[0] * power, base_param_index, power)
                 if base.name == "PauliX":
                     return True if power % 2 == 0 else append_mc_fixed_single_qubit_op("PauliX", [control], target)
                 if base.name == "PauliY":
@@ -4309,9 +4312,7 @@ class RocQDevice(QubitDevice):
                 continue
 
             if op.name == "ControlledSequence":
-                if any(param_index in trainable_param_set for param_index in raw_param_indices):
-                    return None
-                if not append_controlled_sequence(op, params):
+                if not append_controlled_sequence(op, params, param_indices):
                     return None
                 continue
 
