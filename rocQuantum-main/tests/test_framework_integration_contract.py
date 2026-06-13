@@ -335,6 +335,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             low_level_bindings = f.read()
         with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
             runtime = f.read()
+        with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
+            pennylane = f.read()
 
         self.assertIn("sparse_hamiltonian_moments", header)
         self.assertIn("SparseHamiltonianMoments", header)
@@ -418,6 +420,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("operation.control_values", bindings)
         self.assertIn("simulator.apply_controlled_matrix(matrix, operation.controls, operation.wires)", bindings)
         self.assertIn("binding adjoint_jacobian does not differentiate trainable matrix operation payloads", bindings)
+        self.assertIn("if op.name == \"BlockEncode\"", pennylane)
+        self.assertIn("append_matrix_payload(op.name, wire_indices, matrix, raw_param_indices)", pennylane)
         self.assertIn("payload.targets", bindings)
         self.assertIn("Sparse adjoint observable matrix dimension does not match target count", bindings)
         self.assertIn("replace_local_basis_index(basis, payload.targets", bindings)

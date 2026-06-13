@@ -4032,6 +4032,17 @@ class RocQDevice(QubitDevice):
                     return None
                 continue
 
+            if op.name == "BlockEncode":
+                if bool(getattr(op, "has_sparse_matrix", False)):
+                    return None
+                try:
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                except Exception:
+                    return None
+                if not append_matrix_payload(op.name, wire_indices, matrix, raw_param_indices):
+                    return None
+                continue
+
             for param in raw_params:
                 if hasattr(param, "bind"):
                     return None
