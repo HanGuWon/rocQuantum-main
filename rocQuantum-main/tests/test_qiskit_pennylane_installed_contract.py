@@ -5539,6 +5539,35 @@ def test_pennylane_batch_execute_uses_batched_scaled_hermitian_expval(monkeypatc
     assert sim.statevector_reads == 0
 
 
+def test_pennylane_batch_execute_uses_batched_mixed_matrix_sum_expval(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    matrix = np.diag([1.0, -1.0]).astype(np.complex128)
+    observable = qml.sum(qml.Hermitian(matrix, wires=0), 0.5 * qml.PauliZ(0))
+    circuits = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.expval(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.expval(observable)]),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((1.25, 1.25))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,))]
+    assert sim.matrix_batch_expectations[0][1] == (0,)
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], matrix)
+    assert sim.matrix_expectations == []
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_batch_execute_uses_batched_hermitian_variance(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -6255,6 +6284,42 @@ def test_pennylane_scaled_hermitian_uses_native_matrix_expectation(monkeypatch):
     np.testing.assert_allclose(sim.matrix_expectations[1][0], 4.0 * np.eye(2))
 
 
+def test_pennylane_mixed_matrix_sum_expval_uses_native_readouts(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    matrix = np.diag([1.0, -1.0]).astype(np.complex128)
+    sum_observable = qml.sum(qml.Hermitian(matrix, wires=0), 0.5 * qml.PauliZ(0))
+    hamiltonian_observable = qml.Hamiltonian(
+        [1.0, 0.5],
+        [qml.Hermitian(matrix, wires=0), qml.PauliZ(0)],
+    )
+
+    @qml.qnode(dev)
+    def sum_circuit():
+        return qml.expval(sum_observable)
+
+    @qml.qnode(dev)
+    def hamiltonian_circuit():
+        return qml.expval(hamiltonian_observable)
+
+    for circuit in (sum_circuit, hamiltonian_circuit):
+        assert circuit() == pytest.approx(1.25)
+        sim = _FakeQuantumSimulator.instances[-1]
+        assert sim.expectations == [("Z", (0,))]
+        assert sim.statevector_reads == 0
+        assert len(sim.matrix_expectations) == 1
+        np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
+        assert sim.matrix_expectations[0][1] == (0,)
+
+
 def test_pennylane_projector_expval_uses_native_z_projector_terms(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -6434,6 +6499,37 @@ def test_pennylane_scaled_sparse_hamiltonian_uses_native_csr_moments(monkeypatch
     assert shape == (2, 2)
 
 
+def test_pennylane_mixed_sparse_sum_expval_uses_native_readouts(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_sparse_moments", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = qml.sum(qml.SparseHamiltonian(hamiltonian_matrix, wires=[0]), 0.5 * qml.PauliZ(0))
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def sparse_circuit():
+        return qml.expval(observable)
+
+    assert sparse_circuit() == pytest.approx(1.25)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.statevector_reads == 0
+    assert len(sim.sparse_moments) == 1
+    data, indices, indptr, shape = sim.sparse_moments[0]
+    np.testing.assert_allclose(data, np.array([1.0, -1.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+    assert shape == (2, 2)
+
+
 def test_pennylane_sparse_hamiltonian_batch_uses_native_csr_moments(monkeypatch):
     pytest.importorskip("pennylane")
     sp = pytest.importorskip("scipy.sparse")
@@ -6494,6 +6590,42 @@ def test_pennylane_scaled_sparse_hamiltonian_batch_uses_native_csr_moments(monke
     assert sim.statevector_reads == 0
     data, indices, indptr, shape = sim.sparse_batch_moments[0]
     np.testing.assert_allclose(data, np.array([2.0, -2.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+    assert shape == (2, 2)
+
+
+def test_pennylane_mixed_sparse_sum_batch_uses_native_readouts(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_sparse_moments", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = qml.sum(qml.SparseHamiltonian(hamiltonian_matrix, wires=[0]), 0.5 * qml.PauliZ(0))
+    dev = qml.device("lightning.rocq", wires=1)
+    tapes = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.expval(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.expval(observable)]),
+    ]
+
+    results = dev.batch_execute(tapes)
+
+    assert results == pytest.approx((1.25, 1.25))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,))]
+    assert len(sim.sparse_batch_moments) == 1
+    assert sim.sparse_moments == []
+    assert sim.statevector_reads == 0
+    data, indices, indptr, shape = sim.sparse_batch_moments[0]
+    np.testing.assert_allclose(data, np.array([1.0, -1.0], dtype=np.complex128))
     np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
     assert shape == (2, 2)
@@ -10628,6 +10760,59 @@ def test_pennylane_native_adjoint_accepts_scaled_sparse_hamiltonian_payload(monk
                 "indptr": [0, 1, 2],
                 "shape": [2, 2],
             }
+        ]
+    ]
+
+
+def test_pennylane_native_adjoint_accepts_mixed_observable_sum_payload(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    matrix = np.diag([1.0, -1.0]).astype(np.complex128)
+    observable = qml.sum(
+        qml.Hermitian(matrix, wires=0),
+        -0.25 * qml.SparseHamiltonian(sp.csr_matrix(matrix), wires=[0]),
+        0.5 * qml.PauliZ(0),
+    )
+    tape = qml.tape.QuantumScript(
+        [qml.RY(0.321, wires=0)],
+        [qml.expval(observable)],
+    )
+    tape.trainable_params = [0]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0]
+    assert [op["rocq_name"] for op in operations] == ["RY"]
+    assert observables == [
+        [
+            {
+                "kind": "matrix",
+                "matrix": [
+                    [(1.0, 0.0), (0.0, 0.0)],
+                    [(0.0, 0.0), (-1.0, 0.0)],
+                ],
+                "targets": [0],
+            },
+            {
+                "kind": "sparse",
+                "data": [(-0.25, 0.0), (0.25, -0.0)],
+                "indices": [0, 1],
+                "indptr": [0, 1, 2],
+                "shape": [2, 2],
+            },
+            {
+                "coefficient": (0.5, 0.0),
+                "pauli_string": "Z",
+                "targets": [0],
+            },
         ]
     ]
 

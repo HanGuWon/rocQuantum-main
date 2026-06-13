@@ -456,20 +456,74 @@ def _matrix_moments_cached(runtime, matrix, targets, cache=None):
     return moments
 
 
-def _complex_matrix_payload(matrix):
-    normalized = np.asarray(matrix, dtype=np.complex128)
-    return [
-        [(float(np.real(value)), float(np.imag(value))) for value in row]
-        for row in normalized
-    ]
+def _scalar_to_complex(value):
+    try:
+        scalar = np.asarray(value, dtype=np.complex128)
+    except (TypeError, ValueError):
+        return None
+    if scalar.shape != ():
+        return None
+    return complex(scalar.item())
 
 
-def _complex_vector_payload(values):
-    normalized = np.asarray(values, dtype=np.complex128).reshape(-1)
-    return [(float(np.real(value)), float(np.imag(value))) for value in normalized]
+def _scale_observable_payload(payload, coefficient):
+    kind = payload[0]
+    coefficient = complex(coefficient)
+    if kind == "pauli":
+        return (
+            "pauli",
+            [
+                (coefficient * coeff, pauli_string, targets)
+                for coeff, pauli_string, targets in payload[1]
+            ],
+        )
+    if kind == "matrix":
+        return "matrix", np.ascontiguousarray(coefficient * payload[1]), payload[2]
+    if kind == "sparse":
+        return (
+            "sparse",
+            np.ascontiguousarray(coefficient * payload[1]),
+            payload[2],
+            payload[3],
+            payload[4],
+        )
+    if kind == "sum":
+        return _merge_observable_sum_payloads(
+            _scale_observable_payload(component, coefficient)
+            for component in payload[1]
+        )
+    raise TypeError(f"Unsupported observable payload kind: {kind!r}")
 
 
-def _observable_batch_payload(observable, wire_map, wire_order=None):
+def _merge_observable_sum_payloads(payloads):
+    merged = []
+    pauli_terms = []
+
+    def flush_paulis():
+        if pauli_terms:
+            merged.append(("pauli", _combine_pauli_terms(pauli_terms)))
+            pauli_terms.clear()
+
+    for payload in payloads:
+        if payload is None:
+            return None
+        components = payload[1] if payload[0] == "sum" else (payload,)
+        for component in components:
+            if component[0] == "pauli":
+                pauli_terms.extend(component[1])
+            else:
+                flush_paulis()
+                merged.append(component)
+    flush_paulis()
+
+    if not merged:
+        return "pauli", []
+    if len(merged) == 1:
+        return merged[0]
+    return "sum", tuple(merged)
+
+
+def _observable_expectation_payload(observable, wire_map, wire_order=None, include_sums=True):
     if observable is None:
         return None
 
@@ -492,11 +546,209 @@ def _observable_batch_payload(observable, wire_map, wire_order=None):
         matrix, targets = components
         return "matrix", matrix, tuple(targets)
 
+    if not include_sums:
+        return None
+
+    if observable.name == "SProd":
+        coefficient = _scalar_to_complex(observable.scalar)
+        if coefficient is None:
+            return None
+        base_payload = _observable_expectation_payload(
+            observable.base,
+            wire_map,
+            wire_order=wire_order,
+            include_sums=include_sums,
+        )
+        if base_payload is None:
+            return None
+        return _scale_observable_payload(base_payload, coefficient)
+
+    if observable.name == "Sum":
+        return _merge_observable_sum_payloads(
+            _observable_expectation_payload(
+                operand,
+                wire_map,
+                wire_order=wire_order,
+                include_sums=include_sums,
+            )
+            for operand in getattr(observable, "operands", ())
+        )
+
+    if observable.name in {"LinearCombination", "Hamiltonian"} and callable(getattr(observable, "terms", None)):
+        coeffs, observables = observable.terms()
+        payloads = []
+        for coeff, sub_observable in zip(coeffs, observables):
+            coefficient = _scalar_to_complex(coeff)
+            if coefficient is None:
+                return None
+            sub_payload = _observable_expectation_payload(
+                sub_observable,
+                wire_map,
+                wire_order=wire_order,
+                include_sums=include_sums,
+            )
+            if sub_payload is None:
+                return None
+            payloads.append(_scale_observable_payload(sub_payload, coefficient))
+        return _merge_observable_sum_payloads(payloads)
+
     return None
 
 
-def _observable_batch_payload_matches(observable, wire_map, reference_payload, wire_order=None):
-    current = _observable_batch_payload(observable, wire_map, wire_order=wire_order)
+def _sparse_payload_moments_cached(runtime, payload, cache=None):
+    _, data, indices, indptr, shape = payload
+    cache_key = ("sparse_payload_moments", _observable_batch_payload_cache_key(payload))
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
+
+    moments = runtime.sparse_hamiltonian_moments(data, indices, indptr, shape)
+    if cache is not None:
+        cache[cache_key] = moments
+    return moments
+
+
+def _evaluate_observable_payload(runtime, payload, cache=None):
+    kind = payload[0]
+    if kind == "pauli":
+        return _evaluate_pauli_terms(runtime, payload[1], cache=cache)
+    if kind == "matrix":
+        return _matrix_expectation_cached(runtime, payload[1], payload[2], cache=cache)
+    if kind == "sparse":
+        mean, _ = _sparse_payload_moments_cached(runtime, payload, cache=cache)
+        return mean
+    if kind == "sum":
+        result = 0.0 + 0.0j
+        for component in payload[1]:
+            result += _evaluate_observable_payload(runtime, component, cache=cache)
+        return result
+    raise TypeError(f"Unsupported observable payload kind: {kind!r}")
+
+
+def _complex_matrix_payload(matrix):
+    normalized = np.asarray(matrix, dtype=np.complex128)
+    return [
+        [(float(np.real(value)), float(np.imag(value))) for value in row]
+        for row in normalized
+    ]
+
+
+def _complex_vector_payload(values):
+    normalized = np.asarray(values, dtype=np.complex128).reshape(-1)
+    return [(float(np.real(value)), float(np.imag(value))) for value in normalized]
+
+
+def _native_adjoint_terms_from_observable(observable, wire_map, all_wires, coefficient=1.0 + 0.0j):
+    if observable is None:
+        return None
+
+    coefficient = complex(coefficient)
+    terms = _pauli_terms_from_observable(observable, wire_map)
+    if terms is not None:
+        return [
+            {
+                "coefficient": (float(np.real(coeff)), float(np.imag(coeff))),
+                "pauli_string": pauli_string,
+                "targets": [int(target) for target in targets],
+            }
+            for coeff, pauli_string, targets in _combine_pauli_terms(
+                (coefficient * term_coeff, pauli_string, targets)
+                for term_coeff, pauli_string, targets in terms
+            )
+        ]
+
+    components = _hermitian_matrix_and_targets(observable, wire_map)
+    if components is not None:
+        matrix, targets = components
+        if coefficient != 1:
+            matrix = np.ascontiguousarray(coefficient * matrix)
+        return [
+            {
+                "kind": "matrix",
+                "matrix": _complex_matrix_payload(matrix),
+                "targets": [int(target) for target in targets],
+            }
+        ]
+
+    scaled_sparse = _scaled_sparse_hamiltonian_base(observable)
+    if scaled_sparse is not None:
+        _, sparse_base = scaled_sparse
+        observable_wires = list(sparse_base.wires)
+        partial_targets = None
+        if len(observable_wires) < len(all_wires):
+            sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, sparse_base.wires)
+            partial_targets = [int(wire_map[wire]) for wire in observable_wires]
+        else:
+            sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, all_wires)
+        if coefficient != 1:
+            sparse_matrix = sparse_matrix.copy()
+            sparse_matrix.data = coefficient * np.asarray(sparse_matrix.data, dtype=np.complex128)
+        sparse_payload = {
+            "kind": "sparse",
+            "data": _complex_vector_payload(sparse_matrix.data),
+            "indices": [int(index) for index in sparse_matrix.indices],
+            "indptr": [int(offset) for offset in sparse_matrix.indptr],
+            "shape": [int(dim) for dim in sparse_matrix.shape],
+        }
+        if partial_targets is not None:
+            sparse_payload["targets"] = partial_targets
+        return [sparse_payload]
+
+    if observable.name == "SProd":
+        scalar = _scalar_to_complex(observable.scalar)
+        if scalar is None:
+            return None
+        return _native_adjoint_terms_from_observable(
+            observable.base,
+            wire_map,
+            all_wires,
+            coefficient=coefficient * scalar,
+        )
+
+    if observable.name == "Sum":
+        payloads = []
+        for operand in getattr(observable, "operands", ()):
+            operand_payloads = _native_adjoint_terms_from_observable(
+                operand,
+                wire_map,
+                all_wires,
+                coefficient=coefficient,
+            )
+            if operand_payloads is None:
+                return None
+            payloads.extend(operand_payloads)
+        return payloads
+
+    if observable.name in {"LinearCombination", "Hamiltonian"} and callable(getattr(observable, "terms", None)):
+        coeffs, observables = observable.terms()
+        payloads = []
+        for coeff, sub_observable in zip(coeffs, observables):
+            scalar = _scalar_to_complex(coeff)
+            if scalar is None:
+                return None
+            sub_payloads = _native_adjoint_terms_from_observable(
+                sub_observable,
+                wire_map,
+                all_wires,
+                coefficient=coefficient * scalar,
+            )
+            if sub_payloads is None:
+                return None
+            payloads.extend(sub_payloads)
+        return payloads
+
+    return None
+
+
+def _observable_batch_payload(observable, wire_map, wire_order=None, include_sums=True):
+    return _observable_expectation_payload(
+        observable,
+        wire_map,
+        wire_order=wire_order,
+        include_sums=include_sums,
+    )
+
+
+def _observable_payload_matches(current, reference_payload):
     if current is None or current[0] != reference_payload[0]:
         return False
     if reference_payload[0] == "pauli":
@@ -508,7 +760,22 @@ def _observable_batch_payload_matches(observable, wire_map, reference_payload, w
             and np.array_equal(current[2], reference_payload[2])
             and np.array_equal(current[3], reference_payload[3])
         )
+    if reference_payload[0] == "sum":
+        return len(current[1]) == len(reference_payload[1]) and all(
+            _observable_payload_matches(current_component, reference_component)
+            for current_component, reference_component in zip(current[1], reference_payload[1])
+        )
     return current[2] == reference_payload[2] and np.array_equal(current[1], reference_payload[1])
+
+
+def _observable_batch_payload_matches(observable, wire_map, reference_payload, wire_order=None, include_sums=True):
+    current = _observable_batch_payload(
+        observable,
+        wire_map,
+        wire_order=wire_order,
+        include_sums=include_sums,
+    )
+    return _observable_payload_matches(current, reference_payload)
 
 
 def _array_cache_key(values):
@@ -536,6 +803,8 @@ def _observable_batch_payload_cache_key(payload):
             _array_cache_key(payload[2]),
             _array_cache_key(payload[3]),
         )
+    if kind == "sum":
+        return "sum", tuple(_observable_batch_payload_cache_key(component) for component in payload[1])
     raise TypeError(f"Unsupported observable batch payload kind: {kind!r}")
 
 
@@ -548,6 +817,11 @@ def _evaluate_observable_batch_payload(runtime, payload):
     if kind == "sparse":
         means, _ = _native_sparse_hamiltonian_moments_batch(runtime, payload)
         return means
+    if kind == "sum":
+        result = np.zeros(runtime.batch_size(), dtype=np.complex128)
+        for component in payload[1]:
+            result += _evaluate_observable_batch_payload(runtime, component)
+        return result
     raise TypeError(f"Unsupported observable batch payload kind: {kind!r}")
 
 
@@ -3378,17 +3652,18 @@ class RocQDevice(QubitDevice):
             return False
 
         for measurement in measurements:
-            if measurement.__class__.__name__ not in {"ExpectationMP", "VarianceMP"}:
+            measurement_name = measurement.__class__.__name__
+            if measurement_name not in {"ExpectationMP", "VarianceMP"}:
                 return False
             observable = getattr(measurement, "obs", None)
             if observable is None:
                 return False
-            if observable.name == "Hermitian":
-                continue
-            scaled = _scaled_base_observable(observable)
-            if scaled is not None and scaled[1].name in {"Hermitian", "SparseHamiltonian"}:
-                continue
-            if _pauli_terms_from_observable(observable, self.wire_map) is None:
+            payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
+            if payload is None:
+                return False
+            if observable.name == "Hermitian" and payload[0] != "matrix":
+                return False
+            if measurement_name == "VarianceMP" and payload[0] == "sum":
                 return False
         return True
 
@@ -4832,54 +5107,14 @@ class RocQDevice(QubitDevice):
     def _native_adjoint_observable_payloads(self, tape):
         payloads = []
         for observable in tape.observables:
-            terms = _pauli_terms_from_observable(observable, self.wire_map)
-            if terms is not None:
-                payloads.append(
-                    [
-                        {
-                            "coefficient": (float(np.real(coeff)), float(np.imag(coeff))),
-                            "pauli_string": pauli_string,
-                            "targets": [int(target) for target in targets],
-                        }
-                        for coeff, pauli_string, targets in _combine_pauli_terms(terms)
-                    ]
-                )
-                continue
-
-            components = _hermitian_matrix_and_targets(observable, self.wire_map)
-            if components is None:
-                scaled_sparse = _scaled_sparse_hamiltonian_base(observable)
-                if scaled_sparse is None:
-                    return None
-                _, sparse_base = scaled_sparse
-                observable_wires = list(sparse_base.wires)
-                partial_targets = None
-                if len(observable_wires) < len(self.wires):
-                    sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, sparse_base.wires)
-                    partial_targets = [int(self.wire_map[wire]) for wire in observable_wires]
-                else:
-                    sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, self.wires)
-                sparse_payload = {
-                    "kind": "sparse",
-                    "data": _complex_vector_payload(sparse_matrix.data),
-                    "indices": [int(index) for index in sparse_matrix.indices],
-                    "indptr": [int(offset) for offset in sparse_matrix.indptr],
-                    "shape": [int(dim) for dim in sparse_matrix.shape],
-                }
-                if partial_targets is not None:
-                    sparse_payload["targets"] = partial_targets
-                payloads.append([sparse_payload])
-                continue
-            matrix, targets = components
-            payloads.append(
-                [
-                    {
-                        "kind": "matrix",
-                        "matrix": _complex_matrix_payload(matrix),
-                        "targets": [int(target) for target in targets],
-                    }
-                ]
+            observable_payloads = _native_adjoint_terms_from_observable(
+                observable,
+                self.wire_map,
+                self.wires,
             )
+            if observable_payloads is None:
+                return None
+            payloads.append(observable_payloads)
         return payloads
 
     def _native_adjoint_trainable_params(self, tape):
@@ -4947,6 +5182,8 @@ class RocQDevice(QubitDevice):
                 observable = getattr(measurement, "obs", None)
                 payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
                 if payload is None:
+                    return None
+                if measurement_name == "VarianceMP" and payload[0] == "sum":
                     return None
                 reference_measurement_specs.append((measurement_name, payload))
             elif measurement_name == "CountsMP":
@@ -5993,40 +6230,19 @@ class RocQDevice(QubitDevice):
         if self._diagonalizing_rotations_applied:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
-        if _scaled_sparse_hamiltonian_base(observable) is not None:
-            mean, _ = _sparse_hamiltonian_moments_cached(
-                self._runtime,
-                observable,
-                self.wires,
-                cache=self._analytic_measurement_cache,
-                fallback_state=self._ensure_state,
-            )
-            return _real_measurement_result(mean, "Expectation value")
-
-        scaled = _scaled_base_observable(observable)
-        if scaled is not None and scaled[1].name == "Hermitian":
-            try:
-                matrix, targets = _hermitian_matrix_and_targets(observable, self.wire_map)
-                if matrix is None:
-                    raise NotImplementedError
-                mean = _matrix_expectation_cached(
-                    self._runtime,
-                    matrix,
-                    targets,
-                    cache=self._analytic_measurement_cache,
-                )
-            except (NotImplementedError, RuntimeError):
-                return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
-            return _real_measurement_result(mean, "Expectation value")
-
-        terms = _pauli_terms_from_observable(observable, self.wire_map)
-        if terms is None:
+        payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
+        if payload is None:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
-        return _real_measurement_result(
-            _evaluate_pauli_terms(self._runtime, terms, cache=self._analytic_measurement_cache),
-            "Expectation value",
-        )
+        try:
+            mean = _evaluate_observable_payload(
+                self._runtime,
+                payload,
+                cache=self._analytic_measurement_cache,
+            )
+        except (NotImplementedError, RuntimeError):
+            return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
+        return _real_measurement_result(mean, "Expectation value")
 
     def var(self, observable, shot_range=None, bin_size=None):
         if self.shots is not None or shot_range is not None or bin_size is not None:
