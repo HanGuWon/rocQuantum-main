@@ -29,6 +29,21 @@ def _normalize_edges(edges: Iterable[Sequence[float]]) -> list[WeightedEdge]:
     return normalized
 
 
+def _canonical_maxcut_edges(num_qubits: int, edges: Iterable[Sequence[float]]) -> list[WeightedEdge]:
+    combined: dict[tuple[int, int], float] = {}
+    for u, v, weight in _normalize_edges(edges):
+        if u < 0 or v < 0 or u >= num_qubits or v >= num_qubits or u == v:
+            raise ValueError("QAOA edge endpoints must be distinct valid qubit indices.")
+        key = (min(u, v), max(u, v))
+        combined[key] = combined.get(key, 0.0) + float(weight)
+
+    return [
+        (u, v, weight)
+        for (u, v), weight in combined.items()
+        if abs(weight) > 1.0e-15
+    ]
+
+
 def make_maxcut_qaoa_kernel(num_qubits: int, edges: Iterable[Sequence[float]], layers: int = 1):
     """Create an experimental MaxCut-style QAOA ansatz kernel.
 
@@ -42,10 +57,7 @@ def make_maxcut_qaoa_kernel(num_qubits: int, edges: Iterable[Sequence[float]], l
     if layers <= 0:
         raise ValueError("layers must be positive.")
 
-    normalized_edges = _normalize_edges(edges)
-    for u, v, _ in normalized_edges:
-        if u < 0 or v < 0 or u >= num_qubits or v >= num_qubits or u == v:
-            raise ValueError("QAOA edge endpoints must be distinct valid qubit indices.")
+    normalized_edges = _canonical_maxcut_edges(num_qubits, edges)
 
     @rocq.kernel
     def qaoa_ansatz(parameters):
@@ -79,9 +91,7 @@ def maxcut_cost_operator(num_qubits: int, edges: Iterable[Sequence[float]]):
     from rocq.operator import PauliOperator
 
     operator = None
-    for u, v, weight in _normalize_edges(edges):
-        if u < 0 or v < 0 or u >= num_qubits or v >= num_qubits or u == v:
-            raise ValueError("QAOA edge endpoints must be distinct valid qubit indices.")
+    for u, v, weight in _canonical_maxcut_edges(num_qubits, edges):
         term = 0.5 * float(weight) * (
             PauliOperator("I") - PauliOperator(f"Z{int(u)} Z{int(v)}")
         )

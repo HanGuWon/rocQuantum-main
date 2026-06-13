@@ -293,6 +293,26 @@ class TestQaoaHelpers(unittest.TestCase):
             ],
         )
 
+    def test_maxcut_qaoa_combines_duplicate_undirected_edges(self):
+        from rocquantum.solvers.qaoa import make_maxcut_qaoa_kernel, maxcut_cost_operator
+        from rocq.operator import iter_pauli_terms
+
+        kernel = make_maxcut_qaoa_kernel(2, [(0, 1, 1.0), (1, 0, 2.0)], layers=1)
+        ops = kernel.build(np.array([0.3, 0.4])).ops
+        rz_ops = [op for op in ops if op.name == "rz"]
+
+        self.assertEqual(len(rz_ops), 1)
+        self.assertAlmostEqual(rz_ops[0].params["phi"], -0.9)
+
+        operator = maxcut_cost_operator(2, [(0, 1, 1.0), (1, 0, 2.0)])
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1.5 + 0j, []),
+                (-1.5 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
+
 
 class TestQecHelpers(unittest.TestCase):
     def test_repetition_code_single_round_uses_canonical_sample(self):

@@ -11,7 +11,8 @@ Current supported subset:
   RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.
 - `maxcut_cost_operator()` builds the weighted MaxCut cost operator as
-  `0.5 * w * (I - Zi Zj)` for each edge.
+  `0.5 * w * (I - Zi Zj)` for each edge, aggregating duplicate or reversed
+  undirected edges before emitting ansatz cost phases or cost terms.
 - `VQE_Solver` passes vectors as one ansatz argument when the target kernel has a single vector-style parameter, including one-element vectors, so the QAOA helper and vector-parameter ansatzes can be evaluated directly by the VQE objective path.
 
 Minimal VQE example:
