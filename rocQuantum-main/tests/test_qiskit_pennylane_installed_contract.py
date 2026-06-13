@@ -9214,6 +9214,95 @@ def test_pennylane_native_adjoint_lowers_trainable_controlled_sequence_base(monk
     assert "param_derivative_scales" not in operations[4]
 
 
+def test_pennylane_native_adjoint_lowers_select_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.Select([qml.RX(0.2, wires=1), qml.RY(0.3, wires=1)], control=[0]),
+            qml.Select([qml.PauliX(wires=1), qml.PauliZ(wires=1)], control=[0]),
+            qml.RY(0.321, wires=2),
+        ],
+        [qml.expval(qml.PauliZ(2))],
+    )
+    tape.trainable_params = [0, 1, 2]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0, 1, 2]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [2]}]]
+    assert all(op["rocq_name"] != "Select" for op in operations)
+    assert [(op["rocq_name"], op["wires"]) for op in operations] == [
+        ("X", [0]),
+        ("CRX", [0, 1]),
+        ("X", [0]),
+        ("CRY", [0, 1]),
+        ("X", [0]),
+        ("CNOT", [0, 1]),
+        ("X", [0]),
+        ("CZ", [0, 1]),
+        ("RY", [2]),
+    ]
+    assert operations[1]["params"] == [0.2]
+    assert operations[1]["param_indices"] == [0]
+    assert operations[1]["trainable_param_indices"] == [0]
+    assert operations[3]["params"] == [0.3]
+    assert operations[3]["param_indices"] == [1]
+    assert operations[3]["trainable_param_indices"] == [1]
+    assert operations[-1]["params"] == [0.321]
+    assert operations[-1]["param_indices"] == [2]
+    assert operations[-1]["trainable_param_indices"] == [2]
+
+
+def test_pennylane_native_adjoint_lowers_partial_select_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=6)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.Select(
+                [qml.PauliX(wires=3), qml.PauliX(wires=4), qml.PauliX(wires=5)],
+                control=[0, 1, 2],
+                partial=True,
+            ),
+            qml.RY(0.321, wires=0),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert [(op["rocq_name"], op["wires"]) for op in operations] == [
+        ("X", [1]),
+        ("X", [2]),
+        ("MCX", [1, 2, 3]),
+        ("X", [2]),
+        ("X", [1]),
+        ("CNOT", [2, 4]),
+        ("CNOT", [1, 5]),
+        ("RY", [0]),
+    ]
+    assert operations[-1]["params"] == [0.321]
+    assert operations[-1]["param_indices"] == [0]
+    assert operations[-1]["trainable_param_indices"] == [0]
+
+
 def test_pennylane_native_adjoint_marks_trainable_operation_parameters(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

@@ -4024,6 +4024,52 @@ class RocQDevice(QubitDevice):
                 append_fixed("PauliX", "X", [wire])
             return lowered
 
+        def append_select(op, params, param_indices):
+            selected_ops = _select_ops(op)
+            control_wires = _select_control_wires(op)
+            if not selected_ops:
+                return False
+            if not _select_is_partial(op) and (not control_wires or len(selected_ops) != (1 << len(control_wires))):
+                return False
+            if _select_is_partial(op) and len(selected_ops) > (1 << len(control_wires)):
+                return False
+
+            slices = _select_param_slices(selected_ops)
+            if slices and slices[-1][1] != len(params):
+                return False
+
+            control_specs = (
+                _select_partial_control_specs(len(selected_ops), control_wires)
+                if _select_is_partial(op)
+                else [
+                    (control_wires, _select_control_values(index, len(control_wires)))
+                    for index in range(len(selected_ops))
+                ]
+            )
+
+            class _SelectedControlledWrapper:
+                def __init__(self, base, controls, values):
+                    self.base = base
+                    self.control_wires = list(controls)
+                    self.control_values = list(values)
+
+            for index, selected_op in enumerate(selected_ops):
+                start, end = slices[index]
+                selected_params = params[start:end]
+                selected_param_indices = param_indices[start:end]
+                if selected_op.name in {"Identity", "I"}:
+                    if selected_params:
+                        return False
+                    continue
+
+                selected_controls, selected_values = control_specs[index]
+                if not selected_controls:
+                    return False
+                wrapper = _SelectedControlledWrapper(selected_op, selected_controls, selected_values)
+                if not append_controlled_wrapper(wrapper, selected_params, selected_param_indices):
+                    return False
+            return True
+
         def append_controlled_sequence(op, params, param_indices):
             base = _controlled_sequence_base(op)
             control_wires = _controlled_sequence_control_wires(op)
@@ -4313,6 +4359,11 @@ class RocQDevice(QubitDevice):
 
             if op.name == "ControlledSequence":
                 if not append_controlled_sequence(op, params, param_indices):
+                    return None
+                continue
+
+            if op.name == "Select":
+                if not append_select(op, params, param_indices):
                     return None
                 continue
 
