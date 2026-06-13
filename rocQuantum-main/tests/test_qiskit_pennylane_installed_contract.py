@@ -8599,11 +8599,18 @@ def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
     class _MatrixOpNativeAdjointSimulator(_RYPreservingSimulator):
         def __init__(self, num_qubits):
             super().__init__(num_qubits)
-            self.native_adjoint_calls = 0
+            self.native_adjoint_calls = []
 
         def adjoint_jacobian(self, operations, observables, trainable_params):
-            self.native_adjoint_calls += 1
-            raise AssertionError("matrix-parameter operations should use the adjoint fallback")
+            self.native_adjoint_calls.append(
+                {
+                    "operations": operations,
+                    "observables": observables,
+                    "trainable_params": trainable_params,
+                }
+            )
+            theta = float(operations[1]["params"][0])
+            return np.asarray([[-math.sin(theta)]], dtype=float)
 
     fake = _install_fake_binding(monkeypatch)
     fake.QuantumSimulator = _MatrixOpNativeAdjointSimulator
@@ -8612,22 +8619,68 @@ def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
         if name.startswith("pennylane_rocq"):
             sys.modules.pop(name)
 
-    matrix_fallback_dev = qml.device("lightning.rocq", wires=1)
+    matrix_native_dev = qml.device("lightning.rocq", wires=1)
 
-    @qml.qnode(matrix_fallback_dev, diff_method="adjoint")
-    def matrix_fallback_circuit(theta):
+    @qml.qnode(matrix_native_dev, diff_method="adjoint")
+    def matrix_native_circuit(theta):
         qml.QubitUnitary(np.eye(2, dtype=np.complex128), wires=0)
         qml.RY(theta, wires=0)
         return qml.expval(qml.PauliZ(0))
 
-    assert matrix_fallback_circuit(theta) == pytest.approx(math.cos(float(theta)))
-    assert qml.grad(matrix_fallback_circuit)(theta) == pytest.approx(-math.sin(float(theta)))
-    matrix_fallback_sims = [
+    assert matrix_native_circuit(theta) == pytest.approx(math.cos(float(theta)))
+    assert qml.grad(matrix_native_circuit)(theta) == pytest.approx(-math.sin(float(theta)))
+    matrix_native_sims = [
         sim for sim in _MatrixOpNativeAdjointSimulator.instances
         if isinstance(sim, _MatrixOpNativeAdjointSimulator)
     ]
-    assert all(sim.native_adjoint_calls == 0 for sim in matrix_fallback_sims)
-    assert any(sim.statevector_reads == 1 for sim in matrix_fallback_sims)
+    native_matrix_sim = matrix_native_sims[-1]
+    assert native_matrix_sim.statevector_reads == 0
+    assert len(native_matrix_sim.native_adjoint_calls) == 1
+    native_matrix_call = native_matrix_sim.native_adjoint_calls[0]
+    assert native_matrix_call["trainable_params"] == [1]
+    assert native_matrix_call["operations"] == [
+        {
+            "name": "QubitUnitary",
+            "rocq_name": "matrix",
+            "wires": [0],
+            "params": [],
+            "param_indices": [0],
+            "trainable_param_indices": [],
+            "trainable_param_positions": [],
+            "matrix": [[(1.0, 0.0), (0.0, 0.0)], [(0.0, 0.0), (1.0, 0.0)]],
+        },
+        {
+            "name": "RY",
+            "rocq_name": "RY",
+            "wires": [0],
+            "params": [float(theta)],
+            "param_indices": [1],
+            "trainable_param_indices": [1],
+            "trainable_param_positions": [0],
+        },
+    ]
+
+
+def test_pennylane_native_adjoint_rejects_trainable_qubit_unitary_matrix(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.QubitUnitary(np.eye(2, dtype=np.complex128), wires=0),
+            qml.RY(0.321, wires=0),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0, 1]
+
+    assert dev._native_adjoint_payload(tape) is None
 
 
 def test_pennylane_native_adjoint_marks_trainable_operation_parameters(monkeypatch):

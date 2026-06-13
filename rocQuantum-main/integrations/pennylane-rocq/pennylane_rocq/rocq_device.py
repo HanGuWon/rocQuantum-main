@@ -3463,6 +3463,23 @@ class RocQDevice(QubitDevice):
                 payload["param_derivative_scales"] = param_derivative_scales
             payloads.append(payload)
 
+        def append_matrix_payload(name, wire_indices, matrix, param_indices):
+            if any(param_index in trainable_param_set for param_index in param_indices):
+                return False
+            payloads.append(
+                {
+                    "name": name,
+                    "rocq_name": "matrix",
+                    "wires": wire_indices,
+                    "params": [],
+                    "param_indices": list(param_indices),
+                    "trainable_param_indices": [],
+                    "trainable_param_positions": [],
+                    "matrix": _complex_matrix_payload(matrix),
+                }
+            )
+            return True
+
         def append_fixed(name, rocq_name, wire_indices, params=None):
             append_payload(name, rocq_name, wire_indices, list(params or []), [])
 
@@ -3978,8 +3995,24 @@ class RocQDevice(QubitDevice):
             if op.name in {"StatePrep", "BasisState"}:
                 return None
 
+            raw_params = list(getattr(op, "parameters", ()))
+            raw_param_indices = list(range(parameter_index, parameter_index + len(raw_params)))
+            parameter_index += len(raw_params)
             params = []
-            for param in getattr(op, "parameters", ()):
+            wire_indices = [int(self.wire_map[wire]) for wire in op.wires]
+
+            if op.name == "QubitUnitary":
+                if len(raw_params) != 1:
+                    return None
+                try:
+                    matrix = matrix_to_little_endian_wires(qml.matrix(op))
+                except Exception:
+                    return None
+                if not append_matrix_payload(op.name, wire_indices, matrix, raw_param_indices):
+                    return None
+                continue
+
+            for param in raw_params:
                 if hasattr(param, "bind"):
                     return None
                 try:
@@ -3987,9 +4020,7 @@ class RocQDevice(QubitDevice):
                 except (TypeError, ValueError):
                     return None
 
-            param_indices = list(range(parameter_index, parameter_index + len(params)))
-            parameter_index += len(params)
-            wire_indices = [int(self.wire_map[wire]) for wire in op.wires]
+            param_indices = raw_param_indices
 
             if op.name in CONTROLLED_WRAPPER_OPS:
                 if not append_controlled_wrapper(op, params, param_indices):

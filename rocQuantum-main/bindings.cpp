@@ -28,6 +28,8 @@ struct AdjointOperationPayload {
     std::vector<double> param_derivative_scales;
     std::vector<int> trainable_param_indices;
     std::vector<int> trainable_param_positions;
+    bool has_matrix = false;
+    std::vector<std::complex<double>> matrix;
 };
 
 struct PauliTermPayload {
@@ -134,6 +136,8 @@ std::vector<int> trainable_positions(
     return out;
 }
 
+std::vector<std::complex<double>> parse_complex_matrix_payload(py::handle values);
+
 std::vector<AdjointOperationPayload> parse_adjoint_operations(
     py::sequence operations,
     const std::unordered_map<int, std::size_t>& trainable_columns) {
@@ -178,6 +182,15 @@ std::vector<AdjointOperationPayload> parse_adjoint_operations(
         if (payload.trainable_param_indices.size() != payload.trainable_param_positions.size()) {
             throw std::invalid_argument(
                 "adjoint operation trainable_param_indices and trainable_param_positions lengths differ.");
+        }
+        if (dict_contains(op, "matrix")) {
+            payload.has_matrix = true;
+            payload.matrix =
+                parse_complex_matrix_payload(py::reinterpret_borrow<py::object>(op[py::str("matrix")]));
+            if (!payload.trainable_param_positions.empty()) {
+                throw_adjoint_not_implemented(
+                    "binding adjoint_jacobian does not differentiate trainable matrix operation payloads.");
+            }
         }
         out.push_back(std::move(payload));
     }
@@ -538,6 +551,18 @@ std::complex<double> inner_product(
     return out;
 }
 
+std::vector<std::complex<double>> conjugate_transpose_matrix(
+    const std::vector<std::complex<double>>& matrix,
+    std::size_t dim) {
+    std::vector<std::complex<double>> out(matrix.size());
+    for (std::size_t row = 0; row < dim; ++row) {
+        for (std::size_t col = 0; col < dim; ++col) {
+            out[row * dim + col] = std::conj(matrix[col * dim + row]);
+        }
+    }
+    return out;
+}
+
 std::string inverse_gate_name(const std::string& gate_name, std::vector<double>& params) {
     const std::string normalized = uppercase_ascii(gate_name);
     if (normalized == "I" || normalized == "IDENTITY" || normalized == "H" || normalized == "HADAMARD" ||
@@ -576,6 +601,25 @@ void apply_adjoint_operation(
     rocquantum::QuantumSimulator& simulator,
     const AdjointOperationPayload& operation,
     bool inverse) {
+    if (operation.has_matrix) {
+        if (operation.wires.empty()) {
+            throw std::invalid_argument("Matrix adjoint operation requires at least one target wire.");
+        }
+        if (operation.wires.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+            throw std::invalid_argument("Too many matrix operation target qubits.");
+        }
+        const std::size_t dim = std::size_t{1} << operation.wires.size();
+        if (operation.matrix.size() != dim * dim) {
+            throw std::invalid_argument("Matrix adjoint operation dimension does not match target count.");
+        }
+        if (inverse) {
+            simulator.apply_matrix(conjugate_transpose_matrix(operation.matrix, dim), operation.wires);
+        } else {
+            simulator.apply_matrix(operation.matrix, operation.wires);
+        }
+        return;
+    }
+
     std::string gate_name = operation.rocq_name.empty() ? operation.name : operation.rocq_name;
     std::vector<double> params = operation.params;
     if (inverse) {
