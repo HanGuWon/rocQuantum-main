@@ -983,6 +983,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("_normalize_dense_operator_targets", source)
         self.assertIn("Dense Qiskit Operator explicit targets", source)
         self.assertIn("_dense_operator_object_array", source)
+        self.assertIn("_dense_matrix_cache_key", source)
+        self.assertIn("contiguous.tobytes()", source)
         self.assertIn("observable.input_dims()", source)
         self.assertIn("observable.output_dims()", source)
         self.assertIn("reversed(input_dims)", source)

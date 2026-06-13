@@ -272,6 +272,17 @@ def _combine_observable_terms(terms, num_qubits: int):
     ]
 
 
+def _dense_matrix_cache_key(matrix, targets):
+    contiguous = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+    return (
+        "matrix",
+        tuple(int(target) for target in targets),
+        contiguous.dtype.str,
+        contiguous.shape,
+        contiguous.tobytes(),
+    )
+
+
 def _observable_signature(observable, num_qubits: int):
     return tuple(
         _combine_observable_terms(
@@ -285,12 +296,7 @@ def _observable_plan(observable, num_qubits: int):
     dense_plan = _dense_operator_plan(observable, int(num_qubits))
     if dense_plan is not None:
         matrix, targets = dense_plan
-        cache_key = (
-            "matrix",
-            tuple(targets),
-            matrix.shape,
-            tuple(complex(value) for value in matrix.reshape(-1)),
-        )
+        cache_key = _dense_matrix_cache_key(matrix, targets)
         return cache_key, ("matrix", (matrix, tuple(targets)))
 
     signature = _observable_signature(observable, int(num_qubits))

@@ -4069,6 +4069,34 @@ def test_qiskit_native_estimator_batches_dense_operator_parameters(monkeypatch):
     assert sim.matrix_expectations == []
 
 
+def test_qiskit_native_estimator_reuses_duplicate_dense_operator_batch(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+    matrix = np.diag([1.0, -1.0]).astype(np.complex128)
+    observables = [Operator(matrix.copy()), Operator(matrix.copy())]
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observables)],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([1.0, 1.0]))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("H", (0,), ())]
+    assert sim.total_gate_applications == 1
+    assert len(sim.matrix_expectations) == 1
+    assert sim.matrix_expectations[0][1] == (0,)
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
+    assert sim.expectations == []
+
+
 def test_qiskit_native_estimator_reuses_bound_circuit_for_observable_batch(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
