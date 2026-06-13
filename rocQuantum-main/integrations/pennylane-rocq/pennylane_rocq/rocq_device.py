@@ -35,6 +35,9 @@ PENNYLANE_TO_ROCQ_ADJOINT_GATES = {
     **PENNYLANE_TO_ROCQ_GATES,
     "PhaseShift": "P",
     "ControlledPhaseShift": "CP",
+    "Adjoint(S)": "SDG",
+    "Adjoint(T)": "TDG",
+    "MultiControlledX": "MCX",
 }
 
 NATIVE_PARAMETRIC_OPS = {"RX", "RY", "RZ", "CRX", "CRY", "CRZ"}
@@ -3646,7 +3649,8 @@ class RocQDevice(QubitDevice):
 
         def append_mc_sx(controls, target):
             if not controls:
-                return False
+                append_fixed("SX", "RX", [target], [np.pi / 2])
+                return True
             return append_phase_projector(controls, np.pi / 4) and append_mc_rx(controls, target, np.pi / 2)
 
         def append_mc_siswap(controls, target_indices):
@@ -4014,6 +4018,44 @@ class RocQDevice(QubitDevice):
                     append_payload(primitive_name, primitive_name, wire_indices, [primitive_param], [primitive_index])
                 continue
 
+            if op.name == "CH":
+                if params or len(wire_indices) != 2:
+                    return None
+                append_ch(wire_indices)
+                continue
+
+            if op.name == "CY":
+                if params or len(wire_indices) != 2:
+                    return None
+                append_cy(wire_indices)
+                continue
+
+            if op.name == "CCZ":
+                if params or len(wire_indices) != 3:
+                    return None
+                append_fixed("Hadamard", "H", [wire_indices[2]])
+                append_mcx(wire_indices[:2], wire_indices[2])
+                append_fixed("Hadamard", "H", [wire_indices[2]])
+                continue
+
+            if op.name == "MultiControlledX":
+                if params or len(wire_indices) < 2:
+                    return None
+                control_values = _mcx_control_values(op)
+                if len(control_values) != len(wire_indices) - 1:
+                    return None
+                flipped_wires = [
+                    wire_index
+                    for wire_index, value in zip(wire_indices[:-1], control_values)
+                    if not _control_value_is_one(value)
+                ]
+                for wire_index in flipped_wires:
+                    append_fixed("PauliX", "X", [wire_index])
+                append_mcx(wire_indices[:-1], wire_indices[-1])
+                for wire_index in reversed(flipped_wires):
+                    append_fixed("PauliX", "X", [wire_index])
+                continue
+
             if op.name in {"CPhaseShift00", "CPhaseShift01", "CPhaseShift10"}:
                 if len(params) != 1 or len(wire_indices) != 2:
                     return None
@@ -4030,6 +4072,21 @@ class RocQDevice(QubitDevice):
                 append_payload("ControlledPhaseShift", "CP", wire_indices, params, param_indices)
                 for wire_index in reversed(flipped_wires):
                     append_payload("PauliX", "X", [wire_index], [], [])
+                continue
+
+            if op.name == "ISWAP":
+                if params or not append_mc_iswap([], wire_indices):
+                    return None
+                continue
+
+            if op.name in {"SISWAP", "SQISW"}:
+                if params or not append_mc_siswap([], wire_indices):
+                    return None
+                continue
+
+            if op.name == "ECR":
+                if params or not append_mc_ecr([], wire_indices):
+                    return None
                 continue
 
             if op.name == "MultiRZ":

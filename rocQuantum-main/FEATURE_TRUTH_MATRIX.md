@@ -10,6 +10,8 @@ Recent PennyLane controlled-global-phase note: targetless controlled `qml.Global
 
 Recent PennyLane controlled-sequence note: `qml.ControlledSequence` also covers adjoint phase-root bases (`Adjoint(S)` / `Adjoint(T)`) through native controlled-phase decomposition, including fixed blocks inside compatible `batch_execute`.
 
+Recent PennyLane direct-adjoint note: direct fixed `Adjoint(S)` / `Adjoint(T)` / `CH` / `CY` / `CCZ` / open-control `MultiControlledX` / `ISWAP` / `SISWAP` / `ECR` operations now lower into primitive root-binding adjoint payloads, so supported trainable rotations around those fixed gates can use native adjoint dispatch instead of Python statevector fallback.
+
 | Area | Feature | Current Status | Evidence | Native Or Fallback | Comparison Target | Impact If Missing | Priority |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Build / Packaging | Native CMake build root | IMPLEMENTED | `CMakeLists.txt`; CMake `3.21`; `find_package(hip CONFIG REQUIRED)`, `roc::rocblas`, `roc::rocsolver`, `hip::host`, component subdirectories | Native | cuQuantum / CUDA-Q | Required for all native use | P0 |

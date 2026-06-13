@@ -8945,6 +8945,115 @@ def test_pennylane_native_adjoint_lowers_controlled_wrapper_payloads(monkeypatch
     assert any(op["rocq_name"] == "RY" and op["params"] == [np.pi / 4] for op in operations)
 
 
+def test_pennylane_native_adjoint_lowers_direct_fixed_gate_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.adjoint(qml.S(wires=0)),
+            qml.adjoint(qml.T(wires=1)),
+            qml.CH(wires=[0, 1]),
+            qml.CY(wires=[1, 2]),
+            qml.CCZ(wires=[0, 1, 2]),
+            qml.MultiControlledX(wires=[0, 1, 2], control_values=[False, True]),
+            qml.ISWAP(wires=[1, 2]),
+            qml.SISWAP(wires=[1, 2]),
+            qml.ECR(wires=[1, 2]),
+            qml.RY(0.4, wires=2),
+        ],
+        [qml.expval(qml.PauliZ(2))],
+    )
+    tape.trainable_params = [0]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [2]}]]
+    assert all(
+        op["rocq_name"]
+        not in {"CH", "CY", "CCZ", "MultiControlledX", "ISWAP", "SISWAP", "SQISW", "ECR", "Adjoint(S)", "Adjoint(T)"}
+        for op in operations
+    )
+    assert operations[0]["rocq_name"] == "SDG"
+    assert operations[1]["rocq_name"] == "TDG"
+    assert ("X", [0]) in [(op["rocq_name"], op["wires"]) for op in operations]
+    assert any(op["rocq_name"] == "MCX" and op["wires"] == [0, 1, 2] for op in operations)
+    assert any(op["rocq_name"] == "CNOT" and op["wires"] == [1, 2] for op in operations)
+    assert any(op["rocq_name"] == "RX" and op["params"] == [np.pi / 2] for op in operations)
+    assert operations[-1]["rocq_name"] == "RY"
+    assert operations[-1]["trainable_param_indices"] == [0]
+
+
+def test_pennylane_native_adjoint_uses_direct_fixed_gate_payload(monkeypatch):
+    pytest.importorskip("pennylane")
+
+    class _DirectFixedGateNativeAdjointSimulator(_FakeQuantumSimulator):
+        def __init__(self, num_qubits):
+            super().__init__(num_qubits)
+            self.native_adjoint_calls = []
+
+        def adjoint_jacobian(self, operations, observables, trainable_params):
+            self.native_adjoint_calls.append(
+                {
+                    "operations": operations,
+                    "observables": observables,
+                    "trainable_params": trainable_params,
+                }
+            )
+            return np.asarray([[2.5]], dtype=float)
+
+    fake = _install_fake_binding(monkeypatch)
+    fake.QuantumSimulator = _DirectFixedGateNativeAdjointSimulator
+    fake.QSim = _DirectFixedGateNativeAdjointSimulator
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+    from pennylane import numpy as pnp
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev, diff_method="adjoint")
+    def circuit(theta):
+        qml.adjoint(qml.S(wires=0))
+        qml.CH(wires=[0, 1])
+        qml.CY(wires=[1, 2])
+        qml.CCZ(wires=[0, 1, 2])
+        qml.MultiControlledX(wires=[0, 1, 2], control_values=[False, True])
+        qml.ISWAP(wires=[1, 2])
+        qml.SISWAP(wires=[1, 2])
+        qml.ECR(wires=[1, 2])
+        qml.RY(theta, wires=2)
+        return qml.expval(qml.PauliZ(2))
+
+    theta = pnp.array(0.123, requires_grad=True)
+
+    assert qml.grad(circuit)(theta) == pytest.approx(2.5)
+    sim = _DirectFixedGateNativeAdjointSimulator.instances[-1]
+    assert sim.statevector_reads == 0
+    assert len(sim.native_adjoint_calls) == 1
+    native_call = sim.native_adjoint_calls[0]
+    assert all(
+        op["rocq_name"]
+        not in {"CH", "CY", "CCZ", "MultiControlledX", "ISWAP", "SISWAP", "SQISW", "ECR", "Adjoint(S)", "Adjoint(T)"}
+        for op in native_call["operations"]
+    )
+    trainable_ry_ops = [
+        op for op in native_call["operations"]
+        if op["rocq_name"] == "RY" and op["trainable_param_indices"]
+    ]
+    assert len(trainable_ry_ops) == 1
+    assert native_call["trainable_params"] == trainable_ry_ops[0]["trainable_param_indices"]
+
+
 def test_pennylane_native_adjoint_uses_controlled_wrapper_payload(monkeypatch):
     pytest.importorskip("pennylane")
 
