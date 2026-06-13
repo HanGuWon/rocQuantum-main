@@ -313,8 +313,50 @@ def _real_measurement_result(value, measurement_name):
     return float(real_value)
 
 
+def _scaled_base_observable(observable):
+    coefficient = 1.0 + 0.0j
+    base = observable
+    while getattr(base, "name", None) == "SProd":
+        try:
+            scalar = np.asarray(base.scalar, dtype=np.complex128)
+        except (TypeError, ValueError):
+            return None
+        if scalar.shape != ():
+            return None
+        coefficient *= complex(scalar.item())
+        base = getattr(base, "base", None)
+        if base is None:
+            return None
+    return coefficient, base
+
+
+def _scaled_sparse_hamiltonian_base(observable):
+    scaled = _scaled_base_observable(observable)
+    if scaled is None:
+        return None
+    coefficient, base = scaled
+    if base.name != "SparseHamiltonian":
+        return None
+    return coefficient, base
+
+
+def _scaled_sparse_hamiltonian_matrix(observable, wire_order):
+    scaled = _scaled_sparse_hamiltonian_base(observable)
+    if scaled is None:
+        return None
+
+    coefficient, base = scaled
+    sparse_matrix = base.sparse_matrix(wire_order=wire_order, format="csr")
+    if coefficient != 1:
+        sparse_matrix = sparse_matrix.copy()
+        sparse_matrix.data = coefficient * np.asarray(sparse_matrix.data, dtype=np.complex128)
+    return sparse_matrix
+
+
 def _sparse_hamiltonian_moments(state, observable, wire_order):
-    sparse_matrix = observable.sparse_matrix(wire_order=wire_order, format="csr")
+    sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, wire_order)
+    if sparse_matrix is None:
+        raise TypeError("Expected a SparseHamiltonian or scaled SparseHamiltonian observable.")
     h_state = sparse_matrix.dot(state)
     mean = np.vdot(state, h_state)
     second_moment = np.vdot(h_state, h_state)
@@ -332,7 +374,9 @@ def _sparse_hamiltonian_moments_cache_key(sparse_matrix):
 
 
 def _sparse_hamiltonian_moments_cached(runtime, observable, wire_order, cache=None, fallback_state=None):
-    sparse_matrix = observable.sparse_matrix(wire_order=wire_order, format="csr")
+    sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, wire_order)
+    if sparse_matrix is None:
+        raise TypeError("Expected a SparseHamiltonian or scaled SparseHamiltonian observable.")
     cache_key = _sparse_hamiltonian_moments_cache_key(sparse_matrix)
     if cache is not None and cache_key in cache:
         return cache[cache_key]
@@ -360,10 +404,16 @@ def _native_sparse_hamiltonian_moments_batch(runtime, payload):
 
 
 def _hermitian_matrix_and_targets(observable, wire_map):
-    if observable.name != "Hermitian":
+    scaled = _scaled_base_observable(observable)
+    if scaled is None:
         return None
-    matrix = matrix_to_little_endian_wires(qml.matrix(observable))
-    targets = [wire_map[wire] for wire in observable.wires]
+    coefficient, base = scaled
+    if base.name != "Hermitian":
+        return None
+    matrix = matrix_to_little_endian_wires(qml.matrix(base))
+    if coefficient != 1:
+        matrix = np.ascontiguousarray(coefficient * matrix)
+    targets = [wire_map[wire] for wire in base.wires]
     return matrix, targets
 
 
@@ -427,8 +477,8 @@ def _observable_batch_payload(observable, wire_map, wire_order=None):
     if terms is not None:
         return "pauli", _combine_pauli_terms(terms)
 
-    if observable.name == "SparseHamiltonian":
-        sparse_matrix = observable.sparse_matrix(wire_order=wire_order or tuple(wire_map.keys()), format="csr")
+    sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, wire_order or tuple(wire_map.keys()))
+    if sparse_matrix is not None:
         return (
             "sparse",
             np.asarray(sparse_matrix.data, dtype=np.complex128),
@@ -3335,6 +3385,9 @@ class RocQDevice(QubitDevice):
                 return False
             if observable.name == "Hermitian":
                 continue
+            scaled = _scaled_base_observable(observable)
+            if scaled is not None and scaled[1].name in {"Hermitian", "SparseHamiltonian"}:
+                continue
             if _pauli_terms_from_observable(observable, self.wire_map) is None:
                 return False
         return True
@@ -4795,15 +4848,17 @@ class RocQDevice(QubitDevice):
 
             components = _hermitian_matrix_and_targets(observable, self.wire_map)
             if components is None:
-                if observable.name != "SparseHamiltonian":
+                scaled_sparse = _scaled_sparse_hamiltonian_base(observable)
+                if scaled_sparse is None:
                     return None
-                observable_wires = list(observable.wires)
+                _, sparse_base = scaled_sparse
+                observable_wires = list(sparse_base.wires)
                 partial_targets = None
                 if len(observable_wires) < len(self.wires):
-                    sparse_matrix = observable.sparse_matrix(wire_order=observable.wires, format="csr")
+                    sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, sparse_base.wires)
                     partial_targets = [int(self.wire_map[wire]) for wire in observable_wires]
                 else:
-                    sparse_matrix = observable.sparse_matrix(wire_order=self.wires, format="csr")
+                    sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, self.wires)
                 sparse_payload = {
                     "kind": "sparse",
                     "data": _complex_vector_payload(sparse_matrix.data),
@@ -5938,7 +5993,7 @@ class RocQDevice(QubitDevice):
         if self._diagonalizing_rotations_applied:
             return super().expval(observable, shot_range=shot_range, bin_size=bin_size)
 
-        if observable.name == "SparseHamiltonian":
+        if _scaled_sparse_hamiltonian_base(observable) is not None:
             mean, _ = _sparse_hamiltonian_moments_cached(
                 self._runtime,
                 observable,
@@ -5948,9 +6003,12 @@ class RocQDevice(QubitDevice):
             )
             return _real_measurement_result(mean, "Expectation value")
 
-        if observable.name == "Hermitian":
+        scaled = _scaled_base_observable(observable)
+        if scaled is not None and scaled[1].name == "Hermitian":
             try:
                 matrix, targets = _hermitian_matrix_and_targets(observable, self.wire_map)
+                if matrix is None:
+                    raise NotImplementedError
                 mean = _matrix_expectation_cached(
                     self._runtime,
                     matrix,
@@ -5976,7 +6034,7 @@ class RocQDevice(QubitDevice):
         if self._diagonalizing_rotations_applied:
             return super().var(observable, shot_range=shot_range, bin_size=bin_size)
 
-        if observable.name == "SparseHamiltonian":
+        if _scaled_sparse_hamiltonian_base(observable) is not None:
             mean, second_moment = _sparse_hamiltonian_moments_cached(
                 self._runtime,
                 observable,
@@ -5986,9 +6044,12 @@ class RocQDevice(QubitDevice):
             )
             return _real_measurement_result(second_moment - mean * mean, "Variance")
 
-        if observable.name == "Hermitian":
+        scaled = _scaled_base_observable(observable)
+        if scaled is not None and scaled[1].name == "Hermitian":
             try:
                 matrix, targets = _hermitian_matrix_and_targets(observable, self.wire_map)
+                if matrix is None:
+                    raise NotImplementedError
                 mean, second_moment = _matrix_moments_cached(
                     self._runtime,
                     matrix,
