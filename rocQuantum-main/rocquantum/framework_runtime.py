@@ -1007,10 +1007,7 @@ class RocQuantumRuntime:
             expectation_matrix_from_statevector(state, squared_matrix, normalized_targets),
         )
 
-    def expectation_matrix_batch(self, matrix: object, targets: Iterable[int]) -> np.ndarray:
-        normalized_targets = normalize_targets(targets)
-        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
-
+    def _native_expectation_matrix_batch(self, normalized_matrix, normalized_targets):
         def _native_expectation_unavailable(exc: Exception) -> bool:
             message = str(exc)
             return isinstance(exc, NotImplementedError) or "status 5" in message
@@ -1034,6 +1031,16 @@ class RocQuantumRuntime:
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
                     raise
+
+        return None
+
+    def expectation_matrix_batch(self, matrix: object, targets: Iterable[int]) -> np.ndarray:
+        normalized_targets = normalize_targets(targets)
+        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+
+        native_result = self._native_expectation_matrix_batch(normalized_matrix, normalized_targets)
+        if native_result is not None:
+            return native_result
 
         if self.batch_size() == 1:
             return np.asarray([self.expectation_matrix(normalized_matrix, normalized_targets)], dtype=np.complex128)
@@ -1079,9 +1086,34 @@ class RocQuantumRuntime:
                     raise
 
         squared_matrix = np.ascontiguousarray(normalized_matrix @ normalized_matrix)
+        native_means = self._native_expectation_matrix_batch(normalized_matrix, normalized_targets)
+        native_second_moments = self._native_expectation_matrix_batch(squared_matrix, normalized_targets)
+        if native_means is not None and native_second_moments is not None:
+            return native_means, native_second_moments
+
+        if self.batch_size() == 1:
+            mean, second_moment = self.expectation_matrix_moments(normalized_matrix, normalized_targets)
+            return (
+                np.asarray([mean], dtype=np.complex128),
+                np.asarray([second_moment], dtype=np.complex128),
+            )
+
+        states = self.statevectors()
         return (
-            self.expectation_matrix_batch(normalized_matrix, normalized_targets),
-            self.expectation_matrix_batch(squared_matrix, normalized_targets),
+            np.asarray(
+                [
+                    expectation_matrix_from_statevector(state, normalized_matrix, normalized_targets)
+                    for state in states
+                ],
+                dtype=np.complex128,
+            ),
+            np.asarray(
+                [
+                    expectation_matrix_from_statevector(state, squared_matrix, normalized_targets)
+                    for state in states
+                ],
+                dtype=np.complex128,
+            ),
         )
 
     def sparse_hamiltonian_moments(

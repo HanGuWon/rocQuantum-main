@@ -11533,6 +11533,41 @@ def test_runtime_dense_expectation_moments_batch_prefers_native_hook():
     assert simulator.calls[0][1] == (0,)
 
 
+def test_runtime_dense_expectation_moments_batch_fallback_reads_statevectors_once():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _StateBatchSimulator:
+        num_qubits = 1
+
+        def __init__(self):
+            self.statevector_reads = 0
+
+        def batch_size(self):
+            return 2
+
+        def get_statevectors(self):
+            self.statevector_reads += 1
+            return np.array(
+                [
+                    [1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0)],
+                    [1.0, 0.0],
+                ],
+                dtype=np.complex128,
+            )
+
+    simulator = _StateBatchSimulator()
+    runtime = RocQuantumRuntime(simulator)
+
+    means, second_moments = runtime.expectation_matrix_moments_batch(
+        np.array([[0.0, 1.0], [1.0, 0.0]]),
+        [0],
+    )
+
+    np.testing.assert_allclose(means, np.array([1.0, 0.0]))
+    np.testing.assert_allclose(second_moments, np.array([1.0, 1.0]))
+    assert simulator.statevector_reads == 1
+
+
 def test_runtime_sparse_moments_fall_back_to_statevector():
     from rocquantum.framework_runtime import RocQuantumRuntime
 
