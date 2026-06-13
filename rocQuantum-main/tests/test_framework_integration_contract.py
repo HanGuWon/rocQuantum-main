@@ -714,6 +714,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"ControlledPhaseShift\": \"CP\"", source)
         self.assertIn("def append_diagonal_phases", source)
         self.assertIn("op.name == \"DiagonalQubitUnitary\"", source)
+        self.assertIn("def append_select_pauli_rot", source)
+        self.assertIn("op.name == \"SelectPauliRot\"", source)
         self.assertIn("def append_qft", source)
         self.assertIn("def append_basis_embedding", source)
         self.assertIn("def append_permute", source)

@@ -3590,6 +3590,33 @@ class RocQDevice(QubitDevice):
                 diffs,
             )
 
+        def append_select_pauli_rot(wire_indices, angles, rot_axis):
+            if len(wire_indices) < 2:
+                return False
+            control_indices = wire_indices[:-1]
+            target = wire_indices[-1]
+            angle_array = np.asarray(angles, dtype=float).reshape(-1)
+            if angle_array.shape[-1] != (1 << len(control_indices)):
+                return False
+
+            if rot_axis == "X":
+                append_fixed("Hadamard", "H", [target])
+                if not append_uniform_rz(control_indices, target, angle_array):
+                    return False
+                append_fixed("Hadamard", "H", [target])
+                return True
+            if rot_axis == "Y":
+                append_fixed("Sdg", "SDG", [target])
+                append_fixed("Hadamard", "H", [target])
+                if not append_uniform_rz(control_indices, target, angle_array):
+                    return False
+                append_fixed("Hadamard", "H", [target])
+                append_fixed("S", "S", [target])
+                return True
+            if rot_axis == "Z":
+                return append_uniform_rz(control_indices, target, angle_array)
+            return False
+
         def append_qft(wire_indices):
             if not wire_indices:
                 return False
@@ -4189,6 +4216,15 @@ class RocQDevice(QubitDevice):
                 except Exception:
                     return None
                 if not append_diagonal_phases(wire_indices, phases):
+                    return None
+                continue
+
+            if op.name == "SelectPauliRot":
+                if len(raw_params) != 1 or any(
+                    param_index in trainable_param_set for param_index in raw_param_indices
+                ):
+                    return None
+                if not append_select_pauli_rot(wire_indices, raw_params[0], _select_pauli_rot_axis(op)):
                     return None
                 continue
 
