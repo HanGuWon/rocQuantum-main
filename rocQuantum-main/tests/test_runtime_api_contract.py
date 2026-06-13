@@ -218,6 +218,48 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         self.assertEqual(backend.expectation(operator), 1.5)
 
+    def test_mock_density_backend_evaluates_hermitian_sum(self):
+        from rocq.backends import DensityMatrixBackend
+
+        with mock.patch("rocq.backends.dm_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                backend = DensityMatrixBackend(1)
+
+        operator = HermitianOperator(np.diag([1.0, -1.0]), targets=[0]) + 0.5
+
+        self.assertEqual(backend.expectation(operator), 1.5)
+
+    def test_mock_density_backend_evaluates_sparse_hamiltonian_sum(self):
+        from rocq.backends import DensityMatrixBackend
+
+        with mock.patch("rocq.backends.dm_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                backend = DensityMatrixBackend(1)
+
+        operator = SparseHamiltonianOperator(
+            data=np.array([1.0, -1.0], dtype=np.complex128),
+            indices=np.array([0, 1], dtype=np.int64),
+            indptr=np.array([0, 1, 2], dtype=np.int64),
+            shape=(2, 2),
+        ) + 0.5
+
+        self.assertEqual(backend.expectation(operator), 1.5)
+
+    def test_mock_density_backend_evaluates_offdiagonal_hermitian(self):
+        from rocq.backends import DensityMatrixBackend
+
+        with mock.patch("rocq.backends.dm_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                backend = DensityMatrixBackend(1)
+
+        backend._state._density = np.array(  # noqa: SLF001 - contract test for fallback math
+            [[0.5, 0.5], [0.5, 0.5]],
+            dtype=np.complex64,
+        )
+        operator = HermitianOperator(np.array([[0.0, 1.0], [1.0, 0.0]]), targets=[0])
+
+        self.assertEqual(backend.expectation(operator), 1.0)
+
     def test_framework_runtime_exposes_native_adjoint_jacobian_hook(self):
         from rocquantum.framework_runtime import RocQuantumRuntime
 

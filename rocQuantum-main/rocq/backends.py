@@ -126,6 +126,34 @@ def _statevector_expectation_matrix(statevector, matrix, targets: Sequence[int],
     return total
 
 
+def _density_matrix_expectation_matrix(density_matrix, matrix, targets: Sequence[int], num_qubits: int):
+    density = np.asarray(density_matrix, dtype=np.complex128)
+    expected_dim = 1 << int(num_qubits)
+    if density.shape != (expected_dim, expected_dim):
+        raise ValueError("Density matrix dimension does not match backend qubit count.")
+
+    target_count = len(targets)
+    matrix_dim = 1 << target_count
+    total = 0.0 + 0.0j
+    for row_index in range(expected_dim):
+        row_target = 0
+        base_index = row_index
+        for bit, qubit in enumerate(targets):
+            mask = 1 << int(qubit)
+            if row_index & mask:
+                row_target |= 1 << bit
+            base_index &= ~mask
+
+        for col_target in range(matrix_dim):
+            col_index = base_index
+            for bit, qubit in enumerate(targets):
+                if (col_target >> bit) & 1:
+                    col_index |= 1 << int(qubit)
+            total += matrix[row_target, col_target] * density[col_index, row_index]
+
+    return total
+
+
 def _normalize_sparse_hamiltonian(operator: SparseHamiltonianOperator, num_qubits: int):
     data = np.asarray(operator.data, dtype=np.complex128).reshape(-1)
     indices = np.asarray(operator.indices, dtype=np.int64).reshape(-1)
@@ -147,6 +175,20 @@ def _normalize_sparse_hamiltonian(operator: SparseHamiltonianOperator, num_qubit
         raise ValueError("SparseHamiltonianOperator CSR column index is out of bounds.")
 
     return data, indices.astype(np.uintp), indptr.astype(np.uintp), (rows, cols)
+
+
+def _density_matrix_sparse_hamiltonian_expectation(density_matrix, data, indices, indptr):
+    density = np.asarray(density_matrix, dtype=np.complex128)
+    rows, cols = density.shape
+    if rows != cols:
+        raise ValueError("Density matrix must be square.")
+
+    total = 0.0 + 0.0j
+    for row in range(rows):
+        for offset in range(int(indptr[row]), int(indptr[row + 1])):
+            col = int(indices[offset])
+            total += data[offset] * density[col, row]
+    return total
 
 
 def _statevector_sparse_hamiltonian_moments(statevector, data, indices, indptr):
@@ -818,8 +860,39 @@ class DensityMatrixBackend(_BaseBackend):
         return _format_sample_counts(raw_results, len(measured_qubits))
 
     def expectation(self, operator):
+        if isinstance(operator, HermitianOperator):
+            matrix, targets = _normalize_matrix_targets(operator.matrix, operator.targets, self.num_qubits)
+            value = _density_matrix_expectation_matrix(
+                self.get_state(),
+                matrix,
+                targets,
+                self.num_qubits,
+            )
+            return _finalize_expectation(operator.coefficient * value)
+
+        if isinstance(operator, SparseHamiltonianOperator):
+            data, indices, indptr, _ = _normalize_sparse_hamiltonian(operator, self.num_qubits)
+            value = _density_matrix_sparse_hamiltonian_expectation(
+                self.get_state(),
+                data,
+                indices,
+                indptr,
+            )
+            return _finalize_expectation(operator.coefficient * value)
+
+        if isinstance(operator, SumOperator):
+            try:
+                terms = _combined_pauli_terms(operator)
+            except NotImplementedError:
+                total = 0.0 + 0.0j
+                for term in operator.terms:
+                    total += operator.coefficient * self.expectation(term)
+                return _finalize_expectation(total)
+        else:
+            terms = _combined_pauli_terms(operator)
+
         total = 0.0 + 0.0j
-        for coefficient, paulis in _combined_pauli_terms(operator):
+        for coefficient, paulis in terms:
             if not paulis:
                 total += coefficient
                 continue
