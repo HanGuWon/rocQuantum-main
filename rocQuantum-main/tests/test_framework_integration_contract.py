@@ -503,6 +503,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"C(PhaseShift)\"", source)
         self.assertIn("\"C(PauliY)\"", source)
         self.assertIn("\"C(Hadamard)\"", source)
+        self.assertIn("\"C(Adjoint(S))\"", source)
+        self.assertIn("\"C(Adjoint(T))\"", source)
         self.assertIn("\"C(SWAP)\"", source)
         self.assertIn("\"C(ISWAP)\"", source)
         self.assertIn("\"C(PSWAP)\"", source)

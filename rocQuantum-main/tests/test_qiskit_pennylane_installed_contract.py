@@ -4860,6 +4860,7 @@ def test_pennylane_batch_execute_keeps_controlled_phase_root_wrappers_native(mon
         qml.tape.QuantumScript(
             [
                 qml.ctrl(qml.S(wires=2), control=[0, 1], control_values=[False, True]),
+                qml.ctrl(qml.adjoint(qml.T(wires=2)), control=[0, 1]),
                 qml.RY(0.4, wires=2),
             ],
             [qml.expval(qml.PauliZ(0))],
@@ -4867,6 +4868,7 @@ def test_pennylane_batch_execute_keeps_controlled_phase_root_wrappers_native(mon
         qml.tape.QuantumScript(
             [
                 qml.ctrl(qml.S(wires=2), control=[0, 1], control_values=[False, True]),
+                qml.ctrl(qml.adjoint(qml.T(wires=2)), control=[0, 1]),
                 qml.RY(0.8, wires=2),
             ],
             [qml.expval(qml.PauliZ(0))],
@@ -4878,12 +4880,42 @@ def test_pennylane_batch_execute_keeps_controlled_phase_root_wrappers_native(mon
 
     assert ("RY", (2,), (0.4, 0.8)) in sim.batch_ops
     assert any(name == "RZ" for name, _, _ in sim.ops)
+    assert any(name == "RZ" and params == (-np.pi / 16,) for name, _, params in sim.ops)
     assert any(name in {"CNOT", "CX"} for name, _, _ in sim.ops)
     assert sim.ops[0] == ("X", (0,), ())
-    assert sim.ops[-1] == ("X", (0,), ())
+    assert sum(op == ("X", (0,), ()) for op in sim.ops) >= 2
     assert sim.matrices == []
     assert sim.controlled_matrices == []
     assert sim.batch_expectations == [("Z", (0,))]
+
+
+def test_pennylane_controlled_adjoint_phase_root_wrappers_decompose_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.ctrl(qml.adjoint(qml.S(wires=2)), control=[0, 1], control_values=[True, False])
+        qml.ctrl(qml.adjoint(qml.T(wires=2)), control=[0, 1])
+        return qml.expval(qml.PauliZ(0))
+
+    assert circuit() == pytest.approx(0.5)
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert any(name == "RZ" and params == (-np.pi / 8,) for name, _, params in sim.ops)
+    assert any(name == "RZ" and params == (-np.pi / 16,) for name, _, params in sim.ops)
+    assert any(name in {"CNOT", "CX"} for name, _, _ in sim.ops)
+    assert sim.ops[0] == ("X", (1,), ())
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.expectations == [("Z", (0,))]
 
 
 def test_pennylane_batch_execute_batches_diagonal_qubit_unitary_sweeps(monkeypatch):

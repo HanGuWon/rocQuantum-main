@@ -78,6 +78,8 @@ CONTROLLED_WRAPPER_OPS = {
     "C(Hadamard)",
     "C(S)",
     "C(T)",
+    "C(Adjoint(S))",
+    "C(Adjoint(T))",
     "C(SWAP)",
     "C(ISWAP)",
     "C(PSWAP)",
@@ -1175,6 +1177,12 @@ def _apply_controlled_sequence_power(runtime, base_name, control_index, target_i
     if base_name == "T":
         _apply_controlled_phase_shift(runtime, [control_index, target_index], power * np.pi / 4)
         return True
+    if base_name == "Adjoint(S)":
+        _apply_controlled_phase_shift(runtime, [control_index, target_index], -power * np.pi / 2)
+        return True
+    if base_name == "Adjoint(T)":
+        _apply_controlled_phase_shift(runtime, [control_index, target_index], -power * np.pi / 4)
+        return True
 
     return False
 
@@ -1403,7 +1411,7 @@ def _select_partial_control_specs(selected_count, control_wires):
 def _apply_multi_controlled_fixed_single_qubit_op(runtime, base_name, controls, target, control_values):
     if len(controls) < 2 or len(control_values) != len(controls):
         return False
-    if base_name not in {"PauliX", "PauliY", "PauliZ", "Hadamard", "S", "T"}:
+    if base_name not in {"PauliX", "PauliY", "PauliZ", "Hadamard", "S", "T", "Adjoint(S)", "Adjoint(T)"}:
         return False
 
     flipped = []
@@ -1432,6 +1440,10 @@ def _apply_multi_controlled_fixed_single_qubit_op(runtime, base_name, controls, 
             _apply_multi_controlled_phase_shift(runtime, controls, target, np.pi / 2)
         elif base_name == "T":
             _apply_multi_controlled_phase_shift(runtime, controls, target, np.pi / 4)
+        elif base_name == "Adjoint(S)":
+            _apply_multi_controlled_phase_shift(runtime, controls, target, -np.pi / 2)
+        elif base_name == "Adjoint(T)":
+            _apply_multi_controlled_phase_shift(runtime, controls, target, -np.pi / 4)
 
         for control in reversed(flipped):
             runtime.apply_operation("X", [control])
@@ -1894,6 +1906,12 @@ def _apply_single_controlled_native_op(runtime, base_name, control, target, cont
             return True
         if base_name == "T":
             _apply_controlled_phase_shift(runtime, [control, target], np.pi / 4)
+            return True
+        if base_name == "Adjoint(S)":
+            _apply_controlled_phase_shift(runtime, [control, target], -np.pi / 2)
+            return True
+        if base_name == "Adjoint(T)":
+            _apply_controlled_phase_shift(runtime, [control, target], -np.pi / 4)
             return True
 
         return False
@@ -3601,6 +3619,10 @@ class RocQDevice(QubitDevice):
                 return append_mc_phase_shift(controls, target, np.pi / 2)
             if base_name == "T":
                 return append_mc_phase_shift(controls, target, np.pi / 4)
+            if base_name == "Adjoint(S)":
+                return append_mc_phase_shift(controls, target, -np.pi / 2)
+            if base_name == "Adjoint(T)":
+                return append_mc_phase_shift(controls, target, -np.pi / 4)
             return False
 
         def append_mc_ecr(controls, target_indices):
@@ -3670,7 +3692,7 @@ class RocQDevice(QubitDevice):
                 pass
             elif base_name == "ECR" and len(target_indices) == 2 and not selected_params:
                 pass
-            elif base_name in {"PauliX", "PauliY", "PauliZ", "Hadamard", "S", "T"} and not selected_params:
+            elif base_name in {"PauliX", "PauliY", "PauliZ", "Hadamard", "S", "T", "Adjoint(S)", "Adjoint(T)"} and not selected_params:
                 pass
             else:
                 return False
