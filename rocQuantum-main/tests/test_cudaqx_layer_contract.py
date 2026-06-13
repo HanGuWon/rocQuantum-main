@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import types
 import unittest
 from unittest import mock
 
@@ -80,6 +81,51 @@ class TestVqeSolverContract(unittest.TestCase):
             )
 
         np.testing.assert_allclose(gradient, np.array([0.5]))
+
+    def test_parameter_shift_gradient_accepts_scalar_parameter(self):
+        import rocq
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        @rocq.kernel
+        def ansatz(theta):
+            q = rocq.qvec(1)
+            rocq.rx(theta, q[0])
+
+        solver = VQE_Solver()
+        hamiltonian = PauliOperator("Z0")
+        with mock.patch("rocquantum.solvers.vqe_solver.observe", side_effect=[1.0, 0.0]):
+            gradient = solver.estimate_gradient(
+                0.25,
+                hamiltonian,
+                ansatz,
+                1,
+                method="parameter_shift",
+            )
+
+        np.testing.assert_allclose(gradient, np.array([0.5]))
+
+    def test_solve_normalizes_scalar_initial_parameter(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import Optimizer, VQE_Solver
+
+        class RecordingOptimizer(Optimizer):
+            def __init__(self):
+                self.x0 = None
+
+            def minimize(self, fun, x0, args=()):
+                self.x0 = np.asarray(x0, dtype=float)
+                return types.SimpleNamespace(fun=-0.25, x=self.x0)
+
+        def ansatz(theta):
+            return None
+
+        optimizer = RecordingOptimizer()
+        solver = VQE_Solver(optimizer=optimizer)
+        result = solver.solve(PauliOperator("Z0"), ansatz, 1, initial_params=0.25)
+
+        np.testing.assert_allclose(optimizer.x0, np.array([0.25]))
+        np.testing.assert_allclose(result["optimal_parameters"], np.array([0.25]))
 
     def test_objective_passes_multi_parameter_vector_to_qaoa_kernel(self):
         from rocq.operator import PauliOperator

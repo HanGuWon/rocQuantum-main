@@ -6,7 +6,7 @@ This package is an experimental, minimal higher-level layer over the canonical
 Current supported subset:
 
 - `VQE_Solver` evaluates canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, scaled composite sums, and full-state CSR sparse observables on the state-vector backend or density-matrix correctness fallback.
-- `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`.
+- `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`; scalar single-parameter inputs are normalized to one-element vectors for gradient and optimizer entry points.
 - `make_maxcut_qaoa_kernel()` builds a MaxCut-style QAOA ansatz using H, CNOT,
   RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.

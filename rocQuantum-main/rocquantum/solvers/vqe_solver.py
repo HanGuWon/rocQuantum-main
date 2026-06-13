@@ -86,6 +86,10 @@ def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
         return (params.copy(),)
     return tuple(float(value) for value in params)
 
+
+def _parameter_vector(params) -> np.ndarray:
+    return np.asarray(params, dtype=float).reshape(-1)
+
 # --- Optimizer Strategy Pattern Definition ---
 
 class Optimizer(ABC):
@@ -217,7 +221,7 @@ class VQE_Solver:
         step: float = 1e-5,
     ) -> np.ndarray:
         """Estimate the VQE objective gradient for the supported experimental subset."""
-        params = np.asarray(params, dtype=float)
+        params = _parameter_vector(params)
         gradient = np.zeros_like(params, dtype=float)
         method = method.lower()
 
@@ -255,7 +259,7 @@ class VQE_Solver:
 
         result = self.optimizer.minimize(
             fun=self._objective_function,
-            x0=initial_params,
+            x0=_parameter_vector(initial_params),
             args=(hamiltonian, ansatz_kernel, num_qubits)
         )
 
