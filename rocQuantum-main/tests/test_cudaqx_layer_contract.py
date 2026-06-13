@@ -102,6 +102,33 @@ class TestVqeSolverContract(unittest.TestCase):
 
 
 class TestQaoaHelpers(unittest.TestCase):
+    def test_spin_factories_match_cudaq_style_pauli_construction(self):
+        import rocq
+        from rocq.operator import iter_pauli_terms
+
+        operator = 0.5 - 0.5 * rocq.spin.z(0) * rocq.spin.z(1)
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.5 + 0j, []),
+                (-0.5 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
+
+    def test_spin_factories_preserve_same_qubit_pauli_phases(self):
+        import rocq
+        from rocq.operator import iter_pauli_terms
+
+        self.assertEqual(
+            iter_pauli_terms(rocq.spin.x(0) * rocq.spin.y(0)),
+            [(1j, [("Z", 0)])],
+        )
+        self.assertEqual(
+            iter_pauli_terms(rocq.spin.y(0) * rocq.spin.x(0)),
+            [(-1j, [("Z", 0)])],
+        )
+
     def test_observable_arithmetic_accepts_numeric_identity_constants(self):
         from rocq.operator import PauliOperator, iter_pauli_terms
 

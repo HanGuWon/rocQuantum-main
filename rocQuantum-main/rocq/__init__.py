@@ -1,6 +1,7 @@
 """Canonical rocQuantum Python API."""
 
 from .noise import NoiseModel
+from . import spin
 from .kernel import QuantumKernel, execute, kernel, observe, sample
 from .operator import (
     HermitianOperator,
@@ -38,6 +39,7 @@ from .gates import (
 
 __all__ = [
     "NoiseModel",
+    "spin",
     "QuantumKernel",
     "QuantumOperator",
     "PauliOperator",

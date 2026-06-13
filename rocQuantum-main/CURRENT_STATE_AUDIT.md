@@ -174,7 +174,7 @@ What is not real today:
 - Native expectation helpers exist in `hipStateVec` and are bound in `python/rocq/bindings.cpp`.
 - The canonical top-level `rocq.operator.get_expectation_value()` delegates to `rocq.observe()` for supported Pauli operators, `HermitianOperator` dense matrices, and full-state `SparseHamiltonianOperator` CSR observables; the state-vector backend combines duplicate Pauli terms before native expectation calls, prefers the low-level `get_expectation_matrix` / `rocsvGetExpectationMatrix` and `get_sparse_matrix_moments` / `rocsvGetSparseMatrixMoments` hooks when available, and the legacy `_rocq_hip_backend` binding also exposes `get_expectation_pauli_string_batch` / `rocsvGetExpectationPauliStringBatch` plus `get_expectation_matrix_batch` / `rocsvGetExpectationMatrixBatch` for local batched readouts.
 - Canonical `SumOperator` addition preserves scalar coefficients on nested sums, so VQE/QAOA-style composite observables such as `2 * (X0 + Y1) + Z0` no longer lose the outer sum weight during Pauli-term expansion.
-- Canonical `QuantumOperator` supports subtraction/negation and numeric identity constants such as `0.5 + X0` / `1.0 - Z0`, and Pauli-only sum/product expressions such as `(0.5 + Z0) * Z1` now distribute to Pauli terms with same-qubit phase rules preserved. The experimental MaxCut QAOA cost helper now includes the weighted identity offset in each `0.5 * w * (I - Zi Zj)` edge term instead of returning only the `-0.5 * w * ZiZj` component.
+- Canonical `QuantumOperator` supports subtraction/negation and numeric identity constants such as `0.5 + X0` / `1.0 - Z0`; CUDA-Q-style `rocq.spin.x/y/z/i` factories build canonical Pauli operators; and Pauli-only sum/product expressions such as `(0.5 + Z0) * Z1` now distribute to Pauli terms with same-qubit phase rules preserved. The experimental MaxCut QAOA cost helper now includes the weighted identity offset in each `0.5 * w * (I - Zi Zj)` edge term instead of returning only the `-0.5 * w * ZiZj` component.
 - The experimental MaxCut QAOA ansatz now uses `-gamma * w` for the CNOT-RZ-CNOT cost-phase angle, matching that cost Hamiltonian up to the expected global phase.
 - `rocquantum.solvers.VQE_Solver` now passes multi-parameter arrays as one argument to single-parameter vector ansatz kernels, allowing the experimental MaxCut QAOA helper to run through the same VQE objective path instead of failing on scalar argument splatting.
 - `python/rocq/api.py::Circuit.expval()` now uses native backend Pauli expectation helpers, matching `get_expval()` for supported Pauli terms.
@@ -197,7 +197,7 @@ What is not real today:
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling now extracts only the density diagonal on device before host-side shot drawing, reducing transfer from full density matrix to probability-vector scale, but it is still not a fully GPU-resident sampling path.
 - Stabilizer/tableau/Pauli-propagation backends were not found.
-- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, VQE-compatible MaxCut-style QAOA helper, and one 3-qubit repetition-code syndrome round.
+- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, CUDA-Q-style spin factories, VQE-compatible MaxCut-style QAOA helper, and one 3-qubit repetition-code syndrome round.
 
 ## Highest-Risk Overclaims Before This Audit
 
