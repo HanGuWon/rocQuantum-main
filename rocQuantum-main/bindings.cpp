@@ -32,6 +32,12 @@ struct AdjointOperationPayload {
     std::vector<std::complex<double>> matrix;
     std::vector<unsigned> controls;
     std::vector<bool> control_values;
+    bool has_sparse_matrix = false;
+    std::vector<std::complex<double>> sparse_data;
+    std::vector<std::size_t> sparse_indices;
+    std::vector<std::size_t> sparse_indptr;
+    std::size_t sparse_rows = 0;
+    std::size_t sparse_cols = 0;
 };
 
 struct PauliTermPayload {
@@ -139,6 +145,8 @@ std::vector<int> trainable_positions(
 }
 
 std::vector<std::complex<double>> parse_complex_matrix_payload(py::handle values);
+std::vector<std::complex<double>> parse_complex_vector_payload(py::handle values);
+std::vector<std::size_t> parse_size_vector(py::handle values, const char* label);
 
 std::vector<AdjointOperationPayload> parse_adjoint_operations(
     py::sequence operations,
@@ -207,6 +215,28 @@ std::vector<AdjointOperationPayload> parse_adjoint_operations(
                 throw_adjoint_not_implemented(
                     "binding adjoint_jacobian does not differentiate trainable matrix operation payloads.");
             }
+        }
+        if (dict_contains(op, "sparse_data")) {
+            payload.has_sparse_matrix = true;
+            payload.sparse_data =
+                parse_complex_vector_payload(required_dict_item(op, "sparse_data", "adjoint operation"));
+            payload.sparse_indices =
+                parse_size_vector(required_dict_item(op, "sparse_indices", "adjoint operation"),
+                                  "adjoint sparse operation CSR indices");
+            payload.sparse_indptr =
+                parse_size_vector(required_dict_item(op, "sparse_indptr", "adjoint operation"),
+                                  "adjoint sparse operation CSR indptr");
+            auto shape = required_dict_item(op, "sparse_shape", "adjoint operation")
+                             .cast<std::pair<std::size_t, std::size_t>>();
+            payload.sparse_rows = shape.first;
+            payload.sparse_cols = shape.second;
+            if (!payload.trainable_param_positions.empty()) {
+                throw_adjoint_not_implemented(
+                    "binding adjoint_jacobian does not differentiate trainable sparse matrix operation payloads.");
+            }
+        }
+        if (payload.has_matrix && payload.has_sparse_matrix) {
+            throw std::invalid_argument("adjoint operation cannot contain both dense and sparse matrix payloads.");
         }
         out.push_back(std::move(payload));
     }
@@ -579,6 +609,37 @@ std::vector<std::complex<double>> conjugate_transpose_matrix(
     return out;
 }
 
+SparseMatrixPayload conjugate_transpose_sparse_matrix(const SparseMatrixPayload& payload) {
+    SparseMatrixPayload out;
+    out.rows = payload.cols;
+    out.cols = payload.rows;
+    out.targets = payload.targets;
+    out.data.resize(payload.data.size());
+    out.indices.resize(payload.indices.size());
+    out.indptr.assign(out.rows + 1, 0);
+
+    for (std::size_t col : payload.indices) {
+        if (col >= payload.cols) {
+            throw std::invalid_argument("Sparse adjoint operation column index is out of bounds.");
+        }
+        ++out.indptr[col + 1];
+    }
+    for (std::size_t row = 0; row < out.rows; ++row) {
+        out.indptr[row + 1] += out.indptr[row];
+    }
+
+    auto next = out.indptr;
+    for (std::size_t row = 0; row < payload.rows; ++row) {
+        for (std::size_t offset = payload.indptr[row]; offset < payload.indptr[row + 1]; ++offset) {
+            const std::size_t col = payload.indices[offset];
+            const std::size_t dest = next[col]++;
+            out.indices[dest] = row;
+            out.data[dest] = std::conj(payload.data[offset]);
+        }
+    }
+    return out;
+}
+
 std::string inverse_gate_name(const std::string& gate_name, std::vector<double>& params) {
     const std::string normalized = uppercase_ascii(gate_name);
     if (normalized == "I" || normalized == "IDENTITY" || normalized == "H" || normalized == "HADAMARD" ||
@@ -655,6 +716,44 @@ void apply_adjoint_operation(
                 throw;
             }
         }
+        return;
+    }
+
+    if (operation.has_sparse_matrix) {
+        if (operation.wires.empty()) {
+            throw std::invalid_argument("Sparse matrix adjoint operation requires at least one target wire.");
+        }
+        if (operation.wires.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
+            throw std::invalid_argument("Too many sparse matrix operation target qubits.");
+        }
+        const std::size_t dim = std::size_t{1} << operation.wires.size();
+        if (operation.sparse_rows != dim || operation.sparse_cols != dim) {
+            throw std::invalid_argument("Sparse matrix adjoint operation dimension does not match target count.");
+        }
+        if (operation.sparse_indptr.size() != operation.sparse_rows + 1) {
+            throw std::invalid_argument("Sparse matrix adjoint operation indptr length must equal rows + 1.");
+        }
+        if (operation.sparse_data.size() != operation.sparse_indices.size()) {
+            throw std::invalid_argument("Sparse matrix adjoint operation data and indices lengths differ.");
+        }
+        SparseMatrixPayload payload;
+        payload.data = operation.sparse_data;
+        payload.indices = operation.sparse_indices;
+        payload.indptr = operation.sparse_indptr;
+        payload.targets = operation.wires;
+        payload.rows = operation.sparse_rows;
+        payload.cols = operation.sparse_cols;
+        for (std::size_t row = 0; row < payload.rows; ++row) {
+            if (payload.indptr[row] > payload.indptr[row + 1] ||
+                payload.indptr[row + 1] > payload.data.size()) {
+                throw std::invalid_argument("Sparse matrix adjoint operation CSR indptr is invalid.");
+            }
+        }
+        if (inverse) {
+            payload = conjugate_transpose_sparse_matrix(payload);
+        }
+        simulator.apply_sparse_matrix(payload.data, payload.indices, payload.indptr, payload.rows, payload.cols,
+                                      payload.targets);
         return;
     }
 

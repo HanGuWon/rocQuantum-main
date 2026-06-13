@@ -3484,6 +3484,26 @@ class RocQDevice(QubitDevice):
             payloads.append(payload)
             return True
 
+        def append_sparse_matrix_payload(name, wire_indices, sparse_matrix, param_indices):
+            if any(param_index in trainable_param_set for param_index in param_indices):
+                return False
+            payloads.append(
+                {
+                    "name": name,
+                    "rocq_name": "sparse_matrix",
+                    "wires": wire_indices,
+                    "params": [],
+                    "param_indices": list(param_indices),
+                    "trainable_param_indices": [],
+                    "trainable_param_positions": [],
+                    "sparse_data": _complex_vector_payload(sparse_matrix.data),
+                    "sparse_indices": [int(index) for index in sparse_matrix.indices],
+                    "sparse_indptr": [int(offset) for offset in sparse_matrix.indptr],
+                    "sparse_shape": [int(dim) for dim in sparse_matrix.shape],
+                }
+            )
+            return True
+
         def append_fixed(name, rocq_name, wire_indices, params=None):
             append_payload(name, rocq_name, wire_indices, list(params or []), [])
 
@@ -4034,7 +4054,13 @@ class RocQDevice(QubitDevice):
 
             if op.name == "BlockEncode":
                 if bool(getattr(op, "has_sparse_matrix", False)):
-                    return None
+                    try:
+                        sparse_matrix = sparse_matrix_to_little_endian_wires(op.sparse_matrix(format="csr"))
+                    except Exception:
+                        return None
+                    if not append_sparse_matrix_payload(op.name, wire_indices, sparse_matrix, raw_param_indices):
+                        return None
+                    continue
                 try:
                     matrix = matrix_to_little_endian_wires(qml.matrix(op))
                 except Exception:
