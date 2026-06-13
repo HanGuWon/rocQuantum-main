@@ -43,6 +43,26 @@ except ImportError:  # pragma: no cover - exercised in minimal CI environments.
 # --- Type Hinting Placeholders ---
 AnsatzKernel = Callable[..., None]  # An ansatz is a kernel function
 
+_VECTOR_PARAMETER_NAMES = {
+    "params",
+    "parameters",
+    "parameter_vector",
+    "parameter_values",
+    "values",
+}
+
+
+def _parameter_prefers_vector(parameter: inspect.Parameter) -> bool:
+    if parameter.name.lower() in _VECTOR_PARAMETER_NAMES:
+        return True
+
+    annotation = parameter.annotation
+    if annotation is inspect.Parameter.empty:
+        return False
+
+    annotation_text = getattr(annotation, "__name__", str(annotation)).lower()
+    return any(token in annotation_text for token in ("ndarray", "array", "sequence", "list", "tuple"))
+
 
 def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
     params = np.asarray(params, dtype=float).reshape(-1)
@@ -62,7 +82,7 @@ def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
         }
         and parameter.default is inspect.Parameter.empty
     ]
-    if len(positional) == 1 and params.size != 1:
+    if len(positional) == 1 and (params.size != 1 or _parameter_prefers_vector(positional[0])):
         return (params.copy(),)
     return tuple(float(value) for value in params)
 

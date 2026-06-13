@@ -100,6 +100,42 @@ class TestVqeSolverContract(unittest.TestCase):
         np.testing.assert_allclose(args[2], np.array([0.3, 0.4]))
         self.assertEqual(kwargs, {"backend": "state_vector"})
 
+    def test_objective_passes_single_value_vector_to_vector_style_kernel(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        def ansatz(parameters):
+            return None
+
+        solver = VQE_Solver(backend="state_vector")
+        hamiltonian = PauliOperator("Z0")
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe", return_value=-0.25) as patched_observe:
+            energy = solver._objective_function(np.array([0.125]), hamiltonian, ansatz, 1)
+
+        self.assertEqual(energy, -0.25)
+        args, kwargs = patched_observe.call_args
+        self.assertIs(args[0], ansatz)
+        self.assertIs(args[1], hamiltonian)
+        np.testing.assert_allclose(args[2], np.array([0.125]))
+        self.assertEqual(kwargs, {"backend": "state_vector"})
+
+    def test_objective_preserves_single_scalar_parameter_kernel(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        def ansatz(theta):
+            return None
+
+        solver = VQE_Solver(backend="state_vector")
+        hamiltonian = PauliOperator("Z0")
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe", return_value=-0.25) as patched_observe:
+            energy = solver._objective_function(np.array([0.125]), hamiltonian, ansatz, 1)
+
+        self.assertEqual(energy, -0.25)
+        patched_observe.assert_called_once_with(ansatz, hamiltonian, 0.125, backend="state_vector")
+
 
 class TestQaoaHelpers(unittest.TestCase):
     def test_spin_factories_match_cudaq_style_pauli_construction(self):

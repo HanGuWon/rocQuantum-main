@@ -12,7 +12,7 @@ Current supported subset:
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.
 - `maxcut_cost_operator()` builds the weighted MaxCut cost operator as
   `0.5 * w * (I - Zi Zj)` for each edge.
-- `VQE_Solver` passes multi-parameter vectors as one ansatz argument when the target kernel has a single vector-style parameter, so the QAOA helper can be evaluated directly by the VQE objective path.
+- `VQE_Solver` passes vectors as one ansatz argument when the target kernel has a single vector-style parameter, including one-element vectors, so the QAOA helper and vector-parameter ansatzes can be evaluated directly by the VQE objective path.
 
 Minimal VQE example:
 

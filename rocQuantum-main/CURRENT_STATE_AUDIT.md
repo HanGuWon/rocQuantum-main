@@ -177,7 +177,7 @@ What is not real today:
 - Canonical `SumOperator` addition preserves scalar coefficients on nested sums, so VQE/QAOA-style composite observables such as `2 * (X0 + Y1) + Z0` no longer lose the outer sum weight during Pauli-term expansion.
 - Canonical `QuantumOperator` supports subtraction/negation and numeric identity constants such as `0.5 + X0` / `1.0 - Z0`; CUDA-Q-style `rocq.spin.x/y/z/i` factories build canonical Pauli operators; and Pauli-only sum/product expressions such as `(0.5 + Z0) * Z1` now distribute to Pauli terms with same-qubit phase rules preserved. The experimental MaxCut QAOA cost helper now includes the weighted identity offset in each `0.5 * w * (I - Zi Zj)` edge term instead of returning only the `-0.5 * w * ZiZj` component.
 - The experimental MaxCut QAOA ansatz now uses `-gamma * w` for the CNOT-RZ-CNOT cost-phase angle, matching that cost Hamiltonian up to the expected global phase.
-- `rocquantum.solvers.VQE_Solver` now passes multi-parameter arrays as one argument to single-parameter vector ansatz kernels, allowing the experimental MaxCut QAOA helper to run through the same VQE objective path instead of failing on scalar argument splatting.
+- `rocquantum.solvers.VQE_Solver` now passes arrays as one argument to single vector-style ansatz parameters, including one-element vectors, allowing the experimental MaxCut QAOA helper and vector-parameter ansatzes to run through the same VQE objective path instead of failing on scalar argument splatting.
 - `python/rocq/api.py::Circuit.expval()` now uses native backend Pauli expectation helpers, matching `get_expval()` for supported Pauli terms.
 
 ### Packaging and CI
