@@ -353,10 +353,30 @@ def _scaled_sparse_hamiltonian_matrix(observable, wire_order):
     return sparse_matrix
 
 
+def _sparse_identity_matrix_coefficient(sparse_matrix):
+    shape = tuple(int(dim) for dim in sparse_matrix.shape)
+    if len(shape) != 2 or shape[0] != shape[1] or shape[0] == 0:
+        return None
+    matrix = sparse_matrix.tocsr(copy=True)
+    matrix.sum_duplicates()
+    diagonal = np.asarray(matrix.diagonal(), dtype=np.complex128)
+    coefficient = complex(diagonal[0])
+    if not np.allclose(diagonal, coefficient, rtol=1e-12, atol=1e-12):
+        return None
+    coo = matrix.tocoo()
+    off_diagonal = coo.row != coo.col
+    if np.any(np.abs(np.asarray(coo.data, dtype=np.complex128)[off_diagonal]) > 1e-12):
+        return None
+    return coefficient
+
+
 def _sparse_hamiltonian_moments(state, observable, wire_order):
     sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, wire_order)
     if sparse_matrix is None:
         raise TypeError("Expected a SparseHamiltonian or scaled SparseHamiltonian observable.")
+    identity_coefficient = _sparse_identity_matrix_coefficient(sparse_matrix)
+    if identity_coefficient is not None:
+        return identity_coefficient, identity_coefficient * identity_coefficient
     h_state = sparse_matrix.dot(state)
     mean = np.vdot(state, h_state)
     second_moment = np.vdot(h_state, h_state)
@@ -377,6 +397,9 @@ def _sparse_hamiltonian_moments_cached(runtime, observable, wire_order, cache=No
     sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, wire_order)
     if sparse_matrix is None:
         raise TypeError("Expected a SparseHamiltonian or scaled SparseHamiltonian observable.")
+    identity_coefficient = _sparse_identity_matrix_coefficient(sparse_matrix)
+    if identity_coefficient is not None:
+        return identity_coefficient, identity_coefficient * identity_coefficient
     cache_key = _sparse_hamiltonian_moments_cache_key(sparse_matrix)
     if cache is not None and cache_key in cache:
         return cache[cache_key]
@@ -544,6 +567,9 @@ def _observable_expectation_payload(observable, wire_map, wire_order=None, inclu
 
     sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, wire_order or tuple(wire_map.keys()))
     if sparse_matrix is not None:
+        identity_coefficient = _sparse_identity_matrix_coefficient(sparse_matrix)
+        if identity_coefficient is not None:
+            return "pauli", [(identity_coefficient, "", [])]
         return (
             "sparse",
             np.asarray(sparse_matrix.data, dtype=np.complex128),
@@ -756,6 +782,15 @@ def _native_adjoint_terms_from_observable(observable, wire_map, all_wires, coeff
         if coefficient != 1:
             sparse_matrix = sparse_matrix.copy()
             sparse_matrix.data = coefficient * np.asarray(sparse_matrix.data, dtype=np.complex128)
+        identity_coefficient = _sparse_identity_matrix_coefficient(sparse_matrix)
+        if identity_coefficient is not None:
+            return [
+                {
+                    "coefficient": (float(np.real(identity_coefficient)), float(np.imag(identity_coefficient))),
+                    "pauli_string": "",
+                    "targets": [],
+                }
+            ]
         sparse_payload = {
             "kind": "sparse",
             "data": _complex_vector_payload(sparse_matrix.data),

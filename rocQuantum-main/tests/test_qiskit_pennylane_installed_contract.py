@@ -6679,6 +6679,33 @@ def test_pennylane_sparse_hamiltonian_uses_sparse_statevector_fallback(monkeypat
     assert var_sim.statevector_reads == 1
 
 
+def test_pennylane_sparse_hamiltonian_identity_folds_without_readout(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    identity = sp.eye(2, dtype=np.complex128, format="csr")
+    observable = qml.s_prod(2.0, qml.SparseHamiltonian(identity, wires=[0]))
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def sparse_identity_circuit():
+        qml.RY(0.123, wires=0)
+        return qml.expval(observable), qml.var(observable)
+
+    assert sparse_identity_circuit() == pytest.approx((2.0, 0.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("RY", (0,), (0.123,))]
+    assert sim.expectations == []
+    assert sim.sparse_moments == []
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_sparse_hamiltonian_prefers_native_csr_moments(monkeypatch):
     pytest.importorskip("pennylane")
     sp = pytest.importorskip("scipy.sparse")
@@ -6915,6 +6942,36 @@ def test_pennylane_sparse_hamiltonian_batch_uses_native_csr_moments(monkeypatch)
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
     assert len(sim.sparse_batch_moments) == 1
     assert sim.sparse_moments == []
+    assert sim.statevector_reads == 0
+
+
+def test_pennylane_sparse_hamiltonian_identity_batch_folds_without_readout(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    identity = sp.eye(2, dtype=np.complex128, format="csr")
+    observable = 2.0 * qml.SparseHamiltonian(identity, wires=[0])
+    dev = qml.device("lightning.rocq", wires=1)
+    tapes = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.expval(observable), qml.var(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.expval(observable), qml.var(observable)]),
+    ]
+
+    np.testing.assert_allclose(
+        np.asarray(dev.batch_execute(tapes), dtype=float),
+        np.array([[2.0, 0.0], [2.0, 0.0]], dtype=float),
+    )
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.sparse_batch_moments == []
+    assert sim.batch_expectations == []
     assert sim.statevector_reads == 0
 
 
@@ -9397,6 +9454,41 @@ def test_pennylane_native_adjoint_folds_identity_hermitian_observable(monkeypatc
 
     dev = qml.device("lightning.rocq", wires=1)
     observable = qml.s_prod(2.0, qml.Hermitian(np.eye(2, dtype=np.complex128), wires=0))
+    tape = qml.tape.QuantumScript(
+        [qml.RY(0.321, wires=0)],
+        [qml.expval(observable)],
+    )
+    tape.trainable_params = [0]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0]
+    assert observables == [[{"coefficient": (2.0, 0.0), "pauli_string": "", "targets": []}]]
+    assert operations == [
+        {
+            "name": "RY",
+            "rocq_name": "RY",
+            "wires": [0],
+            "params": [0.321],
+            "param_indices": [0],
+            "trainable_param_indices": [0],
+            "trainable_param_positions": [0],
+        }
+    ]
+
+
+def test_pennylane_native_adjoint_folds_identity_sparse_hamiltonian_observable(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = 2.0 * qml.SparseHamiltonian(sp.eye(2, dtype=np.complex128, format="csr"), wires=[0])
     tape = qml.tape.QuantumScript(
         [qml.RY(0.321, wires=0)],
         [qml.expval(observable)],
