@@ -7452,6 +7452,31 @@ def test_pennylane_mixed_dense_sparse_sum_variance_uses_native_csr_moments(monke
     assert shape == (2, 2)
 
 
+def test_pennylane_large_mixed_dense_sum_variance_falls_back_cleanly(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    matrix = np.fliplr(np.eye(32, dtype=np.complex128))
+    observable = qml.sum(qml.Hermitian(matrix, wires=range(5)), 0.5 * qml.PauliZ(0))
+    dev = qml.device("lightning.rocq", wires=5)
+
+    @qml.qnode(dev)
+    def circuit():
+        return qml.var(observable)
+
+    assert circuit() == pytest.approx(0.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == []
+    assert sim.matrix_expectations == []
+    assert sim.sparse_moments == []
+    assert sim.statevector_reads == 1
+
+
 def test_pennylane_sparse_hamiltonian_batch_uses_native_csr_moments(monkeypatch):
     pytest.importorskip("pennylane")
     sp = pytest.importorskip("scipy.sparse")

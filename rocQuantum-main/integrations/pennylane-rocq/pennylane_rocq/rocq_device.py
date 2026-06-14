@@ -6568,25 +6568,26 @@ class RocQDevice(QubitDevice):
                 self.wire_map,
                 wire_order=self.wires,
             )
-            if variance_payload is not None:
-                try:
-                    if variance_payload[0] == "matrix":
-                        mean, second_moment = _matrix_moments_cached(
-                            self._runtime,
-                            variance_payload[1],
-                            variance_payload[2],
-                            cache=self._analytic_measurement_cache,
-                        )
-                    elif variance_payload[0] == "sparse":
-                        mean, second_moment = _sparse_payload_moments_cached(
-                            self._runtime,
-                            variance_payload,
-                            cache=self._analytic_measurement_cache,
-                        )
-                    else:
-                        raise NotImplementedError
-                except (NotImplementedError, RuntimeError):
-                    return super().var(observable, shot_range=shot_range, bin_size=bin_size)
+            if variance_payload is None:
+                return super().var(observable, shot_range=shot_range, bin_size=bin_size)
+            try:
+                if variance_payload[0] == "matrix":
+                    mean, second_moment = _matrix_moments_cached(
+                        self._runtime,
+                        variance_payload[1],
+                        variance_payload[2],
+                        cache=self._analytic_measurement_cache,
+                    )
+                elif variance_payload[0] == "sparse":
+                    mean, second_moment = _sparse_payload_moments_cached(
+                        self._runtime,
+                        variance_payload,
+                        cache=self._analytic_measurement_cache,
+                    )
+                else:
+                    raise NotImplementedError
+            except (NotImplementedError, RuntimeError):
+                return super().var(observable, shot_range=shot_range, bin_size=bin_size)
             return _real_measurement_result(second_moment - mean * mean, "Variance")
 
         variance_payload = _observable_variance_batch_payload(observable, self.wire_map, wire_order=self.wires)
