@@ -132,6 +132,10 @@ class _FakeQuantumSimulator:
         self.statevector_reads += 1
         return self._peek_statevector()
 
+    def get_statevectors(self):
+        self.statevector_reads += 1
+        return np.tile(self._peek_statevector(), (self._batch_size, 1))
+
     def _peek_statevector(self):
         state = np.zeros(1 << self._num_qubits, dtype=np.complex128)
         if self._measured:
@@ -444,6 +448,87 @@ def test_qiskit_backend_can_skip_sampling_for_statevector_only(monkeypatch):
     assert result.results[0].shots == 0
     assert _FakeQuantumSimulator.instances[-1].measurements == []
     assert _FakeQuantumSimulator.instances[-1].statevector_reads == 1
+
+
+def test_qiskit_backend_batches_compatible_statevector_circuit_lists(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuits = []
+    for angle in (0.1, 0.2):
+        circuit = QuantumCircuit(1)
+        circuit.ry(angle, 0)
+        circuits.append(circuit)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuits, sampling=False, statevector=True).result()
+
+    assert len(result.results) == 2
+    for index in range(2):
+        np.testing.assert_allclose(
+            np.asarray(result.results[index].data.statevector, dtype=np.complex128),
+            np.array([1.0, 0.0], dtype=np.complex128),
+        )
+        assert result.results[index].shots == 0
+
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == []
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.measurements == []
+    assert sim.statevector_reads == 1
+
+
+def test_qiskit_backend_does_not_batch_statevector_lists_with_global_phase(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuits = []
+    for angle, phase in ((0.1, 0.25), (0.2, 0.5)):
+        circuit = QuantumCircuit(1)
+        circuit.global_phase = phase
+        circuit.ry(angle, 0)
+        circuits.append(circuit)
+
+    before = len(_FakeQuantumSimulator.instances)
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuits, sampling=False, statevector=True).result()
+
+    assert len(result.results) == 2
+    sims = _FakeQuantumSimulator.instances[before:]
+    assert sims
+    assert not any(sim.batch_size() == 2 for sim in sims)
+    assert _FakeQuantumSimulator.instances[-1].batch_ops == []
+
+
+def test_qiskit_backend_does_not_batch_statevector_lists_with_phase_gate(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuits = []
+    for angle in (0.1, 0.2):
+        circuit = QuantumCircuit(1)
+        circuit.p(angle, 0)
+        circuits.append(circuit)
+
+    before = len(_FakeQuantumSimulator.instances)
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuits, sampling=False, statevector=True).result()
+
+    assert len(result.results) == 2
+    sims = _FakeQuantumSimulator.instances[before:]
+    assert sims
+    assert not any(sim.batch_size() == 2 for sim in sims)
+    assert _FakeQuantumSimulator.instances[-1].batch_ops == []
 
 
 def test_framework_runtime_converts_full_statevectors_to_little_endian_order():

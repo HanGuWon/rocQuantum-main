@@ -94,6 +94,30 @@ CONTROL_FLOW_OPS = {
     "break_loop", "continue_loop", "for_loop", "if_else", "switch_case", "while_loop",
 }
 DEFAULT_MAX_DYNAMIC_LOOP_ITERATIONS = 1024
+STATEVECTOR_BATCH_SAFE_OPS = {
+    "barrier",
+    "delay",
+    "global_phase",
+    "save_statevector",
+    "measure",
+    "reset",
+    "initialize",
+    "state_preparation",
+    "id",
+    "i",
+    "x",
+    "y",
+    "z",
+    "h",
+    "cx",
+    "cz",
+    "rx",
+    "ry",
+    "rz",
+    "crx",
+    "cry",
+    "crz",
+}
 
 
 def _instruction_condition(instruction):
@@ -2793,6 +2817,38 @@ class RocQuantumBackend(BackendV2):
         return any(instruction.operation.name == "save_statevector" for instruction in circuit.data)
 
     @staticmethod
+    def _has_nontrivial_global_phase(circuit):
+        try:
+            if abs(float(getattr(circuit, "global_phase", 0.0))) > 1e-15:
+                return True
+        except (TypeError, ValueError):
+            return True
+
+        for instruction in circuit.data:
+            op = instruction.operation
+            if op.name != "global_phase":
+                continue
+            try:
+                (phase,) = normalize_params(getattr(op, "params", ()) or ())
+                if abs(float(phase)) > 1e-15:
+                    return True
+            except (TypeError, ValueError):
+                return True
+        return False
+
+    @staticmethod
+    def _is_statevector_batch_safe_circuit(circuit):
+        if RocQuantumBackend._has_nontrivial_global_phase(circuit):
+            return False
+        for instruction in circuit.data:
+            op = instruction.operation
+            if op.name not in STATEVECTOR_BATCH_SAFE_OPS:
+                return False
+            if _instruction_condition(instruction) is not None:
+                return False
+        return True
+
+    @staticmethod
     def _has_dynamic_circuit(circuit):
         measurement_started = False
         for instruction in circuit.data:
@@ -3184,6 +3240,43 @@ class RocQuantumBackend(BackendV2):
             )
         return results
 
+    def _try_run_batched_statevector_circuits(self, circuits, statevector_option):
+        circuits = list(circuits)
+        if len(circuits) <= 1:
+            return None
+        if not bool(statevector_option) and not all(self._requests_statevector(circuit) for circuit in circuits):
+            return None
+        if any(self._has_runtime_reset(circuit) or self._has_dynamic_circuit(circuit) for circuit in circuits):
+            return None
+        if any(not self._is_statevector_batch_safe_circuit(circuit) for circuit in circuits):
+            return None
+
+        try:
+            self._apply_circuit_batch(circuits, include_global_phase=False)
+            statevectors = np.asarray(self._runtime.statevectors(), dtype=np.complex128).reshape(
+                len(circuits),
+                1 << int(circuits[0].num_qubits),
+            )
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            return None
+
+        results = []
+        for circuit, statevector in zip(circuits, statevectors):
+            exp_data = ExperimentResultData(statevector=np.asarray(statevector, dtype=np.complex128))
+            results.append(
+                ExperimentResult(
+                    shots=0,
+                    success=True,
+                    data=exp_data,
+                    header=getattr(
+                        circuit,
+                        "header",
+                        {"name": getattr(circuit, "name", None), "metadata": getattr(circuit, "metadata", None)},
+                    ),
+                )
+            )
+        return results
+
     def run(self, run_input, **options):
         if not isinstance(run_input, list):
             run_input = [run_input]
@@ -3199,6 +3292,22 @@ class RocQuantumBackend(BackendV2):
                 run_input,
                 shots,
                 bool(options.get("memory", self.options.memory)),
+            )
+            if batched_results is not None:
+                result = Result(
+                    backend_name=self.name,
+                    backend_version=getattr(self, "backend_version", "0.1.0"),
+                    job_id=job_id,
+                    qobj_id=None,
+                    success=True,
+                    results=batched_results,
+                )
+                return RocQuantumJob(self, job_id, result)
+
+        if not bool(options.get("sampling", self.options.sampling)):
+            batched_results = self._try_run_batched_statevector_circuits(
+                run_input,
+                bool(options.get("statevector", self.options.statevector)),
             )
             if batched_results is not None:
                 result = Result(
