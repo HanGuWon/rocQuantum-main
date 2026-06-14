@@ -285,6 +285,10 @@ def _install_fake_binding(monkeypatch):
     return fake
 
 
+def _single_qubit_sparse_x(sp):
+    return sp.csr_matrix(np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128))
+
+
 def test_qiskit_backend_returns_job_and_fixed_width_counts(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -6737,7 +6741,7 @@ def test_pennylane_sparse_hamiltonian_uses_sparse_statevector_fallback(monkeypat
 
     import pennylane as qml
 
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
     dev = qml.device("lightning.rocq", wires=1)
 
@@ -6749,12 +6753,12 @@ def test_pennylane_sparse_hamiltonian_uses_sparse_statevector_fallback(monkeypat
     def var_circuit():
         return qml.var(observable)
 
-    assert expval_circuit() == pytest.approx(1.0)
+    assert expval_circuit() == pytest.approx(0.0)
     expval_sim = _FakeQuantumSimulator.instances[-1]
     assert expval_sim.expectations == []
     assert expval_sim.statevector_reads == 1
 
-    assert var_circuit() == pytest.approx(0.0)
+    assert var_circuit() == pytest.approx(1.0)
     var_sim = _FakeQuantumSimulator.instances[-1]
     assert var_sim.expectations == []
     assert var_sim.statevector_reads == 1
@@ -6787,11 +6791,10 @@ def test_pennylane_sparse_hamiltonian_identity_folds_without_readout(monkeypatch
     assert sim.statevector_reads == 0
 
 
-def test_pennylane_sparse_hamiltonian_prefers_native_csr_moments(monkeypatch):
+def test_pennylane_diagonal_sparse_hamiltonian_uses_native_pauli_terms(monkeypatch):
     pytest.importorskip("pennylane")
     sp = pytest.importorskip("scipy.sparse")
     _install_fake_binding(monkeypatch)
-    monkeypatch.setattr(_FakeQuantumSimulator, "enable_sparse_moments", True)
     for name in list(sys.modules):
         if name.startswith("pennylane_rocq"):
             sys.modules.pop(name)
@@ -6810,19 +6813,55 @@ def test_pennylane_sparse_hamiltonian_prefers_native_csr_moments(monkeypatch):
     def var_circuit():
         return qml.var(observable)
 
-    assert expval_circuit() == pytest.approx(1.0)
+    assert expval_circuit() == pytest.approx(0.5)
+    expval_sim = _FakeQuantumSimulator.instances[-1]
+    assert expval_sim.expectations == [("Z", (0,))]
+    assert expval_sim.sparse_moments == []
+    assert expval_sim.statevector_reads == 0
+
+    assert var_circuit() == pytest.approx(0.75)
+    var_sim = _FakeQuantumSimulator.instances[-1]
+    assert var_sim.expectations == [("Z", (0,))]
+    assert var_sim.sparse_moments == []
+    assert var_sim.statevector_reads == 0
+
+
+def test_pennylane_sparse_hamiltonian_prefers_native_csr_moments(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_sparse_moments", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
+    observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def expval_circuit():
+        return qml.expval(observable)
+
+    @qml.qnode(dev)
+    def var_circuit():
+        return qml.var(observable)
+
+    assert expval_circuit() == pytest.approx(0.0)
     expval_sim = _FakeQuantumSimulator.instances[-1]
     assert expval_sim.statevector_reads == 0
     assert len(expval_sim.sparse_moments) == 1
 
-    assert var_circuit() == pytest.approx(0.0)
+    assert var_circuit() == pytest.approx(1.0)
     var_sim = _FakeQuantumSimulator.instances[-1]
     assert var_sim.statevector_reads == 0
     assert len(var_sim.sparse_moments) == 1
 
     data, indices, indptr, shape = var_sim.sparse_moments[0]
-    np.testing.assert_allclose(data, np.array([1.0, -1.0], dtype=np.complex128))
-    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_allclose(data, np.array([1.0, 1.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([1, 0], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
     assert shape == (2, 2)
 
@@ -6838,7 +6877,7 @@ def test_pennylane_single_execute_caches_sparse_hamiltonian_moments(monkeypatch)
 
     import pennylane as qml
 
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
     dev = qml.device("lightning.rocq", wires=1)
 
@@ -6846,13 +6885,13 @@ def test_pennylane_single_execute_caches_sparse_hamiltonian_moments(monkeypatch)
     def sparse_circuit():
         return qml.expval(observable), qml.var(observable)
 
-    assert sparse_circuit() == pytest.approx((1.0, 0.0))
+    assert sparse_circuit() == pytest.approx((0.0, 1.0))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.statevector_reads == 0
     assert len(sim.sparse_moments) == 1
     data, indices, indptr, shape = sim.sparse_moments[0]
-    np.testing.assert_allclose(data, np.array([1.0, -1.0], dtype=np.complex128))
-    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_allclose(data, np.array([1.0, 1.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([1, 0], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
     assert shape == (2, 2)
 
@@ -6868,7 +6907,7 @@ def test_pennylane_scaled_sparse_hamiltonian_uses_native_csr_moments(monkeypatch
 
     import pennylane as qml
 
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.s_prod(2.0, qml.SparseHamiltonian(hamiltonian_matrix, wires=[0]))
     dev = qml.device("lightning.rocq", wires=1)
 
@@ -6876,13 +6915,13 @@ def test_pennylane_scaled_sparse_hamiltonian_uses_native_csr_moments(monkeypatch
     def sparse_circuit():
         return qml.expval(observable), qml.var(observable)
 
-    assert sparse_circuit() == pytest.approx((2.0, 0.0))
+    assert sparse_circuit() == pytest.approx((0.0, 4.0))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.statevector_reads == 0
     assert len(sim.sparse_moments) == 1
     data, indices, indptr, shape = sim.sparse_moments[0]
-    np.testing.assert_allclose(data, np.array([2.0, -2.0], dtype=np.complex128))
-    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_allclose(data, np.array([2.0, 2.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([1, 0], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
     assert shape == (2, 2)
 
@@ -6898,7 +6937,7 @@ def test_pennylane_mixed_sparse_sum_expval_uses_native_readouts(monkeypatch):
 
     import pennylane as qml
 
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.sum(qml.SparseHamiltonian(hamiltonian_matrix, wires=[0]), 0.5 * qml.PauliZ(0))
     dev = qml.device("lightning.rocq", wires=1)
 
@@ -6906,14 +6945,14 @@ def test_pennylane_mixed_sparse_sum_expval_uses_native_readouts(monkeypatch):
     def sparse_circuit():
         return qml.expval(observable)
 
-    assert sparse_circuit() == pytest.approx(1.25)
+    assert sparse_circuit() == pytest.approx(0.25)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.expectations == [("Z", (0,))]
     assert sim.statevector_reads == 0
     assert len(sim.sparse_moments) == 1
     data, indices, indptr, shape = sim.sparse_moments[0]
-    np.testing.assert_allclose(data, np.array([1.0, -1.0], dtype=np.complex128))
-    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_allclose(data, np.array([1.0, 1.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([1, 0], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
     assert shape == (2, 2)
 
@@ -6929,7 +6968,7 @@ def test_pennylane_mixed_sparse_sum_variance_uses_native_csr_moments(monkeypatch
 
     import pennylane as qml
 
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     sum_observable = qml.sum(qml.SparseHamiltonian(hamiltonian_matrix, wires=[0]), 0.5 * qml.PauliZ(0))
     hamiltonian_observable = qml.Hamiltonian(
         [1.0, 0.5],
@@ -6946,15 +6985,15 @@ def test_pennylane_mixed_sparse_sum_variance_uses_native_csr_moments(monkeypatch
         return qml.var(hamiltonian_observable)
 
     for circuit in (sum_circuit, hamiltonian_circuit):
-        assert circuit() == pytest.approx(0.0)
+        assert circuit() == pytest.approx(1.0)
         sim = _FakeQuantumSimulator.instances[-1]
         assert sim.expectations == []
         assert sim.statevector_reads == 0
         assert len(sim.sparse_moments) == 1
         data, indices, indptr, shape = sim.sparse_moments[0]
-        np.testing.assert_allclose(data, np.array([1.5, -1.5], dtype=np.complex128))
-        np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
-        np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+        np.testing.assert_allclose(data, np.array([0.5, 1.0, 1.0, -0.5], dtype=np.complex128))
+        np.testing.assert_array_equal(indices, np.array([0, 1, 0, 1], dtype=np.int64))
+        np.testing.assert_array_equal(indptr, np.array([0, 2, 4], dtype=np.int64))
         assert shape == (2, 2)
 
 
@@ -6970,8 +7009,8 @@ def test_pennylane_mixed_dense_sparse_sum_variance_uses_native_csr_moments(monke
 
     import pennylane as qml
 
-    sparse_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
-    dense_matrix = np.diag([2.0, -2.0]).astype(np.complex128)
+    sparse_matrix = _single_qubit_sparse_x(sp)
+    dense_matrix = np.array([[0.0, 2.0], [2.0, 0.0]], dtype=np.complex128)
     observable = qml.sum(
         qml.Hermitian(dense_matrix, wires=0),
         qml.SparseHamiltonian(sparse_matrix, wires=[0]),
@@ -6983,16 +7022,16 @@ def test_pennylane_mixed_dense_sparse_sum_variance_uses_native_csr_moments(monke
     def circuit():
         return qml.var(observable)
 
-    assert circuit() == pytest.approx(0.0)
+    assert circuit() == pytest.approx(9.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.expectations == []
     assert sim.matrix_expectations == []
     assert sim.statevector_reads == 0
     assert len(sim.sparse_moments) == 1
     data, indices, indptr, shape = sim.sparse_moments[0]
-    np.testing.assert_allclose(data, np.array([3.5, -3.5], dtype=np.complex128))
-    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
-    np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+    np.testing.assert_allclose(data, np.array([0.5, 3.0, 3.0, -0.5], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([0, 1, 0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(indptr, np.array([0, 2, 4], dtype=np.int64))
     assert shape == (2, 2)
 
 
@@ -7007,7 +7046,7 @@ def test_pennylane_sparse_hamiltonian_batch_uses_native_csr_moments(monkeypatch)
 
     import pennylane as qml
 
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
     dev = qml.device("lightning.rocq", wires=1)
     tapes = [
@@ -7017,12 +7056,42 @@ def test_pennylane_sparse_hamiltonian_batch_uses_native_csr_moments(monkeypatch)
 
     results = dev.batch_execute(tapes)
 
-    assert results == pytest.approx((1.0, 1.0))
+    assert results == pytest.approx((0.0, 0.0))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
     assert len(sim.sparse_batch_moments) == 1
     assert sim.sparse_moments == []
+    assert sim.statevector_reads == 0
+
+
+def test_pennylane_diagonal_sparse_hamiltonian_batch_uses_native_pauli_terms(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = 2.0 * qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
+    dev = qml.device("lightning.rocq", wires=1)
+    tapes = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.expval(observable), qml.var(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.expval(observable), qml.var(observable)]),
+    ]
+
+    np.testing.assert_allclose(
+        np.asarray(dev.batch_execute(tapes), dtype=float),
+        np.array([[1.0, 3.0], [1.0, 3.0]], dtype=float),
+    )
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,))]
+    assert sim.sparse_batch_moments == []
     assert sim.statevector_reads == 0
 
 
@@ -7067,7 +7136,7 @@ def test_pennylane_scaled_sparse_hamiltonian_batch_uses_native_csr_moments(monke
 
     import pennylane as qml
 
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = 2.0 * qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
     dev = qml.device("lightning.rocq", wires=1)
     tapes = [
@@ -7077,7 +7146,7 @@ def test_pennylane_scaled_sparse_hamiltonian_batch_uses_native_csr_moments(monke
 
     results = dev.batch_execute(tapes)
 
-    assert results == pytest.approx((2.0, 2.0))
+    assert results == pytest.approx((0.0, 0.0))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
@@ -7085,8 +7154,8 @@ def test_pennylane_scaled_sparse_hamiltonian_batch_uses_native_csr_moments(monke
     assert sim.sparse_moments == []
     assert sim.statevector_reads == 0
     data, indices, indptr, shape = sim.sparse_batch_moments[0]
-    np.testing.assert_allclose(data, np.array([2.0, -2.0], dtype=np.complex128))
-    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_allclose(data, np.array([2.0, 2.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([1, 0], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
     assert shape == (2, 2)
 
@@ -7102,7 +7171,7 @@ def test_pennylane_mixed_sparse_sum_batch_uses_native_readouts(monkeypatch):
 
     import pennylane as qml
 
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.sum(qml.SparseHamiltonian(hamiltonian_matrix, wires=[0]), 0.5 * qml.PauliZ(0))
     dev = qml.device("lightning.rocq", wires=1)
     tapes = [
@@ -7112,7 +7181,7 @@ def test_pennylane_mixed_sparse_sum_batch_uses_native_readouts(monkeypatch):
 
     results = dev.batch_execute(tapes)
 
-    assert results == pytest.approx((1.25, 1.25))
+    assert results == pytest.approx((0.25, 0.25))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
@@ -7121,8 +7190,8 @@ def test_pennylane_mixed_sparse_sum_batch_uses_native_readouts(monkeypatch):
     assert sim.sparse_moments == []
     assert sim.statevector_reads == 0
     data, indices, indptr, shape = sim.sparse_batch_moments[0]
-    np.testing.assert_allclose(data, np.array([1.0, -1.0], dtype=np.complex128))
-    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_allclose(data, np.array([1.0, 1.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([1, 0], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
     assert shape == (2, 2)
 
@@ -7138,7 +7207,7 @@ def test_pennylane_mixed_sparse_sum_batch_variance_uses_native_csr_moments(monke
 
     import pennylane as qml
 
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.sum(qml.SparseHamiltonian(hamiltonian_matrix, wires=[0]), 0.5 * qml.PauliZ(0))
     dev = qml.device("lightning.rocq", wires=1)
     tapes = [
@@ -7148,7 +7217,7 @@ def test_pennylane_mixed_sparse_sum_batch_variance_uses_native_csr_moments(monke
 
     results = dev.batch_execute(tapes)
 
-    assert results == pytest.approx((0.0, 0.0))
+    assert results == pytest.approx((1.0, 1.0))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
@@ -7157,9 +7226,9 @@ def test_pennylane_mixed_sparse_sum_batch_variance_uses_native_csr_moments(monke
     assert sim.sparse_moments == []
     assert sim.statevector_reads == 0
     data, indices, indptr, shape = sim.sparse_batch_moments[0]
-    np.testing.assert_allclose(data, np.array([1.5, -1.5], dtype=np.complex128))
-    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
-    np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+    np.testing.assert_allclose(data, np.array([0.5, 1.0, 1.0, -0.5], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([0, 1, 0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(indptr, np.array([0, 2, 4], dtype=np.int64))
     assert shape == (2, 2)
 
 
@@ -7175,8 +7244,8 @@ def test_pennylane_mixed_dense_sparse_sum_batch_variance_uses_native_csr_moments
 
     import pennylane as qml
 
-    sparse_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
-    dense_matrix = np.diag([2.0, -2.0]).astype(np.complex128)
+    sparse_matrix = _single_qubit_sparse_x(sp)
+    dense_matrix = np.array([[0.0, 2.0], [2.0, 0.0]], dtype=np.complex128)
     observable = qml.sum(
         qml.Hermitian(dense_matrix, wires=0),
         qml.SparseHamiltonian(sparse_matrix, wires=[0]),
@@ -7190,7 +7259,7 @@ def test_pennylane_mixed_dense_sparse_sum_batch_variance_uses_native_csr_moments
 
     results = dev.batch_execute(tapes)
 
-    assert results == pytest.approx((0.0, 0.0))
+    assert results == pytest.approx((9.0, 9.0))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
@@ -7200,9 +7269,9 @@ def test_pennylane_mixed_dense_sparse_sum_batch_variance_uses_native_csr_moments
     assert sim.statevector_reads == 0
     assert len(sim.sparse_batch_moments) == 1
     data, indices, indptr, shape = sim.sparse_batch_moments[0]
-    np.testing.assert_allclose(data, np.array([3.5, -3.5], dtype=np.complex128))
-    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
-    np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+    np.testing.assert_allclose(data, np.array([0.5, 3.0, 3.0, -0.5], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([0, 1, 0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(indptr, np.array([0, 2, 4], dtype=np.int64))
     assert shape == (2, 2)
 
 
@@ -7217,7 +7286,7 @@ def test_pennylane_sparse_hamiltonian_batch_variance_uses_native_csr_moments(mon
 
     import pennylane as qml
 
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
     dev = qml.device("lightning.rocq", wires=1)
     tapes = [
@@ -7227,7 +7296,7 @@ def test_pennylane_sparse_hamiltonian_batch_variance_uses_native_csr_moments(mon
 
     results = dev.batch_execute(tapes)
 
-    assert results == pytest.approx((0.0, 0.0))
+    assert results == pytest.approx((1.0, 1.0))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
@@ -9617,6 +9686,32 @@ def test_pennylane_native_adjoint_folds_identity_sparse_hamiltonian_observable(m
     ]
 
 
+def test_pennylane_native_adjoint_lowers_diagonal_sparse_hamiltonian_to_pauli_terms(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = -0.5 * qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
+    tape = qml.tape.QuantumScript(
+        [qml.RY(0.321, wires=0)],
+        [qml.expval(observable)],
+    )
+    tape.trainable_params = [0]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0]
+    assert observables == [[{"coefficient": (-0.5, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert [op["rocq_name"] for op in operations] == ["RY"]
+
+
 def test_pennylane_native_adjoint_uses_controlled_qubit_unitary_matrix_payload(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -11351,7 +11446,7 @@ def test_pennylane_native_adjoint_accepts_sparse_hamiltonian_payload(monkeypatch
                 }
             )
             theta = float(operations[0]["params"][0])
-            return np.asarray([[-math.sin(theta)]], dtype=float)
+            return np.asarray([[math.cos(theta)]], dtype=float)
 
     fake = _install_fake_binding(monkeypatch)
     fake.QuantumSimulator = _SparseNativeAdjointSimulator
@@ -11364,7 +11459,7 @@ def test_pennylane_native_adjoint_accepts_sparse_hamiltonian_payload(monkeypatch
     from pennylane import numpy as pnp
 
     dev = qml.device("lightning.rocq", wires=1)
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
 
     @qml.qnode(dev, diff_method="adjoint")
@@ -11374,8 +11469,8 @@ def test_pennylane_native_adjoint_accepts_sparse_hamiltonian_payload(monkeypatch
 
     theta = pnp.array(0.321, requires_grad=True)
 
-    assert circuit(theta) == pytest.approx(math.cos(float(theta)))
-    assert qml.grad(circuit)(theta) == pytest.approx(-math.sin(float(theta)))
+    assert circuit(theta) == pytest.approx(math.sin(float(theta)))
+    assert qml.grad(circuit)(theta) == pytest.approx(math.cos(float(theta)))
 
     sim = [
         instance for instance in _SparseNativeAdjointSimulator.instances
@@ -11389,8 +11484,8 @@ def test_pennylane_native_adjoint_accepts_sparse_hamiltonian_payload(monkeypatch
         [
             {
                 "kind": "sparse",
-                "data": [(1.0, 0.0), (-1.0, 0.0)],
-                "indices": [0, 1],
+                "data": [(1.0, 0.0), (1.0, 0.0)],
+                "indices": [1, 0],
                 "indptr": [0, 1, 2],
                 "shape": [2, 2],
             }
@@ -11410,7 +11505,7 @@ def test_pennylane_native_adjoint_accepts_scaled_sparse_hamiltonian_payload(monk
     import pennylane as qml
 
     dev = qml.device("lightning.rocq", wires=1)
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.s_prod(-0.5, qml.SparseHamiltonian(hamiltonian_matrix, wires=[0]))
     tape = qml.tape.QuantumScript(
         [qml.RY(0.321, wires=0)],
@@ -11426,8 +11521,8 @@ def test_pennylane_native_adjoint_accepts_scaled_sparse_hamiltonian_payload(monk
         [
             {
                 "kind": "sparse",
-                "data": [(-0.5, 0.0), (0.5, -0.0)],
-                "indices": [0, 1],
+                "data": [(-0.5, 0.0), (-0.5, 0.0)],
+                "indices": [1, 0],
                 "indptr": [0, 1, 2],
                 "shape": [2, 2],
             }
@@ -11499,7 +11594,7 @@ def test_pennylane_native_adjoint_uses_partial_sparse_hamiltonian_payload(monkey
     import pennylane as qml
 
     dev = qml.device("lightning.rocq", wires=2)
-    hamiltonian_matrix = sp.csr_matrix(np.diag([1.0, -1.0]).astype(np.complex128))
+    hamiltonian_matrix = _single_qubit_sparse_x(sp)
     observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[1])
     tape = qml.tape.QuantumScript(
         [qml.RY(0.321, wires=1)],
@@ -11525,8 +11620,8 @@ def test_pennylane_native_adjoint_uses_partial_sparse_hamiltonian_payload(monkey
         [
             {
                 "kind": "sparse",
-                "data": [(1.0, 0.0), (-1.0, 0.0)],
-                "indices": [0, 1],
+                "data": [(1.0, 0.0), (1.0, 0.0)],
+                "indices": [1, 0],
                 "indptr": [0, 1, 2],
                 "shape": [2, 2],
                 "targets": [1],

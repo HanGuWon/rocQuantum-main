@@ -371,6 +371,55 @@ def _sparse_identity_matrix_coefficient(sparse_matrix):
     return coefficient
 
 
+def _diagonal_values_pauli_terms(diagonal, targets):
+    targets = list(targets)
+    target_count = len(targets)
+    if target_count > MAX_DIAGONAL_OBSERVABLE_PAULI_QUBITS:
+        return None
+
+    diagonal = np.asarray(diagonal, dtype=np.complex128).reshape(-1)
+    dimension = 1 << target_count
+    if diagonal.shape != (dimension,):
+        return None
+
+    terms = []
+    for mask in range(dimension):
+        coefficient = 0.0 + 0.0j
+        for basis_index, value in enumerate(diagonal):
+            parity = (basis_index & mask).bit_count()
+            coefficient += value * (-1.0 if parity & 1 else 1.0)
+        coefficient /= dimension
+        if abs(coefficient) <= 1e-15:
+            continue
+        term_targets = [
+            targets[bit]
+            for bit in range(target_count)
+            if (mask >> bit) & 1
+        ]
+        terms.append((coefficient, "Z" * len(term_targets), term_targets))
+    return terms
+
+
+def _sparse_diagonal_matrix_pauli_terms(sparse_matrix, targets):
+    targets = list(targets)
+    target_count = len(targets)
+    if target_count > MAX_DIAGONAL_OBSERVABLE_PAULI_QUBITS:
+        return None
+
+    shape = tuple(int(dim) for dim in sparse_matrix.shape)
+    dimension = 1 << target_count
+    if len(shape) != 2 or shape != (dimension, dimension):
+        return None
+
+    matrix = sparse_matrix.tocsr(copy=True)
+    matrix.sum_duplicates()
+    coo = matrix.tocoo()
+    off_diagonal = coo.row != coo.col
+    if np.any(np.abs(np.asarray(coo.data, dtype=np.complex128)[off_diagonal]) > 1e-12):
+        return None
+    return _diagonal_values_pauli_terms(matrix.diagonal(), targets)
+
+
 def _sparse_hamiltonian_moments(state, observable, wire_order):
     sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, wire_order)
     if sparse_matrix is None:
@@ -453,12 +502,8 @@ def _identity_matrix_coefficient(matrix):
 
 
 def _diagonal_matrix_pauli_terms(matrix, targets):
-    targets = list(targets)
-    target_count = len(targets)
-    if target_count > MAX_DIAGONAL_OBSERVABLE_PAULI_QUBITS:
-        return None
-
     matrix = np.asarray(matrix, dtype=np.complex128)
+    target_count = len(targets)
     dimension = 1 << target_count
     if matrix.ndim != 2 or matrix.shape != (dimension, dimension):
         return None
@@ -466,23 +511,7 @@ def _diagonal_matrix_pauli_terms(matrix, targets):
     diagonal = np.diag(matrix)
     if not np.allclose(matrix, np.diag(diagonal), rtol=1e-12, atol=1e-12):
         return None
-
-    terms = []
-    for mask in range(dimension):
-        coefficient = 0.0 + 0.0j
-        for basis_index, value in enumerate(diagonal):
-            parity = (basis_index & mask).bit_count()
-            coefficient += value * (-1.0 if parity & 1 else 1.0)
-        coefficient /= dimension
-        if abs(coefficient) <= 1e-15:
-            continue
-        term_targets = [
-            targets[bit]
-            for bit in range(target_count)
-            if (mask >> bit) & 1
-        ]
-        terms.append((coefficient, "Z" * len(term_targets), term_targets))
-    return terms
+    return _diagonal_values_pauli_terms(diagonal, targets)
 
 
 def _matrix_expectation_cache_key(matrix, targets):
@@ -599,11 +628,18 @@ def _observable_expectation_payload(observable, wire_map, wire_order=None, inclu
     if terms is not None:
         return "pauli", _combine_pauli_terms(terms)
 
-    sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, wire_order or tuple(wire_map.keys()))
+    sparse_wire_order = tuple(wire_order or tuple(wire_map.keys()))
+    sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, sparse_wire_order)
     if sparse_matrix is not None:
         identity_coefficient = _sparse_identity_matrix_coefficient(sparse_matrix)
         if identity_coefficient is not None:
             return "pauli", [(identity_coefficient, "", [])]
+        diagonal_terms = _sparse_diagonal_matrix_pauli_terms(
+            sparse_matrix,
+            [wire_map[wire] for wire in sparse_wire_order],
+        )
+        if diagonal_terms is not None:
+            return "pauli", _combine_pauli_terms(diagonal_terms)
         return (
             "sparse",
             np.asarray(sparse_matrix.data, dtype=np.complex128),
@@ -827,8 +863,10 @@ def _native_adjoint_terms_from_observable(observable, wire_map, all_wires, coeff
         if len(observable_wires) < len(all_wires):
             sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, sparse_base.wires)
             partial_targets = [int(wire_map[wire]) for wire in observable_wires]
+            sparse_targets = partial_targets
         else:
             sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, all_wires)
+            sparse_targets = [int(wire_map[wire]) for wire in all_wires]
         if coefficient != 1:
             sparse_matrix = sparse_matrix.copy()
             sparse_matrix.data = coefficient * np.asarray(sparse_matrix.data, dtype=np.complex128)
@@ -840,6 +878,16 @@ def _native_adjoint_terms_from_observable(observable, wire_map, all_wires, coeff
                     "pauli_string": "",
                     "targets": [],
                 }
+            ]
+        diagonal_terms = _sparse_diagonal_matrix_pauli_terms(sparse_matrix, sparse_targets)
+        if diagonal_terms is not None:
+            return [
+                {
+                    "coefficient": (float(np.real(coeff)), float(np.imag(coeff))),
+                    "pauli_string": pauli_string,
+                    "targets": [int(target) for target in term_targets],
+                }
+                for coeff, pauli_string, term_targets in _combine_pauli_terms(diagonal_terms)
             ]
         sparse_payload = {
             "kind": "sparse",
@@ -6432,6 +6480,21 @@ class RocQDevice(QubitDevice):
             return super().var(observable, shot_range=shot_range, bin_size=bin_size)
 
         if _scaled_sparse_hamiltonian_base(observable) is not None:
+            sparse_matrix = _scaled_sparse_hamiltonian_matrix(observable, self.wires)
+            sparse_targets = [self.wire_map[wire] for wire in self.wires]
+            diagonal_terms = _sparse_diagonal_matrix_pauli_terms(sparse_matrix, sparse_targets)
+            if diagonal_terms is not None:
+                mean = _evaluate_pauli_terms(
+                    self._runtime,
+                    diagonal_terms,
+                    cache=self._analytic_measurement_cache,
+                )
+                second_moment = _evaluate_pauli_terms(
+                    self._runtime,
+                    _pauli_square_terms(diagonal_terms),
+                    cache=self._analytic_measurement_cache,
+                )
+                return _real_measurement_result(second_moment - mean * mean, "Variance")
             mean, second_moment = _sparse_hamiltonian_moments_cached(
                 self._runtime,
                 observable,
