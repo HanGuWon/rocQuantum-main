@@ -222,12 +222,12 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         state._d_state = object()
         state._num_qubits = 1
         matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
-        operator = HermitianOperator(matrix, targets=[0]) + HermitianOperator(matrix.copy(), targets=[0]) + 0.5
+        operator = 2 * HermitianOperator(matrix, targets=[0]) + 3 * HermitianOperator(matrix.copy(), targets=[0]) + 0.5
 
         with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
             result = state.expectation(operator)
 
-        self.assertEqual(result, 1.0)
+        self.assertEqual(result, 1.75)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], 1)
         self.assertEqual(calls[0][1], [0])
@@ -270,15 +270,15 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         indices = np.array([0, 1], dtype=np.int64)
         indptr = np.array([0, 1, 2], dtype=np.int64)
         operator = (
-            SparseHamiltonianOperator(data, indices, indptr, shape=(2, 2))
-            + SparseHamiltonianOperator(data.copy(), indices.copy(), indptr.copy(), shape=(2, 2))
+            2 * SparseHamiltonianOperator(data, indices, indptr, shape=(2, 2))
+            + 3 * SparseHamiltonianOperator(data.copy(), indices.copy(), indptr.copy(), shape=(2, 2))
             + 0.25
         )
 
         with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
             result = state.expectation(operator)
 
-        self.assertEqual(result, 1.25)
+        self.assertEqual(result, 2.75)
         self.assertEqual(calls, [(1, [0, 1], [0, 1, 2], 2, 2)])
 
     def test_mock_statevector_sum_keeps_matrix_fallback(self):

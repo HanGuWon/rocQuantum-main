@@ -74,7 +74,6 @@ def _matrix_expectation_cache_key(operator, num_qubits: int):
         matrix = np.ascontiguousarray(matrix, dtype=np.complex128)
         return (
             "hermitian",
-            complex(operator.coefficient),
             tuple(int(target) for target in targets),
             matrix.dtype.str,
             matrix.shape,
@@ -88,7 +87,6 @@ def _matrix_expectation_cache_key(operator, num_qubits: int):
         indptr = np.ascontiguousarray(indptr, dtype=np.uintp)
         return (
             "sparse",
-            complex(operator.coefficient),
             tuple(int(value) for value in shape),
             data.dtype.str,
             data.shape,
@@ -119,8 +117,8 @@ def _expect_mixed_sum_operator(operator: SumOperator, num_qubits: int, expectati
             value = expectation_func(term)
         else:
             if cache_key not in expectation_cache:
-                expectation_cache[cache_key] = expectation_func(term)
-            value = expectation_cache[cache_key]
+                expectation_cache[cache_key] = expectation_func(term * (1 / term.coefficient))
+            value = term.coefficient * expectation_cache[cache_key]
         total += operator.coefficient * value
     return _finalize_expectation(total)
 
