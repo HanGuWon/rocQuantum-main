@@ -3932,6 +3932,29 @@ def test_qiskit_estimator_dense_operator_accepts_explicit_targets(monkeypatch):
     np.testing.assert_allclose(runtime.calls[0][1], np.diag([1.0, -0.5]))
 
 
+def test_qiskit_estimator_dense_operator_mapping_wrapper_uses_default_targets(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable
+
+    class Runtime:
+        def __init__(self):
+            self.calls = []
+
+        def expectation_matrix(self, matrix, targets):
+            self.calls.append((np.asarray(matrix, dtype=np.complex128), tuple(targets)))
+            return 0.5 + 0.0j
+
+    runtime = Runtime()
+    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+
+    assert estimate_observable(runtime, {"operator": observable}, 1) == pytest.approx(0.5)
+    assert runtime.calls[0][1] == (0,)
+    np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -1.0]))
+
+
 def test_qiskit_estimator_dense_operator_rejects_invalid_explicit_targets(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -4055,6 +4078,29 @@ def test_qiskit_native_estimator_accepts_explicit_dense_operator_targets(monkeyp
     assert float(result.data.evs) == pytest.approx(0.25)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations[0][1] == (1,)
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+
+
+def test_qiskit_native_estimator_accepts_dense_operator_mapping_without_targets(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1)
+    observable = {"operator": Operator(np.diag([1.0, -1.0]).astype(np.complex128))}
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable)],
+    ).result()[0]
+
+    assert float(result.data.evs) == pytest.approx(1.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.matrix_expectations[0][1] == (0,)
     assert sim.expectations == []
     assert sim.statevector_reads == 0
 

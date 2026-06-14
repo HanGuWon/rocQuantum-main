@@ -73,8 +73,7 @@ def _dense_operator_payload(observable):
 
     if isinstance(observable, Mapping) and isinstance(observable.get("operator"), Operator):
         targets = observable.get("targets", observable.get("qargs"))
-        if targets is not None:
-            return observable["operator"], targets
+        return observable["operator"], targets
 
     return None
 
