@@ -6142,7 +6142,11 @@ def test_pennylane_batch_execute_uses_batched_mixed_matrix_sum_expval(monkeypatc
 
     dev = qml.device("lightning.rocq", wires=1)
     matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
-    observable = qml.sum(qml.Hermitian(matrix, wires=0), 0.5 * qml.PauliZ(0))
+    observable = qml.sum(
+        qml.Hermitian(matrix, wires=0),
+        2.0 * qml.Hermitian(matrix.copy(), wires=0),
+        0.5 * qml.PauliZ(0),
+    )
     circuits = [
         qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.expval(observable)]),
         qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.expval(observable)]),
@@ -6153,8 +6157,9 @@ def test_pennylane_batch_execute_uses_batched_mixed_matrix_sum_expval(monkeypatc
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
     assert sim.batch_expectations == [("Z", (0,))]
+    assert len(sim.matrix_batch_expectations) == 1
     assert sim.matrix_batch_expectations[0][1] == (0,)
-    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], matrix)
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], 3.0 * matrix)
     assert sim.matrix_expectations == []
     assert sim.statevector_reads == 0
 
@@ -6171,20 +6176,24 @@ def test_pennylane_batch_execute_uses_batched_mixed_matrix_sum_variance(monkeypa
 
     dev = qml.device("lightning.rocq", wires=1)
     matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
-    observable = qml.sum(qml.Hermitian(matrix, wires=0), 0.5 * qml.PauliZ(0))
+    observable = qml.sum(
+        qml.Hermitian(matrix, wires=0),
+        2.0 * qml.Hermitian(matrix.copy(), wires=0),
+        0.5 * qml.PauliZ(0),
+    )
     circuits = [
         qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.var(observable)]),
         qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.var(observable)]),
     ]
 
-    assert dev.batch_execute(circuits) == pytest.approx((1.0, 1.0))
+    assert dev.batch_execute(circuits) == pytest.approx((9.0, 9.0))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
     assert sim.batch_expectations == []
     assert len(sim.matrix_batch_expectations) == 2
-    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], np.array([[0.5, 1.0], [1.0, -0.5]]))
-    np.testing.assert_allclose(sim.matrix_batch_expectations[1][0], 1.25 * np.eye(2))
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], np.array([[0.5, 3.0], [3.0, -0.5]]))
+    np.testing.assert_allclose(sim.matrix_batch_expectations[1][0], 9.25 * np.eye(2))
     assert sim.matrix_expectations == []
     assert sim.statevector_reads == 0
 
@@ -7019,10 +7028,14 @@ def test_pennylane_mixed_matrix_sum_expval_uses_native_readouts(monkeypatch):
 
     dev = qml.device("lightning.rocq", wires=1)
     matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
-    sum_observable = qml.sum(qml.Hermitian(matrix, wires=0), 0.5 * qml.PauliZ(0))
+    sum_observable = qml.sum(
+        qml.Hermitian(matrix, wires=0),
+        2.0 * qml.Hermitian(matrix.copy(), wires=0),
+        0.5 * qml.PauliZ(0),
+    )
     hamiltonian_observable = qml.Hamiltonian(
-        [1.0, 0.5],
-        [qml.Hermitian(matrix, wires=0), qml.PauliZ(0)],
+        [1.0, 2.0, 0.5],
+        [qml.Hermitian(matrix, wires=0), qml.Hermitian(matrix.copy(), wires=0), qml.PauliZ(0)],
     )
 
     @qml.qnode(dev)
@@ -7039,7 +7052,7 @@ def test_pennylane_mixed_matrix_sum_expval_uses_native_readouts(monkeypatch):
         assert sim.expectations == [("Z", (0,))]
         assert sim.statevector_reads == 0
         assert len(sim.matrix_expectations) == 1
-        np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
+        np.testing.assert_allclose(sim.matrix_expectations[0][0], 3.0 * matrix)
         assert sim.matrix_expectations[0][1] == (0,)
 
 
@@ -7055,19 +7068,23 @@ def test_pennylane_mixed_matrix_sum_variance_uses_native_dense_moments(monkeypat
 
     dev = qml.device("lightning.rocq", wires=1)
     matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
-    observable = qml.sum(qml.Hermitian(matrix, wires=0), 0.5 * qml.PauliZ(0))
+    observable = qml.sum(
+        qml.Hermitian(matrix, wires=0),
+        2.0 * qml.Hermitian(matrix.copy(), wires=0),
+        0.5 * qml.PauliZ(0),
+    )
 
     @qml.qnode(dev)
     def circuit():
         return qml.var(observable)
 
-    assert circuit() == pytest.approx(1.0)
+    assert circuit() == pytest.approx(9.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.expectations == []
     assert sim.statevector_reads == 0
     assert len(sim.matrix_expectations) == 2
-    np.testing.assert_allclose(sim.matrix_expectations[0][0], np.array([[0.5, 1.0], [1.0, -0.5]]))
-    np.testing.assert_allclose(sim.matrix_expectations[1][0], 1.25 * np.eye(2))
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], np.array([[0.5, 3.0], [3.0, -0.5]]))
+    np.testing.assert_allclose(sim.matrix_expectations[1][0], 9.25 * np.eye(2))
     assert sim.matrix_expectations[0][1] == (0,)
     assert sim.matrix_expectations[1][1] == (0,)
 

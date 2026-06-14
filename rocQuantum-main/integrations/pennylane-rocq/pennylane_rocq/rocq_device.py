@@ -595,11 +595,27 @@ def _scale_observable_payload(payload, coefficient):
 def _merge_observable_sum_payloads(payloads):
     merged = []
     pauli_terms = []
+    matrix_positions = {}
 
     def flush_paulis():
         if pauli_terms:
             merged.append(("pauli", _combine_pauli_terms(pauli_terms)))
             pauli_terms.clear()
+
+    def append_matrix(component):
+        matrix = np.ascontiguousarray(np.asarray(component[1], dtype=np.complex128))
+        targets = tuple(int(target) for target in component[2])
+        position = matrix_positions.get(targets)
+        if position is None:
+            matrix_positions[targets] = len(merged)
+            merged.append(("matrix", matrix, targets))
+        else:
+            previous = merged[position]
+            merged[position] = (
+                "matrix",
+                np.ascontiguousarray(previous[1] + matrix),
+                previous[2],
+            )
 
     for payload in payloads:
         if payload is None:
@@ -608,6 +624,9 @@ def _merge_observable_sum_payloads(payloads):
         for component in components:
             if component[0] == "pauli":
                 pauli_terms.extend(component[1])
+            elif component[0] == "matrix":
+                flush_paulis()
+                append_matrix(component)
             else:
                 flush_paulis()
                 merged.append(component)
