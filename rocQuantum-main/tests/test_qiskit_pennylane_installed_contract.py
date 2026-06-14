@@ -24,6 +24,7 @@ class _FakeQuantumSimulator:
     enable_probabilities = False
     enable_matrix_expectation = False
     measure_qubit_results = []
+    reject_batch_gates = set()
 
     def __init__(self, num_qubits, batch_size=1):
         self._num_qubits = int(num_qubits)
@@ -82,6 +83,8 @@ class _FakeQuantumSimulator:
         self.ops.append((name, tuple(targets), tuple(params or ())))
 
     def apply_gate_batch(self, name, targets, params_by_batch):
+        if str(name).upper() in self.reject_batch_gates:
+            raise NotImplementedError(f"batch gate {name} disabled")
         self.total_gate_applications += int(self._batch_size)
         self.batch_ops.append((name, tuple(targets), tuple(float(param) for param in params_by_batch)))
 
@@ -286,6 +289,7 @@ def _install_fake_binding(monkeypatch):
     _FakeQuantumSimulator.enable_probabilities = False
     _FakeQuantumSimulator.enable_matrix_expectation = False
     _FakeQuantumSimulator.measure_qubit_results = []
+    _FakeQuantumSimulator.reject_batch_gates = set()
     return fake
 
 
@@ -503,13 +507,37 @@ def test_qiskit_backend_does_not_batch_statevector_lists_with_global_phase(monke
     assert len(result.results) == 2
     sims = _FakeQuantumSimulator.instances[before:]
     assert sims
-    assert not any(sim.batch_size() == 2 for sim in sims)
+    assert _FakeQuantumSimulator.instances[-1].batch_size() == 1
     assert _FakeQuantumSimulator.instances[-1].batch_ops == []
 
 
-def test_qiskit_backend_does_not_batch_statevector_lists_with_phase_gate(monkeypatch):
+def test_qiskit_backend_batches_statevector_phase_lists_with_native_phase_batch(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuits = []
+    for angle in (0.1, 0.2):
+        circuit = QuantumCircuit(1)
+        circuit.p(angle, 0)
+        circuits.append(circuit)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuits, sampling=False, statevector=True).result()
+
+    assert len(result.results) == 2
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("P", (0,), (0.1, 0.2))]
+    assert sim.statevector_reads == 1
+
+
+def test_qiskit_backend_does_not_batch_statevector_phase_lists_without_native_phase(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.reject_batch_gates = {"P"}
 
     from qiskit import QuantumCircuit
     from qiskit_rocquantum_provider import RocQuantumProvider
@@ -527,7 +555,55 @@ def test_qiskit_backend_does_not_batch_statevector_lists_with_phase_gate(monkeyp
     assert len(result.results) == 2
     sims = _FakeQuantumSimulator.instances[before:]
     assert sims
-    assert not any(sim.batch_size() == 2 for sim in sims)
+    assert _FakeQuantumSimulator.instances[-1].batch_size() == 1
+    assert _FakeQuantumSimulator.instances[-1].batch_ops == []
+
+
+def test_qiskit_backend_batches_statevector_controlled_phase_lists_with_native_phase_batch(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuits = []
+    for angle in (0.1, 0.2):
+        circuit = QuantumCircuit(2)
+        circuit.cp(angle, 0, 1)
+        circuits.append(circuit)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuits, sampling=False, statevector=True).result()
+
+    assert len(result.results) == 2
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("CP", (0, 1), (0.1, 0.2))]
+    assert sim.statevector_reads == 1
+
+
+def test_qiskit_backend_does_not_batch_statevector_controlled_phase_lists_without_native_phase(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    _FakeQuantumSimulator.reject_batch_gates = {"CP"}
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuits = []
+    for angle in (0.1, 0.2):
+        circuit = QuantumCircuit(2)
+        circuit.cp(angle, 0, 1)
+        circuits.append(circuit)
+
+    before = len(_FakeQuantumSimulator.instances)
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuits, sampling=False, statevector=True).result()
+
+    assert len(result.results) == 2
+    sims = _FakeQuantumSimulator.instances[before:]
+    assert sims
+    assert _FakeQuantumSimulator.instances[-1].batch_size() == 1
     assert _FakeQuantumSimulator.instances[-1].batch_ops == []
 
 

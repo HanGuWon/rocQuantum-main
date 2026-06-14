@@ -117,6 +117,8 @@ STATEVECTOR_BATCH_SAFE_OPS = {
     "crx",
     "cry",
     "crz",
+    "p",
+    "cp",
 }
 
 
@@ -535,14 +537,16 @@ class RocQuantumBackend(BackendV2):
             self._apply_global_phase_value(0.5 * theta, target=target)
         self._runtime.apply_operation("rz", [target], [theta])
 
-    def _apply_phase_gate_batch(self, q_indices, thetas):
+    def _apply_phase_gate_batch(self, q_indices, thetas, *, require_native=False):
         if len(q_indices) != 1:
             raise ValueError("Qiskit p gate requires exactly one qubit.")
 
         try:
             self._runtime.apply_operation_batch("p", [q_indices[0]], thetas)
             return
-        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+        except (NotImplementedError, RuntimeError, TypeError, ValueError) as exc:
+            if require_native:
+                raise NotImplementedError("Statevector batching requires native P batch dispatch.") from exc
             pass
         self._runtime.apply_operation_batch("rz", [q_indices[0]], thetas)
 
@@ -564,7 +568,7 @@ class RocQuantumBackend(BackendV2):
         self._runtime.apply_operation("cx", [control, target])
         self._runtime.apply_operation("rz", [target], [0.5 * theta])
 
-    def _apply_controlled_phase_gate_batch(self, q_indices, thetas):
+    def _apply_controlled_phase_gate_batch(self, q_indices, thetas, *, require_native=False):
         if len(q_indices) != 2:
             raise ValueError("Qiskit cp gate requires exactly two qubits.")
 
@@ -572,7 +576,9 @@ class RocQuantumBackend(BackendV2):
         try:
             self._runtime.apply_operation_batch("cp", [control, target], thetas)
             return
-        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+        except (NotImplementedError, RuntimeError, TypeError, ValueError) as exc:
+            if require_native:
+                raise NotImplementedError("Statevector batching requires native CP batch dispatch.") from exc
             pass
         half_thetas = [0.5 * theta for theta in thetas]
         self._runtime.apply_operation_batch("rz", [control], half_thetas)
@@ -2544,7 +2550,13 @@ class RocQuantumBackend(BackendV2):
 
         return measured_bits
 
-    def _apply_circuit_batch(self, circuits, *, include_global_phase: bool = False):
+    def _apply_circuit_batch(
+        self,
+        circuits,
+        *,
+        include_global_phase: bool = False,
+        require_native_phase: bool = False,
+    ):
         circuits = list(circuits)
         if not circuits:
             raise ValueError("_apply_circuit_batch requires at least one circuit.")
@@ -2648,6 +2660,17 @@ class RocQuantumBackend(BackendV2):
                 len(params) == 1 for params in normalized_params_by_circuit
             ):
                 thetas = [params[0] for params in normalized_params_by_circuit]
+                if reference_op.name in {"p", "cp"}:
+                    if reference_op.name == "p":
+                        self._apply_phase_gate_batch(q_indices, thetas, require_native=require_native_phase)
+                    else:
+                        self._apply_controlled_phase_gate_batch(
+                            q_indices,
+                            thetas,
+                            require_native=require_native_phase,
+                        )
+                    touched_qubits.update(q_indices)
+                    continue
                 if self._apply_controlled_global_phase_gate_batch(reference_op, q_indices, thetas):
                     touched_qubits.update(q_indices)
                     continue
@@ -2704,16 +2727,12 @@ class RocQuantumBackend(BackendV2):
                 continue
 
             if normalized_params_by_circuit is not None and reference_op.name in {
-                "p", "cp", "rxx", "ryy", "rzz", "rzx"
+                "rxx", "ryy", "rzz", "rzx"
             } and all(
                 len(params) == 1 for params in normalized_params_by_circuit
             ):
                 thetas = [params[0] for params in normalized_params_by_circuit]
-                if reference_op.name == "p":
-                    self._apply_phase_gate_batch(q_indices, thetas)
-                elif reference_op.name == "cp":
-                    self._apply_controlled_phase_gate_batch(q_indices, thetas)
-                elif reference_op.name == "rxx":
+                if reference_op.name == "rxx":
                     self._apply_rxx_gate_batch(q_indices, thetas)
                 elif reference_op.name == "ryy":
                     self._apply_ryy_gate_batch(q_indices, thetas)
@@ -3252,7 +3271,7 @@ class RocQuantumBackend(BackendV2):
             return None
 
         try:
-            self._apply_circuit_batch(circuits, include_global_phase=False)
+            self._apply_circuit_batch(circuits, include_global_phase=False, require_native_phase=True)
             statevectors = np.asarray(self._runtime.statevectors(), dtype=np.complex128).reshape(
                 len(circuits),
                 1 << int(circuits[0].num_qubits),
