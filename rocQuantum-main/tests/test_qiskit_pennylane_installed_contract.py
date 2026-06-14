@@ -7056,6 +7056,64 @@ def test_pennylane_mixed_matrix_sum_expval_uses_native_readouts(monkeypatch):
         assert sim.matrix_expectations[0][1] == (0,)
 
 
+def test_pennylane_mixed_matrix_sum_elides_merged_zero_readout(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = qml.sum(
+        qml.Hermitian(matrix, wires=0),
+        -1.0 * qml.Hermitian(matrix.copy(), wires=0),
+        0.5 * qml.PauliZ(0),
+    )
+
+    @qml.qnode(dev)
+    def circuit():
+        return qml.expval(observable)
+
+    assert circuit() == pytest.approx(0.25)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.matrix_expectations == []
+    assert sim.statevector_reads == 0
+
+
+def test_pennylane_mixed_matrix_sum_folds_merged_diagonal_readout(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    diagonal_after_merge = np.array([[0.25, -1.0], [-1.0, -0.25]], dtype=np.complex128)
+    observable = qml.sum(
+        qml.Hermitian(matrix, wires=0),
+        qml.Hermitian(diagonal_after_merge, wires=0),
+    )
+
+    @qml.qnode(dev)
+    def circuit():
+        return qml.expval(observable)
+
+    assert circuit() == pytest.approx(0.125)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.matrix_expectations == []
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_mixed_matrix_sum_variance_uses_native_dense_moments(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

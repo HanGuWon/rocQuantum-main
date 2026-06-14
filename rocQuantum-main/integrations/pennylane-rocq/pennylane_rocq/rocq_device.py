@@ -617,6 +617,39 @@ def _merge_observable_sum_payloads(payloads):
                 previous[2],
             )
 
+    def fold_matrix_component(component):
+        matrix, targets = component[1], component[2]
+        identity_coefficient = _identity_matrix_coefficient(matrix)
+        if identity_coefficient is not None:
+            return "pauli", [(identity_coefficient, "", [])]
+
+        diagonal_terms = _diagonal_matrix_pauli_terms(matrix, targets)
+        if diagonal_terms is not None:
+            return "pauli", diagonal_terms
+        return component
+
+    def compact_components(components):
+        compacted = []
+        pending_paulis = []
+
+        def flush_pending_paulis():
+            if pending_paulis:
+                terms = _combine_pauli_terms(pending_paulis)
+                if terms:
+                    compacted.append(("pauli", terms))
+                pending_paulis.clear()
+
+        for component in components:
+            if component[0] == "matrix":
+                component = fold_matrix_component(component)
+            if component[0] == "pauli":
+                pending_paulis.extend(component[1])
+            else:
+                flush_pending_paulis()
+                compacted.append(component)
+        flush_pending_paulis()
+        return compacted
+
     for payload in payloads:
         if payload is None:
             return None
@@ -631,6 +664,7 @@ def _merge_observable_sum_payloads(payloads):
                 flush_paulis()
                 merged.append(component)
     flush_paulis()
+    merged = compact_components(merged)
 
     if not merged:
         return "pauli", []
