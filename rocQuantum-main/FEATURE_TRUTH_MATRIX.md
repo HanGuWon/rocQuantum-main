@@ -28,7 +28,7 @@ Recent Qiskit diagonal-observable note: native Estimator and direct provider exp
 
 Recent PennyLane diagonal-observable note: scalar identity and small diagonal `qml.Hermitian` or CSR `qml.SparseHamiltonian` observables, including scalar `qml.s_prod` wrappers, now fold into constant or Pauli-Z payloads for expval, variance, compatible `batch_execute`, and explicit adjoint payloads, avoiding dense/CSR expectation hooks and statevector fallback.
 
-Recent PennyLane Projector note: computational-basis `qml.Projector` variance now reuses the Pauli-Z projector expectation via `P^2=P`, including compatible `batch_execute`, avoiding a separate Pauli-square readout plan after Projector lowering.
+Recent PennyLane Projector note: computational-basis `qml.Projector` variance now reuses the Pauli-Z projector expectation via `P^2=P`, including scalar wrappers and compatible `batch_execute`, avoiding a separate Pauli-square readout plan after Projector lowering.
 
 Recent PennyLane matrix-adjoint note: fixed `qml.QubitUnitary`, `qml.ControlledQubitUnitary`, dense `qml.BlockEncode`, and sparse `qml.BlockEncode` operations now enter native adjoint payloads as dense matrix or CSR operation payloads, with conjugate-transpose inverse application and open-control wrapping in the root binding; trainable matrix-parameter differentiation remains an explicit fallback boundary.
 

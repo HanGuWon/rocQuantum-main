@@ -6098,6 +6098,38 @@ def test_pennylane_batch_execute_uses_projector_idempotent_variance(monkeypatch)
     assert sim.statevector_reads == 0
 
 
+def test_pennylane_batch_execute_uses_scaled_projector_idempotent_variance(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    observable = qml.s_prod(2.0, qml.Projector([1, 0], wires=[0, 1]))
+    circuits = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.var(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.var(observable)]),
+    ]
+
+    np.testing.assert_allclose(
+        np.asarray(dev.batch_execute(circuits), dtype=float),
+        np.array([0.4375, 0.4375], dtype=float),
+    )
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [
+        ("Z", (1,)),
+        ("Z", (0,)),
+        ("ZZ", (0, 1)),
+    ]
+    assert sim.matrix_batch_expectations == []
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_batch_execute_uses_batched_mixed_matrix_sum_expval(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -7081,6 +7113,32 @@ def test_pennylane_projector_var_uses_native_z_projector_terms(monkeypatch):
         return qml.var(qml.Projector([1, 0], wires=[0, 1]))
 
     assert projector_var_circuit() == pytest.approx(0.109375)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [
+        ("Z", (1,)),
+        ("Z", (0,)),
+        ("ZZ", (0, 1)),
+    ]
+    assert sim.statevector_reads == 0
+
+
+def test_pennylane_scaled_projector_var_uses_idempotent_native_terms(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    observable = qml.s_prod(2.0, qml.Projector([1, 0], wires=[0, 1]))
+
+    @qml.qnode(dev)
+    def projector_var_circuit():
+        return qml.var(observable)
+
+    assert projector_var_circuit() == pytest.approx(0.4375)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.expectations == [
         ("Z", (1,)),
