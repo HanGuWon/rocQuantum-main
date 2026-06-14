@@ -5836,6 +5836,11 @@ class RocQDevice(QubitDevice):
                     if normalized_payload[0] == "sparse":
                         means, _ = cached_sparse_moments(normalized_payload)
                         observable_batch_cache[cache_key] = means
+                    elif normalized_payload[0] == "sum":
+                        result = np.zeros(self._runtime.batch_size(), dtype=np.complex128)
+                        for component in normalized_payload[1]:
+                            result += cached_observable(component)
+                        observable_batch_cache[cache_key] = result
                     else:
                         observable_batch_cache[cache_key] = _evaluate_observable_batch_payload(
                             self._runtime,

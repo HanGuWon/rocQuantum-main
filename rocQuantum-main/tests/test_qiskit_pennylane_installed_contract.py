@@ -6373,7 +6373,47 @@ def test_pennylane_batch_execute_uses_batched_mixed_matrix_sum_expval(monkeypatc
     assert sim.batch_expectations == [("Z", (0,))]
     assert len(sim.matrix_batch_expectations) == 1
     assert sim.matrix_batch_expectations[0][1] == (0,)
-    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], 3.0 * matrix)
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], matrix)
+    assert sim.matrix_expectations == []
+    assert sim.statevector_reads == 0
+
+
+def test_pennylane_batch_execute_reuses_sum_component_matrix_readouts(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    matrix = np.array([[1.0, 1.0], [1.0, 1.0]], dtype=np.complex128)
+    observable = qml.sum(qml.PauliZ(0), qml.Hermitian(matrix, wires=0))
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.RY(0.1, wires=0)],
+            [qml.expval(qml.PauliZ(0)), qml.expval(observable)],
+        ),
+        qml.tape.QuantumScript(
+            [qml.RY(0.2, wires=0)],
+            [qml.expval(qml.PauliZ(0)), qml.expval(observable)],
+        ),
+    ]
+
+    results = dev.batch_execute(circuits)
+
+    assert len(results) == 2
+    for result in results:
+        np.testing.assert_allclose(result, (0.5, 1.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,))]
+    assert len(sim.matrix_batch_expectations) == 1
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], matrix)
+    assert sim.matrix_batch_expectations[0][1] == (0,)
     assert sim.matrix_expectations == []
     assert sim.statevector_reads == 0
 
@@ -8007,9 +8047,53 @@ def test_pennylane_mixed_sparse_sum_batch_uses_native_readouts(monkeypatch):
     assert sim.sparse_moments == []
     assert sim.statevector_reads == 0
     data, indices, indptr, shape = sim.sparse_batch_moments[0]
-    np.testing.assert_allclose(data, np.array([3.0, 3.0], dtype=np.complex128))
+    np.testing.assert_allclose(data, np.array([1.0, 1.0], dtype=np.complex128))
     np.testing.assert_array_equal(indices, np.array([1, 0], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+    assert shape == (2, 2)
+
+
+def test_pennylane_batch_execute_reuses_sum_component_sparse_readouts(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_sparse_moments", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = sp.csr_matrix(np.array([[1.0, 1.0], [1.0, 1.0]], dtype=np.complex128))
+    observable = qml.sum(qml.PauliZ(0), qml.SparseHamiltonian(hamiltonian_matrix, wires=[0]))
+    dev = qml.device("lightning.rocq", wires=1)
+    tapes = [
+        qml.tape.QuantumScript(
+            [qml.RY(0.1, wires=0)],
+            [qml.expval(qml.PauliZ(0)), qml.expval(observable)],
+        ),
+        qml.tape.QuantumScript(
+            [qml.RY(0.2, wires=0)],
+            [qml.expval(qml.PauliZ(0)), qml.expval(observable)],
+        ),
+    ]
+
+    results = dev.batch_execute(tapes)
+
+    assert len(results) == 2
+    for result in results:
+        np.testing.assert_allclose(result, (0.5, 1.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,))]
+    assert len(sim.sparse_batch_moments) == 1
+    assert sim.sparse_moments == []
+    assert sim.statevector_reads == 0
+    data, indices, indptr, shape = sim.sparse_batch_moments[0]
+    np.testing.assert_allclose(data, np.array([1.0, 1.0, 1.0, 1.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([0, 1, 0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(indptr, np.array([0, 2, 4], dtype=np.int64))
     assert shape == (2, 2)
 
 
