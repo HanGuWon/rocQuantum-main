@@ -3129,6 +3129,61 @@ class RocQuantumBackend(BackendV2):
             "memory": memory if memory_enabled else None,
         }
 
+    def _try_run_batched_sampling_circuits(self, circuits, shots, memory_enabled):
+        circuits = list(circuits)
+        if len(circuits) <= 1:
+            return None
+        if any(self._requests_statevector(circuit) for circuit in circuits):
+            return None
+        if any(self._has_runtime_reset(circuit) or self._has_dynamic_circuit(circuit) for circuit in circuits):
+            return None
+
+        try:
+            measured_bits = self._apply_circuit_batch(circuits, include_global_phase=False)
+            measured_items = (
+                sorted(measured_bits.items())
+                if measured_bits
+                else [(idx, idx) for idx in range(circuits[0].num_qubits)]
+            )
+            qubits_to_measure, sample_offsets = qiskit_sample_plan(measured_items)
+            raw_samples_batch = np.asarray(
+                self._runtime.measure_batch(qubits_to_measure, int(shots)),
+                dtype=np.int64,
+            )
+        except (NotImplementedError, RuntimeError, TypeError, ValueError):
+            return None
+
+        expected_shape = (len(circuits), int(shots))
+        if raw_samples_batch.shape != expected_shape:
+            return None
+
+        results = []
+        for circuit, raw_samples in zip(circuits, raw_samples_batch):
+            memory_width = getattr(circuit, "num_clbits", 0) or len(measured_items)
+            memory = qiskit_memory_from_samples(
+                raw_samples,
+                measured_items,
+                memory_width,
+                sample_offsets,
+            )
+            exp_data = ExperimentResultData(
+                counts=counts_from_memory(memory),
+                memory=memory if memory_enabled else None,
+            )
+            results.append(
+                ExperimentResult(
+                    shots=int(shots),
+                    success=True,
+                    data=exp_data,
+                    header=getattr(
+                        circuit,
+                        "header",
+                        {"name": getattr(circuit, "name", None), "metadata": getattr(circuit, "metadata", None)},
+                    ),
+                )
+            )
+        return results
+
     def run(self, run_input, **options):
         if not isinstance(run_input, list):
             run_input = [run_input]
@@ -3136,6 +3191,25 @@ class RocQuantumBackend(BackendV2):
         job_id = str(uuid.uuid4())
         shots = int(options.get("shots", self.options.shots))
         results = []
+
+        if bool(options.get("sampling", self.options.sampling)) and not bool(
+            options.get("statevector", self.options.statevector)
+        ):
+            batched_results = self._try_run_batched_sampling_circuits(
+                run_input,
+                shots,
+                bool(options.get("memory", self.options.memory)),
+            )
+            if batched_results is not None:
+                result = Result(
+                    backend_name=self.name,
+                    backend_version=getattr(self, "backend_version", "0.1.0"),
+                    job_id=job_id,
+                    qobj_id=None,
+                    success=True,
+                    results=batched_results,
+                )
+                return RocQuantumJob(self, job_id, result)
 
         for circuit in run_input:
             return_statevector = bool(
