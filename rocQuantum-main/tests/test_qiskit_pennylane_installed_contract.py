@@ -3949,6 +3949,24 @@ def test_qiskit_estimator_dense_operator_rejects_invalid_explicit_targets(monkey
         estimate_observable(Runtime(), (observable, [0, 0]), 2)
 
 
+def test_qiskit_estimator_dense_scalar_operator_rejects_nonempty_explicit_targets(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable
+
+    class Runtime:
+        def expectation_matrix(self, matrix, targets):
+            raise AssertionError("scalar observables should fail or fold before runtime dispatch")
+
+    observable = Operator(np.array([[2.0]], dtype=np.complex128))
+
+    assert estimate_observable(Runtime(), (observable, []), 1) == pytest.approx(2.0)
+    with pytest.raises(ValueError, match="explicit targets"):
+        estimate_observable(Runtime(), (observable, [0]), 1)
+
+
 def test_qiskit_native_estimator_accepts_dense_operator(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

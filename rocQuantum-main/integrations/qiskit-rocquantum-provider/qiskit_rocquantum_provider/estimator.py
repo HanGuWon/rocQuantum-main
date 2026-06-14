@@ -110,6 +110,8 @@ def _dense_operator_plan(observable, num_qubits: int):
 
     target_qubits = dimension.bit_length() - 1
     if target_qubits == 0:
+        if explicit_targets is not None:
+            _normalize_dense_operator_targets(explicit_targets, target_qubits, int(num_qubits))
         return "constant", complex(matrix[0, 0])
     if target_qubits > int(num_qubits):
         raise ValueError("Dense Qiskit Operator observable acts on more qubits than the circuit.")
