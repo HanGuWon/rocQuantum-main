@@ -6061,6 +6061,40 @@ def test_pennylane_batch_execute_reuses_scaled_pauli_expval_readout(monkeypatch)
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_reuses_reordered_scaled_pauli_sum_readout(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    base_observable = qml.sum(qml.PauliZ(0), qml.PauliX(0))
+    scaled_reordered = qml.sum(2.0 * qml.PauliX(0), 2.0 * qml.PauliZ(0))
+    dev = qml.device("lightning.rocq", wires=1)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.RY(0.1, wires=0)],
+            [qml.expval(base_observable), qml.expval(scaled_reordered)],
+        ),
+        qml.tape.QuantumScript(
+            [qml.RY(0.2, wires=0)],
+            [qml.expval(base_observable), qml.expval(scaled_reordered)],
+        ),
+    ]
+
+    results = dev.batch_execute(circuits)
+
+    assert len(results) == 2
+    for result in results:
+        np.testing.assert_allclose(result, (1.0, 2.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("X", (0,)), ("Z", (0,))]
+
+
 def test_pennylane_batch_execute_uses_batched_variance(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -6270,8 +6304,8 @@ def test_pennylane_batch_execute_uses_projector_idempotent_variance(monkeypatch)
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
     assert sim.batch_expectations == [
-        ("Z", (1,)),
         ("Z", (0,)),
+        ("Z", (1,)),
         ("ZZ", (0, 1)),
     ]
     assert sim.matrix_batch_expectations == []
@@ -6302,8 +6336,8 @@ def test_pennylane_batch_execute_uses_scaled_projector_idempotent_variance(monke
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
     assert sim.batch_expectations == [
-        ("Z", (1,)),
         ("Z", (0,)),
+        ("Z", (1,)),
         ("ZZ", (0, 1)),
     ]
     assert sim.matrix_batch_expectations == []

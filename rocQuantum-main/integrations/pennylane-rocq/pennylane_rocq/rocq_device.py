@@ -1110,7 +1110,10 @@ def _factor_complex_array(values):
 
 
 def _factor_pauli_payload_terms(terms):
-    terms = _combine_pauli_terms(terms)
+    terms = sorted(
+        _combine_pauli_terms(terms),
+        key=lambda term: (str(term[1]), tuple(int(target) for target in term[2])),
+    )
     if not terms:
         return 1.0 + 0.0j, []
 
