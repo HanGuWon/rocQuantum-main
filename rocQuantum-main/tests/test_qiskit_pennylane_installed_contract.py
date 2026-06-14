@@ -3852,6 +3852,61 @@ def test_qiskit_estimator_dense_operator_batch_helper_uses_matrix_batch(monkeypa
     np.testing.assert_allclose(runtime.calls[0][0], matrix)
 
 
+def test_qiskit_estimator_reuses_scalar_multiple_dense_operator_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1)
+    matrix = np.array([[1.0, 1.0], [1.0, 1.0]], dtype=np.complex128)
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, [Operator(matrix), Operator(2.0 * matrix)])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([1.0, 2.0], dtype=float))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert len(sim.matrix_expectations) == 1
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
+    assert sim.matrix_expectations[0][1] == (0,)
+    assert sim.statevector_reads == 0
+
+
+def test_qiskit_estimator_reuses_scalar_multiple_dense_operator_batch_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1)
+    circuit.ry(theta, 0)
+    matrix = np.array([[1.0, 1.0], [1.0, 1.0]], dtype=np.complex128)
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, [Operator(matrix), Operator(2.0 * matrix)], [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([1.0, 2.0], dtype=float))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert len(sim.matrix_batch_expectations) == 1
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], matrix)
+    assert sim.matrix_batch_expectations[0][1] == (0,)
+    assert sim.matrix_expectations == []
+    assert sim.statevector_reads == 0
+
+
 def test_qiskit_estimator_partial_dense_operator_uses_matrix_targets(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

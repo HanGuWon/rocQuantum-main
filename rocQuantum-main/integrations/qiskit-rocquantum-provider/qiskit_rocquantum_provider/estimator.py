@@ -287,6 +287,16 @@ def _dense_matrix_cache_key(matrix, targets):
     )
 
 
+def _factor_dense_operator_matrix(matrix):
+    matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+    nonzero = np.flatnonzero(np.abs(matrix.reshape(-1)) > 1e-15)
+    if nonzero.size == 0:
+        return 1.0 + 0.0j, matrix
+
+    coefficient = complex(matrix.reshape(-1)[int(nonzero[0])])
+    return coefficient, np.ascontiguousarray(matrix / coefficient)
+
+
 def _dense_identity_operator_coefficient(matrix):
     matrix = np.asarray(matrix, dtype=np.complex128)
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] == 0:
@@ -356,8 +366,9 @@ def _observable_plan(observable, num_qubits: int):
         if diagonal_terms is not None:
             signature = tuple(_combine_observable_terms(diagonal_terms, int(num_qubits)))
             return ("pauli", signature), ("pauli", signature)
-        cache_key = _dense_matrix_cache_key(matrix, targets)
-        return cache_key, ("matrix", (matrix, tuple(targets)))
+        coefficient, normalized_matrix = _factor_dense_operator_matrix(matrix)
+        cache_key = _dense_matrix_cache_key(normalized_matrix, targets)
+        return cache_key, ("matrix", (normalized_matrix, tuple(targets), coefficient))
 
     signature = _observable_signature(observable, int(num_qubits))
     return ("pauli", signature), ("pauli", signature)
@@ -405,14 +416,30 @@ def _estimate_observable_plan(runtime, plan, num_qubits: int) -> float:
         return _estimate_combined_observable_terms(runtime, payload, int(num_qubits))
 
     if kind == "matrix":
-        matrix, targets = payload
-        result = runtime.expectation_matrix(matrix, targets)
+        matrix, targets, coefficient = payload
+        result = coefficient * runtime.expectation_matrix(matrix, targets)
         real_result = np.real_if_close(result)
         if np.iscomplexobj(real_result):
             raise ValueError("Observable expectation has a non-negligible imaginary component.")
         return float(real_result)
 
     raise TypeError(f"Unsupported observable plan kind: {kind!r}")
+
+
+def _estimate_observable_plan_cached(runtime, cache_key, plan, num_qubits: int, cache) -> float:
+    kind, payload = plan
+    if kind != "matrix":
+        if cache_key not in cache:
+            cache[cache_key] = _estimate_observable_plan(runtime, plan, int(num_qubits))
+        return cache[cache_key]
+
+    matrix, targets, coefficient = payload
+    if cache_key not in cache:
+        cache[cache_key] = runtime.expectation_matrix(matrix, targets)
+    real_result = np.real_if_close(coefficient * cache[cache_key])
+    if np.iscomplexobj(real_result):
+        raise ValueError("Observable expectation has a non-negligible imaginary component.")
+    return float(real_result)
 
 
 def _estimate_observable_plan_batch(runtime, plan, num_qubits: int) -> np.ndarray:
@@ -427,14 +454,30 @@ def _estimate_observable_plan_batch(runtime, plan, num_qubits: int) -> np.ndarra
         return _estimate_combined_observable_terms_batch(runtime, payload, int(num_qubits))
 
     if kind == "matrix":
-        matrix, targets = payload
-        result = runtime.expectation_matrix_batch(matrix, targets)
+        matrix, targets, coefficient = payload
+        result = coefficient * runtime.expectation_matrix_batch(matrix, targets)
         real_result = np.real_if_close(result)
         if np.iscomplexobj(real_result):
             raise ValueError("Observable expectation has a non-negligible imaginary component.")
         return np.asarray(real_result, dtype=float)
 
     raise TypeError(f"Unsupported observable plan kind: {kind!r}")
+
+
+def _estimate_observable_plan_batch_cached(runtime, cache_key, plan, num_qubits: int, cache) -> np.ndarray:
+    kind, payload = plan
+    if kind != "matrix":
+        if cache_key not in cache:
+            cache[cache_key] = _estimate_observable_plan_batch(runtime, plan, int(num_qubits))
+        return cache[cache_key]
+
+    matrix, targets, coefficient = payload
+    if cache_key not in cache:
+        cache[cache_key] = runtime.expectation_matrix_batch(matrix, targets)
+    real_result = np.real_if_close(coefficient * cache[cache_key])
+    if np.iscomplexobj(real_result):
+        raise ValueError("Observable expectation has a non-negligible imaginary component.")
+    return np.asarray(real_result, dtype=float)
 
 
 def estimate_observable(runtime, observable, num_qubits: int) -> float:
@@ -511,13 +554,13 @@ class RocQuantumEstimator(BaseEstimatorV2):
                 observable_index = _index_for_shape(index, pub.observables.shape)
                 observable = pub.observables[observable_index]
                 cache_key, plan = _observable_plan(observable, int(circuit.num_qubits))
-                if cache_key not in observable_cache:
-                    observable_cache[cache_key] = _estimate_observable_plan(
-                        self._backend._runtime,
-                        plan,
-                        circuit.num_qubits,
-                    )
-                evs[index] = observable_cache[cache_key]
+                evs[index] = _estimate_observable_plan_cached(
+                    self._backend._runtime,
+                    cache_key,
+                    plan,
+                    circuit.num_qubits,
+                    observable_cache,
+                )
 
         if pub.shape == ():
             evs = evs[()]
@@ -557,18 +600,21 @@ class RocQuantumEstimator(BaseEstimatorV2):
             }
         )
         observable_cache_keys = {}
+        observable_plans = {}
         observable_values_by_cache = {}
         for observable_index in observable_indices:
             observable = pub.observables[observable_index]
             try:
                 cache_key, plan = _observable_plan(observable, int(pub.circuit.num_qubits))
-                if cache_key not in observable_values_by_cache:
-                    observable_values_by_cache[cache_key] = _estimate_observable_plan_batch(
-                        self._backend._runtime,
-                        plan,
-                        int(pub.circuit.num_qubits),
-                    )
+                _estimate_observable_plan_batch_cached(
+                    self._backend._runtime,
+                    cache_key,
+                    plan,
+                    int(pub.circuit.num_qubits),
+                    observable_values_by_cache,
+                )
                 observable_cache_keys[observable_index] = cache_key
+                observable_plans[observable_index] = plan
             except (NotImplementedError, RuntimeError, TypeError, ValueError):
                 return None
 
@@ -579,7 +625,15 @@ class RocQuantumEstimator(BaseEstimatorV2):
             parameter_index = _index_for_shape(index, parameter_shape)
             observable_index = _index_for_shape(index, pub.observables.shape)
             cache_key = observable_cache_keys[observable_index]
-            evs[index] = observable_values_by_cache[cache_key][parameter_offsets[parameter_index]]
+            plan = observable_plans[observable_index]
+            values = _estimate_observable_plan_batch_cached(
+                self._backend._runtime,
+                cache_key,
+                plan,
+                int(pub.circuit.num_qubits),
+                observable_values_by_cache,
+            )
+            evs[index] = values[parameter_offsets[parameter_index]]
 
         return PubResult(
             DataBin(evs=evs, stds=stds, shape=pub.shape),
