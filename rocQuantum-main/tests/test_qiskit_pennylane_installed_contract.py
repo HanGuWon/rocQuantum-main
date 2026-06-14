@@ -3841,14 +3841,15 @@ def test_qiskit_estimator_dense_operator_batch_helper_uses_matrix_batch(monkeypa
             return np.array([1.0 + 0.0j, -1.0 + 0.0j], dtype=np.complex128)
 
     runtime = BatchRuntime()
-    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = Operator(matrix)
 
     np.testing.assert_allclose(
         estimate_observable_batch(runtime, observable, 1),
         np.array([1.0, -1.0], dtype=float),
     )
     assert runtime.calls[0][1] == (0,)
-    np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -1.0]))
+    np.testing.assert_allclose(runtime.calls[0][0], matrix)
 
 
 def test_qiskit_estimator_partial_dense_operator_uses_matrix_targets(monkeypatch):
@@ -3867,11 +3868,12 @@ def test_qiskit_estimator_partial_dense_operator_uses_matrix_targets(monkeypatch
             return 0.25 + 0.0j
 
     runtime = Runtime()
-    observable = Operator(np.diag([1.0, -0.5]).astype(np.complex128))
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = Operator(matrix)
 
     assert estimate_observable(runtime, observable, 2) == pytest.approx(0.25)
     assert runtime.calls[0][1] == (0,)
-    np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -0.5]))
+    np.testing.assert_allclose(runtime.calls[0][0], matrix)
 
 
 def test_qiskit_estimator_dense_operator_uses_dimension_metadata_targets(monkeypatch):
@@ -3890,15 +3892,16 @@ def test_qiskit_estimator_dense_operator_uses_dimension_metadata_targets(monkeyp
             return 0.75 + 0.0j
 
     runtime = Runtime()
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
     observable = Operator(
-        np.diag([1.0, -0.5]).astype(np.complex128),
+        matrix,
         input_dims=(2, 1),
         output_dims=(2, 1),
     )
 
     assert estimate_observable(runtime, observable, 2) == pytest.approx(0.75)
     assert runtime.calls[0][1] == (1,)
-    np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -0.5]))
+    np.testing.assert_allclose(runtime.calls[0][0], matrix)
 
 
 def test_qiskit_estimator_dense_operator_accepts_explicit_targets(monkeypatch):
@@ -3924,7 +3927,8 @@ def test_qiskit_estimator_dense_operator_accepts_explicit_targets(monkeypatch):
             return 2
 
     runtime = Runtime()
-    observable = Operator(np.diag([1.0, -0.5]).astype(np.complex128))
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = Operator(matrix)
 
     assert estimate_observable(runtime, (observable, [1]), 2) == pytest.approx(0.75)
     np.testing.assert_allclose(
@@ -3933,7 +3937,7 @@ def test_qiskit_estimator_dense_operator_accepts_explicit_targets(monkeypatch):
     )
     assert runtime.calls[0][2] == (1,)
     assert runtime.calls[1][2] == (1,)
-    np.testing.assert_allclose(runtime.calls[0][1], np.diag([1.0, -0.5]))
+    np.testing.assert_allclose(runtime.calls[0][1], matrix)
 
 
 def test_qiskit_estimator_dense_operator_mapping_wrapper_uses_default_targets(monkeypatch):
@@ -3952,11 +3956,120 @@ def test_qiskit_estimator_dense_operator_mapping_wrapper_uses_default_targets(mo
             return 0.5 + 0.0j
 
     runtime = Runtime()
-    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = Operator(matrix)
 
     assert estimate_observable(runtime, {"operator": observable}, 1) == pytest.approx(0.5)
     assert runtime.calls[0][1] == (0,)
-    np.testing.assert_allclose(runtime.calls[0][0], np.diag([1.0, -1.0]))
+    np.testing.assert_allclose(runtime.calls[0][0], matrix)
+
+
+def test_qiskit_estimator_diagonal_dense_operator_uses_pauli_terms(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable
+
+    class Runtime:
+        def __init__(self):
+            self.calls = []
+
+        def expectation_pauli_string(self, pauli_string, targets):
+            self.calls.append((pauli_string, tuple(targets)))
+            return 0.25
+
+        def expectation_matrix(self, matrix, targets):
+            raise AssertionError("diagonal dense operators should lower to Pauli terms")
+
+    runtime = Runtime()
+    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+
+    assert estimate_observable(runtime, observable, 1) == pytest.approx(0.25)
+    assert runtime.calls == [("Z", (0,))]
+
+
+def test_qiskit_estimator_diagonal_dense_operator_batch_uses_pauli_terms(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable_batch
+
+    class BatchRuntime:
+        def __init__(self):
+            self.calls = []
+
+        def batch_size(self):
+            return 2
+
+        def expectation_pauli_string_batch(self, pauli_string, targets):
+            self.calls.append((pauli_string, tuple(targets)))
+            return np.array([0.25, -0.5], dtype=float)
+
+        def expectation_matrix_batch(self, matrix, targets):
+            raise AssertionError("diagonal dense operators should lower to Pauli terms")
+
+    runtime = BatchRuntime()
+    observable = Operator(np.diag([2.0, -2.0]).astype(np.complex128))
+
+    np.testing.assert_allclose(
+        estimate_observable_batch(runtime, observable, 1),
+        np.array([0.5, -1.0], dtype=float),
+    )
+    assert runtime.calls == [("Z", (0,))]
+
+
+def test_qiskit_estimator_diagonal_dense_operator_respects_explicit_targets(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable
+
+    class Runtime:
+        def __init__(self):
+            self.calls = []
+
+        def expectation_pauli_string(self, pauli_string, targets):
+            self.calls.append((pauli_string, tuple(targets)))
+            return 0.75
+
+        def expectation_matrix(self, matrix, targets):
+            raise AssertionError("diagonal dense operators should lower to Pauli terms")
+
+    runtime = Runtime()
+    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+
+    assert estimate_observable(runtime, (observable, [1]), 2) == pytest.approx(0.75)
+    assert runtime.calls == [("Z", (1,))]
+
+
+def test_qiskit_estimator_two_qubit_diagonal_dense_operator_uses_pauli_terms(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable
+
+    class Runtime:
+        def __init__(self):
+            self.calls = []
+
+        def expectation_pauli_string(self, pauli_string, targets):
+            self.calls.append((pauli_string, tuple(targets)))
+            if pauli_string == "ZZ" and tuple(targets) == (0, 1):
+                return 0.25
+            raise AssertionError((pauli_string, targets))
+
+        def expectation_matrix(self, matrix, targets):
+            raise AssertionError("diagonal dense operators should lower to Pauli terms")
+
+    runtime = Runtime()
+    observable = Operator(np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.complex128))
+
+    assert estimate_observable(runtime, observable, 2) == pytest.approx(0.25)
+    assert runtime.calls == [("ZZ", (0, 1))]
 
 
 def test_qiskit_estimator_dense_operator_rejects_invalid_explicit_targets(monkeypatch):
@@ -4004,16 +4117,18 @@ def test_qiskit_native_estimator_accepts_dense_operator(monkeypatch):
     from qiskit_rocquantum_provider import RocQuantumProvider
 
     circuit = QuantumCircuit(1)
-    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = Operator(matrix)
 
     result = RocQuantumProvider().get_estimator().run(
         [(circuit, observable)],
     ).result()[0]
 
-    assert float(result.data.evs) == pytest.approx(1.0)
+    assert float(result.data.evs) == pytest.approx(0.0)
     assert result.metadata["native"] is True
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations[0][1] == (0,)
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
     assert sim.expectations == []
     assert sim.statevector_reads == 0
 
@@ -4027,13 +4142,13 @@ def test_qiskit_native_estimator_dense_operator_uses_runtime_statevector_fallbac
     from qiskit_rocquantum_provider import RocQuantumProvider
 
     circuit = QuantumCircuit(1)
-    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+    observable = Operator(np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128))
 
     result = RocQuantumProvider().get_estimator().run(
         [(circuit, observable)],
     ).result()[0]
 
-    assert float(result.data.evs) == pytest.approx(1.0)
+    assert float(result.data.evs) == pytest.approx(0.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations == []
     assert sim.expectations == []
@@ -4050,15 +4165,17 @@ def test_qiskit_native_estimator_accepts_partial_dense_operator(monkeypatch):
     from qiskit_rocquantum_provider import RocQuantumProvider
 
     circuit = QuantumCircuit(2)
-    observable = Operator(np.diag([1.0, -0.5]).astype(np.complex128))
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = Operator(matrix)
 
     result = RocQuantumProvider().get_estimator().run(
         [(circuit, observable)],
     ).result()[0]
 
-    assert float(result.data.evs) == pytest.approx(0.25)
+    assert float(result.data.evs) == pytest.approx(0.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations[0][1] == (0,)
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
     assert sim.expectations == []
     assert sim.statevector_reads == 0
 
@@ -4073,15 +4190,17 @@ def test_qiskit_native_estimator_accepts_explicit_dense_operator_targets(monkeyp
     from qiskit_rocquantum_provider import RocQuantumProvider
 
     circuit = QuantumCircuit(2)
-    observable = Operator(np.diag([1.0, -0.5]).astype(np.complex128))
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = Operator(matrix)
 
     result = RocQuantumProvider().get_estimator().run(
         [(circuit, (observable, [1]))],
     ).result()[0]
 
-    assert float(result.data.evs) == pytest.approx(0.25)
+    assert float(result.data.evs) == pytest.approx(0.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations[0][1] == (1,)
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
     assert sim.expectations == []
     assert sim.statevector_reads == 0
 
@@ -4096,16 +4215,40 @@ def test_qiskit_native_estimator_accepts_dense_operator_mapping_without_targets(
     from qiskit_rocquantum_provider import RocQuantumProvider
 
     circuit = QuantumCircuit(1)
-    observable = {"operator": Operator(np.diag([1.0, -1.0]).astype(np.complex128))}
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = {"operator": Operator(matrix)}
 
     result = RocQuantumProvider().get_estimator().run(
         [(circuit, observable)],
     ).result()[0]
 
-    assert float(result.data.evs) == pytest.approx(1.0)
+    assert float(result.data.evs) == pytest.approx(0.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations[0][1] == (0,)
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
     assert sim.expectations == []
+    assert sim.statevector_reads == 0
+
+
+def test_qiskit_native_estimator_diagonal_dense_operator_uses_pauli_terms(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1)
+    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable)],
+    ).result()[0]
+
+    assert float(result.data.evs) == pytest.approx(0.5)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.matrix_expectations == []
     assert sim.statevector_reads == 0
 
 
@@ -4122,7 +4265,36 @@ def test_qiskit_native_estimator_batches_dense_operator_parameters(monkeypatch):
     theta = Parameter("theta")
     circuit = QuantumCircuit(1)
     circuit.ry(theta, 0)
-    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = Operator(matrix)
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.0, 0.0], dtype=float))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.matrix_batch_expectations[0][1] == (0,)
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], matrix)
+    assert sim.matrix_expectations == []
+
+
+def test_qiskit_native_estimator_batches_diagonal_dense_operator_as_pauli_terms(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1)
+    circuit.ry(theta, 0)
+    observable = Operator(np.diag([2.0, -2.0]).astype(np.complex128))
 
     result = RocQuantumProvider().get_estimator().run(
         [(circuit, observable, [0.1, 0.2])],
@@ -4133,8 +4305,9 @@ def test_qiskit_native_estimator_batches_dense_operator_parameters(monkeypatch):
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.batch_size() == 2
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
-    assert sim.matrix_batch_expectations[0][1] == (0,)
-    assert sim.matrix_expectations == []
+    assert sim.batch_expectations == [("Z", (0,))]
+    assert sim.matrix_batch_expectations == []
+    assert sim.statevector_reads == 0
 
 
 def test_qiskit_native_estimator_reuses_duplicate_dense_operator_batch(monkeypatch):
@@ -4148,14 +4321,14 @@ def test_qiskit_native_estimator_reuses_duplicate_dense_operator_batch(monkeypat
 
     circuit = QuantumCircuit(1)
     circuit.h(0)
-    matrix = np.diag([1.0, -1.0]).astype(np.complex128)
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
     observables = [Operator(matrix.copy()), Operator(matrix.copy())]
 
     result = RocQuantumProvider().get_estimator().run(
         [(circuit, observables)],
     ).result()[0]
 
-    np.testing.assert_allclose(result.data.evs, np.array([1.0, 1.0]))
+    np.testing.assert_allclose(result.data.evs, np.array([0.0, 0.0]))
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.ops == [("H", (0,), ())]
     assert sim.total_gate_applications == 1
@@ -4279,11 +4452,21 @@ def test_qiskit_provider_estimates_dense_operator_natively(monkeypatch):
 
     provider = RocQuantumProvider()
     circuit = QuantumCircuit(2)
-    observable = Operator(np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.complex128))
+    matrix = np.array(
+        [
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+        ],
+        dtype=np.complex128,
+    )
+    observable = Operator(matrix)
 
     assert provider.estimate_expectation(circuit, observable) == pytest.approx(1.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations[0][1] == (0, 1)
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
     assert sim.expectations == []
     assert sim.statevector_reads == 0
 
@@ -4299,11 +4482,13 @@ def test_qiskit_provider_estimates_partial_dense_operator_natively(monkeypatch):
 
     provider = RocQuantumProvider()
     circuit = QuantumCircuit(2)
-    observable = Operator(np.diag([1.0, -0.5]).astype(np.complex128))
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = Operator(matrix)
 
-    assert provider.estimate_expectation(circuit, observable) == pytest.approx(0.25)
+    assert provider.estimate_expectation(circuit, observable) == pytest.approx(0.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations[0][1] == (0,)
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
     assert sim.expectations == []
     assert sim.statevector_reads == 0
 
@@ -4319,15 +4504,36 @@ def test_qiskit_provider_estimates_explicit_partial_dense_operator_natively(monk
 
     provider = RocQuantumProvider()
     circuit = QuantumCircuit(2)
-    observable = Operator(np.diag([1.0, -0.5]).astype(np.complex128))
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+    observable = Operator(matrix)
 
     assert provider.estimate_expectation(
         circuit,
         {"operator": observable, "targets": [1]},
-    ) == pytest.approx(0.25)
+    ) == pytest.approx(0.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.matrix_expectations[0][1] == (1,)
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
     assert sim.expectations == []
+    assert sim.statevector_reads == 0
+
+
+def test_qiskit_provider_estimates_diagonal_dense_operator_as_pauli_terms(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    circuit = QuantumCircuit(1)
+    observable = Operator(np.diag([1.0, -1.0]).astype(np.complex128))
+
+    assert provider.estimate_expectation(circuit, observable) == pytest.approx(0.5)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.matrix_expectations == []
     assert sim.statevector_reads == 0
 
 

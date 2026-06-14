@@ -11,6 +11,9 @@ from qiskit.primitives.containers.observables_array import object_array
 from qiskit.primitives.primitive_job import PrimitiveJob
 
 
+MAX_DIAGONAL_DENSE_OPERATOR_PAULI_QUBITS = 4
+
+
 def _sparse_observable_terms(observable, num_qubits: int):
     terms = []
     for paulis, indices, coeff in observable.as_paulis().to_sparse_list():
@@ -284,6 +287,39 @@ def _dense_matrix_cache_key(matrix, targets):
     )
 
 
+def _diagonal_dense_operator_terms(matrix, targets, num_qubits: int):
+    targets = [int(target) for target in targets]
+    target_count = len(targets)
+    if target_count > MAX_DIAGONAL_DENSE_OPERATOR_PAULI_QUBITS:
+        return None
+
+    matrix = np.asarray(matrix, dtype=np.complex128)
+    dimension = 1 << target_count
+    if matrix.ndim != 2 or matrix.shape != (dimension, dimension):
+        return None
+
+    diagonal = np.diag(matrix)
+    if not np.allclose(matrix, np.diag(diagonal), rtol=1e-12, atol=1e-12):
+        return None
+
+    terms = []
+    for mask in range(dimension):
+        coefficient = 0.0 + 0.0j
+        for basis_index, value in enumerate(diagonal):
+            parity = (basis_index & mask).bit_count()
+            coefficient += value * (-1.0 if parity & 1 else 1.0)
+        coefficient /= dimension
+        if abs(coefficient) <= 1e-15:
+            continue
+
+        label = ["I"] * int(num_qubits)
+        for bit, target in enumerate(targets):
+            if (mask >> bit) & 1:
+                label[int(num_qubits) - 1 - target] = "Z"
+        terms.append((coefficient, "".join(label)))
+    return terms
+
+
 def _observable_signature(observable, num_qubits: int):
     return tuple(
         _combine_observable_terms(
@@ -300,6 +336,10 @@ def _observable_plan(observable, num_qubits: int):
             scalar = complex(dense_plan[1])
             return ("constant", scalar), ("constant", scalar)
         _, matrix, targets = dense_plan
+        diagonal_terms = _diagonal_dense_operator_terms(matrix, targets, int(num_qubits))
+        if diagonal_terms is not None:
+            signature = tuple(_combine_observable_terms(diagonal_terms, int(num_qubits)))
+            return ("pauli", signature), ("pauli", signature)
         cache_key = _dense_matrix_cache_key(matrix, targets)
         return cache_key, ("matrix", (matrix, tuple(targets)))
 
