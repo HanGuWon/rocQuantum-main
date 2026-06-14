@@ -740,6 +740,8 @@ def _evaluate_observable_payload(runtime, payload, cache=None):
 def _observable_payload_contains_kind(payload, target_kind):
     if payload[0] == target_kind:
         return True
+    if payload[0] == "idempotent":
+        return _observable_payload_contains_kind(payload[1], target_kind)
     if payload[0] == "sum":
         return any(_observable_payload_contains_kind(component, target_kind) for component in payload[1])
     return False
@@ -957,7 +959,11 @@ def _observable_batch_payload(observable, wire_map, wire_order=None, include_sum
 
 def _observable_variance_batch_payload(observable, wire_map, wire_order=None):
     payload = _observable_batch_payload(observable, wire_map, wire_order=wire_order)
-    if payload is None or payload[0] != "sum":
+    if payload is None:
+        return None
+    if observable.name == "Projector":
+        return "idempotent", payload
+    if payload[0] != "sum":
         return payload
 
     components = _mixed_dense_matrix_and_targets(observable, wire_map, payload)
@@ -970,6 +976,8 @@ def _observable_variance_batch_payload(observable, wire_map, wire_order=None):
 def _observable_payload_matches(current, reference_payload):
     if current is None or current[0] != reference_payload[0]:
         return False
+    if reference_payload[0] == "idempotent":
+        return _observable_payload_matches(current[1], reference_payload[1])
     if reference_payload[0] == "pauli":
         return current[1] == reference_payload[1]
     if reference_payload[0] == "sparse":
@@ -1024,6 +1032,8 @@ def _observable_batch_payload_cache_key(payload):
         )
     if kind == "sum":
         return "sum", tuple(_observable_batch_payload_cache_key(component) for component in payload[1])
+    if kind == "idempotent":
+        return "idempotent", _observable_batch_payload_cache_key(payload[1])
     raise TypeError(f"Unsupported observable batch payload kind: {kind!r}")
 
 
@@ -5720,6 +5730,10 @@ class RocQDevice(QubitDevice):
                     means, second_moments = cached_sparse_moments(payload)
                     batched_values.append(second_moments - means * means)
                     continue
+                if measurement_name == "VarianceMP" and payload[0] == "idempotent":
+                    means = cached_observable(payload[1])
+                    batched_values.append(means - means * means)
+                    continue
 
                 means = cached_observable(payload)
                 if measurement_name == "VarianceMP":
@@ -6562,7 +6576,19 @@ class RocQDevice(QubitDevice):
                         raise NotImplementedError
                 except (NotImplementedError, RuntimeError):
                     return super().var(observable, shot_range=shot_range, bin_size=bin_size)
-                return _real_measurement_result(second_moment - mean * mean, "Variance")
+            return _real_measurement_result(second_moment - mean * mean, "Variance")
+
+        variance_payload = _observable_variance_batch_payload(observable, self.wire_map, wire_order=self.wires)
+        if variance_payload is not None and variance_payload[0] == "idempotent":
+            try:
+                mean = _evaluate_observable_payload(
+                    self._runtime,
+                    variance_payload[1],
+                    cache=self._analytic_measurement_cache,
+                )
+            except (NotImplementedError, RuntimeError):
+                return super().var(observable, shot_range=shot_range, bin_size=bin_size)
+            return _real_measurement_result(mean - mean * mean, "Variance")
 
         terms = _pauli_terms_from_observable(observable, self.wire_map)
         if terms is None:
