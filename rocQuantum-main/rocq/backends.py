@@ -68,6 +68,63 @@ def _combined_pauli_terms(operator):
     ]
 
 
+def _matrix_expectation_cache_key(operator, num_qubits: int):
+    if isinstance(operator, HermitianOperator):
+        matrix, targets = _normalize_matrix_targets(operator.matrix, operator.targets, int(num_qubits))
+        matrix = np.ascontiguousarray(matrix, dtype=np.complex128)
+        return (
+            "hermitian",
+            complex(operator.coefficient),
+            tuple(int(target) for target in targets),
+            matrix.dtype.str,
+            matrix.shape,
+            matrix.tobytes(),
+        )
+
+    if isinstance(operator, SparseHamiltonianOperator):
+        data, indices, indptr, shape = _normalize_sparse_hamiltonian(operator, int(num_qubits))
+        data = np.ascontiguousarray(data, dtype=np.complex128)
+        indices = np.ascontiguousarray(indices, dtype=np.uintp)
+        indptr = np.ascontiguousarray(indptr, dtype=np.uintp)
+        return (
+            "sparse",
+            complex(operator.coefficient),
+            tuple(int(value) for value in shape),
+            data.dtype.str,
+            data.shape,
+            data.tobytes(),
+            indices.dtype.str,
+            indices.shape,
+            indices.tobytes(),
+            indptr.dtype.str,
+            indptr.shape,
+            indptr.tobytes(),
+        )
+
+    return None
+
+
+def _expect_mixed_sum_operator(operator: SumOperator, num_qubits: int, expectation_func):
+    if operator.coefficient == 0:
+        return 0.0
+
+    total = 0.0 + 0.0j
+    expectation_cache = {}
+    for term in operator.terms:
+        if getattr(term, "coefficient", None) == 0:
+            continue
+
+        cache_key = _matrix_expectation_cache_key(term, int(num_qubits))
+        if cache_key is None:
+            value = expectation_func(term)
+        else:
+            if cache_key not in expectation_cache:
+                expectation_cache[cache_key] = expectation_func(term)
+            value = expectation_cache[cache_key]
+        total += operator.coefficient * value
+    return _finalize_expectation(total)
+
+
 def _normalize_matrix_targets(matrix, targets, num_qubits: int):
     matrix_array = np.asarray(matrix, dtype=np.complex128)
     if matrix_array.ndim != 2 or matrix_array.shape[0] != matrix_array.shape[1]:
@@ -241,10 +298,7 @@ class _MockStateVectorState:
             try:
                 terms = _combined_pauli_terms(operator)
             except NotImplementedError:
-                total = 0.0 + 0.0j
-                for term in operator.terms:
-                    total += operator.coefficient * self.expectation(term)
-                return _finalize_expectation(total)
+                return _expect_mixed_sum_operator(operator, self._num_qubits, self.expectation)
         else:
             terms = _combined_pauli_terms(operator)
 
@@ -514,10 +568,7 @@ class _HipStateVectorState:
             try:
                 terms = _combined_pauli_terms(operator)
             except NotImplementedError:
-                total = 0.0 + 0.0j
-                for term in operator.terms:
-                    total += operator.coefficient * self.expectation(term)
-                return _finalize_expectation(total)
+                return _expect_mixed_sum_operator(operator, self._num_qubits, self.expectation)
         else:
             terms = _combined_pauli_terms(operator)
 
@@ -884,10 +935,7 @@ class DensityMatrixBackend(_BaseBackend):
             try:
                 terms = _combined_pauli_terms(operator)
             except NotImplementedError:
-                total = 0.0 + 0.0j
-                for term in operator.terms:
-                    total += operator.coefficient * self.expectation(term)
-                return _finalize_expectation(total)
+                return _expect_mixed_sum_operator(operator, self.num_qubits, self.expectation)
         else:
             terms = _combined_pauli_terms(operator)
 

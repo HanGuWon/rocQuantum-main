@@ -207,6 +207,80 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][2:], (1, 0))
 
+    def test_hip_statevector_backend_reuses_duplicate_hermitian_sum_terms(self):
+        from rocq.backends import _HipStateVectorState
+
+        calls = []
+
+        class _FakeHipBackend:
+            def get_expectation_matrix(self, handle, d_state, num_qubits, targets, matrix):
+                calls.append((num_qubits, list(targets), matrix.copy()))
+                return 0.25 + 0.0j
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+        matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+        operator = HermitianOperator(matrix, targets=[0]) + HermitianOperator(matrix.copy(), targets=[0]) + 0.5
+
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
+            result = state.expectation(operator)
+
+        self.assertEqual(result, 1.0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], 1)
+        self.assertEqual(calls[0][1], [0])
+        np.testing.assert_allclose(calls[0][2], matrix.astype(np.complex64))
+
+    def test_hip_statevector_backend_skips_zero_hermitian_sum_terms(self):
+        from rocq.backends import _HipStateVectorState
+
+        class _FakeHipBackend:
+            def get_expectation_matrix(self, handle, d_state, num_qubits, targets, matrix):
+                raise AssertionError("zero-coefficient Hermitian terms should not be read out")
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+        matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+        operator = 0 * HermitianOperator(matrix, targets=[0]) + 0.5
+
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
+            result = state.expectation(operator)
+
+        self.assertEqual(result, 0.5)
+
+    def test_hip_statevector_backend_reuses_duplicate_sparse_sum_terms(self):
+        from rocq.backends import _HipStateVectorState
+
+        calls = []
+
+        class _FakeHipBackend:
+            def get_sparse_matrix_moments(self, handle, d_state, num_qubits, data, indices, indptr, rows, cols):
+                calls.append((num_qubits, list(indices), list(indptr), rows, cols))
+                return 0.5 + 0.0j, 0.25 + 0.0j
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+        data = np.array([1.0, -1.0], dtype=np.complex128)
+        indices = np.array([0, 1], dtype=np.int64)
+        indptr = np.array([0, 1, 2], dtype=np.int64)
+        operator = (
+            SparseHamiltonianOperator(data, indices, indptr, shape=(2, 2))
+            + SparseHamiltonianOperator(data.copy(), indices.copy(), indptr.copy(), shape=(2, 2))
+            + 0.25
+        )
+
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
+            result = state.expectation(operator)
+
+        self.assertEqual(result, 1.25)
+        self.assertEqual(calls, [(1, [0, 1], [0, 1, 2], 2, 2)])
+
     def test_mock_statevector_sum_keeps_matrix_fallback(self):
         from rocq.backends import StateVectorBackend
 
