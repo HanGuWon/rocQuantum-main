@@ -287,6 +287,18 @@ def _dense_matrix_cache_key(matrix, targets):
     )
 
 
+def _dense_identity_operator_coefficient(matrix):
+    matrix = np.asarray(matrix, dtype=np.complex128)
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] == 0:
+        return None
+
+    coefficient = complex(matrix[0, 0])
+    identity = np.eye(matrix.shape[0], dtype=np.complex128)
+    if not np.allclose(matrix, coefficient * identity, rtol=1e-12, atol=1e-12):
+        return None
+    return coefficient
+
+
 def _diagonal_dense_operator_terms(matrix, targets, num_qubits: int):
     targets = [int(target) for target in targets]
     target_count = len(targets)
@@ -336,6 +348,10 @@ def _observable_plan(observable, num_qubits: int):
             scalar = complex(dense_plan[1])
             return ("constant", scalar), ("constant", scalar)
         _, matrix, targets = dense_plan
+        identity_coefficient = _dense_identity_operator_coefficient(matrix)
+        if identity_coefficient is not None:
+            scalar = complex(identity_coefficient)
+            return ("constant", scalar), ("constant", scalar)
         diagonal_terms = _diagonal_dense_operator_terms(matrix, targets, int(num_qubits))
         if diagonal_terms is not None:
             signature = tuple(_combine_observable_terms(diagonal_terms, int(num_qubits)))

@@ -4107,6 +4107,50 @@ def test_qiskit_estimator_dense_scalar_operator_rejects_nonempty_explicit_target
         estimate_observable(Runtime(), (observable, [0]), 1)
 
 
+def test_qiskit_estimator_dense_identity_operator_folds_without_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable
+
+    class Runtime:
+        def expectation_pauli_string(self, pauli_string, targets):
+            raise AssertionError("dense identity observables should fold before Pauli readout")
+
+        def expectation_matrix(self, matrix, targets):
+            raise AssertionError("dense identity observables should fold before matrix readout")
+
+    observable = Operator(2.0 * np.eye(32, dtype=np.complex128))
+
+    assert estimate_observable(Runtime(), observable, 5) == pytest.approx(2.0)
+
+
+def test_qiskit_estimator_dense_identity_operator_batch_folds_without_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider.estimator import estimate_observable_batch
+
+    class Runtime:
+        def batch_size(self):
+            return 2
+
+        def expectation_pauli_string_batch(self, pauli_string, targets):
+            raise AssertionError("dense identity observables should fold before Pauli readout")
+
+        def expectation_matrix_batch(self, matrix, targets):
+            raise AssertionError("dense identity observables should fold before matrix readout")
+
+    observable = Operator(3.0 * np.eye(32, dtype=np.complex128))
+
+    np.testing.assert_allclose(
+        estimate_observable_batch(Runtime(), observable, 5),
+        np.array([3.0, 3.0], dtype=float),
+    )
+
+
 def test_qiskit_native_estimator_accepts_dense_operator(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -4361,6 +4405,30 @@ def test_qiskit_native_estimator_accepts_dense_scalar_operator_without_readout(m
     assert sim.expectations == []
 
 
+def test_qiskit_native_estimator_accepts_dense_identity_operator_without_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(5)
+    circuit.h(0)
+    observable = Operator(2.0 * np.eye(32, dtype=np.complex128))
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable)],
+    ).result()[0]
+
+    assert result.data.evs == pytest.approx(2.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("H", (0,), ())]
+    assert sim.matrix_expectations == []
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+
+
 def test_qiskit_native_estimator_batches_dense_scalar_operator_without_readout(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
@@ -4386,6 +4454,34 @@ def test_qiskit_native_estimator_batches_dense_scalar_operator_without_readout(m
     assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
     assert sim.matrix_batch_expectations == []
     assert sim.batch_expectations == []
+
+
+def test_qiskit_native_estimator_batches_dense_identity_operator_without_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(5)
+    circuit.ry(theta, 0)
+    observable = Operator(3.0 * np.eye(32, dtype=np.complex128))
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observable, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([3.0, 3.0]))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.matrix_batch_expectations == []
+    assert sim.batch_expectations == []
+    assert sim.statevector_reads == 0
 
 
 def test_qiskit_native_estimator_reuses_bound_circuit_for_observable_batch(monkeypatch):
@@ -4534,6 +4630,27 @@ def test_qiskit_provider_estimates_diagonal_dense_operator_as_pauli_terms(monkey
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.expectations == [("Z", (0,))]
     assert sim.matrix_expectations == []
+    assert sim.statevector_reads == 0
+
+
+def test_qiskit_provider_estimates_dense_identity_operator_without_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    circuit = QuantumCircuit(5)
+    circuit.h(0)
+    observable = Operator(2.0 * np.eye(32, dtype=np.complex128))
+
+    assert provider.estimate_expectation(circuit, observable) == pytest.approx(2.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("H", (0,), ())]
+    assert sim.matrix_expectations == []
+    assert sim.expectations == []
     assert sim.statevector_reads == 0
 
 
