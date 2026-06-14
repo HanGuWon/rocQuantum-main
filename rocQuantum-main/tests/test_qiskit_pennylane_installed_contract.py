@@ -5681,6 +5681,34 @@ def test_pennylane_batch_execute_uses_batched_scaled_hermitian_expval(monkeypatc
     assert sim.statevector_reads == 0
 
 
+def test_pennylane_batch_execute_folds_identity_hermitian_readouts(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.s_prod(2.0, qml.Hermitian(np.eye(2, dtype=np.complex128), wires=0))
+    circuits = [
+        qml.tape.QuantumScript([qml.RY(0.1, wires=0)], [qml.expval(observable), qml.var(observable)]),
+        qml.tape.QuantumScript([qml.RY(0.2, wires=0)], [qml.expval(observable), qml.var(observable)]),
+    ]
+
+    np.testing.assert_allclose(
+        np.asarray(dev.batch_execute(circuits), dtype=float),
+        np.array([[2.0, 0.0], [2.0, 0.0]], dtype=float),
+    )
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.matrix_batch_expectations == []
+    assert sim.batch_expectations == []
+    assert sim.statevector_reads == 0
+
+
 def test_pennylane_batch_execute_uses_batched_mixed_matrix_sum_expval(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -6318,15 +6346,41 @@ def test_pennylane_hermitian_observable_uses_statevector_fallback(monkeypatch):
     import pennylane as qml
 
     dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.Hermitian(np.diag([1.0, -1.0]).astype(np.complex128), wires=0)
 
     @qml.qnode(dev)
     def hermitian_circuit():
-        return qml.expval(qml.Hermitian(np.eye(2), wires=0))
+        return qml.expval(observable)
 
     assert hermitian_circuit() == pytest.approx(1.0)
     sim = _FakeQuantumSimulator.instances[-1]
     assert sim.expectations == []
     assert sim.statevector_reads == 1
+
+
+def test_pennylane_hermitian_identity_expval_folds_without_readout(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.s_prod(2.0, qml.Hermitian(np.eye(2, dtype=np.complex128), wires=0))
+
+    @qml.qnode(dev)
+    def hermitian_identity_circuit():
+        qml.RY(0.123, wires=0)
+        return qml.expval(observable)
+
+    assert hermitian_identity_circuit() == pytest.approx(2.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("RY", (0,), (0.123,))]
+    assert sim.expectations == []
+    assert sim.matrix_expectations == []
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_hermitian_var_uses_single_runtime_statevector_fallback(monkeypatch):
@@ -6350,6 +6404,31 @@ def test_pennylane_hermitian_var_uses_single_runtime_statevector_fallback(monkey
     assert sim.expectations == []
     assert sim.matrix_expectations == []
     assert sim.statevector_reads == 1
+
+
+def test_pennylane_hermitian_identity_var_folds_without_readout(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.s_prod(3.0, qml.Hermitian(np.eye(2, dtype=np.complex128), wires=0))
+
+    @qml.qnode(dev)
+    def hermitian_identity_var_circuit():
+        qml.RY(0.123, wires=0)
+        return qml.var(observable)
+
+    assert hermitian_identity_var_circuit() == pytest.approx(0.0)
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.ops == [("RY", (0,), (0.123,))]
+    assert sim.expectations == []
+    assert sim.matrix_expectations == []
+    assert sim.statevector_reads == 0
 
 
 def test_pennylane_hermitian_expval_prefers_native_matrix_expectation(monkeypatch):
@@ -9305,6 +9384,40 @@ def test_pennylane_native_adjoint_rejects_trainable_qubit_unitary_matrix(monkeyp
     tape.trainable_params = [0, 1]
 
     assert dev._native_adjoint_payload(tape) is None
+
+
+def test_pennylane_native_adjoint_folds_identity_hermitian_observable(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    observable = qml.s_prod(2.0, qml.Hermitian(np.eye(2, dtype=np.complex128), wires=0))
+    tape = qml.tape.QuantumScript(
+        [qml.RY(0.321, wires=0)],
+        [qml.expval(observable)],
+    )
+    tape.trainable_params = [0]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0]
+    assert observables == [[{"coefficient": (2.0, 0.0), "pauli_string": "", "targets": []}]]
+    assert operations == [
+        {
+            "name": "RY",
+            "rocq_name": "RY",
+            "wires": [0],
+            "params": [0.321],
+            "param_indices": [0],
+            "trainable_param_indices": [0],
+            "trainable_param_positions": [0],
+        }
+    ]
 
 
 def test_pennylane_native_adjoint_uses_controlled_qubit_unitary_matrix_payload(monkeypatch):

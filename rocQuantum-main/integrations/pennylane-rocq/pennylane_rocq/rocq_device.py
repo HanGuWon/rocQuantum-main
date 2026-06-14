@@ -417,6 +417,17 @@ def _hermitian_matrix_and_targets(observable, wire_map):
     return matrix, targets
 
 
+def _identity_matrix_coefficient(matrix):
+    matrix = np.asarray(matrix, dtype=np.complex128)
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] == 0:
+        return None
+    coefficient = complex(matrix[0, 0])
+    identity = np.eye(matrix.shape[0], dtype=np.complex128)
+    if not np.allclose(matrix, coefficient * identity, rtol=1e-12, atol=1e-12):
+        return None
+    return coefficient
+
+
 def _matrix_expectation_cache_key(matrix, targets):
     return "matrix_mean", tuple(int(target) for target in targets), _array_cache_key(matrix)
 
@@ -544,6 +555,9 @@ def _observable_expectation_payload(observable, wire_map, wire_order=None, inclu
     components = _hermitian_matrix_and_targets(observable, wire_map)
     if components is not None:
         matrix, targets = components
+        identity_coefficient = _identity_matrix_coefficient(matrix)
+        if identity_coefficient is not None:
+            return "pauli", [(identity_coefficient, "", [])]
         return "matrix", matrix, tuple(targets)
 
     if not include_sums:
@@ -709,6 +723,16 @@ def _native_adjoint_terms_from_observable(observable, wire_map, all_wires, coeff
     components = _hermitian_matrix_and_targets(observable, wire_map)
     if components is not None:
         matrix, targets = components
+        identity_coefficient = _identity_matrix_coefficient(matrix)
+        if identity_coefficient is not None:
+            identity_coefficient *= coefficient
+            return [
+                {
+                    "coefficient": (float(np.real(identity_coefficient)), float(np.imag(identity_coefficient))),
+                    "pauli_string": "",
+                    "targets": [],
+                }
+            ]
         if coefficient != 1:
             matrix = np.ascontiguousarray(coefficient * matrix)
         return [
@@ -6338,6 +6362,9 @@ class RocQDevice(QubitDevice):
                 matrix, targets = _hermitian_matrix_and_targets(observable, self.wire_map)
                 if matrix is None:
                     raise NotImplementedError
+                identity_coefficient = _identity_matrix_coefficient(matrix)
+                if identity_coefficient is not None:
+                    return 0.0
                 mean, second_moment = _matrix_moments_cached(
                     self._runtime,
                     matrix,
