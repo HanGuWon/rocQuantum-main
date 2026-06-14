@@ -1099,6 +1099,45 @@ def _array_cache_key(values):
     return array.shape, str(array.dtype), array.tobytes()
 
 
+def _factor_complex_array(values):
+    array = np.ascontiguousarray(np.asarray(values, dtype=np.complex128))
+    nonzero = np.flatnonzero(np.abs(array.reshape(-1)) > 1e-15)
+    if nonzero.size == 0:
+        return 1.0 + 0.0j, array
+
+    coefficient = complex(array.reshape(-1)[int(nonzero[0])])
+    return coefficient, np.ascontiguousarray(array / coefficient)
+
+
+def _factor_pauli_payload_terms(terms):
+    terms = _combine_pauli_terms(terms)
+    if not terms:
+        return 1.0 + 0.0j, []
+
+    coefficient = complex(terms[0][0])
+    return coefficient, [
+        (complex(coeff) / coefficient, pauli_string, targets)
+        for coeff, pauli_string, targets in terms
+    ]
+
+
+def _observable_batch_payload_readout_plan(payload):
+    kind = payload[0]
+    if kind == "pauli":
+        coefficient, normalized_terms = _factor_pauli_payload_terms(payload[1])
+        normalized_payload = "pauli", normalized_terms
+        return _observable_batch_payload_cache_key(normalized_payload), coefficient, normalized_payload
+    if kind == "matrix":
+        coefficient, normalized_matrix = _factor_complex_array(payload[1])
+        normalized_payload = "matrix", normalized_matrix, payload[2]
+        return _observable_batch_payload_cache_key(normalized_payload), coefficient, normalized_payload
+    if kind == "sparse":
+        coefficient, normalized_data = _factor_complex_array(payload[1])
+        normalized_payload = "sparse", normalized_data, payload[2], payload[3], payload[4]
+        return _observable_batch_payload_cache_key(normalized_payload), coefficient, normalized_payload
+    return _observable_batch_payload_cache_key(payload), 1.0 + 0.0j, payload
+
+
 def _observable_batch_payload_cache_key(payload):
     kind = payload[0]
     if kind == "pauli":
@@ -5779,26 +5818,27 @@ class RocQDevice(QubitDevice):
             probability_batch_cache = {}
 
             def cached_sparse_moments(payload):
-                cache_key = _observable_batch_payload_cache_key(payload)
+                cache_key, coefficient, normalized_payload = _observable_batch_payload_readout_plan(payload)
                 if cache_key not in sparse_moment_batch_cache:
                     sparse_moment_batch_cache[cache_key] = _native_sparse_hamiltonian_moments_batch(
                         self._runtime,
-                        payload,
+                        normalized_payload,
                     )
-                return sparse_moment_batch_cache[cache_key]
+                means, second_moments = sparse_moment_batch_cache[cache_key]
+                return coefficient * means, coefficient * coefficient * second_moments
 
             def cached_observable(payload):
-                cache_key = _observable_batch_payload_cache_key(payload)
+                cache_key, coefficient, normalized_payload = _observable_batch_payload_readout_plan(payload)
                 if cache_key not in observable_batch_cache:
-                    if payload[0] == "sparse":
-                        means, _ = cached_sparse_moments(payload)
+                    if normalized_payload[0] == "sparse":
+                        means, _ = cached_sparse_moments(normalized_payload)
                         observable_batch_cache[cache_key] = means
                     else:
                         observable_batch_cache[cache_key] = _evaluate_observable_batch_payload(
                             self._runtime,
-                            payload,
+                            normalized_payload,
                         )
-                return observable_batch_cache[cache_key]
+                return coefficient * observable_batch_cache[cache_key]
 
             for measurement_name, payload in reference_measurement_specs:
                 if measurement_name == "ProbabilityMP":
