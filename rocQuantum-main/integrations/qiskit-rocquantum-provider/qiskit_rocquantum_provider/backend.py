@@ -123,6 +123,8 @@ STATEVECTOR_BATCH_SAFE_OPS = {
     "ryy",
     "rzz",
     "rzx",
+    "pauli",
+    "unitary",
     "PauliEvolution",
 }
 

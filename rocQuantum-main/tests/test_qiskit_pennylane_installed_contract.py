@@ -697,6 +697,37 @@ def test_qiskit_backend_does_not_batch_statevector_pauli_evolution_identity_term
     assert _FakeQuantumSimulator.instances[-1].batch_ops == []
 
 
+def test_qiskit_backend_batches_statevector_lists_with_fixed_pauli_and_unitary(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import PauliGate
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    unitary = np.array([[0, 1], [1, 0]], dtype=np.complex128)
+    circuits = []
+    for angle in (0.1, 0.2):
+        circuit = QuantumCircuit(2)
+        circuit.unitary(unitary, [0])
+        circuit.append(PauliGate("XZ"), [0, 1])
+        circuit.ry(angle, 1)
+        circuits.append(circuit)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuits, sampling=False, statevector=True).result()
+
+    assert len(result.results) == 2
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.statevector_reads == 1
+    assert sim.ops == [("Z", (0,), ()), ("X", (1,), ())]
+    matrix, targets = sim.matrices[0]
+    np.testing.assert_allclose(matrix, unitary)
+    assert targets == (0,)
+    assert sim.batch_ops == [("RY", (1,), (0.1, 0.2))]
+
+
 def test_framework_runtime_converts_full_statevectors_to_little_endian_order():
     from rocquantum.framework_runtime import statevector_to_little_endian_wires
 
