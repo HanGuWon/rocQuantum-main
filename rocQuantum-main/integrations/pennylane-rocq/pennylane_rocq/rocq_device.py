@@ -119,6 +119,7 @@ PAULI_PRODUCTS = {
     ("Z", "Y"): (0.0 - 1.0j, "X"),
     ("Z", "Z"): (1.0 + 0.0j, "I"),
 }
+MAX_DIAGONAL_OBSERVABLE_PAULI_QUBITS = 4
 
 
 def _pauli_string_from_observable(observable, wire_map):
@@ -451,6 +452,39 @@ def _identity_matrix_coefficient(matrix):
     return coefficient
 
 
+def _diagonal_matrix_pauli_terms(matrix, targets):
+    targets = list(targets)
+    target_count = len(targets)
+    if target_count > MAX_DIAGONAL_OBSERVABLE_PAULI_QUBITS:
+        return None
+
+    matrix = np.asarray(matrix, dtype=np.complex128)
+    dimension = 1 << target_count
+    if matrix.ndim != 2 or matrix.shape != (dimension, dimension):
+        return None
+
+    diagonal = np.diag(matrix)
+    if not np.allclose(matrix, np.diag(diagonal), rtol=1e-12, atol=1e-12):
+        return None
+
+    terms = []
+    for mask in range(dimension):
+        coefficient = 0.0 + 0.0j
+        for basis_index, value in enumerate(diagonal):
+            parity = (basis_index & mask).bit_count()
+            coefficient += value * (-1.0 if parity & 1 else 1.0)
+        coefficient /= dimension
+        if abs(coefficient) <= 1e-15:
+            continue
+        term_targets = [
+            targets[bit]
+            for bit in range(target_count)
+            if (mask >> bit) & 1
+        ]
+        terms.append((coefficient, "Z" * len(term_targets), term_targets))
+    return terms
+
+
 def _matrix_expectation_cache_key(matrix, targets):
     return "matrix_mean", tuple(int(target) for target in targets), _array_cache_key(matrix)
 
@@ -584,6 +618,9 @@ def _observable_expectation_payload(observable, wire_map, wire_order=None, inclu
         identity_coefficient = _identity_matrix_coefficient(matrix)
         if identity_coefficient is not None:
             return "pauli", [(identity_coefficient, "", [])]
+        diagonal_terms = _diagonal_matrix_pauli_terms(matrix, targets)
+        if diagonal_terms is not None:
+            return "pauli", _combine_pauli_terms(diagonal_terms)
         return "matrix", matrix, tuple(targets)
 
     if not include_sums:
@@ -758,6 +795,19 @@ def _native_adjoint_terms_from_observable(observable, wire_map, all_wires, coeff
                     "pauli_string": "",
                     "targets": [],
                 }
+            ]
+        diagonal_terms = _diagonal_matrix_pauli_terms(matrix, targets)
+        if diagonal_terms is not None:
+            return [
+                {
+                    "coefficient": (float(np.real(coeff)), float(np.imag(coeff))),
+                    "pauli_string": pauli_string,
+                    "targets": [int(target) for target in term_targets],
+                }
+                for coeff, pauli_string, term_targets in _combine_pauli_terms(
+                    (coefficient * term_coeff, pauli_string, term_targets)
+                    for term_coeff, pauli_string, term_targets in diagonal_terms
+                )
             ]
         if coefficient != 1:
             matrix = np.ascontiguousarray(coefficient * matrix)
@@ -3785,7 +3835,7 @@ class RocQDevice(QubitDevice):
                 payload = _observable_batch_payload(observable, self.wire_map, wire_order=self.wires)
             if payload is None:
                 return False
-            if observable.name == "Hermitian" and payload[0] != "matrix":
+            if observable.name == "Hermitian" and payload[0] not in {"matrix", "pauli"}:
                 return False
         return True
 
@@ -6400,6 +6450,19 @@ class RocQDevice(QubitDevice):
                 identity_coefficient = _identity_matrix_coefficient(matrix)
                 if identity_coefficient is not None:
                     return 0.0
+                diagonal_terms = _diagonal_matrix_pauli_terms(matrix, targets)
+                if diagonal_terms is not None:
+                    mean = _evaluate_pauli_terms(
+                        self._runtime,
+                        diagonal_terms,
+                        cache=self._analytic_measurement_cache,
+                    )
+                    second_moment = _evaluate_pauli_terms(
+                        self._runtime,
+                        _pauli_square_terms(diagonal_terms),
+                        cache=self._analytic_measurement_cache,
+                    )
+                    return _real_measurement_result(second_moment - mean * mean, "Variance")
                 mean, second_moment = _matrix_moments_cached(
                     self._runtime,
                     matrix,
