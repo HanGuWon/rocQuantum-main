@@ -7296,8 +7296,34 @@ def test_pennylane_scaled_hermitian_uses_native_matrix_expectation(monkeypatch):
     assert sim.expectations == []
     assert sim.statevector_reads == 0
     assert len(sim.matrix_expectations) == 2
-    np.testing.assert_allclose(sim.matrix_expectations[0][0], 2.0 * matrix)
-    np.testing.assert_allclose(sim.matrix_expectations[1][0], 4.0 * np.eye(2))
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
+    np.testing.assert_allclose(sim.matrix_expectations[1][0], np.eye(2))
+
+
+def test_pennylane_single_execute_reuses_scaled_hermitian_expval_readout(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    matrix = np.array([[1.0, 1.0], [1.0, 1.0]], dtype=np.complex128)
+
+    @qml.qnode(dev)
+    def hermitian_circuit():
+        return qml.expval(qml.Hermitian(matrix, wires=0)), qml.expval(2.0 * qml.Hermitian(matrix.copy(), wires=0))
+
+    assert hermitian_circuit() == pytest.approx((1.0, 2.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == []
+    assert sim.statevector_reads == 0
+    assert len(sim.matrix_expectations) == 1
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
+    assert sim.matrix_expectations[0][1] == (0,)
 
 
 def test_pennylane_mixed_matrix_sum_expval_uses_native_readouts(monkeypatch):
@@ -7336,7 +7362,7 @@ def test_pennylane_mixed_matrix_sum_expval_uses_native_readouts(monkeypatch):
         assert sim.expectations == [("Z", (0,))]
         assert sim.statevector_reads == 0
         assert len(sim.matrix_expectations) == 1
-        np.testing.assert_allclose(sim.matrix_expectations[0][0], 3.0 * matrix)
+        np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
         assert sim.matrix_expectations[0][1] == (0,)
 
 
@@ -7425,8 +7451,8 @@ def test_pennylane_mixed_matrix_sum_variance_uses_native_dense_moments(monkeypat
     assert sim.expectations == []
     assert sim.statevector_reads == 0
     assert len(sim.matrix_expectations) == 2
-    np.testing.assert_allclose(sim.matrix_expectations[0][0], np.array([[0.5, 3.0], [3.0, -0.5]]))
-    np.testing.assert_allclose(sim.matrix_expectations[1][0], 9.25 * np.eye(2))
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], np.array([[1.0, 6.0], [6.0, -1.0]]))
+    np.testing.assert_allclose(sim.matrix_expectations[1][0], 37.0 * np.eye(2))
     assert sim.matrix_expectations[0][1] == (0,)
     assert sim.matrix_expectations[1][1] == (0,)
 
@@ -7696,9 +7722,40 @@ def test_pennylane_scaled_sparse_hamiltonian_uses_native_csr_moments(monkeypatch
     assert sim.statevector_reads == 0
     assert len(sim.sparse_moments) == 1
     data, indices, indptr, shape = sim.sparse_moments[0]
-    np.testing.assert_allclose(data, np.array([2.0, 2.0], dtype=np.complex128))
+    np.testing.assert_allclose(data, np.array([1.0, 1.0], dtype=np.complex128))
     np.testing.assert_array_equal(indices, np.array([1, 0], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
+    assert shape == (2, 2)
+
+
+def test_pennylane_single_execute_reuses_scaled_sparse_expval_readout(monkeypatch):
+    pytest.importorskip("pennylane")
+    sp = pytest.importorskip("scipy.sparse")
+    _install_fake_binding(monkeypatch)
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_sparse_moments", True)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    hamiltonian_matrix = sp.csr_matrix(np.array([[1.0, 1.0], [1.0, 1.0]], dtype=np.complex128))
+    observable = qml.SparseHamiltonian(hamiltonian_matrix, wires=[0])
+    scaled_observable = 2.0 * qml.SparseHamiltonian(hamiltonian_matrix.copy(), wires=[0])
+    dev = qml.device("lightning.rocq", wires=1)
+
+    @qml.qnode(dev)
+    def sparse_circuit():
+        return qml.expval(observable), qml.expval(scaled_observable)
+
+    assert sparse_circuit() == pytest.approx((1.0, 2.0))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.statevector_reads == 0
+    assert len(sim.sparse_moments) == 1
+    data, indices, indptr, shape = sim.sparse_moments[0]
+    np.testing.assert_allclose(data, np.array([1.0, 1.0, 1.0, 1.0], dtype=np.complex128))
+    np.testing.assert_array_equal(indices, np.array([0, 1, 0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(indptr, np.array([0, 2, 4], dtype=np.int64))
     assert shape == (2, 2)
 
 
@@ -7731,7 +7788,7 @@ def test_pennylane_mixed_sparse_sum_expval_uses_native_readouts(monkeypatch):
     assert sim.statevector_reads == 0
     assert len(sim.sparse_moments) == 1
     data, indices, indptr, shape = sim.sparse_moments[0]
-    np.testing.assert_allclose(data, np.array([3.0, 3.0], dtype=np.complex128))
+    np.testing.assert_allclose(data, np.array([1.0, 1.0], dtype=np.complex128))
     np.testing.assert_array_equal(indices, np.array([1, 0], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 1, 2], dtype=np.int64))
     assert shape == (2, 2)
@@ -7801,7 +7858,7 @@ def test_pennylane_mixed_sparse_sum_variance_uses_native_csr_moments(monkeypatch
         assert sim.statevector_reads == 0
         assert len(sim.sparse_moments) == 1
         data, indices, indptr, shape = sim.sparse_moments[0]
-        np.testing.assert_allclose(data, np.array([0.5, 1.0, 1.0, -0.5], dtype=np.complex128))
+        np.testing.assert_allclose(data, np.array([1.0, 2.0, 2.0, -1.0], dtype=np.complex128))
         np.testing.assert_array_equal(indices, np.array([0, 1, 0, 1], dtype=np.int64))
         np.testing.assert_array_equal(indptr, np.array([0, 2, 4], dtype=np.int64))
         assert shape == (2, 2)
@@ -7839,7 +7896,7 @@ def test_pennylane_mixed_dense_sparse_sum_variance_uses_native_csr_moments(monke
     assert sim.statevector_reads == 0
     assert len(sim.sparse_moments) == 1
     data, indices, indptr, shape = sim.sparse_moments[0]
-    np.testing.assert_allclose(data, np.array([0.5, 3.0, 3.0, -0.5], dtype=np.complex128))
+    np.testing.assert_allclose(data, np.array([1.0, 6.0, 6.0, -1.0], dtype=np.complex128))
     np.testing.assert_array_equal(indices, np.array([0, 1, 0, 1], dtype=np.int64))
     np.testing.assert_array_equal(indptr, np.array([0, 2, 4], dtype=np.int64))
     assert shape == (2, 2)

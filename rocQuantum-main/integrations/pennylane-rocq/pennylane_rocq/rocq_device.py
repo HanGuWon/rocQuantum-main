@@ -450,13 +450,17 @@ def _sparse_hamiltonian_moments_cached(runtime, observable, wire_order, cache=No
     identity_coefficient = _sparse_identity_matrix_coefficient(sparse_matrix)
     if identity_coefficient is not None:
         return identity_coefficient, identity_coefficient * identity_coefficient
-    cache_key = _sparse_hamiltonian_moments_cache_key(sparse_matrix)
+    coefficient, normalized_data = _factor_complex_array(sparse_matrix.data)
+    normalized_matrix = sparse_matrix.copy()
+    normalized_matrix.data = normalized_data
+    cache_key = _sparse_hamiltonian_moments_cache_key(normalized_matrix)
     if cache is not None and cache_key in cache:
-        return cache[cache_key]
+        mean, second_moment = cache[cache_key]
+        return coefficient * mean, coefficient * coefficient * second_moment
 
     try:
         moments = runtime.sparse_hamiltonian_moments(
-            sparse_matrix.data,
+            normalized_matrix.data,
             sparse_matrix.indices,
             sparse_matrix.indptr,
             sparse_matrix.shape,
@@ -464,11 +468,14 @@ def _sparse_hamiltonian_moments_cached(runtime, observable, wire_order, cache=No
     except NotImplementedError:
         if fallback_state is None:
             raise
-        moments = _sparse_hamiltonian_moments(fallback_state(), observable, wire_order)
+        state = fallback_state()
+        h_state = normalized_matrix.dot(state)
+        moments = np.vdot(state, h_state), np.vdot(h_state, h_state)
 
     if cache is not None:
         cache[cache_key] = moments
-    return moments
+    mean, second_moment = moments
+    return coefficient * mean, coefficient * coefficient * second_moment
 
 
 def _native_sparse_hamiltonian_moments_batch(runtime, payload):
@@ -523,34 +530,37 @@ def _matrix_moments_cache_key(matrix, targets):
 
 
 def _matrix_expectation_cached(runtime, matrix, targets, cache=None):
-    cache_key = _matrix_expectation_cache_key(matrix, targets)
+    coefficient, normalized_matrix = _factor_complex_array(matrix)
+    cache_key = _matrix_expectation_cache_key(normalized_matrix, targets)
     if cache is not None and cache_key in cache:
-        return cache[cache_key]
+        return coefficient * cache[cache_key]
 
-    mean = runtime.expectation_matrix(matrix, targets)
+    mean = runtime.expectation_matrix(normalized_matrix, targets)
     if cache is not None:
         cache[cache_key] = mean
-    return mean
+    return coefficient * mean
 
 
 def _matrix_moments_cached(runtime, matrix, targets, cache=None):
-    moments_key = _matrix_moments_cache_key(matrix, targets)
+    coefficient, normalized_matrix = _factor_complex_array(matrix)
+    moments_key = _matrix_moments_cache_key(normalized_matrix, targets)
     if cache is not None and moments_key in cache:
-        return cache[moments_key]
+        mean, second_moment = cache[moments_key]
+        return coefficient * mean, coefficient * coefficient * second_moment
 
-    mean_key = _matrix_expectation_cache_key(matrix, targets)
+    mean_key = _matrix_expectation_cache_key(normalized_matrix, targets)
     if cache is not None and mean_key in cache:
         mean = cache[mean_key]
-        second_moment = runtime.expectation_matrix(np.ascontiguousarray(matrix @ matrix), targets)
+        second_moment = runtime.expectation_matrix(np.ascontiguousarray(normalized_matrix @ normalized_matrix), targets)
     else:
-        mean, second_moment = runtime.expectation_matrix_moments(matrix, targets)
+        mean, second_moment = runtime.expectation_matrix_moments(normalized_matrix, targets)
         if cache is not None:
             cache[mean_key] = mean
 
     moments = mean, second_moment
     if cache is not None:
         cache[moments_key] = moments
-    return moments
+    return coefficient * mean, coefficient * coefficient * second_moment
 
 
 def _scalar_to_complex(value):
@@ -789,14 +799,18 @@ def _observable_expectation_payload(observable, wire_map, wire_order=None, inclu
 
 def _sparse_payload_moments_cached(runtime, payload, cache=None):
     _, data, indices, indptr, shape = payload
-    cache_key = ("sparse_payload_moments", _observable_batch_payload_cache_key(payload))
+    coefficient, normalized_data = _factor_complex_array(data)
+    normalized_payload = "sparse", normalized_data, indices, indptr, shape
+    cache_key = ("sparse_payload_moments", _observable_batch_payload_cache_key(normalized_payload))
     if cache is not None and cache_key in cache:
-        return cache[cache_key]
+        mean, second_moment = cache[cache_key]
+        return coefficient * mean, coefficient * coefficient * second_moment
 
-    moments = runtime.sparse_hamiltonian_moments(data, indices, indptr, shape)
+    moments = runtime.sparse_hamiltonian_moments(normalized_data, indices, indptr, shape)
     if cache is not None:
         cache[cache_key] = moments
-    return moments
+    mean, second_moment = moments
+    return coefficient * mean, coefficient * coefficient * second_moment
 
 
 def _evaluate_observable_payload(runtime, payload, cache=None):
