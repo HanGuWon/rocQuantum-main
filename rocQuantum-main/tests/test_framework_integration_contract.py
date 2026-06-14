@@ -833,6 +833,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("STATEVECTOR_BATCH_SAFE_OPS", source)
         self.assertIn("def _try_run_batched_statevector_circuits", source)
         self.assertIn("self._runtime.statevectors()", source)
+        self.assertIn("\"PauliEvolution\"", source)
+        self.assertIn("set(str(label).upper()) <= {\"I\"}", source)
         self.assertIn("require_native_phase", source)
         self.assertIn("Statevector batching requires native P batch dispatch", source)
         self.assertIn("Statevector batching requires native CP batch dispatch", source)

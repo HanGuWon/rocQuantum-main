@@ -119,6 +119,11 @@ STATEVECTOR_BATCH_SAFE_OPS = {
     "crz",
     "p",
     "cp",
+    "rxx",
+    "ryy",
+    "rzz",
+    "rzx",
+    "PauliEvolution",
 }
 
 
@@ -2863,6 +2868,15 @@ class RocQuantumBackend(BackendV2):
             op = instruction.operation
             if op.name not in STATEVECTOR_BATCH_SAFE_OPS:
                 return False
+            if op.name == "PauliEvolution":
+                terms = _pauli_evolution_terms(op)
+                if terms is None:
+                    return False
+                if any(
+                    set(str(label).upper()) <= {"I"} and abs(complex(coeff).real) > 1e-15
+                    for label, coeff in terms
+                ):
+                    return False
             if _instruction_condition(instruction) is not None:
                 return False
         return True

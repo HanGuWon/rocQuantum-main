@@ -607,6 +607,96 @@ def test_qiskit_backend_does_not_batch_statevector_controlled_phase_lists_withou
     assert _FakeQuantumSimulator.instances[-1].batch_ops == []
 
 
+def test_qiskit_backend_batches_statevector_pauli_rotation_lists(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuits = []
+    for angle in (0.1, 0.2):
+        circuit = QuantumCircuit(2)
+        circuit.rxx(angle, 0, 1)
+        circuit.ryy(angle + 0.1, 0, 1)
+        circuit.rzz(angle + 0.2, 0, 1)
+        circuit.rzx(angle + 0.3, 0, 1)
+        circuits.append(circuit)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuits, sampling=False, statevector=True).result()
+
+    assert len(result.results) == 2
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.statevector_reads == 1
+    assert sim.matrices == []
+    assert sim.batch_ops == [
+        ("RX", (0,), (0.1, 0.2)),
+        ("RZ", (1,), (0.2, 0.30000000000000004)),
+        ("RZ", (1,), (0.30000000000000004, 0.4)),
+        ("RZ", (1,), (0.4, 0.5)),
+    ]
+
+
+def test_qiskit_backend_batches_statevector_pauli_evolution_lists(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import PauliEvolutionGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuits = []
+    for time in (0.1, 0.2):
+        circuit = QuantumCircuit(2)
+        circuit.append(
+            PauliEvolutionGate(SparsePauliOp.from_list([("ZZ", 0.5)]), time=time),
+            [0, 1],
+        )
+        circuits.append(circuit)
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuits, sampling=False, statevector=True).result()
+
+    assert len(result.results) == 2
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == [("CNOT", (0, 1), ()), ("CNOT", (0, 1), ())]
+    assert sim.batch_ops == [("RZ", (1,), (0.1, 0.2))]
+    assert sim.statevector_reads == 1
+
+
+def test_qiskit_backend_does_not_batch_statevector_pauli_evolution_identity_terms(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import PauliEvolutionGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuits = []
+    for time in (0.1, 0.2):
+        circuit = QuantumCircuit(1)
+        circuit.append(
+            PauliEvolutionGate(SparsePauliOp.from_list([("I", 0.5), ("Z", 1.0)]), time=time),
+            [0],
+        )
+        circuits.append(circuit)
+
+    before = len(_FakeQuantumSimulator.instances)
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    result = backend.run(circuits, sampling=False, statevector=True).result()
+
+    assert len(result.results) == 2
+    sims = _FakeQuantumSimulator.instances[before:]
+    assert sims
+    assert _FakeQuantumSimulator.instances[-1].batch_size() == 1
+    assert _FakeQuantumSimulator.instances[-1].batch_ops == []
+
+
 def test_framework_runtime_converts_full_statevectors_to_little_endian_order():
     from rocquantum.framework_runtime import statevector_to_little_endian_wires
 
