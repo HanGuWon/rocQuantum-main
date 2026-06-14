@@ -3673,6 +3673,60 @@ def test_qiskit_native_estimator_batches_parameters_with_observables(monkeypatch
     assert sim.batch_expectations == [("Z", (0,)), ("X", (0,))]
 
 
+def test_qiskit_estimator_reuses_scalar_multiple_pauli_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    circuit = QuantumCircuit(1)
+    observables = [
+        SparsePauliOp.from_list([("Z", 1.0)]),
+        SparsePauliOp.from_list([("Z", 2.0)]),
+    ]
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observables)],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 1.0], dtype=float))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.expectations == [("Z", (0,))]
+    assert sim.statevector_reads == 0
+
+
+def test_qiskit_estimator_reuses_scalar_multiple_pauli_batch_readout(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import Parameter
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    theta = Parameter("theta")
+    circuit = QuantumCircuit(1)
+    circuit.ry(theta, 0)
+    observables = [
+        SparsePauliOp.from_list([("Z", 1.0)]),
+        SparsePauliOp.from_list([("Z", 2.0)]),
+    ]
+
+    result = RocQuantumProvider().get_estimator().run(
+        [(circuit, observables, [0.1, 0.2])],
+    ).result()[0]
+
+    np.testing.assert_allclose(result.data.evs, np.array([0.5, 1.0], dtype=float))
+    assert result.metadata["batched_parameters"] is True
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.batch_expectations == [("Z", (0,))]
+    assert sim.statevector_reads == 0
+
+
 def test_qiskit_native_estimator_batches_parametric_values(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

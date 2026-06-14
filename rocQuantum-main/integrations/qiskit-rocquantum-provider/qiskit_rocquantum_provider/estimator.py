@@ -351,6 +351,18 @@ def _observable_signature(observable, num_qubits: int):
     )
 
 
+def _factor_observable_signature(signature):
+    signature = tuple(signature)
+    if not signature:
+        return 1.0 + 0.0j, signature
+
+    coefficient = complex(signature[0][0])
+    return coefficient, tuple(
+        (complex(coeff) / coefficient, label)
+        for coeff, label in signature
+    )
+
+
 def _observable_plan(observable, num_qubits: int):
     dense_plan = _dense_operator_plan(observable, int(num_qubits))
     if dense_plan is not None:
@@ -365,13 +377,15 @@ def _observable_plan(observable, num_qubits: int):
         diagonal_terms = _diagonal_dense_operator_terms(matrix, targets, int(num_qubits))
         if diagonal_terms is not None:
             signature = tuple(_combine_observable_terms(diagonal_terms, int(num_qubits)))
-            return ("pauli", signature), ("pauli", signature)
+            coefficient, normalized_signature = _factor_observable_signature(signature)
+            return ("pauli", normalized_signature), ("pauli", (normalized_signature, coefficient))
         coefficient, normalized_matrix = _factor_dense_operator_matrix(matrix)
         cache_key = _dense_matrix_cache_key(normalized_matrix, targets)
         return cache_key, ("matrix", (normalized_matrix, tuple(targets), coefficient))
 
     signature = _observable_signature(observable, int(num_qubits))
-    return ("pauli", signature), ("pauli", signature)
+    coefficient, normalized_signature = _factor_observable_signature(signature)
+    return ("pauli", normalized_signature), ("pauli", (normalized_signature, coefficient))
 
 
 def _estimate_combined_observable_terms(runtime, terms, num_qubits: int) -> float:
@@ -413,7 +427,12 @@ def _estimate_observable_plan(runtime, plan, num_qubits: int) -> float:
         return float(real_result)
 
     if kind == "pauli":
-        return _estimate_combined_observable_terms(runtime, payload, int(num_qubits))
+        terms, coefficient = payload
+        result = coefficient * _estimate_combined_observable_terms(runtime, terms, int(num_qubits))
+        real_result = np.real_if_close(result)
+        if np.iscomplexobj(real_result):
+            raise ValueError("Observable expectation has a non-negligible imaginary component.")
+        return float(real_result)
 
     if kind == "matrix":
         matrix, targets, coefficient = payload
@@ -428,10 +447,19 @@ def _estimate_observable_plan(runtime, plan, num_qubits: int) -> float:
 
 def _estimate_observable_plan_cached(runtime, cache_key, plan, num_qubits: int, cache) -> float:
     kind, payload = plan
-    if kind != "matrix":
+    if kind == "constant":
         if cache_key not in cache:
             cache[cache_key] = _estimate_observable_plan(runtime, plan, int(num_qubits))
         return cache[cache_key]
+
+    if kind == "pauli":
+        terms, coefficient = payload
+        if cache_key not in cache:
+            cache[cache_key] = _estimate_combined_observable_terms(runtime, terms, int(num_qubits))
+        real_result = np.real_if_close(coefficient * cache[cache_key])
+        if np.iscomplexobj(real_result):
+            raise ValueError("Observable expectation has a non-negligible imaginary component.")
+        return float(real_result)
 
     matrix, targets, coefficient = payload
     if cache_key not in cache:
@@ -451,7 +479,12 @@ def _estimate_observable_plan_batch(runtime, plan, num_qubits: int) -> np.ndarra
         return np.full(runtime.batch_size(), float(real_result), dtype=float)
 
     if kind == "pauli":
-        return _estimate_combined_observable_terms_batch(runtime, payload, int(num_qubits))
+        terms, coefficient = payload
+        result = coefficient * _estimate_combined_observable_terms_batch(runtime, terms, int(num_qubits))
+        real_result = np.real_if_close(result)
+        if np.iscomplexobj(real_result):
+            raise ValueError("Observable expectation has a non-negligible imaginary component.")
+        return np.asarray(real_result, dtype=float)
 
     if kind == "matrix":
         matrix, targets, coefficient = payload
@@ -466,10 +499,19 @@ def _estimate_observable_plan_batch(runtime, plan, num_qubits: int) -> np.ndarra
 
 def _estimate_observable_plan_batch_cached(runtime, cache_key, plan, num_qubits: int, cache) -> np.ndarray:
     kind, payload = plan
-    if kind != "matrix":
+    if kind == "constant":
         if cache_key not in cache:
             cache[cache_key] = _estimate_observable_plan_batch(runtime, plan, int(num_qubits))
         return cache[cache_key]
+
+    if kind == "pauli":
+        terms, coefficient = payload
+        if cache_key not in cache:
+            cache[cache_key] = _estimate_combined_observable_terms_batch(runtime, terms, int(num_qubits))
+        real_result = np.real_if_close(coefficient * cache[cache_key])
+        if np.iscomplexobj(real_result):
+            raise ValueError("Observable expectation has a non-negligible imaginary component.")
+        return np.asarray(real_result, dtype=float)
 
     matrix, targets, coefficient = payload
     if cache_key not in cache:

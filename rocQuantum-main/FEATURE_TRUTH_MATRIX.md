@@ -22,7 +22,7 @@ Recent PennyLane mixed-observable note: expectation sums that combine Pauli-repr
 
 Recent runtime dense-moments note: shared dense-matrix moment fallback now reads batched statevectors once when native dense moments and native dense batch expectation hooks are unavailable, avoiding duplicate readback for PennyLane Hermitian variance batches on older bindings.
 
-Recent Qiskit constant-observable note: native Estimator now folds dense scalar `Operator([[c]])` and dense identity `Operator(c*I)` observables into constant expectation values for single and batched pubs, lowers small diagonal dense `Operator` observables to Pauli-Z payloads, and reuses normalized dense readouts for scalar-multiple dense `Operator` observables within single and batched pubs, avoiding duplicate dense expectation hooks or statevector readback for CUDA-Q-style numeric/scaled observables.
+Recent Qiskit constant-observable note: native Estimator now folds dense scalar `Operator([[c]])` and dense identity `Operator(c*I)` observables into constant expectation values for single and batched pubs, lowers small diagonal dense `Operator` observables to Pauli-Z payloads, and reuses normalized Pauli and dense readouts for scalar-multiple `SparsePauliOp` and dense `Operator` observables within single and batched pubs, avoiding duplicate expectation hooks or statevector readback for CUDA-Q-style numeric/scaled observables.
 
 Recent Qiskit diagonal-observable note: native Estimator and direct provider expectation now lower small diagonal dense `Operator` observables, including explicit target wrappers, into Pauli-Z terms before dense-matrix hooks, avoiding dense expectation and statevector fallback for those readouts.
 
