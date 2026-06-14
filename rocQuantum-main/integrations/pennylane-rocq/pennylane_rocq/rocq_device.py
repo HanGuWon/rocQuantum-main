@@ -596,6 +596,7 @@ def _merge_observable_sum_payloads(payloads):
     merged = []
     pauli_terms = []
     matrix_positions = {}
+    sparse_positions = {}
 
     def flush_paulis():
         if pauli_terms:
@@ -615,6 +616,26 @@ def _merge_observable_sum_payloads(payloads):
                 "matrix",
                 np.ascontiguousarray(previous[1] + matrix),
                 previous[2],
+            )
+
+    def append_sparse(component):
+        data = np.ascontiguousarray(np.asarray(component[1], dtype=np.complex128))
+        indices = np.ascontiguousarray(np.asarray(component[2], dtype=np.int64))
+        indptr = np.ascontiguousarray(np.asarray(component[3], dtype=np.int64))
+        shape = tuple(int(dim) for dim in component[4])
+        key = (shape, _array_cache_key(indices), _array_cache_key(indptr))
+        position = sparse_positions.get(key)
+        if position is None:
+            sparse_positions[key] = len(merged)
+            merged.append(("sparse", data, indices, indptr, shape))
+        else:
+            previous = merged[position]
+            merged[position] = (
+                "sparse",
+                np.ascontiguousarray(previous[1] + data),
+                previous[2],
+                previous[3],
+                previous[4],
             )
 
     def fold_matrix_component(component):
@@ -642,6 +663,8 @@ def _merge_observable_sum_payloads(payloads):
         for component in components:
             if component[0] == "matrix":
                 component = fold_matrix_component(component)
+            if component[0] == "sparse" and np.allclose(component[1], 0.0, rtol=1e-12, atol=1e-12):
+                continue
             if component[0] == "pauli":
                 pending_paulis.extend(component[1])
             else:
@@ -660,6 +683,9 @@ def _merge_observable_sum_payloads(payloads):
             elif component[0] == "matrix":
                 flush_paulis()
                 append_matrix(component)
+            elif component[0] == "sparse":
+                flush_paulis()
+                append_sparse(component)
             else:
                 flush_paulis()
                 merged.append(component)
