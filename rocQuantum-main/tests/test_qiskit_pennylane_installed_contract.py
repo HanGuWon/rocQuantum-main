@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import cmath
 import math
 import os
 import sys
@@ -486,7 +487,7 @@ def test_qiskit_backend_batches_compatible_statevector_circuit_lists(monkeypatch
     assert sim.statevector_reads == 1
 
 
-def test_qiskit_backend_does_not_batch_statevector_lists_with_global_phase(monkeypatch):
+def test_qiskit_backend_batches_statevector_lists_with_global_phase(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
 
@@ -500,15 +501,19 @@ def test_qiskit_backend_does_not_batch_statevector_lists_with_global_phase(monke
         circuit.ry(angle, 0)
         circuits.append(circuit)
 
-    before = len(_FakeQuantumSimulator.instances)
     backend = RocQuantumProvider().get_backend("rocq_simulator")
     result = backend.run(circuits, sampling=False, statevector=True).result()
 
     assert len(result.results) == 2
-    sims = _FakeQuantumSimulator.instances[before:]
-    assert sims
-    assert _FakeQuantumSimulator.instances[-1].batch_size() == 1
-    assert _FakeQuantumSimulator.instances[-1].batch_ops == []
+    for index, phase in enumerate((0.25, 0.5)):
+        np.testing.assert_allclose(
+            np.asarray(result.results[index].data.statevector, dtype=np.complex128),
+            np.array([cmath.exp(1j * phase), 0.0], dtype=np.complex128),
+        )
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RY", (0,), (0.1, 0.2))]
+    assert sim.statevector_reads == 1
 
 
 def test_qiskit_backend_batches_statevector_phase_lists_with_native_phase_batch(monkeypatch):
@@ -668,7 +673,7 @@ def test_qiskit_backend_batches_statevector_pauli_evolution_lists(monkeypatch):
     assert sim.statevector_reads == 1
 
 
-def test_qiskit_backend_does_not_batch_statevector_pauli_evolution_identity_terms(monkeypatch):
+def test_qiskit_backend_batches_statevector_pauli_evolution_identity_terms(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
 
@@ -686,15 +691,19 @@ def test_qiskit_backend_does_not_batch_statevector_pauli_evolution_identity_term
         )
         circuits.append(circuit)
 
-    before = len(_FakeQuantumSimulator.instances)
     backend = RocQuantumProvider().get_backend("rocq_simulator")
     result = backend.run(circuits, sampling=False, statevector=True).result()
 
     assert len(result.results) == 2
-    sims = _FakeQuantumSimulator.instances[before:]
-    assert sims
-    assert _FakeQuantumSimulator.instances[-1].batch_size() == 1
-    assert _FakeQuantumSimulator.instances[-1].batch_ops == []
+    for index, time in enumerate((0.1, 0.2)):
+        np.testing.assert_allclose(
+            np.asarray(result.results[index].data.statevector, dtype=np.complex128),
+            np.array([cmath.exp(-0.5j * time), 0.0], dtype=np.complex128),
+        )
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.batch_ops == [("RZ", (0,), (0.2, 0.4))]
+    assert sim.statevector_reads == 1
 
 
 def test_qiskit_backend_batches_statevector_lists_with_fixed_pauli_and_unitary(monkeypatch):

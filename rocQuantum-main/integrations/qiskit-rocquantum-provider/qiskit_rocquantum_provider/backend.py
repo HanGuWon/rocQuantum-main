@@ -2843,28 +2843,42 @@ class RocQuantumBackend(BackendV2):
         return any(instruction.operation.name == "save_statevector" for instruction in circuit.data)
 
     @staticmethod
-    def _has_nontrivial_global_phase(circuit):
+    def _statevector_batch_global_phase(circuit):
+        phase = 0.0
         try:
-            if abs(float(getattr(circuit, "global_phase", 0.0))) > 1e-15:
-                return True
+            phase += float(getattr(circuit, "global_phase", 0.0))
         except (TypeError, ValueError):
-            return True
+            return None
 
         for instruction in circuit.data:
             op = instruction.operation
-            if op.name != "global_phase":
+            if op.name == "global_phase":
+                try:
+                    (instruction_phase,) = normalize_params(getattr(op, "params", ()) or ())
+                    phase += float(instruction_phase)
+                except (TypeError, ValueError):
+                    return None
                 continue
-            try:
-                (phase,) = normalize_params(getattr(op, "params", ()) or ())
-                if abs(float(phase)) > 1e-15:
-                    return True
-            except (TypeError, ValueError):
-                return True
-        return False
+            if op.name == "PauliEvolution":
+                terms = _pauli_evolution_terms(op)
+                if terms is None:
+                    return None
+                try:
+                    (time,) = normalize_params(getattr(op, "params", ()) or ())
+                    time = float(time)
+                except (TypeError, ValueError):
+                    return None
+                for label, coeff in terms:
+                    coeff = complex(coeff)
+                    if abs(coeff.imag) > 1e-12:
+                        return None
+                    if set(str(label).upper()) <= {"I"}:
+                        phase += -time * float(coeff.real)
+        return phase
 
     @staticmethod
     def _is_statevector_batch_safe_circuit(circuit):
-        if RocQuantumBackend._has_nontrivial_global_phase(circuit):
+        if RocQuantumBackend._statevector_batch_global_phase(circuit) is None:
             return False
         for instruction in circuit.data:
             op = instruction.operation
@@ -2873,11 +2887,6 @@ class RocQuantumBackend(BackendV2):
             if op.name == "PauliEvolution":
                 terms = _pauli_evolution_terms(op)
                 if terms is None:
-                    return False
-                if any(
-                    set(str(label).upper()) <= {"I"} and abs(complex(coeff).real) > 1e-15
-                    for label, coeff in terms
-                ):
                     return False
             if _instruction_condition(instruction) is not None:
                 return False
@@ -3285,6 +3294,9 @@ class RocQuantumBackend(BackendV2):
             return None
         if any(not self._is_statevector_batch_safe_circuit(circuit) for circuit in circuits):
             return None
+        phase_corrections = [self._statevector_batch_global_phase(circuit) for circuit in circuits]
+        if any(phase is None for phase in phase_corrections):
+            return None
 
         try:
             self._apply_circuit_batch(circuits, include_global_phase=False, require_native_phase=True)
@@ -3296,8 +3308,11 @@ class RocQuantumBackend(BackendV2):
             return None
 
         results = []
-        for circuit, statevector in zip(circuits, statevectors):
-            exp_data = ExperimentResultData(statevector=np.asarray(statevector, dtype=np.complex128))
+        for circuit, statevector, phase in zip(circuits, statevectors, phase_corrections):
+            statevector = np.asarray(statevector, dtype=np.complex128)
+            if abs(float(phase)) > 1e-15:
+                statevector = statevector * cmath.exp(1j * float(phase))
+            exp_data = ExperimentResultData(statevector=statevector)
             results.append(
                 ExperimentResult(
                     shots=0,
