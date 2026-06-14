@@ -233,6 +233,36 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(calls[0][1], [0])
         np.testing.assert_allclose(calls[0][2], matrix.astype(np.complex64))
 
+    def test_hip_statevector_backend_combines_pauli_terms_inside_mixed_sum(self):
+        from rocq.backends import _HipStateVectorState
+
+        pauli_calls = []
+        matrix_calls = []
+
+        class _FakeHipBackend:
+            def get_expectation_value_z(self, handle, d_state, num_qubits, qubit):
+                pauli_calls.append((num_qubits, qubit))
+                return 0.25
+
+            def get_expectation_matrix(self, handle, d_state, num_qubits, targets, matrix):
+                matrix_calls.append((num_qubits, list(targets), matrix.copy()))
+                return 0.5 + 0.0j
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+        matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+        operator = PauliOperator("Z0") + 2 * PauliOperator("Z0") + HermitianOperator(matrix, targets=[0])
+
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
+            result = state.expectation(operator)
+
+        self.assertEqual(result, 1.25)
+        self.assertEqual(pauli_calls, [(1, 0)])
+        self.assertEqual(len(matrix_calls), 1)
+        self.assertEqual(matrix_calls[0][1], [0])
+
     def test_hip_statevector_backend_skips_zero_hermitian_sum_terms(self):
         from rocq.backends import _HipStateVectorState
 

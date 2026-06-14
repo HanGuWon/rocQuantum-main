@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .operator import HermitianOperator, SparseHamiltonianOperator, SumOperator, iter_pauli_terms
+from .operator import HermitianOperator, PauliOperator, SparseHamiltonianOperator, SumOperator, iter_pauli_terms
 
 try:
     import _rocq_hip_backend as hip_backend
@@ -108,18 +108,36 @@ def _expect_mixed_sum_operator(operator: SumOperator, num_qubits: int, expectati
 
     total = 0.0 + 0.0j
     expectation_cache = {}
+    pauli_terms = []
     for term in operator.terms:
         if getattr(term, "coefficient", None) == 0:
             continue
 
         cache_key = _matrix_expectation_cache_key(term, int(num_qubits))
         if cache_key is None:
-            value = expectation_func(term)
+            try:
+                pauli_terms.extend(iter_pauli_terms(term))
+                continue
+            except (NotImplementedError, TypeError):
+                value = expectation_func(term)
         else:
             if cache_key not in expectation_cache:
                 expectation_cache[cache_key] = expectation_func(term * (1 / term.coefficient))
             value = term.coefficient * expectation_cache[cache_key]
         total += operator.coefficient * value
+
+    if pauli_terms:
+        pauli_operators = [
+            PauliOperator(
+                "I" if not paulis else " ".join(f"{pauli}{int(qubit)}" for pauli, qubit in paulis),
+                coefficient=coefficient,
+            )
+            for coefficient, paulis in pauli_terms
+            if coefficient != 0
+        ]
+        if pauli_operators:
+            pauli_operator = pauli_operators[0] if len(pauli_operators) == 1 else SumOperator(pauli_operators)
+            total += operator.coefficient * expectation_func(pauli_operator)
     return _finalize_expectation(total)
 
 
