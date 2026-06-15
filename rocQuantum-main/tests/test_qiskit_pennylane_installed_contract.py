@@ -6147,6 +6147,54 @@ def test_pennylane_batch_execute_batches_select_sweeps(monkeypatch):
     assert sim.batch_expectations == [("Z", (0,))]
 
 
+def test_pennylane_batch_execute_keeps_select_product_basis_native_batched(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    selected_product = qml.prod(
+        qml.BasisEmbedding(np.array([1, 0]), wires=[1, 2]),
+        qml.PauliX(wires=2),
+    )
+    dev = qml.device("lightning.rocq", wires=3)
+    circuits = [
+        qml.tape.QuantumScript(
+            [
+                qml.Select([selected_product, qml.Identity(wires=1)], control=[0]),
+                qml.RY(0.2, wires=0),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+        qml.tape.QuantumScript(
+            [
+                qml.Select([selected_product, qml.Identity(wires=1)], control=[0]),
+                qml.RY(0.8, wires=0),
+            ],
+            [qml.expval(qml.PauliZ(0))],
+        ),
+    ]
+
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sim = _FakeQuantumSimulator.instances[-1]
+    assert sim.batch_size() == 2
+    assert sim.ops == [
+        ("X", (0,), ()),
+        ("CNOT", (0, 1), ()),
+        ("X", (0,), ()),
+        ("X", (0,), ()),
+        ("CNOT", (0, 2), ()),
+        ("X", (0,), ()),
+    ]
+    assert sim.batch_ops == [("RY", (0,), (0.2, 0.8))]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+    assert sim.batch_expectations == [("Z", (0,))]
+
+
 def test_pennylane_batch_execute_keeps_arithmetic_templates_batched(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -9283,6 +9331,41 @@ def test_pennylane_select_decomposes_natively(monkeypatch):
     assert sim.controlled_matrices == []
 
 
+def test_pennylane_select_product_basis_native_decomposes_natively(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    selected_product = qml.prod(
+        qml.BasisEmbedding(np.array([1, 0]), wires=[1, 2]),
+        qml.PauliX(wires=2),
+    )
+    dev = qml.device("lightning.rocq", wires=3)
+
+    @qml.qnode(dev)
+    def circuit():
+        qml.Select([selected_product, qml.Identity(wires=1)], control=[0])
+        return qml.state()
+
+    circuit()
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    assert sim.ops == [
+        ("X", (0,), ()),
+        ("CNOT", (0, 1), ()),
+        ("X", (0,), ()),
+        ("X", (0,), ()),
+        ("CNOT", (0, 2), ()),
+        ("X", (0,), ()),
+    ]
+    assert sim.matrices == []
+    assert sim.controlled_matrices == []
+
+
 def test_pennylane_partial_select_decomposes_natively(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
@@ -11770,6 +11853,49 @@ def test_pennylane_native_adjoint_lowers_select_product_basis_phase_payloads(mon
     assert operations[-1]["params"] == [0.321]
     assert operations[-1]["param_indices"] == [2]
     assert operations[-1]["trainable_param_indices"] == [2]
+
+
+def test_pennylane_native_adjoint_lowers_select_product_basis_native_payloads(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    selected_product = qml.prod(
+        qml.BasisEmbedding(np.array([1, 0]), wires=[1, 2]),
+        qml.PauliX(wires=2),
+    )
+    dev = qml.device("lightning.rocq", wires=3)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.Select([selected_product, qml.Identity(wires=1)], control=[0]),
+            qml.RY(0.321, wires=0),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [1]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [1]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert [(op["rocq_name"], op["wires"]) for op in operations] == [
+        ("X", [0]),
+        ("CNOT", [0, 1]),
+        ("X", [0]),
+        ("X", [0]),
+        ("CNOT", [0, 2]),
+        ("X", [0]),
+        ("RY", [0]),
+    ]
+    assert all(op["rocq_name"] != "Select" for op in operations)
+    assert all(op["rocq_name"] != "matrix" for op in operations)
+    assert operations[-1]["params"] == [0.321]
+    assert operations[-1]["param_indices"] == [1]
+    assert operations[-1]["trainable_param_indices"] == [1]
 
 
 def test_pennylane_native_adjoint_lowers_select_multi_native_product_payloads(monkeypatch):

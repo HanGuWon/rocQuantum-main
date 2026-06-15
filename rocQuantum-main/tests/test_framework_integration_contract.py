@@ -726,6 +726,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def append_grover_operator", source)
         self.assertIn("def append_controlled_sequence", source)
         self.assertIn("def append_select", source)
+        self.assertIn("append_controlled_x_targets(selected_controls", source)
+        self.assertIn("op_params_by_batch[0]", source)
         self.assertIn("op.name == \"QFT\"", source)
         self.assertIn("op.name == \"BasisEmbedding\"", source)
         self.assertIn("op.name == \"Permute\"", source)

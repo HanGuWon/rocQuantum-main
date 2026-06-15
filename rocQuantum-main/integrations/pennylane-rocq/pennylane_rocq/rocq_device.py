@@ -2869,9 +2869,25 @@ def _apply_controlled_selected_product(runtime, selected_op, controls, control_v
     if split_params is None:
         return False
 
-    active_targets = []
-    native_operands = []
-    phase_thetas = []
+    fallback_wire = None
+    pending_basis_targets = []
+    pending_basis_fallback = None
+
+    def flush_basis_targets():
+        nonlocal fallback_wire, pending_basis_fallback
+        if pending_basis_targets and not _apply_controlled_x_targets(
+            runtime,
+            controls,
+            control_values,
+            pending_basis_targets,
+        ):
+            return False
+        if fallback_wire is None and pending_basis_fallback is not None:
+            fallback_wire = pending_basis_fallback
+        pending_basis_targets.clear()
+        pending_basis_fallback = None
+        return True
+
     for operand, operand_params in zip(operands, split_params):
         if operand.name in {"Identity", "I"}:
             if operand_params:
@@ -2879,37 +2895,43 @@ def _apply_controlled_selected_product(runtime, selected_op, controls, control_v
             continue
 
         if operand.name == "GlobalPhase":
+            if not flush_basis_targets():
+                return False
             theta = _global_phase_theta(operand_params)
             if theta is None:
                 return False
-            phase_thetas.append(theta)
+            if not _apply_controlled_global_phase(
+                runtime,
+                controls,
+                control_values,
+                theta,
+                fallback_wire=fallback_wire,
+            ):
+                return False
             continue
 
-        if operand.name != "BasisEmbedding":
-            native_operands.append((operand, operand_params))
+        if operand.name == "BasisEmbedding":
+            if len(operand_params) != 1:
+                return False
+            try:
+                bits = np.asarray(operand_params[0], dtype=int).reshape(-1)
+                target_indices = [wire_map[wire] for wire in operand.wires]
+            except (KeyError, TypeError, ValueError):
+                return False
+            if len(bits) != len(target_indices):
+                return False
+            active_targets = [
+                target_index
+                for bit, target_index in zip(bits, target_indices)
+                if int(bit)
+            ]
+            pending_basis_targets.extend(active_targets)
+            if pending_basis_fallback is None and target_indices:
+                pending_basis_fallback = target_indices[0]
             continue
 
-        if len(operand_params) != 1:
+        if not flush_basis_targets():
             return False
-
-        bits = np.asarray(operand_params[0], dtype=int).reshape(-1)
-        target_indices = [wire_map[wire] for wire in operand.wires]
-        if len(bits) != len(target_indices):
-            return False
-
-        active_targets.extend(
-            target_index
-            for bit, target_index in zip(bits, target_indices)
-            if int(bit)
-        )
-
-    if active_targets and native_operands:
-        return False
-    if len(native_operands) > 1:
-        return False
-
-    if native_operands:
-        operand, operand_params = native_operands[0]
         if not _apply_controlled_selected_op(
             runtime,
             operand,
@@ -2920,47 +2942,10 @@ def _apply_controlled_selected_product(runtime, selected_op, controls, control_v
         ):
             return False
         target_indices = [wire_map[wire] for wire in operand.wires]
-        fallback_wire = target_indices[0] if target_indices else None
-        for theta in phase_thetas:
-            if not _apply_controlled_global_phase(
-                runtime,
-                controls,
-                control_values,
-                theta,
-                fallback_wire=fallback_wire,
-            ):
-                return False
-        return True
+        if fallback_wire is None and target_indices:
+            fallback_wire = target_indices[0]
 
-    if active_targets:
-        if not _apply_controlled_x_targets(runtime, controls, control_values, active_targets):
-            return False
-        fallback_wire = active_targets[0]
-        for theta in phase_thetas:
-            if not _apply_controlled_global_phase(
-                runtime,
-                controls,
-                control_values,
-                theta,
-                fallback_wire=fallback_wire,
-            ):
-                return False
-        return True
-
-    if not active_targets:
-        for theta in phase_thetas:
-            fallback_wire = wire_map[selected_op.wires[0]] if selected_op.wires else None
-            if not _apply_controlled_global_phase(
-                runtime,
-                controls,
-                control_values,
-                theta,
-                fallback_wire=fallback_wire,
-            ):
-                return False
-        return True
-
-    return _apply_controlled_x_targets(runtime, controls, control_values, active_targets)
+    return flush_basis_targets()
 
 
 def _apply_uncontrolled_selected_op(runtime, selected_op, wire_map, params):
@@ -3203,6 +3188,17 @@ def _apply_select_batch(runtime, reference_op, wire_map, params_by_op):
             ):
                 continue
         if any(params for params in op_params_by_batch):
+            if any(not _parameter_lists_match(params, op_params_by_batch[0]) for params in op_params_by_batch[1:]):
+                return False
+            if _apply_controlled_selected_op(
+                runtime,
+                selected_op,
+                controls,
+                control_values,
+                wire_map,
+                params=op_params_by_batch[0],
+            ):
+                continue
             return False
         if not _apply_controlled_selected_op(
             runtime,
@@ -4940,20 +4936,36 @@ class RocQDevice(QubitDevice):
                 if split_params is None or split_indices is None:
                     return False
 
-                active_targets = []
-                ordered_operands = []
-                has_native_operands = False
+                pending_basis_targets = []
+
+                def flush_basis_targets():
+                    if not pending_basis_targets:
+                        return True
+                    if not append_controlled_x_targets(
+                        selected_controls,
+                        selected_values,
+                        pending_basis_targets,
+                    ):
+                        return False
+                    pending_basis_targets.clear()
+                    return True
+
                 for operand, operand_params, operand_indices in zip(operands, split_params, split_indices):
                     if operand.name in {"Identity", "I"}:
                         if operand_params:
                             return False
                         continue
-                    if operand.name == "GlobalPhase":
-                        ordered_operands.append((operand, operand_params, operand_indices))
-                        continue
                     if operand.name != "BasisEmbedding":
-                        has_native_operands = True
-                        ordered_operands.append((operand, operand_params, operand_indices))
+                        if not flush_basis_targets():
+                            return False
+                        if not append_selected_op(
+                            operand,
+                            selected_controls,
+                            selected_values,
+                            operand_params,
+                            operand_indices,
+                        ):
+                            return False
                         continue
                     if len(operand_params) != 1 or any(index in trainable_param_set for index in operand_indices):
                         return False
@@ -4964,31 +4976,13 @@ class RocQDevice(QubitDevice):
                         return False
                     if len(bits) != len(target_indices):
                         return False
-                    active_targets.extend(
+                    active_targets = [
                         target_index
                         for bit, target_index in zip(bits, target_indices)
                         if int(bit)
-                    )
-
-                if active_targets and has_native_operands:
-                    return False
-                if active_targets and not append_controlled_x_targets(
-                    selected_controls,
-                    selected_values,
-                    active_targets,
-                ):
-                    return False
-
-                for operand, operand_params, operand_indices in ordered_operands:
-                    if not append_selected_op(
-                        operand,
-                        selected_controls,
-                        selected_values,
-                        operand_params,
-                        operand_indices,
-                    ):
-                        return False
-                return True
+                    ]
+                    pending_basis_targets.extend(active_targets)
+                return flush_basis_targets()
 
             def append_selected_matrix_payload(selected_op, selected_controls, selected_values, selected_param_indices):
                 if not selected_controls or any(index in trainable_param_set for index in selected_param_indices):
