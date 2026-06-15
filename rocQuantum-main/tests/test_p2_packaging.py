@@ -33,6 +33,8 @@ class TestCanonicalImports(unittest.TestCase):
             QuantumKernel,
             execute,
             execute_async,
+            get_state,
+            get_state_async,
             observe,
             observe_async,
             sample,
@@ -41,6 +43,8 @@ class TestCanonicalImports(unittest.TestCase):
         self.assertIsNotNone(QuantumKernel)
         self.assertIsNotNone(execute)
         self.assertIsNotNone(execute_async)
+        self.assertIsNotNone(get_state)
+        self.assertIsNotNone(get_state_async)
         self.assertIsNotNone(observe)
         self.assertIsNotNone(observe_async)
         self.assertIsNotNone(sample)
@@ -63,6 +67,8 @@ class TestFutureCanonicalRuntimeSurface(unittest.TestCase):
         import rocq
         self.assertTrue(callable(rocq.observe))
         self.assertTrue(callable(rocq.sample))
+        self.assertTrue(callable(rocq.get_state))
+        self.assertTrue(callable(rocq.get_state_async))
         self.assertTrue(callable(rocq.observe_async))
         self.assertTrue(callable(rocq.sample_async))
 
@@ -89,6 +95,8 @@ class TestLegacyShim(unittest.TestCase):
             compile_and_execute_async,
             execute,
             execute_async,
+            get_state,
+            get_state_async,
             kernel,
         )
         self.assertIsNotNone(kernel)
@@ -96,6 +104,8 @@ class TestLegacyShim(unittest.TestCase):
         self.assertIsNotNone(compile_and_execute_async)
         self.assertIsNotNone(execute)
         self.assertIsNotNone(execute_async)
+        self.assertIsNotNone(get_state)
+        self.assertIsNotNone(get_state_async)
 
 
 class TestVqeImports(unittest.TestCase):

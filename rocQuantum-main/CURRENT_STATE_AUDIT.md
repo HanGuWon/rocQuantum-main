@@ -5,7 +5,7 @@ Audit date: 2026-04-05
 Runtime update note (2026-04-06):
 
 - Canonical `rocq.execute()`, `rocq.sample()`, and `rocq.observe()` now route through a unified backend contract.
-- Canonical `rocq.execute_async()`, `rocq.sample_async()`, `rocq.observe_async()`, and `rocq.compile_and_execute_async()` return host-side `Future` objects over the same contracts; native HIP-stream / multi-QPU async remains open.
+- Canonical `rocq.get_state()` aliases state readback, and `rocq.get_state_async()`, `rocq.execute_async()`, `rocq.sample_async()`, `rocq.observe_async()`, and `rocq.compile_and_execute_async()` return host-side `Future` objects over the same contracts; native HIP-stream / multi-QPU async remains open.
 - `rocq.operator.get_expectation_value()` now delegates to `rocq.observe()`.
 - Native state-vector sampling and Pauli expectation paths are wired into the canonical `rocq` surface.
 - Canonical `qvec` allocation now rejects bool, non-integral, and non-positive register sizes while accepting integral NumPy scalars through explicit normalization.

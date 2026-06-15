@@ -329,6 +329,11 @@ class QuantumKernel:
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
         return backend_impl.get_state()
 
+    def get_state(self, *args, backend: str = "state_vector", noise_model=None, **kwargs):
+        """Return the final state through the canonical execution path."""
+
+        return self.execute(*args, backend=backend, noise_model=noise_model, **kwargs)
+
     def execute_async(
         self,
         *args,
@@ -341,6 +346,21 @@ class QuantumKernel:
 
         return _submit_async(
             lambda: self.execute(*args, backend=backend, noise_model=noise_model, **kwargs),
+            executor=executor,
+        )
+
+    def get_state_async(
+        self,
+        *args,
+        backend: str = "state_vector",
+        noise_model=None,
+        executor: Optional[Executor] = None,
+        **kwargs,
+    ) -> Future:
+        """Submit state readback work to a host-side Future."""
+
+        return _submit_async(
+            lambda: self.get_state(*args, backend=backend, noise_model=noise_model, **kwargs),
             executor=executor,
         )
 
@@ -405,6 +425,12 @@ def execute(kernel_obj: QuantumKernel, *args, backend: str = "state_vector", noi
     return kernel_obj.execute(*args, backend=backend, noise_model=noise_model, **kwargs)
 
 
+def get_state(kernel_obj: QuantumKernel, *args, backend: str = "state_vector", noise_model=None, **kwargs):
+    if not isinstance(kernel_obj, QuantumKernel):
+        raise TypeError("get_state() expects a QuantumKernel instance.")
+    return kernel_obj.get_state(*args, backend=backend, noise_model=noise_model, **kwargs)
+
+
 def compile_and_execute(
     kernel_obj: QuantumKernel,
     *args,
@@ -458,6 +484,19 @@ def execute_async(
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("execute_async() expects a QuantumKernel instance.")
     return kernel_obj.execute_async(*args, backend=backend, noise_model=noise_model, executor=executor, **kwargs)
+
+
+def get_state_async(
+    kernel_obj: QuantumKernel,
+    *args,
+    backend: str = "state_vector",
+    noise_model=None,
+    executor: Optional[Executor] = None,
+    **kwargs,
+) -> Future:
+    if not isinstance(kernel_obj, QuantumKernel):
+        raise TypeError("get_state_async() expects a QuantumKernel instance.")
+    return kernel_obj.get_state_async(*args, backend=backend, noise_model=noise_model, executor=executor, **kwargs)
 
 
 def sample_async(

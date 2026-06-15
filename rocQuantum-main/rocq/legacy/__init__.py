@@ -40,6 +40,8 @@ from rocq.kernel import (
     compile_and_execute_async,
     execute,
     execute_async,
+    get_state,
+    get_state_async,
     kernel,
     observe,
     observe_async,

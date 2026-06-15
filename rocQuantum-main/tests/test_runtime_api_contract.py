@@ -67,11 +67,15 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertTrue(callable(rocq.sample))
         self.assertTrue(callable(rocq.compile_and_execute))
         self.assertTrue(callable(rocq.execute_async))
+        self.assertTrue(callable(rocq.get_state))
+        self.assertTrue(callable(rocq.get_state_async))
         self.assertTrue(callable(rocq.sample_async))
         self.assertTrue(callable(rocq.observe_async))
         self.assertTrue(callable(rocq.compile_and_execute_async))
         for name in (
             "execute_async",
+            "get_state",
+            "get_state_async",
             "sample_async",
             "observe_async",
             "compile_and_execute_async",
@@ -338,6 +342,20 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual([op.name.lower() for op in fake_backend.ops], ["h", "cnot"])
         self.assertIsNone(fake_backend.noise_model)
 
+    def test_get_state_alias_uses_execute_backend_contract(self):
+        @kernel
+        def bell():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+            rocq.cnot(q[0], q[1])
+
+        fake_backend = _FakeBackend()
+        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+            result = rocq.get_state(bell, backend="state_vector")
+
+        self.assertEqual(result, "fake-state")
+        self.assertEqual([op.name.lower() for op in fake_backend.ops], ["h", "cnot"])
+
     def test_sample_uses_backend_sample(self):
         @kernel
         def bell():
@@ -436,6 +454,23 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=1) as executor:
             with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
                 future = rocq.execute_async(bell, backend="state_vector", executor=executor)
+                self.assertIsInstance(future, Future)
+                result = future.result(timeout=5)
+
+        self.assertEqual(result, "fake-state")
+        self.assertEqual([op.name.lower() for op in fake_backend.ops], ["h", "cnot"])
+
+    def test_get_state_async_returns_future_and_uses_backend_contract(self):
+        @kernel
+        def bell():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+            rocq.cnot(q[0], q[1])
+
+        fake_backend = _FakeBackend()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+                future = rocq.get_state_async(bell, backend="state_vector", executor=executor)
                 self.assertIsInstance(future, Future)
                 result = future.result(timeout=5)
 
