@@ -41,7 +41,7 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | Packaging / install / export | PARTIAL | Native build exists, but releasable packaging is not coherent |
 | Python surfaces | PARTIAL | Two divergent stacks exist, one with mock fallbacks |
 | Integrations | PARTIAL | Thin adapters exist, but PennyLane/Cirq/Qiskit sampling now prefers native `measure()` where available; Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, loop-local `break_loop` / `continue_loop`, and `switch_case` sampling can use state-collapsing `measure_qubit()` trajectories; Qiskit/PennyLane Pauli-observable paths avoid mandatory statevector readback; PennyLane `qml.Hermitian` and supported Qiskit dense `Operator` observables can use native dense-matrix single/batch expectation paths for supported targets; default multi-control gates route to native `MCX` / `CSWAP`; PennyLane `SparseHamiltonian` can use native CSR moments, including local batch readouts, with a correctness-first CSR statevector fallback; self-hosted ROCm CI now has a native binding/PennyLane/Qiskit/Cirq Bell-state smoke path, but artifacts are still required for hardware proof |
-| Higher-level libraries | PARTIAL | Experimental VQE/QAOA/repetition-code helpers exist, including single-round repetition-code syndrome/correction analysis, but they are not robust CUDA-QX analogues |
+| Higher-level libraries | PARTIAL | Experimental VQE/QAOA/repetition-code helpers exist, including single/repeated-round repetition-code syndrome/correction analysis, but they are not robust CUDA-QX analogues |
 
 ## ROCm Integration Maturity
 
@@ -102,10 +102,10 @@ Compared with the official CUDA-QX baseline (`https://github.com/NVIDIA/cudaqx`)
 
 Current state:
 
-- QEC is limited to a 3-qubit repetition-code single-round helper with sampled syndrome/correction analysis
+- QEC is limited to a 3-qubit repetition-code helper with single-round sampling and sequential repeated-round syndrome/correction aggregation
 - VQE is limited to Pauli-observable objectives through `rocq.observe()` plus numerical gradient helpers
 - QAOA is limited to a MaxCut-style ansatz/cost helper
-- no repeated-round/noise-aware decoder, robust solver, or hybrid-library stack was found
+- no noise-aware or fault-tolerant decoder, robust solver, or production hybrid-library stack was found
 
 This is a P2 area. It should not be used to market parity while P0 and P1 remain open.
 
@@ -120,7 +120,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 7. `hipTensorNet` breadth is overstated relative to what is built and tested.
 8. `hipDensityMat` is real but still too narrow for broad noisy-simulation claims: generic Kraus channels, GPU-side marginal probability reduction for density sampling, and small dense Hermitian observable reductions exist, while GPU-resident shot workflows, optimized channel scheduling, CSR density observables, and broad descriptor coverage remain incomplete. A small Clifford-only stabilizer/tableau backend now reduces the broader simulator-portfolio gap for Pauli propagation, but it is not GPU-accelerated and does not cover noise or non-Clifford circuits.
 9. Integrations are still thin adapters, though PennyLane/Cirq/Qiskit sampling now prefers the native simulator `measure()` path where available, Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, loop-local `break_loop` / `continue_loop`, and `switch_case` sampling can use state-collapsing `measure_qubit()` trajectories, PennyLane/Qiskit Pauli-observable paths use native expectation helpers where possible, PennyLane `qml.Hermitian` and supported Qiskit dense `Operator` observables can use native dense-matrix single/batch expectation paths for supported targets, Qiskit/PennyLane default multi-control gates reach native `MCX` / `CSWAP`, PennyLane `SparseHamiltonian` can use native CSR moments, including local batch readouts, with a CSR statevector fallback, and self-hosted ROCm CI now has a native framework Bell-state smoke path whose artifacts are needed for hardware proof.
-10. CUDA-QX-style libraries are still shells.
+10. CUDA-QX-style libraries are still experimental helpers rather than production stacks.
 
 ## P0 / P1 / P2 Roadmap
 

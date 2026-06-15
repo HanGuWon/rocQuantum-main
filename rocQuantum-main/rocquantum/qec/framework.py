@@ -120,6 +120,25 @@ def _validate_error_qubit(error_qubit: Optional[int]) -> None:
         raise ValueError("error_qubit must be one of 0, 1, 2, or None.")
 
 
+def _validate_repetition_rounds(rounds: int) -> None:
+    if rounds <= 0:
+        raise ValueError("rounds must be positive.")
+
+
+def _validate_error_qubit_schedule(
+    error_qubits: Optional[List[Optional[int]]],
+    rounds: int,
+) -> List[Optional[int]]:
+    if error_qubits is None:
+        return [None] * rounds
+    schedule = list(error_qubits)
+    if len(schedule) != rounds:
+        raise ValueError("error_qubits length must match rounds.")
+    for error_qubit in schedule:
+        _validate_error_qubit(error_qubit)
+    return schedule
+
+
 def _syndrome_from_bitstring(bitstring: str) -> List[int]:
     if len(bitstring) < 2:
         bitstring = bitstring.zfill(2)
@@ -147,6 +166,14 @@ def _apply_known_bit_flip(bits: List[int], qubit: Optional[int]) -> List[int]:
     if qubit is not None:
         corrected[qubit] ^= 1
     return corrected
+
+
+def _logical_successful_shots(analysis: Dict[str, Any]) -> int:
+    return sum(
+        outcome["count"]
+        for outcome in analysis["decoded_outcomes"]
+        if outcome["logical_success"] is True
+    )
 
 
 def repetition_syndrome_histogram(counts: Dict[str, int]) -> Dict[str, int]:
@@ -238,6 +265,93 @@ def analyze_repetition_code_counts(
     }
 
 
+def analyze_repetition_code_rounds(
+    round_counts: List[Dict[str, int]],
+    initial_bits: Optional[List[int]] = None,
+    error_qubits: Optional[List[Optional[int]]] = None,
+    expected_logical_bit: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Aggregate repeated 3-qubit repetition-code syndrome rounds.
+
+    Each round is decoded with the same lookup-table repetition decoder model
+    as ``analyze_repetition_code_counts``. The most likely correction from one
+    round feeds the next round's known data-bit state, giving a small
+    classical feed-forward workflow over the existing sampled helper.
+    """
+    if round_counts is None:
+        raise ValueError("round_counts must contain at least one round.")
+    counts_by_round = list(round_counts)
+    if not counts_by_round:
+        raise ValueError("round_counts must contain at least one round.")
+    _validate_repetition_rounds(len(counts_by_round))
+    error_schedule = _validate_error_qubit_schedule(error_qubits, len(counts_by_round))
+
+    initial_data_bits = _validate_repetition_bits(initial_bits)
+    expected_for_rounds = expected_logical_bit
+    if expected_for_rounds is None and initial_data_bits.count(initial_data_bits[0]) == 3:
+        expected_for_rounds = initial_data_bits[0]
+    current_bits = list(initial_data_bits)
+    aggregate_histogram = {"00": 0, "10": 0, "11": 0, "01": 0}
+    round_results = []
+    total_shots = 0
+    successful_shots = 0
+    success_is_known = False
+    correction_summary = {"none": 0, "q0": 0, "q1": 0, "q2": 0}
+
+    for round_index, counts in enumerate(counts_by_round):
+        if not isinstance(counts, dict):
+            raise ValueError("round_counts entries must be count dictionaries.")
+
+        analysis = analyze_repetition_code_counts(
+            counts,
+            initial_bits=current_bits,
+            error_qubit=error_schedule[round_index],
+            expected_logical_bit=expected_for_rounds,
+        )
+        for syndrome_key, count in analysis["syndrome_histogram"].items():
+            aggregate_histogram[syndrome_key] += count
+
+        total_shots += analysis["total_shots"]
+        if analysis["logical_success_rate"] is not None:
+            success_is_known = True
+            successful_shots += _logical_successful_shots(analysis)
+
+        correction_qubit = analysis["most_likely_correction_qubit"]
+        correction_key = "none" if correction_qubit is None else f"q{correction_qubit}"
+        correction_summary[correction_key] += 1
+        current_bits = analysis["most_likely_corrected_data_bits"]
+        round_results.append(
+            {
+                "round_index": round_index,
+                "counts": dict(counts),
+                "injected_error_qubit": error_schedule[round_index],
+                "syndrome": analysis["most_likely_syndrome"],
+                "correction_qubit": correction_qubit,
+                "corrected_data_bits": current_bits,
+                "logical_success_rate": analysis["logical_success_rate"],
+                "analysis": analysis,
+            }
+        )
+
+    logical_success_rate = None
+    if success_is_known:
+        logical_success_rate = successful_shots / total_shots
+
+    return {
+        "rounds": len(counts_by_round),
+        "round_results": round_results,
+        "aggregate_syndrome_histogram": aggregate_histogram,
+        "correction_summary": correction_summary,
+        "total_shots": total_shots,
+        "initial_data_bits": initial_data_bits,
+        "final_data_bits": current_bits,
+        "error_qubits": error_schedule,
+        "expected_logical_bit": expected_for_rounds,
+        "logical_success_rate": logical_success_rate,
+        "experimental_supported_subset": "three_qubit_repetition_repeated_rounds",
+    }
+
+
 def run_repetition_code_single_round(
     initial_bits: Optional[List[int]] = None,
     error_qubit: Optional[int] = None,
@@ -292,3 +406,40 @@ def run_repetition_code_single_round(
         "most_likely_corrected_data_bits": analysis["most_likely_corrected_data_bits"],
         "experimental_supported_subset": "three_qubit_repetition_single_round",
     }
+
+
+def run_repetition_code_rounds(
+    initial_bits: Optional[List[int]] = None,
+    error_qubits: Optional[List[Optional[int]]] = None,
+    rounds: int = 1,
+    shots: int = 1,
+    backend: str = "state_vector",
+) -> Dict[str, Any]:
+    """Run repeated experimental 3-qubit repetition-code syndrome rounds."""
+    _validate_repetition_rounds(rounds)
+    if shots <= 0:
+        raise ValueError("shots must be positive.")
+
+    bits = _validate_repetition_bits(initial_bits)
+    error_schedule = _validate_error_qubit_schedule(error_qubits, rounds)
+    current_bits = list(bits)
+    round_counts = []
+
+    for round_index in range(rounds):
+        result = run_repetition_code_single_round(
+            initial_bits=current_bits,
+            error_qubit=error_schedule[round_index],
+            shots=shots,
+            backend=backend,
+        )
+        round_counts.append(result["counts"])
+        current_bits = result["most_likely_corrected_data_bits"]
+
+    analysis = analyze_repetition_code_rounds(
+        round_counts,
+        initial_bits=bits,
+        error_qubits=error_schedule,
+    )
+    analysis["shots_per_round"] = shots
+    analysis["backend"] = backend
+    return analysis

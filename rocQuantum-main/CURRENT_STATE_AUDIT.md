@@ -122,7 +122,7 @@ What is not real today:
 | `python/rocq/*` | Separate legacy-ish Python surface with top-level CMake-built `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers, but broader runtime behavior remains split |
 | `integrations/*` | Thin framework adapters with mixed native and host-side behavior |
 | `rocquantum/backends/*` | Mixed remote-provider clients, local mocks, and skeleton placeholders |
-| `rocquantum/qec`, `rocquantum/solvers` | Experimental VQE/QAOA/repetition-code helpers, not production-ready CUDA-QX analogs |
+| `rocquantum/qec`, `rocquantum/solvers` | Experimental VQE/QAOA/repetition-code helpers, including repeated-round repetition-code aggregation, not production-ready CUDA-QX analogs |
 
 ## What Works Today
 
@@ -201,7 +201,7 @@ What is not real today:
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling now extracts only the density diagonal on device before host-side shot drawing, reducing transfer from full density matrix to probability-vector scale, but it is still not a fully GPU-resident sampling path.
 - Stabilizer/tableau/Pauli-propagation backends were not found.
-- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, CUDA-Q-style spin factories, VQE-compatible MaxCut-style QAOA helper, and one 3-qubit repetition-code syndrome round.
+- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, CUDA-Q-style spin factories, VQE-compatible MaxCut-style QAOA helper, and a 3-qubit repetition-code syndrome subset with single/repeated-round aggregation.
 
 ## Highest-Risk Overclaims Before This Audit
 

@@ -341,6 +341,45 @@ class TestQecHelpers(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-negative integers"):
             analyze_repetition_code_counts({"00": -1})
 
+    def test_repetition_code_rounds_analysis_tracks_feed_forward(self):
+        from rocquantum.qec import analyze_repetition_code_rounds
+
+        analysis = analyze_repetition_code_rounds(
+            [{"01": 5}, {"11": 3, "00": 1}],
+            initial_bits=[0, 0, 0],
+            error_qubits=[0, 1],
+        )
+
+        self.assertEqual(analysis["rounds"], 2)
+        self.assertEqual(
+            analysis["aggregate_syndrome_histogram"],
+            {"00": 1, "10": 5, "11": 3, "01": 0},
+        )
+        self.assertEqual(analysis["correction_summary"], {"none": 0, "q0": 1, "q1": 1, "q2": 0})
+        self.assertEqual(analysis["round_results"][0]["syndrome"], [1, 0])
+        self.assertEqual(analysis["round_results"][1]["correction_qubit"], 1)
+        self.assertEqual(analysis["final_data_bits"], [0, 0, 0])
+        self.assertAlmostEqual(analysis["logical_success_rate"], 8 / 9)
+
+        drifted = analyze_repetition_code_rounds(
+            [{"00": 1}, {"00": 1}],
+            initial_bits=[0, 0, 0],
+            error_qubits=[1, None],
+        )
+        self.assertEqual(drifted["expected_logical_bit"], 0)
+        self.assertEqual(drifted["round_results"][1]["analysis"]["expected_logical_bit"], 0)
+        self.assertEqual(drifted["logical_success_rate"], 0.0)
+
+    def test_repetition_code_rounds_analysis_validates_schedule(self):
+        from rocquantum.qec import analyze_repetition_code_rounds
+
+        with self.assertRaisesRegex(ValueError, "at least one round"):
+            analyze_repetition_code_rounds([])
+        with self.assertRaisesRegex(ValueError, "length must match"):
+            analyze_repetition_code_rounds([{"00": 1}], error_qubits=[0, 1])
+        with self.assertRaisesRegex(ValueError, "count dictionaries"):
+            analyze_repetition_code_rounds([[]])
+
     def test_repetition_code_single_round_uses_canonical_sample(self):
         from rocquantum.qec.framework import run_repetition_code_single_round
 
@@ -356,6 +395,27 @@ class TestQecHelpers(unittest.TestCase):
         _, args, kwargs = patched_sample.mock_calls[0]
         self.assertEqual(kwargs["qubits"], [3, 4])
         self.assertEqual(args[1], 5)
+
+    def test_repetition_code_repeated_rounds_use_canonical_sample(self):
+        from rocquantum.qec.framework import run_repetition_code_rounds
+
+        with mock.patch(
+            "rocquantum.qec.framework.rocq.sample",
+            side_effect=[{"01": 2}, {"11": 2}],
+        ) as patched_sample:
+            result = run_repetition_code_rounds(error_qubits=[0, 1], rounds=2, shots=2)
+
+        self.assertEqual(result["rounds"], 2)
+        self.assertEqual(result["aggregate_syndrome_histogram"], {"00": 0, "10": 2, "11": 2, "01": 0})
+        self.assertEqual(result["correction_summary"], {"none": 0, "q0": 1, "q1": 1, "q2": 0})
+        self.assertEqual(result["final_data_bits"], [0, 0, 0])
+        self.assertEqual(result["shots_per_round"], 2)
+        self.assertEqual(result["logical_success_rate"], 1.0)
+        self.assertEqual(patched_sample.call_count, 2)
+        for sample_call in patched_sample.mock_calls:
+            _, args, kwargs = sample_call
+            self.assertEqual(kwargs["qubits"], [3, 4])
+            self.assertEqual(args[1], 2)
 
     def test_repetition_decoder_uses_canonical_pauli_operator(self):
         from rocq.operator import PauliOperator
