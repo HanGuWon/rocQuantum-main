@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import os
 import warnings
-from numbers import Integral
+from numbers import Integral, Real
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -92,6 +92,15 @@ def _validate_positive_integer(value, name: str) -> int:
     if normalized <= 0:
         raise ValueError(f"{name} must be positive.")
     return normalized
+
+
+def _validate_probability(value, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError(f"{name} must be between 0 and 1.")
+    probability = float(value)
+    if not math.isfinite(probability) or probability < 0.0 or probability > 1.0:
+        raise ValueError(f"{name} must be between 0 and 1.")
+    return probability
 
 
 def _normalize_sample_qubits(qubits, num_qubits: int) -> List[int]:
@@ -402,9 +411,7 @@ def _probability_mixed_kraus_matrices(kraus_matrices, targets: Sequence[int], pr
     if kraus_matrices is None:
         raise ValueError("Kraus noise channels require kraus_matrices.")
     matrices = _normalize_kraus_matrices(kraus_matrices, targets)
-    prob = float(probability)
-    if prob < 0.0 or prob > 1.0:
-        raise ValueError("Kraus channel probability must be between 0 and 1.")
+    prob = _validate_probability(probability, "Kraus channel probability")
     if prob == 1.0:
         return matrices
 
@@ -1429,14 +1436,20 @@ class DensityMatrixBackend(_BaseBackend):
                 )
 
     def apply_noise(self, channel_type: str, targets: List[int], prob: float, kraus_matrices=None):
-        channel_lower = channel_type.lower()
+        if not isinstance(channel_type, str) or not channel_type.strip():
+            raise ValueError("Noise channel type must be a non-empty string.")
+        channel_lower = channel_type.strip().lower()
+        normalized_targets = _normalize_channel_targets(targets, self.num_qubits)
+        prob = _validate_probability(prob, "Noise channel probability")
+        if channel_lower != "kraus" and kraus_matrices is not None:
+            raise ValueError("kraus_matrices may only be supplied for 'kraus' noise channels.")
+
         if channel_lower == "kraus":
-            normalized_targets = _normalize_channel_targets(targets, self.num_qubits)
             matrices = _probability_mixed_kraus_matrices(kraus_matrices, normalized_targets, prob)
             self._state.apply_channel(normalized_targets, matrices)
             return
 
-        for target in targets:
+        for target in normalized_targets:
             if channel_lower == "depolarizing":
                 self._state.apply_depolarizing_channel(target, prob)
             elif channel_lower == "bit_flip":

@@ -901,6 +901,31 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                 with self.assertRaises((TypeError, ValueError)):
                     backend.apply_noise("kraus", targets, 0.25, kraus_matrices=kraus)
 
+        for targets in invalid_targets:
+            with self.subTest(named_targets=targets):
+                with self.assertRaises((TypeError, ValueError)):
+                    backend.apply_noise("bit_flip", targets, 0.25)
+
+        backend.apply_noise("bit_flip", np.int64(0), np.float64(0.25))
+
+    def test_mock_density_backend_rejects_invalid_direct_noise_probabilities(self):
+        backend = self._make_mock_density_backend(1)
+        kraus = np.eye(2, dtype=np.complex64).reshape(1, 2, 2)
+
+        invalid_probabilities = (-0.1, 1.1, np.nan, np.inf, True, "0.1")
+        for probability in invalid_probabilities:
+            with self.subTest(kraus_probability=probability):
+                with self.assertRaisesRegex(ValueError, "between 0 and 1"):
+                    backend.apply_noise("kraus", [0], probability, kraus_matrices=kraus)
+            with self.subTest(named_probability=probability):
+                with self.assertRaisesRegex(ValueError, "between 0 and 1"):
+                    backend.apply_noise("bit_flip", [0], probability)
+
+        with self.assertRaisesRegex(ValueError, "non-empty string"):
+            backend.apply_noise("", [0], 0.25)
+        with self.assertRaisesRegex(ValueError, "kraus_matrices"):
+            backend.apply_noise("bit_flip", [0], 0.25, kraus_matrices=kraus)
+
     def test_framework_runtime_exposes_native_adjoint_jacobian_hook(self):
         from rocquantum.framework_runtime import RocQuantumRuntime
 

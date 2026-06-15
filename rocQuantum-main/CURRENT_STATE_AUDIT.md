@@ -143,6 +143,7 @@ What is not real today:
 - `hipDensityMat` supports density-matrix allocation, reset, single-qubit gates, `CNOT`, controlled single-qubit gate application, and basic channels such as bit flip, phase flip, depolarizing, and amplitude damping; canonical `rocq.backends.DensityMatrixBackend` decomposes `CCX` / two-control `MCX` / `CSWAP` through those primitives and rejects larger `MCX` with an explicit ancilla-policy diagnostic.
 - `hipDensityMatApplyChannel` now accepts single-qubit Kraus channel descriptors, and the named channels share that helper path.
 - `hipDensityMatSample` plus canonical `rocq.backends.DensityMatrixBackend.sample()` provide density-matrix sampling through GPU-side measured-qubit marginal probability reduction followed by host-side shot drawing.
+- Direct `rocq.backends.DensityMatrixBackend.apply_noise()` calls now share bool-safe target and finite probability validation with `NoiseModel`, so invalid named or Kraus noise parameters are rejected before mock/native dispatch.
 - Density-matrix expectation helpers exist for single-qubit X/Y/Z and Pauli-Z products.
 
 ### Tensor networks
