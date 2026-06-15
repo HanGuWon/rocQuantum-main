@@ -39,6 +39,7 @@ class TestCanonicalImports(unittest.TestCase):
     def test_import_rocq_kernel(self):
         from rocq.kernel import (
             QuantumKernel,
+            compiler_capabilities,
             execute,
             execute_async,
             get_state,
@@ -49,6 +50,7 @@ class TestCanonicalImports(unittest.TestCase):
             sample_async,
         )
         self.assertIsNotNone(QuantumKernel)
+        self.assertIsNotNone(compiler_capabilities)
         self.assertIsNotNone(execute)
         self.assertIsNotNone(execute_async)
         self.assertIsNotNone(get_state)
@@ -73,6 +75,7 @@ class TestFutureCanonicalRuntimeSurface(unittest.TestCase):
 
     def test_observe_and_sample_exports(self):
         import rocq
+        self.assertTrue(callable(rocq.compiler_capabilities))
         self.assertTrue(callable(rocq.observe))
         self.assertTrue(callable(rocq.sample))
         self.assertTrue(callable(rocq.get_state))

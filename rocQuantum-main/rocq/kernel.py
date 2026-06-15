@@ -24,6 +24,21 @@ _COMPILER_SUPPORTED_MLIR_SUBSET = (
     "Supported canonical MLIR gates: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, "
     "CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, and CRX/CRY/CRZ/CP."
 )
+_COMPILER_SUPPORTED_GATE_GROUPS = {
+    "allocation": ("qalloc",),
+    "fixed_single_qubit": ("h", "x", "y", "z", "s", "sdg", "t", "tdg"),
+    "fixed_multi_qubit": ("cnot", "cz", "swap", "ccx", "mcx", "cswap"),
+    "parametric_single_qubit": ("rx", "ry", "rz", "p"),
+    "parametric_controlled": ("crx", "cry", "crz", "cp"),
+}
+_COMPILER_UNSUPPORTED_FEATURES = (
+    "mid-circuit measurement",
+    "classical control flow",
+    "kernel arguments in emitted MLIR",
+    "noise channels",
+    "arbitrary unitary/matrix operations",
+    "release-linked default MLIR runtime",
+)
 _BUILD_LOCK = threading.RLock()
 _ASYNC_EXECUTOR_LOCK = threading.Lock()
 _ASYNC_EXECUTOR: Optional[ThreadPoolExecutor] = None
@@ -43,6 +58,27 @@ def _get_default_async_executor() -> ThreadPoolExecutor:
 def _submit_async(callback: Callable[[], object], executor: Optional[Executor] = None) -> Future:
     submitter = executor if executor is not None else _get_default_async_executor()
     return submitter.submit(callback)
+
+
+def compiler_capabilities() -> Dict[str, object]:
+    """Return the supported canonical compiler subset without invoking MLIR."""
+
+    return {
+        "status": "partial",
+        "binding_available": rocquantum_bind is not None,
+        "default_backend": "hip_statevec",
+        "supported_subset": _COMPILER_SUPPORTED_MLIR_SUBSET,
+        "supported_gate_groups": {
+            key: list(values)
+            for key, values in _COMPILER_SUPPORTED_GATE_GROUPS.items()
+        },
+        "unsupported_features": list(_COMPILER_UNSUPPORTED_FEATURES),
+        "mlir_runtime_note": (
+            "Compiler execution requires rocquantum_bind.MLIRCompiler with the "
+            "experimental rocqCompiler MLIR stack linked; default builds may expose "
+            "a fail-fast DisabledRuntimeMLIRCompiler instead."
+        ),
+    }
 
 
 @dataclass(frozen=True)

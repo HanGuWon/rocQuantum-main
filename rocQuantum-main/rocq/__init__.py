@@ -4,6 +4,7 @@ from .noise import NoiseModel
 from . import spin
 from .kernel import (
     QuantumKernel,
+    compiler_capabilities,
     compile_and_execute,
     compile_and_execute_async,
     execute,
@@ -60,6 +61,7 @@ __all__ = [
     "NoiseModel",
     "spin",
     "QuantumKernel",
+    "compiler_capabilities",
     "QuantumOperator",
     "PauliOperator",
     "HermitianOperator",

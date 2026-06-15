@@ -693,6 +693,24 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "ROCQUANTUM_BUILD_BINDINGS=ON"):
                 prep_state.qir()
 
+    def test_compiler_capabilities_expose_partial_supported_subset(self):
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None):
+            capabilities = rocq.compiler_capabilities()
+
+        self.assertEqual(capabilities["status"], "partial")
+        self.assertFalse(capabilities["binding_available"])
+        self.assertEqual(capabilities["default_backend"], "hip_statevec")
+        self.assertIn("Supported canonical MLIR gates", capabilities["supported_subset"])
+        self.assertEqual(
+            capabilities["supported_gate_groups"]["parametric_single_qubit"],
+            ["rx", "ry", "rz", "p"],
+        )
+        self.assertIn(
+            "mid-circuit measurement",
+            capabilities["unsupported_features"],
+        )
+        self.assertIn("DisabledRuntimeMLIRCompiler", capabilities["mlir_runtime_note"])
+
     def test_qir_error_string_is_not_returned_as_qir(self):
         @kernel
         def prep_state():
