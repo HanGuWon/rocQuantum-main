@@ -39,6 +39,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
             "gate_fusion_vs_unfused",
             "sampling_observe",
             "distributed_rccl_vs_host_fallback",
+            "distributed_sparse_moments",
             "tensor_contraction",
             "densitymat_channel",
             "densitymat_sampling",
@@ -92,13 +93,16 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmark_hipTensorNet_contraction", tensornet)
         self.assertIn("benchmark_hipDensityMat_channel_sampling", density)
 
-    def test_distributed_benchmark_covers_rccl_dense_and_generic_matrix_paths(self):
+    def test_distributed_benchmark_covers_rccl_dense_sparse_and_generic_matrix_paths(self):
         with open(DISTRIBUTED_BENCHMARK, "r", encoding="utf-8") as f:
             source = f.read()
 
         self.assertIn("dense_expectation_ms", source)
+        self.assertIn("sparse_moments_ms", source)
         self.assertIn("generic_matrix_ms", source)
         self.assertIn("rocsvGetExpectationMatrix", source)
+        self.assertIn("rocsvGetSparseMatrixMoments", source)
+        self.assertIn("upload_rank_local_z_csr", source)
         self.assertIn("rocsvApplyMatrix", source)
         self.assertIn("ROCQ_DISTRIBUTED_COMM", source)
         self.assertIn("ROCQ_DISTRIBUTED_FALLBACK_MODE", source)
@@ -125,7 +129,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmarks/benchmark_manifest.json", readme)
         self.assertIn("benchmarks/run_release_benchmarks.py", readme)
         self.assertIn("benchmark-summary.json", readme)
-        self.assertIn("dense expectation and generic matrix", readme)
+        self.assertIn("dense expectation, sparse moments, and generic matrix", readme)
 
 
 if __name__ == "__main__":

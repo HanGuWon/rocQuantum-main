@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,26 @@ struct DeviceMatrix {
     }
 };
 
+struct DeviceCsr {
+    rocComplex* data = nullptr;
+    size_t* indices = nullptr;
+    size_t* indptr = nullptr;
+    size_t rows = 0;
+    size_t nnz = 0;
+
+    ~DeviceCsr() {
+        if (data) {
+            hipFree(data);
+        }
+        if (indices) {
+            hipFree(indices);
+        }
+        if (indptr) {
+            hipFree(indptr);
+        }
+    }
+};
+
 bool upload_matrix(const std::vector<rocComplex>& host, unsigned dim, DeviceMatrix& out) {
     out.dim = dim;
     const size_t bytes = host.size() * sizeof(rocComplex);
@@ -61,6 +82,38 @@ bool upload_matrix(const std::vector<rocComplex>& host, unsigned dim, DeviceMatr
         return false;
     }
     return check_hip(hipMemcpy(out.ptr, host.data(), bytes, hipMemcpyHostToDevice), "hipMemcpy(matrix)");
+}
+
+bool upload_rank_local_z_csr(unsigned qubits, DeviceCsr& out) {
+    if (qubits >= std::numeric_limits<size_t>::digits) {
+        std::cerr << "qubit count is too large for CSR benchmark dimensions\n";
+        return false;
+    }
+
+    const size_t rows = size_t{1} << qubits;
+    std::vector<rocComplex> data(rows);
+    std::vector<size_t> indices(rows);
+    std::vector<size_t> indptr(rows + 1);
+    for (size_t row = 0; row < rows; ++row) {
+        data[row] = make_complex((row & size_t{1}) == 0 ? 1.0 : -1.0);
+        indices[row] = row;
+        indptr[row] = row;
+    }
+    indptr[rows] = rows;
+
+    out.rows = rows;
+    out.nnz = rows;
+    if (!check_hip(hipMalloc(&out.data, data.size() * sizeof(rocComplex)), "hipMalloc(csr data)") ||
+        !check_hip(hipMalloc(&out.indices, indices.size() * sizeof(size_t)), "hipMalloc(csr indices)") ||
+        !check_hip(hipMalloc(&out.indptr, indptr.size() * sizeof(size_t)), "hipMalloc(csr indptr)")) {
+        return false;
+    }
+    return check_hip(hipMemcpy(out.data, data.data(), data.size() * sizeof(rocComplex), hipMemcpyHostToDevice),
+                     "hipMemcpy(csr data)") &&
+           check_hip(hipMemcpy(out.indices, indices.data(), indices.size() * sizeof(size_t), hipMemcpyHostToDevice),
+                     "hipMemcpy(csr indices)") &&
+           check_hip(hipMemcpy(out.indptr, indptr.data(), indptr.size() * sizeof(size_t), hipMemcpyHostToDevice),
+                     "hipMemcpy(csr indptr)");
 }
 
 std::vector<rocComplex> pauli_z_matrix_col_major() {
@@ -85,6 +138,7 @@ struct CaseResult {
     int status = 0;
     double expectation_ms = 0.0;
     double dense_expectation_ms = 0.0;
+    double sparse_moments_ms = 0.0;
     double sampling_ms = 0.0;
     double generic_matrix_ms = 0.0;
 };
@@ -129,14 +183,18 @@ CaseResult run_case(const std::string& name,
 
     double expectation = 0.0;
     rocComplex dense_expectation = make_complex(0.0);
+    rocComplex sparse_mean = make_complex(0.0);
+    rocComplex sparse_second = make_complex(0.0);
     std::vector<uint64_t> samples(shots, 0);
     const unsigned measured[] = {0};
     const unsigned dense_target[] = {0};
     const unsigned generic_targets[] = {0, qubits > 1 ? qubits - 1 : 0};
     DeviceMatrix dense_matrix;
     DeviceMatrix generic_identity;
+    DeviceCsr sparse_z;
     if (!upload_matrix(pauli_z_matrix_col_major(), 2, dense_matrix) ||
-        !upload_matrix(identity_matrix_col_major(4), 4, generic_identity)) {
+        !upload_matrix(identity_matrix_col_major(4), 4, generic_identity) ||
+        !upload_rank_local_z_csr(qubits, sparse_z)) {
         result.status = 1;
         rocsvDestroy(handle);
         return result;
@@ -151,6 +209,17 @@ CaseResult run_case(const std::string& name,
                                     dense_matrix.ptr,
                                     dense_matrix.dim,
                                     &dense_expectation);
+    (void)rocsvGetSparseMatrixMoments(handle,
+                                      nullptr,
+                                      qubits,
+                                      sparse_z.data,
+                                      sparse_z.indices,
+                                      sparse_z.indptr,
+                                      sparse_z.rows,
+                                      sparse_z.rows,
+                                      sparse_z.nnz,
+                                      &sparse_mean,
+                                      &sparse_second);
     (void)rocsvSample(handle, nullptr, qubits, measured, 1, shots, samples.data());
     (void)rocsvApplyMatrix(handle,
                            nullptr,
@@ -189,6 +258,26 @@ CaseResult run_case(const std::string& name,
     auto t2 = std::chrono::steady_clock::now();
     if (result.status == 0) {
         for (unsigned i = 0; i < trials; ++i) {
+            if (!ok(rocsvGetSparseMatrixMoments(handle,
+                                                nullptr,
+                                                qubits,
+                                                sparse_z.data,
+                                                sparse_z.indices,
+                                                sparse_z.indptr,
+                                                sparse_z.rows,
+                                                sparse_z.rows,
+                                                sparse_z.nnz,
+                                                &sparse_mean,
+                                                &sparse_second),
+                    "rocsvGetSparseMatrixMoments")) {
+                result.status = 1;
+                break;
+            }
+        }
+    }
+    auto t3 = std::chrono::steady_clock::now();
+    if (result.status == 0) {
+        for (unsigned i = 0; i < trials; ++i) {
             if (!ok(rocsvSample(handle, nullptr, qubits, measured, 1, shots, samples.data()),
                     "rocsvSample")) {
                 result.status = 1;
@@ -196,7 +285,7 @@ CaseResult run_case(const std::string& name,
             }
         }
     }
-    auto t3 = std::chrono::steady_clock::now();
+    auto t4 = std::chrono::steady_clock::now();
     if (result.status == 0) {
         for (unsigned i = 0; i < trials; ++i) {
             if (!ok(rocsvApplyMatrix(handle,
@@ -213,16 +302,18 @@ CaseResult run_case(const std::string& name,
             }
         }
     }
-    auto t4 = std::chrono::steady_clock::now();
+    auto t5 = std::chrono::steady_clock::now();
 
     result.expectation_ms =
         std::chrono::duration<double, std::milli>(t1 - t0).count() / static_cast<double>(trials);
     result.dense_expectation_ms =
         std::chrono::duration<double, std::milli>(t2 - t1).count() / static_cast<double>(trials);
-    result.sampling_ms =
+    result.sparse_moments_ms =
         std::chrono::duration<double, std::milli>(t3 - t2).count() / static_cast<double>(trials);
-    result.generic_matrix_ms =
+    result.sampling_ms =
         std::chrono::duration<double, std::milli>(t4 - t3).count() / static_cast<double>(trials);
+    result.generic_matrix_ms =
+        std::chrono::duration<double, std::milli>(t5 - t4).count() / static_cast<double>(trials);
     rocsvDestroy(handle);
     return result;
 }
@@ -278,6 +369,7 @@ int main(int argc, char** argv) {
         *out << "    {\"name\": \"" << r.name << "\", \"status\": " << r.status
              << ", \"expectation_ms\": " << r.expectation_ms
              << ", \"dense_expectation_ms\": " << r.dense_expectation_ms
+             << ", \"sparse_moments_ms\": " << r.sparse_moments_ms
              << ", \"sampling_ms\": " << r.sampling_ms
              << ", \"generic_matrix_ms\": " << r.generic_matrix_ms << "}";
         *out << (i + 1 == results.size() ? "\n" : ",\n");

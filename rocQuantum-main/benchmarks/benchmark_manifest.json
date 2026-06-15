@@ -19,14 +19,15 @@
     {
       "id": "distributed_reduction_rccl_vs_host",
       "category": "distributed",
-      "description": "RCCL reduction path compared with explicit host fallback for distributed expectation and sampling.",
+      "description": "RCCL reduction path compared with explicit host fallback for distributed expectation, rank-local sparse moments, and sampling.",
       "executable": "rocquantum/src/hipStateVec/benchmark_hipStateVec_distributed_reductions",
       "output": "distributed-reductions.json",
       "args": ["--qubits", "24", "--trials", "20", "--shots", "4096", "--output", "{output}"],
       "requires_rocm_device": true,
       "covers": [
         "distributed_rccl_vs_host_fallback",
-        "distributed_sampling_observe"
+        "distributed_sampling_observe",
+        "distributed_sparse_moments"
       ]
     },
     {
