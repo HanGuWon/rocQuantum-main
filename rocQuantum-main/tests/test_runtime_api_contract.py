@@ -108,6 +108,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "direct backend gate-target validation",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "finite direct backend gate-angle validation",
             capabilities["supported_features"],
         )
@@ -681,6 +685,60 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "angle must"):
                     backend._apply_op(GateOp("rx", [0], {"theta": angle}))
                 backend._state.apply_gate_matrix.assert_not_called()
+
+    def test_direct_backends_reject_invalid_gate_targets_before_native_dispatch(self):
+        from rocq.backends import DensityMatrixBackend, StabilizerBackend, _HipStateVectorState
+
+        invalid_single_targets = ([True], [1.5], ["0"], [-1], [1])
+        for targets in invalid_single_targets:
+            with self.subTest(hip_statevector_targets=targets):
+                state = _HipStateVectorState.__new__(_HipStateVectorState)
+                state._handle = object()
+                state._d_state = object()
+                state._num_qubits = 1
+                fake_hip_backend = mock.Mock()
+                fake_hip_backend.rocqStatus.SUCCESS = "success"
+                fake_hip_backend.apply_x.side_effect = AssertionError(
+                    "native gate dispatch should not receive invalid targets"
+                )
+                with mock.patch("rocq.backends.hip_backend", fake_hip_backend):
+                    with self.assertRaises((TypeError, ValueError)):
+                        state.apply_named_gate("x", targets, {})
+
+            with self.subTest(density_matrix_targets=targets):
+                backend = DensityMatrixBackend.__new__(DensityMatrixBackend)
+                backend.num_qubits = 1
+                backend._state = mock.Mock()
+                with self.assertRaises((TypeError, ValueError)):
+                    backend._apply_op(GateOp("x", targets, {}))
+                backend._state.apply_gate_matrix.assert_not_called()
+
+            with self.subTest(stabilizer_targets=targets):
+                backend = StabilizerBackend(1)
+                with self.assertRaises((TypeError, ValueError)):
+                    backend._apply_op(GateOp("x", targets, {}))
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 2
+        fake_hip_backend = mock.Mock()
+        fake_hip_backend.rocqStatus.SUCCESS = "success"
+        fake_hip_backend.apply_cnot.side_effect = AssertionError(
+            "native two-qubit dispatch should not receive duplicate targets"
+        )
+        with mock.patch("rocq.backends.hip_backend", fake_hip_backend):
+            with self.assertRaisesRegex(ValueError, "target qubits must be distinct"):
+                state.apply_named_gate("cnot", [0, 0], {})
+            with self.assertRaisesRegex(ValueError, "expects 3 target"):
+                state.apply_named_gate("ccx", [0, 1], {})
+
+        backend = DensityMatrixBackend.__new__(DensityMatrixBackend)
+        backend.num_qubits = 2
+        backend._state = mock.Mock()
+        with self.assertRaisesRegex(ValueError, "target qubits must be distinct"):
+            backend._apply_op(GateOp("cnot", [0, 0], {}))
+        backend._state.apply_cnot.assert_not_called()
 
     def test_observe_uses_backend_expectation(self):
         @kernel

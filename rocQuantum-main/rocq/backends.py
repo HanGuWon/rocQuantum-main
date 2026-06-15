@@ -204,6 +204,42 @@ def _normalize_sample_qubits(qubits, num_qubits: int) -> List[int]:
     return normalized
 
 
+def _normalize_gate_targets(
+    op_name: str,
+    targets,
+    num_qubits: int,
+    *,
+    exact_count: Optional[int] = None,
+    min_count: Optional[int] = None,
+) -> List[int]:
+    if isinstance(targets, bool) or isinstance(targets, (str, bytes)):
+        raise TypeError("Gate targets must be a sequence of integer qubit indices.")
+    try:
+        raw_targets = list(targets)
+    except TypeError as exc:
+        raise TypeError("Gate targets must be a sequence of integer qubit indices.") from exc
+
+    if exact_count is not None and len(raw_targets) != exact_count:
+        raise ValueError(f"Gate '{op_name}' expects {exact_count} target(s).")
+    if min_count is not None and len(raw_targets) < min_count:
+        raise ValueError(f"Gate '{op_name}' expects at least {min_count} target(s).")
+    if not raw_targets:
+        raise ValueError("Gate targets must include at least one qubit.")
+
+    normalized = []
+    for target in raw_targets:
+        if isinstance(target, bool) or not isinstance(target, Integral):
+            raise ValueError("Gate target must be an integer qubit index.")
+        index = int(target)
+        if index < 0 or index >= int(num_qubits):
+            raise ValueError(f"Gate target index {index} is out of range for {num_qubits} qubits.")
+        normalized.append(index)
+
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"Gate '{op_name}' target qubits must be distinct.")
+    return normalized
+
+
 def _finalize_expectation(value: complex):
     return value.real if abs(value.imag) < 1e-12 else value
 
@@ -952,59 +988,80 @@ class _HipStateVectorState:
         op = op_name.lower()
 
         if op == "h":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             return self._call(op_name, hip_backend.apply_h, self._handle, self._d_state, self._num_qubits, targets[0])
         if op == "x":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             return self._call(op_name, hip_backend.apply_x, self._handle, self._d_state, self._num_qubits, targets[0])
         if op == "y":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             return self._call(op_name, hip_backend.apply_y, self._handle, self._d_state, self._num_qubits, targets[0])
         if op == "z":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             return self._call(op_name, hip_backend.apply_z, self._handle, self._d_state, self._num_qubits, targets[0])
         if op == "s":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             return self._call(op_name, hip_backend.apply_s, self._handle, self._d_state, self._num_qubits, targets[0])
         if op == "sdg":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             return self._call(op_name, hip_backend.apply_sdg, self._handle, self._d_state, self._num_qubits, targets[0])
         if op == "t":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             return self._call(op_name, hip_backend.apply_t, self._handle, self._d_state, self._num_qubits, targets[0])
         if op in {"tdg", "tdag"}:
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             return self._call(op_name, hip_backend.apply_tdg, self._handle, self._d_state, self._num_qubits, targets[0])
         if op == "rx":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             angle = self._angle(op_name, params, "theta", "phi")
             return self._call(op_name, hip_backend.apply_rx, self._handle, self._d_state, self._num_qubits, targets[0], angle)
         if op == "ry":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             angle = self._angle(op_name, params, "theta", "phi")
             return self._call(op_name, hip_backend.apply_ry, self._handle, self._d_state, self._num_qubits, targets[0], angle)
         if op == "rz":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             angle = self._angle(op_name, params, "phi", "theta")
             return self._call(op_name, hip_backend.apply_rz, self._handle, self._d_state, self._num_qubits, targets[0], angle)
         if op in {"p", "phase"}:
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=1)
             angle = self._angle(op_name, params, "phi", "theta")
             return self._call(op_name, hip_backend.apply_p, self._handle, self._d_state, self._num_qubits, targets[0], angle)
         if op == "cnot":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=2)
             return self._call(op_name, hip_backend.apply_cnot, self._handle, self._d_state, self._num_qubits, targets[0], targets[1])
         if op == "cz":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=2)
             return self._call(op_name, hip_backend.apply_cz, self._handle, self._d_state, self._num_qubits, targets[0], targets[1])
         if op == "swap":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=2)
             return self._call(op_name, hip_backend.apply_swap, self._handle, self._d_state, self._num_qubits, targets[0], targets[1])
         if op == "crx":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=2)
             angle = self._angle(op_name, params, "theta", "phi")
             return self._call(op_name, hip_backend.apply_crx, self._handle, self._d_state, self._num_qubits, targets[0], targets[1], angle)
         if op == "cry":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=2)
             angle = self._angle(op_name, params, "theta", "phi")
             return self._call(op_name, hip_backend.apply_cry, self._handle, self._d_state, self._num_qubits, targets[0], targets[1], angle)
         if op == "crz":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=2)
             angle = self._angle(op_name, params, "phi", "theta")
             return self._call(op_name, hip_backend.apply_crz, self._handle, self._d_state, self._num_qubits, targets[0], targets[1], angle)
         if op in {"cp", "cphase"}:
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=2)
             angle = self._angle(op_name, params, "phi", "theta")
             return self._call(op_name, hip_backend.apply_cp, self._handle, self._d_state, self._num_qubits, targets[0], targets[1], angle)
-        if op in {"mcx", "ccx", "toffoli"}:
+        if op == "mcx":
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, min_count=2)
             controls = targets[:-1]
-            if not controls:
-                raise ValueError(f"Gate '{op_name}' requires at least one control qubit.")
+            return self._call(op_name, hip_backend.apply_mcx, self._handle, self._d_state, self._num_qubits, controls, targets[-1])
+        if op in {"ccx", "toffoli"}:
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=3)
+            controls = targets[:-1]
             return self._call(op_name, hip_backend.apply_mcx, self._handle, self._d_state, self._num_qubits, controls, targets[-1])
         if op == "cswap":
-            if len(targets) != 3:
-                raise ValueError("Gate 'cswap' requires [control, target_a, target_b].")
+            targets = _normalize_gate_targets(op_name, targets, self._num_qubits, exact_count=3)
             return self._call(
                 op_name,
                 hip_backend.apply_cswap,
@@ -1247,10 +1304,12 @@ class StabilizerBackend(_BaseBackend):
             self._generators.append((1.0 + 0.0j, tuple(paulis)))
 
     def _validate_qubit(self, qubit: int) -> int:
-        qubit = int(qubit)
-        if qubit < 0 or qubit >= int(self.num_qubits):
-            raise ValueError(f"Qubit index {qubit} is out of range for {self.num_qubits} qubits.")
-        return qubit
+        return _normalize_gate_targets(
+            "stabilizer",
+            [qubit],
+            self.num_qubits,
+            exact_count=1,
+        )[0]
 
     def _single_pauli(self, qubit: int, pauli: str) -> tuple[str, ...]:
         out = ["I"] * int(self.num_qubits)
@@ -1726,35 +1785,37 @@ class DensityMatrixBackend(_BaseBackend):
         name = op.name.lower()
 
         if name == "cnot":
-            self._state.apply_cnot(op.targets[0], op.targets[1])
+            targets = _normalize_gate_targets(op.name, op.targets, self.num_qubits, exact_count=2)
+            self._state.apply_cnot(targets[0], targets[1])
             return
         if name in {"ccx", "toffoli"}:
-            if len(op.targets) != 3:
-                raise ValueError(f"Gate '{op.name}' requires [control_a, control_b, target].")
-            self._apply_ccx_decomposition(op.targets[0], op.targets[1], op.targets[2])
+            targets = _normalize_gate_targets(op.name, op.targets, self.num_qubits, exact_count=3)
+            self._apply_ccx_decomposition(targets[0], targets[1], targets[2])
             return
         if name == "mcx":
-            self._apply_mcx_decomposition(op.targets)
+            targets = _normalize_gate_targets(op.name, op.targets, self.num_qubits, min_count=2)
+            self._apply_mcx_decomposition(targets)
             return
         if name in {"cswap", "fredkin"}:
-            if len(op.targets) != 3:
-                raise ValueError(f"Gate '{op.name}' requires [control, target_a, target_b].")
-            self._apply_cswap_decomposition(op.targets[0], op.targets[1], op.targets[2])
+            targets = _normalize_gate_targets(op.name, op.targets, self.num_qubits, exact_count=3)
+            self._apply_cswap_decomposition(targets[0], targets[1], targets[2])
             return
         if name == "swap":
-            control, target = op.targets
+            control, target = _normalize_gate_targets(op.name, op.targets, self.num_qubits, exact_count=2)
             self._state.apply_cnot(control, target)
             self._state.apply_cnot(target, control)
             self._state.apply_cnot(control, target)
             return
         if name in {"cz", "crx", "cry", "crz", "cp"}:
+            targets = _normalize_gate_targets(op.name, op.targets, self.num_qubits, exact_count=2)
             controlled_name = "z" if name == "cz" else name[1:]
             matrix = self._gate_matrix(controlled_name, self._angle(name, params))
-            self._state.apply_controlled_gate(matrix, op.targets[0], op.targets[1])
+            self._state.apply_controlled_gate(matrix, targets[0], targets[1])
             return
 
+        targets = _normalize_gate_targets(op.name, op.targets, self.num_qubits, exact_count=1)
         matrix = self._gate_matrix(name, self._angle(name, params))
-        self._state.apply_gate_matrix(matrix, op.targets[0])
+        self._state.apply_gate_matrix(matrix, targets[0])
 
     def _iter_noise_channels(self, noise_model, op):
         if noise_model is None:
