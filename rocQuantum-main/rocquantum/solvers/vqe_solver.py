@@ -141,6 +141,12 @@ def _validate_backend_name(backend: str) -> str:
     return backend
 
 
+def _validate_boolean_option(value, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean.")
+    return value
+
+
 def _optimizer_result_attribute(result, attribute: str):
     try:
         return getattr(result, attribute)
@@ -325,7 +331,7 @@ class VQE_Solver:
                 raise ValueError("optimizer must define a callable minimize method.")
             self.optimizer = optimizer
         self.backend = _validate_backend_name(backend)
-        self.verbose = bool(verbose)
+        self.verbose = _validate_boolean_option(verbose, "verbose")
 
         self._intermediate_results = []
 

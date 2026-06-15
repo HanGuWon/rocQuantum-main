@@ -11,7 +11,8 @@ Current supported subset:
   validation limit for CUDA-QX comparisons.
 - `VQE_Solver.evaluate_energy()` and `VQE_Solver.solve()` evaluate canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, scaled/divided composite sums, and full-state CSR sparse observables on the state-vector backend or density-matrix correctness fallback. Hamiltonians must be canonical `QuantumOperator` instances, ansatz kernels must be `rocq.kernel.QuantumKernel` objects or callables, and both are rejected before backend or optimizer use.
 - `VQE_Solver.solve()` is quiet by default for library and batch use; pass
-  `verbose=True` to print start/finish progress messages.
+  `verbose=True` to print start/finish progress messages. The `verbose`
+  option must be a boolean.
 - `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`;
   scalar single-parameter inputs are normalized to one-element vectors for
   gradient and optimizer entry points, and gradient probes do not mutate the

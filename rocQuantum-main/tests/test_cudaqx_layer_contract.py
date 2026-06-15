@@ -31,7 +31,7 @@ class TestVqeSolverContract(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "QuantumOperator objective, ansatz-kernel, finite-real parameter, energy, backend, gradient-method, optimizer-result, optimizer-interface, and optimizer-option validation",
+            "QuantumOperator objective, ansatz-kernel, finite-real parameter, energy, backend, gradient-method, verbose-option, optimizer-result, optimizer-interface, and optimizer-option validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -576,6 +576,11 @@ class TestVqeSolverContract(unittest.TestCase):
         self.assertEqual(patched_print.call_count, 2)
         self.assertEqual(patched_print.call_args_list[0].args[0], "Starting VQE optimization...")
         self.assertEqual(patched_print.call_args_list[1].args[0], "VQE optimization finished.")
+
+        for verbose in (1, "true", None):
+            with self.subTest(verbose=verbose):
+                with self.assertRaisesRegex(ValueError, "verbose must be a boolean"):
+                    VQE_Solver(optimizer=NoopOptimizer(), verbose=verbose)
 
     def test_objective_passes_multi_parameter_vector_to_qaoa_kernel(self):
         from rocq.operator import PauliOperator
