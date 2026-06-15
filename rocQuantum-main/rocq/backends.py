@@ -1631,9 +1631,11 @@ class StateVectorBackend(_BaseBackend):
         gate.name = lower.upper()
         gate.targets = [int(op.targets[0])]
         if lower in {"rx", "ry"}:
-            gate.params = [float(op.params.get("theta", op.params.get("phi")))]
+            angle = op.params.get("theta", op.params.get("phi"))
+            gate.params = [_validate_gate_angle(lower, angle)]
         elif lower == "rz":
-            gate.params = [float(op.params.get("phi", op.params.get("theta")))]
+            angle = op.params.get("phi", op.params.get("theta"))
+            gate.params = [_validate_gate_angle(lower, angle)]
         return gate
 
     def _try_fuse(self, ops, index: int) -> int:

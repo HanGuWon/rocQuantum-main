@@ -116,6 +116,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "GateFusion rotation-angle validation before native queue dispatch",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "Pauli observable target validation before backend dispatch",
             capabilities["supported_features"],
         )
@@ -197,6 +201,46 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             [(("H", (), (0,), ()), ("RZ", (), (0,), (0.25,)))],
         )
         self.assertEqual(replay_calls, [("x", [1], {})])
+
+    def test_statevector_backend_rejects_invalid_fusion_rotation_angles_before_queue_dispatch(self):
+        from rocq.backends import StateVectorBackend
+
+        class _Status:
+            SUCCESS = 0
+
+        class _GateOp:
+            pass
+
+        class _FakeHipBackend:
+            GateOp = _GateOp
+            rocqStatus = _Status
+
+        class _FakeFusion:
+            def process_queue(self, queue):
+                raise AssertionError("GateFusion should not receive invalid rotation angles")
+
+        class _FakeState:
+            def fusion_engine(self):
+                return _FakeFusion()
+
+            def apply_named_gate(self, name, targets, params):
+                raise AssertionError("invalid fusion spans should fail before replay dispatch")
+
+        invalid_params = ({}, {"theta": None}, {"theta": np.nan}, {"theta": True}, {"theta": "0.25"})
+        for params in invalid_params:
+            with self.subTest(params=params):
+                backend = StateVectorBackend.__new__(StateVectorBackend)
+                backend.num_qubits = 1
+                backend._uses_mock = False
+                backend._state = _FakeState()
+
+                ops = [
+                    GateOp("rx", [0], dict(params)),
+                    GateOp("ry", [0], {"theta": 0.25}),
+                ]
+                with mock.patch("rocq.backends.hip_backend", _FakeHipBackend):
+                    with self.assertRaisesRegex(ValueError, "angle must"):
+                        backend.run_ops(ops)
 
     def test_top_level_phase_gate_exports_record_canonical_ops(self):
         for name in ("tdg", "tdag", "p", "phase", "cp", "cphase"):
