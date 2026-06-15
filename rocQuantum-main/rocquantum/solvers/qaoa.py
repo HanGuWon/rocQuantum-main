@@ -130,15 +130,28 @@ def solve_maxcut_qaoa(
 
     ansatz = make_maxcut_qaoa_kernel(num_qubits, normalized_edges, layers=layers)
     cost_operator = maxcut_cost_operator(num_qubits, normalized_edges)
+    optimization_operator = -cost_operator
 
     from .vqe_solver import VQE_Solver
 
     solver = VQE_Solver(optimizer=optimizer, backend=backend)
-    result = solver.solve(cost_operator, ansatz, num_qubits, initial_params=params)
+    result = solver.solve(optimization_operator, ansatz, num_qubits, initial_params=params)
+    optimal_cut_value = -float(result["optimal_energy"])
+    intermediate_cut_values = [
+        {
+            "parameters": entry["parameters"],
+            "cut_value": -float(entry["energy"]),
+        }
+        for entry in result.get("intermediate_results", [])
+    ]
     result.update(
         {
             "ansatz": ansatz,
             "cost_operator": cost_operator,
+            "optimization_operator": optimization_operator,
+            "optimization_direction": "maximize_cut_value",
+            "optimal_cut_value": optimal_cut_value,
+            "intermediate_cut_values": intermediate_cut_values,
             "normalized_edges": normalized_edges,
             "layers": layers,
             "num_qubits": num_qubits,

@@ -314,6 +314,7 @@ class TestQaoaHelpers(unittest.TestCase):
         )
 
     def test_solve_maxcut_qaoa_wraps_vqe_solver(self):
+        from rocq.operator import iter_pauli_terms
         from rocquantum.solvers import solve_maxcut_qaoa
         from rocquantum.solvers.vqe_solver import Optimizer
 
@@ -341,13 +342,29 @@ class TestQaoaHelpers(unittest.TestCase):
         np.testing.assert_allclose(optimizer.x0, np.array([0.3, 0.4]))
         np.testing.assert_allclose(result["optimal_parameters"], np.array([0.4, 0.5]))
         self.assertEqual(result["optimal_energy"], -1.25)
+        self.assertEqual(result["optimal_cut_value"], 1.25)
         self.assertEqual(result["normalized_edges"], [(0, 1, 3.0)])
         self.assertEqual(result["layers"], 1)
         self.assertEqual(result["num_qubits"], 2)
         self.assertEqual(result["backend"], "density_matrix")
-        self.assertIs(optimizer.args[0], result["cost_operator"])
+        self.assertIs(optimizer.args[0], result["optimization_operator"])
         self.assertIs(optimizer.args[1], result["ansatz"])
         self.assertEqual(optimizer.args[2], 2)
+        self.assertEqual(result["optimization_direction"], "maximize_cut_value")
+        self.assertEqual(
+            iter_pauli_terms(result["cost_operator"]),
+            [
+                (1.5 + 0j, []),
+                (-1.5 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
+        self.assertEqual(
+            iter_pauli_terms(result["optimization_operator"]),
+            [
+                (-1.5 + 0j, []),
+                (1.5 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
 
     def test_solve_maxcut_qaoa_validates_initial_parameter_count(self):
         from rocquantum.solvers.qaoa import solve_maxcut_qaoa

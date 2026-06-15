@@ -13,9 +13,10 @@ Current supported subset:
 - `maxcut_cost_operator()` builds the weighted MaxCut cost operator as
   `0.5 * w * (I - Zi Zj)` for each edge, aggregating duplicate or reversed
   undirected edges before emitting ansatz cost phases or cost terms.
-- `solve_maxcut_qaoa()` wires that ansatz and cost operator into `VQE_Solver`
-  with normalized initial parameters, duplicate-edge aggregation, and the
-  caller's optimizer or the default `SciPyOptimizer`.
+- `solve_maxcut_qaoa()` wires that ansatz into `VQE_Solver` by minimizing the
+  negated cost operator, so the reported `optimal_cut_value` maximizes the
+  weighted MaxCut objective while preserving the positive `cost_operator` for
+  inspection.
 - `VQE_Solver` passes vectors as one ansatz argument when the target kernel has a single vector-style parameter, including one-element vectors, so the QAOA helper and vector-parameter ansatzes can be evaluated directly by the VQE objective path.
 
 Install `rocquantum[solvers]` when using the default `SciPyOptimizer`; the
@@ -60,6 +61,7 @@ result = solve_maxcut_qaoa(
     initial_params=np.array([0.2, 0.4]),
 )
 print(result["optimal_energy"], result["optimal_parameters"])
+print(result["optimal_cut_value"])
 ```
 
 For production-grade workflows, this layer still needs richer operator algebra,
