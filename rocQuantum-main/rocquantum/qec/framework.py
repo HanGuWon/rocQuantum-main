@@ -12,6 +12,7 @@ on a "Circuit Fragmentation" strategy.
 """
 
 from abc import ABC, abstractmethod
+from numbers import Integral
 from typing import List, Dict, Callable, Any, Optional, Tuple
 
 # --- rocQuantum Imports ---
@@ -26,6 +27,40 @@ except ImportError:
 
 # --- Type Hinting Definitions ---
 AnsatzKernel = Callable[..., None]
+
+
+def _validate_binary_count_key(bitstring: str, label: str) -> str:
+    if (
+        not isinstance(bitstring, str)
+        or not bitstring
+        or any(bit not in "01" for bit in bitstring)
+    ):
+        raise ValueError(f"{label} keys must be non-empty binary strings.")
+    return bitstring
+
+
+def _validate_nonnegative_count(count: int, label: str) -> int:
+    if isinstance(count, bool) or not isinstance(count, Integral):
+        raise ValueError(f"{label} values must be non-negative integers.")
+    value = int(count)
+    if value < 0:
+        raise ValueError(f"{label} values must be non-negative integers.")
+    return value
+
+
+def _validate_binary_bit(value: int, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be 0 or 1.")
+    bit = int(value)
+    if bit not in (0, 1):
+        raise ValueError(f"{name} must be 0 or 1.")
+    return bit
+
+
+def _validate_optional_binary_bit(value: Optional[int], name: str) -> Optional[int]:
+    if value is None:
+        return None
+    return _validate_binary_bit(value, name)
 
 
 class QuantumErrorCode(ABC):
@@ -59,15 +94,8 @@ def _most_likely_single_bit(counts: Dict[str, int]) -> int:
 
     total_shots = 0
     for bitstring, count in counts.items():
-        if (
-            not isinstance(bitstring, str)
-            or not bitstring
-            or any(bit not in "01" for bit in bitstring)
-        ):
-            raise ValueError("Ancilla sample counts keys must be non-empty binary strings.")
-        if not isinstance(count, int) or count < 0:
-            raise ValueError("Ancilla sample counts values must be non-negative integers.")
-        total_shots += count
+        _validate_binary_count_key(bitstring, "Ancilla sample counts")
+        total_shots += _validate_nonnegative_count(count, "Ancilla sample counts")
 
     if total_shots <= 0:
         raise ValueError("Ancilla sample counts must contain at least one shot.")
@@ -77,7 +105,7 @@ def _most_likely_single_bit(counts: Dict[str, int]) -> int:
 
 
 def _validate_positive_integer(value: int, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, Integral):
         raise ValueError(f"{name} must be a positive integer.")
     if value <= 0:
         raise ValueError(f"{name} must be positive.")
@@ -159,15 +187,26 @@ class QEC_Experiment:
 
 
 def _validate_repetition_bits(initial_bits: Optional[List[int]]) -> List[int]:
-    bits = list(initial_bits or [0, 0, 0])
-    if len(bits) != 3 or any(bit not in (0, 1) for bit in bits):
+    try:
+        bits = [0, 0, 0] if initial_bits is None else list(initial_bits)
+    except TypeError as exc:
+        raise ValueError(
+            "initial_bits must be a length-3 list containing only 0 or 1."
+        ) from exc
+    if len(bits) != 3:
         raise ValueError("initial_bits must be a length-3 list containing only 0 or 1.")
-    return bits
+    return [_validate_binary_bit(bit, "initial_bits") for bit in bits]
 
 
-def _validate_error_qubit(error_qubit: Optional[int]) -> None:
-    if error_qubit is not None and error_qubit not in (0, 1, 2):
+def _validate_error_qubit(error_qubit: Optional[int]) -> Optional[int]:
+    if error_qubit is None:
+        return None
+    if isinstance(error_qubit, bool) or not isinstance(error_qubit, Integral):
         raise ValueError("error_qubit must be one of 0, 1, 2, or None.")
+    qubit = int(error_qubit)
+    if qubit not in (0, 1, 2):
+        raise ValueError("error_qubit must be one of 0, 1, 2, or None.")
+    return qubit
 
 
 def _validate_repetition_rounds(rounds: int) -> int:
@@ -180,12 +219,13 @@ def _validate_error_qubit_schedule(
 ) -> List[Optional[int]]:
     if error_qubits is None:
         return [None] * rounds
-    schedule = list(error_qubits)
+    try:
+        schedule = list(error_qubits)
+    except TypeError as exc:
+        raise ValueError("error_qubits must be a list of 0, 1, 2, or None values.") from exc
     if len(schedule) != rounds:
         raise ValueError("error_qubits length must match rounds.")
-    for error_qubit in schedule:
-        _validate_error_qubit(error_qubit)
-    return schedule
+    return [_validate_error_qubit(error_qubit) for error_qubit in schedule]
 
 
 def _syndrome_from_bitstring(bitstring: str) -> List[int]:
@@ -232,10 +272,8 @@ def repetition_syndrome_histogram(counts: Dict[str, int]) -> Dict[str, int]:
 
     histogram = {"00": 0, "10": 0, "11": 0, "01": 0}
     for bitstring, count in counts.items():
-        if not isinstance(bitstring, str) or any(bit not in "01" for bit in bitstring):
-            raise ValueError("counts keys must be binary strings.")
-        if not isinstance(count, int) or count < 0:
-            raise ValueError("counts values must be non-negative integers.")
+        _validate_binary_count_key(bitstring, "counts")
+        count = _validate_nonnegative_count(count, "counts")
         syndrome = _syndrome_from_bitstring(bitstring)
         histogram[_syndrome_key(syndrome)] += count
     return histogram
@@ -255,9 +293,11 @@ def analyze_repetition_code_counts(
 ) -> Dict[str, Any]:
     """Decode sampled repetition-code syndromes and summarize correction quality."""
     bits = _validate_repetition_bits(initial_bits)
-    _validate_error_qubit(error_qubit)
-    if expected_logical_bit is not None and expected_logical_bit not in (0, 1):
-        raise ValueError("expected_logical_bit must be 0, 1, or None.")
+    error_qubit = _validate_error_qubit(error_qubit)
+    expected_logical_bit = _validate_optional_binary_bit(
+        expected_logical_bit,
+        "expected_logical_bit",
+    )
 
     encoded_logical_bit = bits[0] if bits.count(bits[0]) == 3 else None
     if expected_logical_bit is None:
@@ -421,7 +461,7 @@ def run_repetition_code_single_round(
     shots = _validate_positive_integer(shots, "shots")
 
     bits = _validate_repetition_bits(initial_bits)
-    _validate_error_qubit(error_qubit)
+    error_qubit = _validate_error_qubit(error_qubit)
 
     @rocq.kernel
     def repetition_round():

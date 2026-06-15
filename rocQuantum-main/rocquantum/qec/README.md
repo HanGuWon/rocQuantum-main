@@ -15,8 +15,10 @@ Current supported subset:
 - Lookup-table correction through `RepetitionCodeDecoder`.
 - Syndrome histogram, repeated-round correction summary, and correction-success
   analysis for sampled counts.
-- Execution helpers require positive integer `shots`, and repeated-round helpers
-  require positive integer `rounds`.
+- Execution helpers require positive integer `shots`, repeated-round helpers
+  require positive integer `rounds`, and count/bit inputs are validated as
+  non-empty binary strings, non-negative integer counts, and non-boolean
+  data/error/logical bits.
 
 Minimal example:
 

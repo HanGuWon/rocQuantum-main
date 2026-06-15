@@ -582,15 +582,20 @@ class TestQecHelpers(unittest.TestCase):
             _most_likely_single_bit({"2": 1})
         with self.assertRaisesRegex(ValueError, "non-negative integers"):
             _most_likely_single_bit({"0": 1, "1": -1})
+        with self.assertRaisesRegex(ValueError, "non-negative integers"):
+            _most_likely_single_bit({"0": True})
         with self.assertRaisesRegex(ValueError, "at least one shot"):
             _most_likely_single_bit({"0": 0, "1": 0})
 
     def test_qec_execution_helpers_require_integer_shots_and_rounds(self):
         from rocquantum.qec.framework import (
             QEC_Experiment,
+            _validate_positive_integer,
             run_repetition_code_rounds,
             run_repetition_code_single_round,
         )
+
+        self.assertEqual(_validate_positive_integer(np.int64(2), "shots"), 2)
 
         experiment = QEC_Experiment()
         with self.assertRaisesRegex(ValueError, "shots must be a positive integer"):
@@ -620,13 +625,34 @@ class TestQecHelpers(unittest.TestCase):
         self.assertEqual(analysis["most_likely_corrected_data_bits"], [0, 0, 0])
         self.assertAlmostEqual(analysis["logical_success_rate"], 7 / 8)
 
+        numpy_integer_analysis = analyze_repetition_code_counts(
+            {"11": np.int64(1)},
+            initial_bits=[np.int64(0), np.int64(0), np.int64(0)],
+            error_qubit=np.int64(1),
+            expected_logical_bit=np.int64(0),
+        )
+        self.assertEqual(numpy_integer_analysis["initial_data_bits"], [0, 0, 0])
+        self.assertEqual(numpy_integer_analysis["observed_data_bits"], [0, 1, 0])
+
     def test_repetition_code_counts_analysis_validates_inputs(self):
         from rocquantum.qec import analyze_repetition_code_counts
 
         with self.assertRaisesRegex(ValueError, "binary strings"):
             analyze_repetition_code_counts({"2": 1})
+        with self.assertRaisesRegex(ValueError, "non-empty binary strings"):
+            analyze_repetition_code_counts({"": 1})
         with self.assertRaisesRegex(ValueError, "non-negative integers"):
             analyze_repetition_code_counts({"00": -1})
+        with self.assertRaisesRegex(ValueError, "non-negative integers"):
+            analyze_repetition_code_counts({"00": True})
+        with self.assertRaisesRegex(ValueError, "initial_bits"):
+            analyze_repetition_code_counts({"00": 1}, initial_bits=[True, 0, 0])
+        with self.assertRaisesRegex(ValueError, "initial_bits"):
+            analyze_repetition_code_counts({"00": 1}, initial_bits=True)
+        with self.assertRaisesRegex(ValueError, "error_qubit"):
+            analyze_repetition_code_counts({"00": 1}, error_qubit=True)
+        with self.assertRaisesRegex(ValueError, "expected_logical_bit"):
+            analyze_repetition_code_counts({"00": 1}, expected_logical_bit=True)
 
     def test_repetition_code_rounds_analysis_tracks_feed_forward(self):
         from rocquantum.qec import analyze_repetition_code_rounds
@@ -666,6 +692,8 @@ class TestQecHelpers(unittest.TestCase):
             analyze_repetition_code_rounds([{"00": 1}], error_qubits=[0, 1])
         with self.assertRaisesRegex(ValueError, "count dictionaries"):
             analyze_repetition_code_rounds([[]])
+        with self.assertRaisesRegex(ValueError, "error_qubit"):
+            analyze_repetition_code_rounds([{"00": 1}], error_qubits=[True])
 
     def test_repetition_code_single_round_uses_canonical_sample(self):
         from rocquantum.qec.framework import run_repetition_code_single_round
