@@ -115,11 +115,14 @@ def _validate_stabilizer_circuits(stabilizer_circuits) -> List[Any]:
     if isinstance(stabilizer_circuits, (str, bytes, Mapping)):
         raise ValueError("generate_stabilizer_circuits must return a sequence of circuit fragments.")
     try:
-        return list(stabilizer_circuits)
+        fragments = list(stabilizer_circuits)
     except TypeError as exc:
         raise ValueError(
             "generate_stabilizer_circuits must return a sequence of circuit fragments."
         ) from exc
+    if not fragments:
+        raise ValueError("generate_stabilizer_circuits must return at least one circuit fragment.")
+    return fragments
 
 
 def _validate_decoder_correction(correction_operator):
