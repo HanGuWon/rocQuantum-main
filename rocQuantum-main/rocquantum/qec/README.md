@@ -20,7 +20,8 @@ Current supported subset:
   measurement hooks are unavailable. Custom code and decoder objects must expose
   callable `generate_stabilizer_circuits()`, `define_logical_operators()`, and
   `decode()` methods, and generated stabilizer fragments must be returned as a
-  non-empty, non-string, non-mapping sequence or iterable. Logical operators must be
+  non-empty, non-string, non-mapping sequence or iterable. The optional
+  `initial_state_kernel` must be callable or `None`. Logical operators must be
   returned as a string-keyed mapping of canonical `rocq.operator.PauliOperator`
   values, and decoder results must be canonical `rocq.operator.PauliOperator`
   corrections.

@@ -1061,7 +1061,7 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "positive-integer shot/round/num_qubits, backend, code/decoder interface, non-empty non-mapping stabilizer-fragment sequence, logical-operator result, decoder-correction result, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
+            "positive-integer shot/round/num_qubits, backend, code/decoder interface, non-empty non-mapping stabilizer-fragment sequence, logical-operator result, decoder-correction result, ancilla-index, callable-or-None initial-state, syndrome, and bool-safe count/bit validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -1211,6 +1211,7 @@ class TestQecHelpers(unittest.TestCase):
 
     def test_qec_experiment_validates_code_and_decoder_interfaces(self):
         from rocquantum.qec.framework import QEC_Experiment
+        from rocq.operator import PauliOperator
 
         class MissingLogicalCode:
             def generate_stabilizer_circuits(self, initial_state_kernel, num_qubits, backend="state_vector"):
@@ -1226,6 +1227,21 @@ class TestQecHelpers(unittest.TestCase):
         class MissingDecode:
             pass
 
+        class RecordingCode:
+            def __init__(self):
+                self.generated = False
+
+            def generate_stabilizer_circuits(self, initial_state_kernel, num_qubits, backend="state_vector"):
+                self.generated = True
+                return ["fragment"]
+
+            def define_logical_operators(self):
+                return {"logical_Z": PauliOperator("Z0")}
+
+        class ValidDecoder:
+            def decode(self, syndrome):
+                return PauliOperator("I")
+
         experiment = QEC_Experiment()
         with self.assertRaisesRegex(ValueError, "generate_stabilizer_circuits"):
             experiment.run_single_round(object(), MissingDecode(), None, 5, [], shots=1)
@@ -1240,6 +1256,17 @@ class TestQecHelpers(unittest.TestCase):
                 [],
                 shots=1,
             )
+        recording_code = RecordingCode()
+        with self.assertRaisesRegex(ValueError, "initial_state_kernel must be callable"):
+            experiment.run_single_round(
+                recording_code,
+                ValidDecoder(),
+                "prepare",
+                5,
+                [3],
+                shots=1,
+            )
+        self.assertFalse(recording_code.generated)
 
     def test_qec_experiment_validates_stabilizer_fragment_collection(self):
         from rocq.operator import PauliOperator

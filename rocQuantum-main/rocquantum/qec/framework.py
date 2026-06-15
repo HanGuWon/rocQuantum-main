@@ -102,6 +102,12 @@ def _validate_backend_name(backend: str) -> str:
     return backend
 
 
+def _validate_initial_state_kernel(initial_state_kernel):
+    if initial_state_kernel is not None and not callable(initial_state_kernel):
+        raise ValueError("initial_state_kernel must be callable or None.")
+    return initial_state_kernel
+
+
 def _validate_code_and_decoder(code, decoder) -> None:
     if not callable(getattr(code, "generate_stabilizer_circuits", None)):
         raise ValueError("code must define a callable generate_stabilizer_circuits method.")
@@ -249,6 +255,7 @@ class QEC_Experiment:
             ancilla_qubit_indices,
             num_qubits,
         )
+        initial_state_kernel = _validate_initial_state_kernel(initial_state_kernel)
         _validate_code_and_decoder(code, decoder)
 
         self._log("Step 1: Generating stabilizer measurement circuit fragments...")
