@@ -1,5 +1,7 @@
 #include "MLIRCompiler.h"
+#include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -154,6 +156,10 @@ std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned
                     "quantum.qalloc size must be positive, received " +
                     std::to_string(allocated_qubits_signed) + ".");
             }
+            if (allocated_qubits_signed > static_cast<int64_t>(std::numeric_limits<unsigned>::max())) {
+                throw_compile_diagnostic(
+                    "quantum.qalloc size exceeds the supported compiler range.");
+            }
 
             const auto allocated_qubits = static_cast<unsigned>(allocated_qubits_signed);
             if (allocated_qubits != expected_num_qubits) {
@@ -200,9 +206,13 @@ std::vector<ExecutableOp> extract_executable_ops(mlir::ModuleOp module, unsigned
             if (!angle_attr) {
                 throw_compile_diagnostic("operation '" + op_name + "' is missing the required 'angle' attribute.");
             }
+            const double angle = angle_attr.getValueAsDouble();
+            if (!std::isfinite(angle)) {
+                throw_compile_diagnostic("operation '" + op_name + "' angle must be finite.");
+            }
             executable_ops.push_back({op_name.substr(std::string("quantum.").size()),
                                       resolve_targets(op, qubit_indices, param_it->second),
-                                      angle_attr.getValueAsDouble(),
+                                      angle,
                                       true});
             return;
         }

@@ -98,6 +98,10 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("quantum.mcx", src)
         self.assertIn("quantum.cswap", src)
         self.assertIn("quantum.tdg", src)
+        self.assertIn("std::isfinite(angle)", src)
+        self.assertIn("angle must be finite", src)
+        self.assertIn("std::numeric_limits<unsigned>::max()", src)
+        self.assertIn("qalloc size exceeds the supported compiler range", src)
 
     def test_binding_documents_compile_and_execute_mvp(self):
         path = os.path.join(_PROJECT_ROOT, "bindings.cpp")
