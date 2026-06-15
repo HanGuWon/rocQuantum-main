@@ -464,12 +464,12 @@
                                        "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3656",
                                        "rocQuantum-main/tests/test_rccl_distributed_contract.py:82"
                                    ],
-                      "notes":  "P1 RCCL backend is now present. Pauli expectation/sample reductions and local-domain dense matrix expectation avoid full host state gather by reducing per-rank device results through ncclAllReduce. Non-local 1-4 target generic dense matrix apply now uses swap-localization before the explicit host fallback. Broad non-local dense/sparse distributed reductions and measured speedups still need ROCm multi-GPU CI and benchmark artifacts.",
+                      "notes":  "P1 RCCL backend is now present. Pauli expectation/sample reductions and local-domain dense matrix expectation avoid full host state gather by reducing per-rank device results through ncclAllReduce. Non-local 1-4 target generic dense matrix apply now uses swap-localization before the explicit host fallback, and distributed_reduction_benchmark emits dense_expectation_ms plus generic_matrix_ms for RCCL-vs-host artifacts. Broad non-local sparse distributed reductions and measured speedups still need ROCm multi-GPU CI artifacts.",
                       "status":  "Needs ROCm CI",
                       "pr_link":  "unknown",
                       "commit_link":  "unknown",
                       "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3656",
-                      "verification_path":  "Run rocQuantum-main/tests/test_rccl_distributed_contract.py locally; run distributed Pauli, sample/probabilities, and local-domain dense matrix expectation parity plus distributed_reduction_benchmark on a ROCm multi-GPU runner."
+                      "verification_path":  "Run rocQuantum-main/tests/test_rccl_distributed_contract.py and rocQuantum-main/tests/test_benchmark_release_contract.py locally; run distributed Pauli, sample/probabilities, local-domain dense matrix expectation, generic dense matrix apply parity, and distributed_reduction_benchmark on a ROCm multi-GPU runner."
                   },
                   {
                       "id":  "P2-TN-004",

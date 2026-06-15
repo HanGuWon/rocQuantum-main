@@ -1,5 +1,7 @@
 #include "rocquantum/hipStateVec.h"
 
+#include <hip/hip_runtime.h>
+
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -25,11 +27,66 @@ void unset_env_var(const char* name) {
 #endif
 }
 
+rocComplex make_complex(double real, double imag = 0.0) {
+#ifdef ROCQ_PRECISION_DOUBLE
+    return rocComplex{real, imag};
+#else
+    return rocComplex{static_cast<float>(real), static_cast<float>(imag)};
+#endif
+}
+
+bool check_hip(hipError_t err, const char* what) {
+    if (err != hipSuccess) {
+        std::cerr << what << " failed: " << hipGetErrorString(err) << "\n";
+        return false;
+    }
+    return true;
+}
+
+struct DeviceMatrix {
+    rocComplex* ptr = nullptr;
+    unsigned dim = 0;
+
+    ~DeviceMatrix() {
+        if (ptr) {
+            hipFree(ptr);
+        }
+    }
+};
+
+bool upload_matrix(const std::vector<rocComplex>& host, unsigned dim, DeviceMatrix& out) {
+    out.dim = dim;
+    const size_t bytes = host.size() * sizeof(rocComplex);
+    if (!check_hip(hipMalloc(&out.ptr, bytes), "hipMalloc(matrix)")) {
+        return false;
+    }
+    return check_hip(hipMemcpy(out.ptr, host.data(), bytes, hipMemcpyHostToDevice), "hipMemcpy(matrix)");
+}
+
+std::vector<rocComplex> pauli_z_matrix_col_major() {
+    return {
+        make_complex(1.0),
+        make_complex(0.0),
+        make_complex(0.0),
+        make_complex(-1.0),
+    };
+}
+
+std::vector<rocComplex> identity_matrix_col_major(unsigned dim) {
+    std::vector<rocComplex> matrix(static_cast<size_t>(dim) * dim, make_complex(0.0));
+    for (unsigned i = 0; i < dim; ++i) {
+        matrix[static_cast<size_t>(i) + static_cast<size_t>(i) * dim] = make_complex(1.0);
+    }
+    return matrix;
+}
+
 struct CaseResult {
     std::string name;
     int status = 0;
     double expectation_ms = 0.0;
+    double dense_expectation_ms = 0.0;
     double sampling_ms = 0.0;
+    double generic_matrix_ms = 0.0;
 };
 
 bool ok(rocqStatus_t status, const char* what) {
@@ -71,11 +128,38 @@ CaseResult run_case(const std::string& name,
     }
 
     double expectation = 0.0;
+    rocComplex dense_expectation = make_complex(0.0);
     std::vector<uint64_t> samples(shots, 0);
     const unsigned measured[] = {0};
+    const unsigned dense_target[] = {0};
+    const unsigned generic_targets[] = {0, qubits > 1 ? qubits - 1 : 0};
+    DeviceMatrix dense_matrix;
+    DeviceMatrix generic_identity;
+    if (!upload_matrix(pauli_z_matrix_col_major(), 2, dense_matrix) ||
+        !upload_matrix(identity_matrix_col_major(4), 4, generic_identity)) {
+        result.status = 1;
+        rocsvDestroy(handle);
+        return result;
+    }
 
     (void)rocsvGetExpectationValueSinglePauliZ(handle, nullptr, qubits, 0, &expectation);
+    (void)rocsvGetExpectationMatrix(handle,
+                                    nullptr,
+                                    qubits,
+                                    dense_target,
+                                    1,
+                                    dense_matrix.ptr,
+                                    dense_matrix.dim,
+                                    &dense_expectation);
     (void)rocsvSample(handle, nullptr, qubits, measured, 1, shots, samples.data());
+    (void)rocsvApplyMatrix(handle,
+                           nullptr,
+                           qubits,
+                           generic_targets,
+                           2,
+                           generic_identity.ptr,
+                           generic_identity.dim);
+    (void)rocsvSynchronize(handle);
 
     auto t0 = std::chrono::steady_clock::now();
     for (unsigned i = 0; i < trials; ++i) {
@@ -88,6 +172,23 @@ CaseResult run_case(const std::string& name,
     auto t1 = std::chrono::steady_clock::now();
     if (result.status == 0) {
         for (unsigned i = 0; i < trials; ++i) {
+            if (!ok(rocsvGetExpectationMatrix(handle,
+                                              nullptr,
+                                              qubits,
+                                              dense_target,
+                                              1,
+                                              dense_matrix.ptr,
+                                              dense_matrix.dim,
+                                              &dense_expectation),
+                    "rocsvGetExpectationMatrix")) {
+                result.status = 1;
+                break;
+            }
+        }
+    }
+    auto t2 = std::chrono::steady_clock::now();
+    if (result.status == 0) {
+        for (unsigned i = 0; i < trials; ++i) {
             if (!ok(rocsvSample(handle, nullptr, qubits, measured, 1, shots, samples.data()),
                     "rocsvSample")) {
                 result.status = 1;
@@ -95,12 +196,33 @@ CaseResult run_case(const std::string& name,
             }
         }
     }
-    auto t2 = std::chrono::steady_clock::now();
+    auto t3 = std::chrono::steady_clock::now();
+    if (result.status == 0) {
+        for (unsigned i = 0; i < trials; ++i) {
+            if (!ok(rocsvApplyMatrix(handle,
+                                     nullptr,
+                                     qubits,
+                                     generic_targets,
+                                     2,
+                                     generic_identity.ptr,
+                                     generic_identity.dim),
+                    "rocsvApplyMatrix(generic distributed identity)") ||
+                !ok(rocsvSynchronize(handle), "rocsvSynchronize(generic matrix)")) {
+                result.status = 1;
+                break;
+            }
+        }
+    }
+    auto t4 = std::chrono::steady_clock::now();
 
     result.expectation_ms =
         std::chrono::duration<double, std::milli>(t1 - t0).count() / static_cast<double>(trials);
-    result.sampling_ms =
+    result.dense_expectation_ms =
         std::chrono::duration<double, std::milli>(t2 - t1).count() / static_cast<double>(trials);
+    result.sampling_ms =
+        std::chrono::duration<double, std::milli>(t3 - t2).count() / static_cast<double>(trials);
+    result.generic_matrix_ms =
+        std::chrono::duration<double, std::milli>(t4 - t3).count() / static_cast<double>(trials);
     rocsvDestroy(handle);
     return result;
 }
@@ -155,7 +277,9 @@ int main(int argc, char** argv) {
         const CaseResult& r = results[i];
         *out << "    {\"name\": \"" << r.name << "\", \"status\": " << r.status
              << ", \"expectation_ms\": " << r.expectation_ms
-             << ", \"sampling_ms\": " << r.sampling_ms << "}";
+             << ", \"dense_expectation_ms\": " << r.dense_expectation_ms
+             << ", \"sampling_ms\": " << r.sampling_ms
+             << ", \"generic_matrix_ms\": " << r.generic_matrix_ms << "}";
         *out << (i + 1 == results.size() ? "\n" : ",\n");
     }
     *out << "  ]\n}\n";

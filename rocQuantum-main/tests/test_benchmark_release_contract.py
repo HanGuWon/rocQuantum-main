@@ -14,6 +14,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO_ROOT = os.path.dirname(PROJECT_ROOT)
 MANIFEST = os.path.join(PROJECT_ROOT, "benchmarks", "benchmark_manifest.json")
 RUNNER = os.path.join(PROJECT_ROOT, "benchmarks", "run_release_benchmarks.py")
+DISTRIBUTED_BENCHMARK = os.path.join(
+    PROJECT_ROOT,
+    "benchmarks",
+    "distributed_reduction_benchmark.cpp",
+)
 
 
 class TestBenchmarkReleaseContract(unittest.TestCase):
@@ -87,6 +92,17 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmark_hipTensorNet_contraction", tensornet)
         self.assertIn("benchmark_hipDensityMat_channel_sampling", density)
 
+    def test_distributed_benchmark_covers_rccl_dense_and_generic_matrix_paths(self):
+        with open(DISTRIBUTED_BENCHMARK, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("dense_expectation_ms", source)
+        self.assertIn("generic_matrix_ms", source)
+        self.assertIn("rocsvGetExpectationMatrix", source)
+        self.assertIn("rocsvApplyMatrix", source)
+        self.assertIn("ROCQ_DISTRIBUTED_COMM", source)
+        self.assertIn("ROCQ_DISTRIBUTED_FALLBACK_MODE", source)
+
     def test_ci_uploads_benchmark_artifacts(self):
         workflow_paths = [
             os.path.join(REPO_ROOT, ".github", "workflows", "rocm-linux-build.yml"),
@@ -109,6 +125,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmarks/benchmark_manifest.json", readme)
         self.assertIn("benchmarks/run_release_benchmarks.py", readme)
         self.assertIn("benchmark-summary.json", readme)
+        self.assertIn("dense expectation and generic matrix", readme)
 
 
 if __name__ == "__main__":

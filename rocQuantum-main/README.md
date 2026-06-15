@@ -130,8 +130,9 @@ cmake --build build-ci --parallel
 ```
 
 The release benchmark registry is defined in `benchmarks/benchmark_manifest.json`. It covers
-state-vector fast path/fallback and fusion timing, distributed RCCL vs host fallback reductions,
-TensorNet contraction planning, and DensityMat channel/observable/sampling timing. The runner
+state-vector fast path/fallback and fusion timing, distributed RCCL vs host fallback reductions
+including dense expectation and generic matrix paths, TensorNet contraction planning, and
+DensityMat channel/observable/sampling timing. The runner
 emits one JSON file per benchmark plus `benchmark-summary.json`; if a native binary or ROCm
 device is unavailable, it writes an explicit skipped artifact instead of pretending a result exists.
 
