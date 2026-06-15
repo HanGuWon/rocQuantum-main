@@ -115,6 +115,51 @@ def _write_report(report: dict[str, Any], output_path: Path | None) -> None:
     print(f"native framework smoke JSON: {output_path}")
 
 
+def _markdown_bool(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def format_native_smoke_markdown(report: dict[str, Any]) -> str:
+    lines = [
+        "# Native Framework Smoke",
+        "",
+        f"- Status: `{report.get('status', '')}`",
+        f"- ROCm device detected: {_markdown_bool(bool(report.get('has_rocm_device')))}",
+        f"- ROCm device probe: `{report.get('device_probe', '')}`",
+        f"- Native ROCm evidence: {_markdown_bool(bool(report.get('native_rocm_evidence')))}",
+    ]
+    if report.get("native_rocm_evidence_required"):
+        lines.append("- Native ROCm evidence required: yes")
+    if report.get("native_rocm_evidence_failure"):
+        lines.append(f"- Native ROCm evidence gate: failed ({report['native_rocm_evidence_failure']})")
+    if report.get("reason"):
+        lines.append(f"- Reason: {report['reason']}")
+    lines.extend(
+        [
+            "",
+            "| Check | Status | Evidence |",
+            "| --- | --- | --- |",
+        ]
+    )
+    for result in report.get("results", []):
+        if not isinstance(result, dict):
+            continue
+        lines.append(
+            f"| `{result.get('name', '')}` | `{result.get('status', '')}` | "
+            f"`{result.get('evidence_kind', '')}` |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _write_markdown_report(report: dict[str, Any], output_path: Path | None) -> None:
+    if output_path is None:
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(format_native_smoke_markdown(report), encoding="utf-8")
+    print(f"native framework smoke Markdown: {output_path}")
+
+
 def _run_step(name: str, callback: Callable[[], None]) -> dict[str, Any]:
     start = time.perf_counter()
     try:
@@ -199,6 +244,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Optional path for a machine-readable native smoke report.",
     )
     parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=None,
+        help="Optional path for a Markdown native smoke summary.",
+    )
+    parser.add_argument(
         "--allow-missing-device-skip",
         action="store_true",
         help="Return success with a skipped report when /dev/kfd is unavailable.",
@@ -226,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
             reason=str(exc),
         )
         _write_report(report, args.json_output)
+        _write_markdown_report(report, args.markdown_output)
         if args.allow_missing_device_skip and not report.get("native_rocm_evidence_failure"):
             print(f"native framework smoke: skipped: {exc}")
             return 0
@@ -247,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         require_native_rocm_evidence=args.require_native_rocm_evidence,
     )
     _write_report(report, args.json_output)
+    _write_markdown_report(report, args.markdown_output)
     if report.get("native_rocm_evidence_failure"):
         return 1
     return 0 if status == "passed" else 1

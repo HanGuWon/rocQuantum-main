@@ -108,12 +108,14 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("--json-output", smoke)
         self.assertIn("native_framework_smoke", smoke)
         self.assertIn("\"schema_version\": 1", smoke)
+        self.assertIn("format_native_smoke_markdown", smoke)
         self.assertIn("native_rocm_evidence", smoke)
         self.assertIn("native_rocm_evidence_required", smoke)
         self.assertIn("ROCQ_NATIVE_SMOKE_REQUIRE_NATIVE_EVIDENCE", smoke)
         self.assertIn("actual_dev_kfd", smoke)
         self.assertIn("assumed_rocm_device", smoke)
         self.assertIn("allow-missing-device-skip", smoke)
+        self.assertIn("--markdown-output", smoke)
         self.assertIn("--require-native-rocm-evidence", smoke)
         self.assertIn("Build native Python bindings for framework smoke", workflow)
         self.assertIn("ROCQUANTUM_BUILD_BINDINGS=ON", workflow)
@@ -123,6 +125,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("--require-native-rocm-evidence", workflow)
         self.assertIn("native-framework-smoke.log", workflow)
         self.assertIn("native-framework-smoke.json", workflow)
+        self.assertIn("native-framework-smoke.md", workflow)
+        self.assertIn("GITHUB_STEP_SUMMARY", workflow)
         self.assertIn("pennylane>=0.35", workflow)
         self.assertIn("qiskit>=0.45", workflow)
         self.assertIn("cirq-core>=1.0", workflow)
@@ -130,6 +134,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
     def test_native_rocm_framework_smoke_can_emit_explicit_local_skip_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             output_path = os.path.join(tmp, "native-framework-smoke.json")
+            markdown_path = os.path.join(tmp, "native-framework-smoke.md")
             completed = subprocess.run(
                 [
                     sys.executable,
@@ -137,6 +142,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
                     "--allow-missing-device-skip",
                     "--json-output",
                     output_path,
+                    "--markdown-output",
+                    markdown_path,
                 ],
                 text=True,
                 capture_output=True,
@@ -147,6 +154,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             self.assertTrue(os.path.exists(output_path))
             with open(output_path, "r", encoding="utf-8") as f:
                 payload = json.load(f)
+            with open(markdown_path, "r", encoding="utf-8") as f:
+                markdown = f.read()
 
         self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["suite"], "native_framework_smoke")
@@ -164,6 +173,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             self.assertEqual(payload["native_rocm_evidence_count"], 0)
             self.assertEqual(payload["evidence_kind"], "skip")
             self.assertFalse(payload["native_rocm_evidence_required"])
+            self.assertIn("# Native Framework Smoke", markdown)
+            self.assertIn("ROCm device probe: `missing_dev_kfd`", markdown)
+            self.assertIn("Native ROCm evidence: no", markdown)
+            self.assertIn("Reason:", markdown)
 
     def test_native_rocm_framework_smoke_can_require_native_evidence(self):
         assume_rocm_device = os.environ.get("ROCQ_NATIVE_SMOKE_ASSUME_ROCM_DEVICE", "").strip().lower()
@@ -172,6 +185,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             output_path = os.path.join(tmp, "native-framework-smoke.json")
+            markdown_path = os.path.join(tmp, "native-framework-smoke.md")
             completed = subprocess.run(
                 [
                     sys.executable,
@@ -180,6 +194,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
                     "--require-native-rocm-evidence",
                     "--json-output",
                     output_path,
+                    "--markdown-output",
+                    markdown_path,
                 ],
                 text=True,
                 capture_output=True,
@@ -189,6 +205,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             self.assertEqual(completed.returncode, 1, completed.stdout)
             with open(output_path, "r", encoding="utf-8") as f:
                 payload = json.load(f)
+            with open(markdown_path, "r", encoding="utf-8") as f:
+                markdown = f.read()
 
         self.assertEqual(payload["status"], "skipped")
         self.assertTrue(payload["native_rocm_evidence_required"])
@@ -197,6 +215,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             payload["native_rocm_evidence_failure"],
             "no passed native ROCm framework smoke suite was produced",
         )
+        self.assertIn("Native ROCm evidence required: yes", markdown)
+        self.assertIn("Native ROCm evidence gate: failed", markdown)
 
     def test_native_rocm_framework_smoke_report_labels_only_real_device_passes_as_evidence(self):
         spec = importlib.util.spec_from_file_location("native_framework_smoke", _NATIVE_FRAMEWORK_SMOKE)
@@ -251,6 +271,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertEqual(failed_report["evidence_kind"], "native_rocm_failed")
         self.assertEqual(failed_report["results"][0]["evidence_kind"], "native_rocm")
         self.assertEqual(failed_report["results"][1]["evidence_kind"], "native_rocm_failed")
+        markdown = module.format_native_smoke_markdown(real_report)
+        self.assertIn("# Native Framework Smoke", markdown)
+        self.assertIn("Native ROCm evidence: yes", markdown)
+        self.assertIn("| `native_binding` | `passed` | `native_rocm` |", markdown)
 
     def test_shared_runtime_exposes_controlled_rotation_aliases(self):
         with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
