@@ -944,6 +944,58 @@ def test_framework_runtime_revalidates_sparse_hamiltonian_moments_before_native_
     assert batch_sim.sparse_batch_moments == []
 
 
+def test_framework_runtime_revalidates_pauli_expectation_payloads_before_native_dispatch(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        expectation_from_statevector,
+    )
+
+    runtime = RocQuantumRuntime.from_bindings(2)
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    invalid_pauli_payloads = (
+        (None, [0]),
+        (b"Z", [0]),
+        ("A", [0]),
+        ("ZZ", [0]),
+        ("Z", [0, 0]),
+        ("Z", [-1]),
+        ("Z", [2]),
+        ("Z", [True]),
+        ("Z", ["0"]),
+    )
+
+    for pauli_string, targets in invalid_pauli_payloads:
+        with pytest.raises(ValueError):
+            runtime.expectation_pauli_string(pauli_string, targets)
+        with pytest.raises(ValueError):
+            expectation_from_statevector(
+                np.array([1.0, 0.0, 0.0, 0.0], dtype=np.complex128),
+                pauli_string,
+                targets,
+            )
+
+    assert sim.expectations == []
+
+    with pytest.raises(ValueError):
+        runtime.expectation_value("A", 0)
+    with pytest.raises(ValueError):
+        runtime.expectation_value("Z", True)
+    with pytest.raises(ValueError):
+        runtime.expectation_value("Z", 2)
+    assert sim.expectations == []
+
+    batch_runtime = RocQuantumRuntime.from_bindings(2, batch_size=2)
+    batch_sim = _FakeQuantumSimulator.instances[-1]
+    for pauli_string, targets in invalid_pauli_payloads:
+        with pytest.raises(ValueError):
+            batch_runtime.expectation_pauli_string_batch(pauli_string, targets)
+
+    assert batch_sim.batch_expectations == []
+
+
 def test_framework_runtime_rejects_nonfinite_probability_payloads():
     from rocquantum.framework_runtime import (
         RocQuantumRuntime,

@@ -71,6 +71,29 @@ def normalize_targets(targets: Iterable[int]) -> list[int]:
     return normalized
 
 
+def normalize_pauli_expectation_payload(
+    pauli_string: object,
+    targets: Iterable[int],
+    num_qubits: int | None = None,
+) -> tuple[str, list[int]]:
+    if not isinstance(pauli_string, str):
+        raise ValueError("Pauli string must be a string.")
+
+    normalized_targets = normalize_targets(targets)
+    normalized_pauli = pauli_string.upper()
+    if len(normalized_pauli) != len(normalized_targets):
+        raise ValueError("Pauli string length must match target qubit count.")
+    if any(pauli not in {"I", "X", "Y", "Z"} for pauli in normalized_pauli):
+        raise ValueError("Pauli string may only contain I, X, Y, or Z.")
+    if len(set(normalized_targets)) != len(normalized_targets):
+        raise ValueError("Pauli expectation targets must be unique.")
+    if any(target < 0 for target in normalized_targets):
+        raise ValueError("Pauli expectation target is outside the qubit range.")
+    if num_qubits is not None and any(target >= int(num_qubits) for target in normalized_targets):
+        raise ValueError("Pauli expectation target is outside the qubit range.")
+    return normalized_pauli, normalized_targets
+
+
 def normalize_positive_integer(value: object, label: str) -> int:
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
         raise ValueError(f"{label} must be a positive integer.")
@@ -520,31 +543,24 @@ def expectation_from_statevector(
     targets: Sequence[int],
 ) -> float:
     state = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
-    if len(pauli_string) != len(targets):
-        raise ValueError("Pauli string length must match target qubit count.")
-    if not targets:
-        return 1.0
 
     num_qubits = int(np.log2(state.size)) if state.size else 0
     if state.size != (1 << num_qubits):
         raise ValueError("Statevector length must be a power of two.")
 
-    normalized_paulis = [pauli.upper() for pauli in pauli_string]
-    normalized_targets = normalize_targets(targets)
-    if len(set(normalized_targets)) != len(normalized_targets):
-        raise ValueError("Pauli expectation targets must be unique.")
-    for target in normalized_targets:
-        if target < 0 or target >= num_qubits:
-            raise ValueError("Pauli expectation target is outside the statevector qubit range.")
-    for pauli in normalized_paulis:
-        if pauli not in {"I", "X", "Y", "Z"}:
-            raise ValueError("Pauli string may only contain I, X, Y, or Z.")
+    normalized_pauli_string, normalized_targets = normalize_pauli_expectation_payload(
+        pauli_string,
+        targets,
+        num_qubits,
+    )
+    if not normalized_targets:
+        return 1.0
 
     result = 0.0 + 0.0j
     for basis_index, amplitude in enumerate(state):
         partner_index = basis_index
         phase = 1.0 + 0.0j
-        for pauli, target in zip(normalized_paulis, normalized_targets):
+        for pauli, target in zip(normalized_pauli_string, normalized_targets):
             bit = (basis_index >> target) & 1
             if pauli == "X":
                 partner_index ^= 1 << target
@@ -1201,31 +1217,44 @@ class RocQuantumRuntime:
         )
 
     def expectation_value(self, pauli: str, target: int) -> float:
+        normalized_pauli, normalized_targets = normalize_pauli_expectation_payload(
+            pauli,
+            [target],
+            None if self.num_qubits() <= 0 else self.num_qubits(),
+        )
         native = getattr(self.simulator, "expectation_value", None)
         if callable(native):
-            return float(native(str(pauli), int(target)))
+            return float(native(normalized_pauli, normalized_targets[0]))
 
         legacy = getattr(self.simulator, "GetExpectationValue", None)
         if callable(legacy):
-            return float(legacy(str(pauli), int(target)))
+            return float(legacy(normalized_pauli, normalized_targets[0]))
 
-        return self.expectation_pauli_string(str(pauli), [int(target)])
+        return self.expectation_pauli_string(normalized_pauli, normalized_targets)
 
     def expectation_pauli_string(self, pauli_string: str, targets: Iterable[int]) -> float:
-        normalized_targets = normalize_targets(targets)
+        normalized_pauli, normalized_targets = normalize_pauli_expectation_payload(
+            pauli_string,
+            targets,
+            None if self.num_qubits() <= 0 else self.num_qubits(),
+        )
 
         native = getattr(self.simulator, "expectation_pauli_string", None)
         if callable(native):
-            return float(native(str(pauli_string), normalized_targets))
+            return float(native(normalized_pauli, normalized_targets))
 
         legacy = getattr(self.simulator, "GetExpectationPauliString", None)
         if callable(legacy):
-            return float(legacy(str(pauli_string), normalized_targets))
+            return float(legacy(normalized_pauli, normalized_targets))
 
-        return expectation_from_statevector(self.statevector(), str(pauli_string), normalized_targets)
+        return expectation_from_statevector(self.statevector(), normalized_pauli, normalized_targets)
 
     def expectation_pauli_string_batch(self, pauli_string: str, targets: Iterable[int]) -> np.ndarray:
-        normalized_targets = normalize_targets(targets)
+        normalized_pauli, normalized_targets = normalize_pauli_expectation_payload(
+            pauli_string,
+            targets,
+            None if self.num_qubits() <= 0 else self.num_qubits(),
+        )
 
         def _native_expectation_unavailable(exc: Exception) -> bool:
             message = str(exc)
@@ -1234,7 +1263,7 @@ class RocQuantumRuntime:
         native = getattr(self.simulator, "expectation_pauli_string_batch", None)
         if callable(native):
             try:
-                return np.asarray(native(str(pauli_string), normalized_targets), dtype=float).reshape(self.batch_size())
+                return np.asarray(native(normalized_pauli, normalized_targets), dtype=float).reshape(self.batch_size())
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
                     raise
@@ -1242,17 +1271,17 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "GetExpectationPauliStringBatch", None)
         if callable(legacy):
             try:
-                return np.asarray(legacy(str(pauli_string), normalized_targets), dtype=float).reshape(self.batch_size())
+                return np.asarray(legacy(normalized_pauli, normalized_targets), dtype=float).reshape(self.batch_size())
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
                     raise
 
         if self.batch_size() == 1:
-            return np.asarray([self.expectation_pauli_string(pauli_string, normalized_targets)], dtype=float)
+            return np.asarray([self.expectation_pauli_string(normalized_pauli, normalized_targets)], dtype=float)
 
         return np.asarray(
             [
-                expectation_from_statevector(state, str(pauli_string), normalized_targets)
+                expectation_from_statevector(state, normalized_pauli, normalized_targets)
                 for state in self.statevectors()
             ],
             dtype=float,

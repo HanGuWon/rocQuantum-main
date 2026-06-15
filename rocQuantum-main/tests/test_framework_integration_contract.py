@@ -292,6 +292,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("\"CSWAP\": \"CSWAP\"", source)
         self.assertIn("from numbers import Integral", source)
         self.assertIn("def normalize_positive_integer", source)
+        self.assertIn("def normalize_pauli_expectation_payload", source)
         self.assertIn("def normalize_targets", source)
         self.assertIn("not isinstance(target, Integral)", source)
         self.assertIn("def normalize_shots", source)
