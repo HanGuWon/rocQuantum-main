@@ -2,7 +2,18 @@
 
 from .noise import NoiseModel
 from . import spin
-from .kernel import QuantumKernel, compile_and_execute, execute, kernel, observe, sample
+from .kernel import (
+    QuantumKernel,
+    compile_and_execute,
+    compile_and_execute_async,
+    execute,
+    execute_async,
+    kernel,
+    observe,
+    observe_async,
+    sample,
+    sample_async,
+)
 from .operator import (
     HermitianOperator,
     PauliOperator,
@@ -54,9 +65,13 @@ __all__ = [
     "SumOperator",
     "kernel",
     "compile_and_execute",
+    "compile_and_execute_async",
     "execute",
+    "execute_async",
     "sample",
+    "sample_async",
     "observe",
+    "observe_async",
     "get_expectation_value",
     "qvec",
     "h",

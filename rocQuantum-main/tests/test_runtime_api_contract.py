@@ -6,6 +6,7 @@ import os
 import sys
 import unittest
 import importlib
+from concurrent.futures import Future, ThreadPoolExecutor
 from unittest import mock
 
 import numpy as np
@@ -65,6 +66,17 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertTrue(callable(rocq.observe))
         self.assertTrue(callable(rocq.sample))
         self.assertTrue(callable(rocq.compile_and_execute))
+        self.assertTrue(callable(rocq.execute_async))
+        self.assertTrue(callable(rocq.sample_async))
+        self.assertTrue(callable(rocq.observe_async))
+        self.assertTrue(callable(rocq.compile_and_execute_async))
+        for name in (
+            "execute_async",
+            "sample_async",
+            "observe_async",
+            "compile_and_execute_async",
+        ):
+            self.assertIn(name, rocq.__all__)
 
     def test_top_level_phase_gate_exports_record_canonical_ops(self):
         for name in ("tdg", "tdag", "p", "phase", "cp", "cphase"):
@@ -413,6 +425,64 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertIs(fake_backend.operator, operator)
         self.assertEqual([op.name.lower() for op in fake_backend.ops], ["h"])
 
+    def test_execute_async_returns_future_and_uses_backend_contract(self):
+        @kernel
+        def bell():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+            rocq.cnot(q[0], q[1])
+
+        fake_backend = _FakeBackend()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+                future = rocq.execute_async(bell, backend="state_vector", executor=executor)
+                self.assertIsInstance(future, Future)
+                result = future.result(timeout=5)
+
+        self.assertEqual(result, "fake-state")
+        self.assertEqual([op.name.lower() for op in fake_backend.ops], ["h", "cnot"])
+
+    def test_sample_and_observe_async_return_futures(self):
+        @kernel
+        def bell():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+            rocq.cnot(q[0], q[1])
+
+        operator = PauliOperator("Z0 Z1")
+        fake_backend = _FakeBackend()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+                sample_future = rocq.sample_async(
+                    bell,
+                    7,
+                    backend="state_vector",
+                    qubits=[1],
+                    executor=executor,
+                )
+                self.assertEqual(sample_future.result(timeout=5), {"0": 7})
+                observe_future = rocq.observe_async(
+                    bell,
+                    operator,
+                    backend="state_vector",
+                    executor=executor,
+                )
+                self.assertEqual(observe_future.result(timeout=5), 1.25)
+
+        self.assertEqual(fake_backend.sample_args, (7, [1]))
+        self.assertIs(fake_backend.operator, operator)
+
+    def test_async_validation_errors_are_reported_through_future(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = rocq.sample_async(prep_state, 0, backend="state_vector", executor=executor)
+            with self.assertRaisesRegex(ValueError, "shots must be"):
+                future.result(timeout=5)
+
     def test_stabilizer_backend_executes_clifford_bell_state(self):
         @kernel
         def bell():
@@ -656,6 +726,38 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(calls[0], ("init", 2, "hip_statevec"))
         self.assertEqual(calls[1][2], {"strict": False})
         self.assertIn('"quantum.cnot"', calls[1][1])
+
+    def test_compile_and_execute_async_uses_native_compiler_binding(self):
+        @kernel
+        def bell():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+            rocq.cnot(q[0], q[1])
+
+        calls = []
+
+        class _FakeCompiler:
+            def __init__(self, num_qubits, backend):
+                calls.append(("init", num_qubits, backend))
+
+            def compile_and_execute(self, mlir, options):
+                calls.append(("compile_and_execute", mlir, dict(options)))
+                return [0.0, 1.0, 0.0, 0.0]
+
+        fake_binding = mock.Mock()
+        fake_binding.MLIRCompiler = _FakeCompiler
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with mock.patch.object(rocq_kernel_module, "rocquantum_bind", fake_binding):
+                future = rocq.compile_and_execute_async(
+                    bell,
+                    strict=False,
+                    executor=executor,
+                )
+                self.assertEqual(future.result(timeout=5), [0.0, 1.0, 0.0, 0.0])
+
+        self.assertEqual(calls[0], ("init", 2, "hip_statevec"))
+        self.assertEqual(calls[1][2], {"strict": False})
 
     def test_compile_and_execute_rejects_non_boolean_strict_option(self):
         @kernel

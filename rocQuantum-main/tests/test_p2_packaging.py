@@ -29,11 +29,22 @@ class TestCanonicalImports(unittest.TestCase):
     """Core symbols must be importable from canonical rocq path."""
 
     def test_import_rocq_kernel(self):
-        from rocq.kernel import QuantumKernel, execute, observe, sample
+        from rocq.kernel import (
+            QuantumKernel,
+            execute,
+            execute_async,
+            observe,
+            observe_async,
+            sample,
+            sample_async,
+        )
         self.assertIsNotNone(QuantumKernel)
         self.assertIsNotNone(execute)
+        self.assertIsNotNone(execute_async)
         self.assertIsNotNone(observe)
+        self.assertIsNotNone(observe_async)
         self.assertIsNotNone(sample)
+        self.assertIsNotNone(sample_async)
 
     def test_import_rocq_operator(self):
         from rocq.operator import PauliOperator, SparseHamiltonianOperator, SumOperator, get_expectation_value
@@ -52,6 +63,8 @@ class TestFutureCanonicalRuntimeSurface(unittest.TestCase):
         import rocq
         self.assertTrue(callable(rocq.observe))
         self.assertTrue(callable(rocq.sample))
+        self.assertTrue(callable(rocq.observe_async))
+        self.assertTrue(callable(rocq.sample_async))
 
 
 class TestLegacyShim(unittest.TestCase):
@@ -71,9 +84,18 @@ class TestLegacyShim(unittest.TestCase):
         self.assertIsNotNone(PauliOperator)
 
     def test_exports_kernel(self):
-        from rocq.legacy import compile_and_execute, execute, kernel
+        from rocq.legacy import (
+            compile_and_execute,
+            compile_and_execute_async,
+            execute,
+            execute_async,
+            kernel,
+        )
         self.assertIsNotNone(kernel)
         self.assertIsNotNone(compile_and_execute)
+        self.assertIsNotNone(compile_and_execute_async)
+        self.assertIsNotNone(execute)
+        self.assertIsNotNone(execute_async)
 
 
 class TestVqeImports(unittest.TestCase):

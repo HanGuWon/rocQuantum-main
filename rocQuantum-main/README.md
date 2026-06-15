@@ -16,6 +16,7 @@ Implemented today:
 - Native tensor-network contraction core
 - Native density-matrix core with named noise channels, generic single- and multi-qubit Kraus channel APIs, decomposed CCX/CSWAP helpers in the canonical backend, and density sampling with GPU-side marginal probability reduction
 - Direct simulator execution through the active local runtime path
+- Host-side `Future` wrappers for canonical `execute_async()`, `sample_async()`, `observe_async()`, and `compile_and_execute_async()`
 
 Only partial today:
 
@@ -87,6 +88,7 @@ Use those files as the authoritative capability summary for the current codebase
 
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` has a source-level MVP subset for qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, and CRX/CRY/CRZ/CP. The default `rocquantum_bind` build does not link the experimental MLIR compiler stack; `ROCQUANTUM_ENABLE_MLIR_COMPILER=ON` currently fails at CMake configure time until that target is release-wired, and `rocq.compile_and_execute()` / `QuantumKernel.compile_and_execute()` validate boolean `strict` options and fail fast with an actionable diagnostic.
 - Canonical `rocq.QuantumKernel.qir()` requires `rocquantum_bind`; if the binding is missing, `emit_qir()` returns a compiler error sentinel, or the default binding was built without MLIR compiler support, the Python API raises an actionable `RuntimeError` instead of returning an `"Error:"` string as if it were QIR.
+- `rocq.execute_async()`, `rocq.sample_async()`, `rocq.observe_async()`, and `rocq.compile_and_execute_async()` are host-side `concurrent.futures.Future` wrappers around the canonical synchronous paths. They improve CUDA-Q-style Python ergonomics and preserve the same validation/backend contracts, but they are not yet native HIP-stream, multi-QPU, or distributed scheduler futures.
 - Legacy `python/rocq.build()` emits conceptual MLIR for inspection, but simulator-backed execution replays the Python circuit API rather than calling `MLIRCompiler.compile_and_execute()`; `_rocq_hip_backend.MLIRCompiler` is a conceptual MLIR holder in the default build, and `QuantumProgram.execution_mode`, `compiler_execution_supported`, and `execution_notes` expose that contract.
 - `multi_gpu=True` should be treated as experimental partial support, not full distributed execution; legacy `Circuit(..., multi_gpu=True)` emits an `ExperimentalMultiGpuWarning` and stores the same note on `Circuit.execution_notes`. See `rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md` for the behavior matrix and runtime switches.
 - Multi-node execution is not implemented: `rocsvAllocateMultiNodeDistributedState` returns `ROCQ_STATUS_NOT_IMPLEMENTED` for `nodeCount > 1`, and legacy `Circuit(..., multi_node=True)` / `node_count > 1` raises `NotImplementedError`.

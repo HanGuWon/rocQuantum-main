@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import math
+import threading
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from numbers import Integral, Real
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from .backends import get_backend, _normalize_sample_qubits, _validate_positive_integer
 from .qvec import qvec
@@ -22,6 +24,25 @@ _COMPILER_SUPPORTED_MLIR_SUBSET = (
     "Supported canonical MLIR gates: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, "
     "CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, and CRX/CRY/CRZ/CP."
 )
+_BUILD_LOCK = threading.RLock()
+_ASYNC_EXECUTOR_LOCK = threading.Lock()
+_ASYNC_EXECUTOR: Optional[ThreadPoolExecutor] = None
+
+
+def _get_default_async_executor() -> ThreadPoolExecutor:
+    global _ASYNC_EXECUTOR
+    with _ASYNC_EXECUTOR_LOCK:
+        if _ASYNC_EXECUTOR is None:
+            _ASYNC_EXECUTOR = ThreadPoolExecutor(
+                max_workers=4,
+                thread_name_prefix="rocq-async",
+            )
+        return _ASYNC_EXECUTOR
+
+
+def _submit_async(callback: Callable[[], object], executor: Optional[Executor] = None) -> Future:
+    submitter = executor if executor is not None else _get_default_async_executor()
+    return submitter.submit(callback)
 
 
 @dataclass(frozen=True)
@@ -90,17 +111,18 @@ class QuantumKernel:
         self._last_context: Optional[_KernelBuildContext] = None
 
     def build(self, *args, **kwargs) -> _KernelBuildContext:
-        ctx = _KernelBuildContext()
-        _KernelBuildContext._active = ctx
-        qvec._current_kernel_context = ctx
-        try:
-            self._func(*args, **kwargs)
-        finally:
-            qvec._current_kernel_context = None
-            _KernelBuildContext._active = None
-        self._last_context = ctx
-        self.num_qubits = ctx._next_qubit_index
-        return ctx
+        with _BUILD_LOCK:
+            ctx = _KernelBuildContext()
+            _KernelBuildContext._active = ctx
+            qvec._current_kernel_context = ctx
+            try:
+                self._func(*args, **kwargs)
+            finally:
+                qvec._current_kernel_context = None
+                _KernelBuildContext._active = None
+            self._last_context = ctx
+            self.num_qubits = ctx._next_qubit_index
+            return ctx
 
     def _prepare_backend(self, backend: str, *args, **kwargs):
         ctx = self.build(*args, **kwargs)
@@ -282,10 +304,45 @@ class QuantumKernel:
                 f"{_COMPILER_SUPPORTED_MLIR_SUBSET} Original error: {exc}"
             ) from exc
 
+    def compile_and_execute_async(
+        self,
+        *args,
+        compiler_backend: str = "hip_statevec",
+        strict: bool = True,
+        executor: Optional[Executor] = None,
+        **kwargs,
+    ) -> Future:
+        """Submit compile-and-execute work to a host-side Future."""
+
+        return _submit_async(
+            lambda: self.compile_and_execute(
+                *args,
+                compiler_backend=compiler_backend,
+                strict=strict,
+                **kwargs,
+            ),
+            executor=executor,
+        )
+
     def execute(self, *args, backend: str = "state_vector", noise_model=None, **kwargs):
         ctx, backend_impl = self._prepare_backend(backend, *args, **kwargs)
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
         return backend_impl.get_state()
+
+    def execute_async(
+        self,
+        *args,
+        backend: str = "state_vector",
+        noise_model=None,
+        executor: Optional[Executor] = None,
+        **kwargs,
+    ) -> Future:
+        """Submit execution work to a host-side Future."""
+
+        return _submit_async(
+            lambda: self.execute(*args, backend=backend, noise_model=noise_model, **kwargs),
+            executor=executor,
+        )
 
     def sample(self, shots: int, *args, backend: str = "state_vector", qubits=None, noise_model=None, **kwargs):
         shots = _validate_positive_integer(shots, "shots")
@@ -297,12 +354,45 @@ class QuantumKernel:
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
         return backend_impl.sample(shots, qubits=sample_qubits)
 
+    def sample_async(
+        self,
+        shots: int,
+        *args,
+        backend: str = "state_vector",
+        qubits=None,
+        noise_model=None,
+        executor: Optional[Executor] = None,
+        **kwargs,
+    ) -> Future:
+        """Submit sampling work to a host-side Future."""
+
+        return _submit_async(
+            lambda: self.sample(shots, *args, backend=backend, qubits=qubits, noise_model=noise_model, **kwargs),
+            executor=executor,
+        )
+
     def observe(self, operator, *args, backend: str = "state_vector", noise_model=None, **kwargs):
         if operator is None:
             raise TypeError("observe() requires a quantum operator.")
         ctx, backend_impl = self._prepare_backend(backend, *args, **kwargs)
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
         return backend_impl.expectation(operator)
+
+    def observe_async(
+        self,
+        operator,
+        *args,
+        backend: str = "state_vector",
+        noise_model=None,
+        executor: Optional[Executor] = None,
+        **kwargs,
+    ) -> Future:
+        """Submit expectation work to a host-side Future."""
+
+        return _submit_async(
+            lambda: self.observe(operator, *args, backend=backend, noise_model=noise_model, **kwargs),
+            executor=executor,
+        )
 
 
 def kernel(func):
@@ -332,13 +422,89 @@ def compile_and_execute(
     )
 
 
+def compile_and_execute_async(
+    kernel_obj: QuantumKernel,
+    *args,
+    compiler_backend: str = "hip_statevec",
+    strict: bool = True,
+    executor: Optional[Executor] = None,
+    **kwargs,
+) -> Future:
+    if not isinstance(kernel_obj, QuantumKernel):
+        raise TypeError("compile_and_execute_async() expects a QuantumKernel instance.")
+    return kernel_obj.compile_and_execute_async(
+        *args,
+        compiler_backend=compiler_backend,
+        strict=strict,
+        executor=executor,
+        **kwargs,
+    )
+
+
 def sample(kernel_obj: QuantumKernel, shots: int, *args, backend: str = "state_vector", qubits=None, noise_model=None, **kwargs):
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("sample() expects a QuantumKernel instance.")
     return kernel_obj.sample(shots, *args, backend=backend, qubits=qubits, noise_model=noise_model, **kwargs)
 
 
+def execute_async(
+    kernel_obj: QuantumKernel,
+    *args,
+    backend: str = "state_vector",
+    noise_model=None,
+    executor: Optional[Executor] = None,
+    **kwargs,
+) -> Future:
+    if not isinstance(kernel_obj, QuantumKernel):
+        raise TypeError("execute_async() expects a QuantumKernel instance.")
+    return kernel_obj.execute_async(*args, backend=backend, noise_model=noise_model, executor=executor, **kwargs)
+
+
+def sample_async(
+    kernel_obj: QuantumKernel,
+    shots: int,
+    *args,
+    backend: str = "state_vector",
+    qubits=None,
+    noise_model=None,
+    executor: Optional[Executor] = None,
+    **kwargs,
+) -> Future:
+    if not isinstance(kernel_obj, QuantumKernel):
+        raise TypeError("sample_async() expects a QuantumKernel instance.")
+    return kernel_obj.sample_async(
+        shots,
+        *args,
+        backend=backend,
+        qubits=qubits,
+        noise_model=noise_model,
+        executor=executor,
+        **kwargs,
+    )
+
+
 def observe(kernel_obj: QuantumKernel, operator, *args, backend: str = "state_vector", noise_model=None, **kwargs):
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("observe() expects a QuantumKernel instance.")
     return kernel_obj.observe(operator, *args, backend=backend, noise_model=noise_model, **kwargs)
+
+
+def observe_async(
+    kernel_obj: QuantumKernel,
+    operator,
+    *args,
+    backend: str = "state_vector",
+    noise_model=None,
+    executor: Optional[Executor] = None,
+    **kwargs,
+) -> Future:
+    if not isinstance(kernel_obj, QuantumKernel):
+        raise TypeError("observe_async() expects a QuantumKernel instance.")
+    return kernel_obj.observe_async(
+        operator,
+        *args,
+        backend=backend,
+        noise_model=noise_model,
+        executor=executor,
+        **kwargs,
+    )
