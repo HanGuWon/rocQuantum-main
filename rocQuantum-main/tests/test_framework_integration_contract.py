@@ -80,9 +80,36 @@ _BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "bindings.cpp")
 _LOW_LEVEL_BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
 _WINDOWS_BUILD_BAT = os.path.join(_PROJECT_ROOT, "build.bat")
 _WINDOWS_BUILD_ROCQ_BAT = os.path.join(_PROJECT_ROOT, "build_rocq.bat")
+_NATIVE_FRAMEWORK_SMOKE = os.path.join(_PROJECT_ROOT, "scripts", "native_framework_smoke.py")
+_ROCM_CI_WORKFLOW = os.path.join(os.path.dirname(_PROJECT_ROOT), ".github", "workflows", "rocm-ci.yml")
 
 
 class TestFrameworkIntegrationContract(unittest.TestCase):
+    def test_native_rocm_framework_smoke_is_source_defined_for_ci(self):
+        with open(_NATIVE_FRAMEWORK_SMOKE, "r", encoding="utf-8") as f:
+            smoke = f.read()
+        with open(_ROCM_CI_WORKFLOW, "r", encoding="utf-8") as f:
+            workflow = f.read()
+
+        self.assertIn("Path(\"/dev/kfd\").exists()", smoke)
+        self.assertIn("rocquantum_bind", smoke)
+        self.assertIn("smoke_native_binding", smoke)
+        self.assertIn("smoke_pennylane", smoke)
+        self.assertIn("pennylane_rocq.RocqDevice", smoke)
+        self.assertIn("smoke_qiskit", smoke)
+        self.assertIn("RocQuantumProvider", smoke)
+        self.assertIn("smoke_cirq", smoke)
+        self.assertIn("RocQuantumSimulator", smoke)
+        self.assertIn("Build native Python bindings for framework smoke", workflow)
+        self.assertIn("ROCQUANTUM_BUILD_BINDINGS=ON", workflow)
+        self.assertIn("python3 -m pybind11 --cmakedir", workflow)
+        self.assertIn("Run native framework integration smoke", workflow)
+        self.assertIn("scripts/native_framework_smoke.py", workflow)
+        self.assertIn("native-framework-smoke.log", workflow)
+        self.assertIn("pennylane>=0.35", workflow)
+        self.assertIn("qiskit>=0.45", workflow)
+        self.assertIn("cirq-core>=1.0", workflow)
+
     def test_shared_runtime_exposes_controlled_rotation_aliases(self):
         with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
             source = f.read()

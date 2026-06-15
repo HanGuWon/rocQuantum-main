@@ -160,6 +160,51 @@ jobs:
           set -o pipefail
           cmake --build build-rocm-ci --parallel 2>&1 | tee "${ARTIFACT_DIR}/build.log"
 
+      - name: Install native framework smoke dependencies
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -o pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          python3 -m pip install --user --upgrade pip \
+            2>&1 | tee "${ARTIFACT_DIR}/native-framework-deps.log"
+          python3 -m pip install --user \
+            "numpy>=1.21" \
+            scipy \
+            pytest \
+            pybind11 \
+            "qiskit>=0.45" \
+            "pennylane>=0.35" \
+            "cirq-core>=1.0" \
+            2>&1 | tee -a "${ARTIFACT_DIR}/native-framework-deps.log"
+
+      - name: Build native Python bindings for framework smoke
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -o pipefail
+          PYBIND11_CMAKE_DIR="$(python3 -m pybind11 --cmakedir)"
+          HIPCC_PATH="$(command -v hipcc)"
+          cmake -S . -B build-rocm-python -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DROCQUANTUM_BUILD_BINDINGS=ON \
+            -DCMAKE_HIP_COMPILER="${HIPCC_PATH}" \
+            -DCMAKE_HIP_ARCHITECTURES="gfx90a" \
+            -DCMAKE_PREFIX_PATH="${PYBIND11_CMAKE_DIR};/opt/rocm" \
+            2>&1 | tee "${ARTIFACT_DIR}/configure-native-framework.log"
+          cmake --build build-rocm-python --parallel \
+            2>&1 | tee "${ARTIFACT_DIR}/build-native-framework.log"
+
+      - name: Run native framework integration smoke
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+          PYTHONPATH: ${{ github.workspace }}/rocQuantum-main:${{ github.workspace }}/rocQuantum-main/build-rocm-python:${{ github.workspace }}/rocQuantum-main/build-rocm-python/python/rocq:${{ github.workspace }}/rocQuantum-main/integrations/pennylane-rocq:${{ github.workspace }}/rocQuantum-main/integrations/qiskit-rocquantum-provider:${{ github.workspace }}/rocQuantum-main/integrations/cirq-rocm
+        run: |
+          set -o pipefail
+          python3 scripts/native_framework_smoke.py \
+            2>&1 | tee "${ARTIFACT_DIR}/native-framework-smoke.log"
+
       - name: Run ROCm runtime tests (1 GPU smoke)
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
