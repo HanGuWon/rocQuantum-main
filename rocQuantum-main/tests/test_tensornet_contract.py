@@ -129,6 +129,18 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("using_metis_partition", source)
         self.assertIn("add_metis_partition_penalty", source)
 
+    def test_kahypar_build_option_fails_fast_until_release_wired(self):
+        with open(_TENSORNET_CMAKE, "r", encoding="utf-8") as f:
+            cmake = f.read()
+        with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("ROCQUANTUM_TENSORNET_ENABLE_KAHYPAR", cmake)
+        self.assertIn("is not release-wired yet", cmake)
+        self.assertIn("ROCTN_PATHFINDER_ALGO_GREEDY", cmake)
+        self.assertNotIn("target_compile_definitions(rocqsim_tensornet PRIVATE HAS_KAHYPAR=1)", cmake)
+        self.assertIn("supports_pathfinder_kahypar = 0", source)
+
     def test_python_binding_passes_optimizer_algorithm(self):
         with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
             source = f.read()

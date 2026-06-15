@@ -45,6 +45,13 @@ if(ROCQUANTUM_TENSORNET_ENABLE_METIS)
     target_link_libraries(rocqsim_tensornet PUBLIC ${METIS_LIBRARY})
 endif()
 
+option(ROCQUANTUM_TENSORNET_ENABLE_KAHYPAR "Enable optional KaHyPar pathfinder integration" OFF)
+if(ROCQUANTUM_TENSORNET_ENABLE_KAHYPAR)
+    message(FATAL_ERROR
+        "ROCQUANTUM_TENSORNET_ENABLE_KAHYPAR=ON is not release-wired yet; "
+        "use ROCTN_PATHFINDER_ALGO_GREEDY or ROCQUANTUM_TENSORNET_ENABLE_METIS=ON")
+endif()
+
 install(
     TARGETS rocqsim_tensornet
     EXPORT ${ROCQUANTUM_EXPORT_SET_NAME}
