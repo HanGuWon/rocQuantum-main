@@ -19,7 +19,8 @@ Current supported subset:
   stabilizer fragments through `rocq.sample()` when legacy `circuit_ref`
   measurement hooks are unavailable. Custom code and decoder objects must expose
   callable `generate_stabilizer_circuits()`, `define_logical_operators()`, and
-  `decode()` methods.
+  `decode()` methods, and generated stabilizer fragments must be returned as a
+  non-string sequence or iterable.
 - Lookup-table correction through `RepetitionCodeDecoder`.
 - Syndrome histogram, repeated-round correction summary, and correction-success
   analysis for sampled counts.

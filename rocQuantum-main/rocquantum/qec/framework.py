@@ -110,6 +110,17 @@ def _validate_code_and_decoder(code, decoder) -> None:
         raise ValueError("decoder must define a callable decode method.")
 
 
+def _validate_stabilizer_circuits(stabilizer_circuits) -> List[Any]:
+    if isinstance(stabilizer_circuits, (str, bytes)):
+        raise ValueError("generate_stabilizer_circuits must return a sequence of circuit fragments.")
+    try:
+        return list(stabilizer_circuits)
+    except TypeError as exc:
+        raise ValueError(
+            "generate_stabilizer_circuits must return a sequence of circuit fragments."
+        ) from exc
+
+
 class QuantumErrorCode(ABC):
     """Abstract base class for defining a quantum error-correcting code."""
     @abstractmethod
@@ -217,6 +228,7 @@ class QEC_Experiment:
         stabilizer_circuits = code.generate_stabilizer_circuits(
             initial_state_kernel, num_qubits, self.backend
         )
+        stabilizer_circuits = _validate_stabilizer_circuits(stabilizer_circuits)
         if len(stabilizer_circuits) != len(ancilla_qubit_indices):
             raise ValueError(
                 "Number of ancilla_qubit_indices must match the number of generated "

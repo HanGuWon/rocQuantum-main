@@ -25,7 +25,7 @@ _QEC_SUPPORTED_FEATURES = (
     "lookup-table single-X repetition-code correction",
     "syndrome histogram and logical-success analysis",
     "independent syndrome-bit readout-error mitigation",
-    "positive-integer shot/round/num_qubits, backend, code/decoder interface, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
+    "positive-integer shot/round/num_qubits, backend, code/decoder interface, stabilizer-fragment sequence, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
 )
 
 _QEC_UNSUPPORTED_FEATURES = (

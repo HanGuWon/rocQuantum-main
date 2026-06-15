@@ -792,7 +792,7 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "positive-integer shot/round/num_qubits, backend, code/decoder interface, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
+            "positive-integer shot/round/num_qubits, backend, code/decoder interface, stabilizer-fragment sequence, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -971,6 +971,53 @@ class TestQecHelpers(unittest.TestCase):
                 [],
                 shots=1,
             )
+
+    def test_qec_experiment_validates_stabilizer_fragment_collection(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.qec.framework import QEC_Experiment
+
+        class FragmentCode:
+            def __init__(self, fragments):
+                self.fragments = fragments
+
+            def generate_stabilizer_circuits(self, initial_state_kernel, num_qubits, backend="state_vector"):
+                return self.fragments
+
+            def define_logical_operators(self):
+                return {"logical_Z": PauliOperator("Z0")}
+
+        class RecordingDecoder:
+            def __init__(self):
+                self.syndrome = None
+
+            def decode(self, syndrome):
+                self.syndrome = list(syndrome)
+                return PauliOperator("I")
+
+        experiment = QEC_Experiment()
+        decoder = RecordingDecoder()
+        with self.assertRaisesRegex(ValueError, "sequence of circuit fragments"):
+            experiment.run_single_round(FragmentCode(None), decoder, None, 5, [3], shots=1)
+        with self.assertRaisesRegex(ValueError, "sequence of circuit fragments"):
+            experiment.run_single_round(FragmentCode("fragment"), decoder, None, 5, [3], shots=1)
+
+        generator_decoder = RecordingDecoder()
+        with mock.patch(
+            "rocquantum.qec.framework.rocq.sample",
+            side_effect=[{"0": 1}, {"1": 1}],
+        ) as patched_sample:
+            result = experiment.run_single_round(
+                FragmentCode(fragment for fragment in ("fragment-0", "fragment-1")),
+                generator_decoder,
+                None,
+                5,
+                [3, 4],
+                shots=1,
+            )
+
+        self.assertEqual(result["syndrome"], [0, 1])
+        self.assertEqual(generator_decoder.syndrome, [0, 1])
+        self.assertEqual(patched_sample.call_count, 2)
 
     def test_repetition_code_counts_analysis_reports_success_rate(self):
         from rocquantum.qec import analyze_repetition_code_counts
