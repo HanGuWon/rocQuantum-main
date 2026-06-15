@@ -1196,7 +1196,7 @@ class _BaseBackend:
     """Abstract base class for a quantum simulation backend."""
 
     def __init__(self, num_qubits: int):
-        self.num_qubits = num_qubits
+        self.num_qubits = _validate_positive_integer(num_qubits, "num_qubits")
 
     def run_ops(self, ops, noise_model=None):
         raise NotImplementedError
@@ -1226,11 +1226,11 @@ class StabilizerBackend(_BaseBackend):
 
     def __init__(self, num_qubits: int):
         super().__init__(num_qubits)
-        self._state = np.zeros(1 << int(num_qubits), dtype=np.complex128)
+        self._state = np.zeros(1 << int(self.num_qubits), dtype=np.complex128)
         self._state[0] = 1.0 + 0.0j
         self._generators: list[tuple[complex, tuple[str, ...]]] = []
-        for qubit in range(int(num_qubits)):
-            paulis = ["I"] * int(num_qubits)
+        for qubit in range(int(self.num_qubits)):
+            paulis = ["I"] * int(self.num_qubits)
             paulis[qubit] = "Z"
             self._generators.append((1.0 + 0.0j, tuple(paulis)))
 
@@ -1489,10 +1489,10 @@ class StateVectorBackend(_BaseBackend):
             if not _mock_backends_enabled():
                 raise _native_backend_error("_rocq_hip_backend", "state_vector")
             _warn_mock_backend("state_vector")
-            self._state = _MockStateVectorState(num_qubits)
+            self._state = _MockStateVectorState(self.num_qubits)
             self._uses_mock = True
         else:
-            self._state = _HipStateVectorState(num_qubits, enable_fusion=enable_fusion)
+            self._state = _HipStateVectorState(self.num_qubits, enable_fusion=enable_fusion)
             self._uses_mock = False
 
     def _apply_op(self, op):
@@ -1624,10 +1624,10 @@ class DensityMatrixBackend(_BaseBackend):
             if not _mock_backends_enabled():
                 raise _native_backend_error("rocq_hip", "density_matrix")
             _warn_mock_backend("density_matrix")
-            self._state = _MockDensityMatrixState(num_qubits)
+            self._state = _MockDensityMatrixState(self.num_qubits)
             self._uses_mock = True
         else:
-            self._state = _HipDensityMatrixState(num_qubits)
+            self._state = _HipDensityMatrixState(self.num_qubits)
             self._uses_mock = False
 
     def _gate_matrix(self, op: str, param: Optional[float] = None) -> np.ndarray:

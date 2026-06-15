@@ -63,6 +63,7 @@ _RUNTIME_SUPPORTED_FEATURES = (
     "observable evaluation through observe()",
     "host-side Future wrappers for execute/get_state/sample/observe",
     "bool-safe state-vector-only enable_fusion execution option",
+    "positive-integer direct backend size validation",
     "density-matrix noise model execution",
     "experimental Clifford stabilizer Pauli propagation backend",
 )

@@ -100,6 +100,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "positive-integer direct backend size validation",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "native HIP-stream futures",
             capabilities["unsupported_features"],
         )
@@ -496,6 +500,22 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "enable_fusion only applies"):
             get_backend("density_matrix", 1, enable_fusion=False)
+
+    def test_backend_constructors_validate_num_qubits_before_dispatch(self):
+        from rocq.backends import StateVectorBackend, get_backend
+
+        invalid_num_qubits = (0, -1, True, 1.5, "1")
+        for num_qubits in invalid_num_qubits:
+            with self.subTest(factory_num_qubits=num_qubits):
+                with self.assertRaisesRegex(ValueError, "num_qubits must"):
+                    get_backend("stabilizer", num_qubits)
+            with self.subTest(statevector_num_qubits=num_qubits):
+                with mock.patch("rocq.backends.hip_backend", None):
+                    with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                        with self.assertRaisesRegex(ValueError, "num_qubits must"):
+                            StateVectorBackend(num_qubits)
+
+        self.assertEqual(get_backend("stabilizer", np.int64(2)).num_qubits, 2)
 
     def test_get_state_alias_uses_execute_backend_contract(self):
         @kernel

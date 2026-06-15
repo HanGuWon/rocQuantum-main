@@ -8,7 +8,7 @@ Runtime update note (2026-04-06):
 - Canonical `rocq.get_state()` aliases state readback, and `rocq.get_state_async()`, `rocq.execute_async()`, `rocq.sample_async()`, `rocq.observe_async()`, and `rocq.compile_and_execute_async()` return host-side `Future` objects over the same contracts; native HIP-stream / multi-QPU async remains open.
 - `rocq.operator.get_expectation_value()` now delegates to `rocq.observe()`.
 - Native state-vector sampling and Pauli expectation paths are wired into the canonical `rocq` surface.
-- Canonical `qvec` allocation now rejects bool, non-integral, and non-positive register sizes while accepting integral NumPy scalars through explicit normalization.
+- Canonical `qvec` allocation and direct canonical backend construction now reject bool, non-integral, and non-positive register/backend sizes while accepting integral NumPy scalars through explicit normalization.
 - Canonical sampling now rejects non-positive or non-integral shots and invalid selected-qubit lists before native backend dispatch; direct canonical backends share the same positive-integer shot and qubit-list validation.
 - Canonical kernel recording now rejects non-integer, out-of-range, duplicate multi-qubit, or arity-invalid gate targets and non-finite gate parameters before native backend dispatch.
 - Shared framework runtime dispatch now rejects bool, string, complex, and non-finite operation parameters before Qiskit/PennyLane/Cirq adapters reach native single or batched gate calls.
