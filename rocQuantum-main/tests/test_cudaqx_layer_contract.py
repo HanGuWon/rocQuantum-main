@@ -155,6 +155,13 @@ class TestVqeSolverContract(unittest.TestCase):
                 solver._objective_function(np.array([np.inf]), hamiltonian, ansatz, 1)
         patched_observe.assert_not_called()
 
+        for params in ([True], ["0.25"], True):
+            with self.subTest(params=params):
+                with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+                    with self.assertRaisesRegex(ValueError, "parameters must be finite"):
+                        solver._objective_function(params, hamiltonian, ansatz, 1)
+                patched_observe.assert_not_called()
+
         optimizer = RecordingOptimizer()
         with self.assertRaisesRegex(ValueError, "initial_params must be finite"):
             VQE_Solver(optimizer=optimizer).solve(
@@ -164,6 +171,18 @@ class TestVqeSolverContract(unittest.TestCase):
                 initial_params=[np.nan],
             )
         self.assertFalse(optimizer.called)
+
+        for initial_params in ([True], ["0.25"]):
+            optimizer = RecordingOptimizer()
+            with self.subTest(initial_params=initial_params):
+                with self.assertRaisesRegex(ValueError, "initial_params must be finite"):
+                    VQE_Solver(optimizer=optimizer).solve(
+                        hamiltonian,
+                        ansatz,
+                        1,
+                        initial_params=initial_params,
+                    )
+                self.assertFalse(optimizer.called)
 
         with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
             with self.assertRaisesRegex(ValueError, "parameters must be finite"):
@@ -184,6 +203,18 @@ class TestVqeSolverContract(unittest.TestCase):
                     1,
                     method="finite_diff",
                     step=0.0,
+                )
+        patched_observe.assert_not_called()
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+            with self.assertRaisesRegex(ValueError, "finite_diff step"):
+                solver.estimate_gradient(
+                    np.array([0.25]),
+                    hamiltonian,
+                    ansatz,
+                    1,
+                    method="finite_diff",
+                    step=True,
                 )
         patched_observe.assert_not_called()
 
@@ -439,16 +470,26 @@ class TestQaoaHelpers(unittest.TestCase):
             maxcut_cost_operator(2, [(False, 1)])
         with self.assertRaisesRegex(ValueError, "finite"):
             maxcut_cost_operator(2, [(0, 1, np.nan)])
+        with self.assertRaisesRegex(ValueError, "finite"):
+            maxcut_cost_operator(2, [(0, 1, True)])
+        with self.assertRaisesRegex(ValueError, "finite"):
+            maxcut_cost_operator(2, [(0, 1, "1.0")])
         with self.assertRaisesRegex(ValueError, "distinct valid"):
             maxcut_cost_operator(2, [(1, 1)])
         with self.assertRaisesRegex(ValueError, "distinct valid"):
             solve_maxcut_qaoa(2, [(0, 2)])
         with self.assertRaisesRegex(ValueError, "initial_params must be finite"):
             solve_maxcut_qaoa(2, [(0, 1)], initial_params=[np.nan, 0.1])
+        with self.assertRaisesRegex(ValueError, "initial_params must be finite"):
+            solve_maxcut_qaoa(2, [(0, 1)], initial_params=[True, 0.1])
+        with self.assertRaisesRegex(ValueError, "initial_params must be finite"):
+            solve_maxcut_qaoa(2, [(0, 1)], initial_params=["0.1", 0.2])
 
         kernel = make_maxcut_qaoa_kernel(2, [(0, 1)], layers=1)
         with self.assertRaisesRegex(ValueError, "QAOA must be finite"):
             kernel.build(np.array([np.inf, 0.1]))
+        with self.assertRaisesRegex(ValueError, "QAOA must be finite"):
+            kernel.build(np.array([True, 0.1], dtype=object))
 
     def test_solve_maxcut_qaoa_wraps_vqe_solver(self):
         from rocq.operator import iter_pauli_terms

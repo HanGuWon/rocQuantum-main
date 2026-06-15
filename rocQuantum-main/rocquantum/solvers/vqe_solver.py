@@ -8,6 +8,7 @@ High-level Variational Quantum Eigensolver (VQE) using rocQuantum primitives.
 """
 
 import inspect
+from numbers import Real
 from typing import Callable, List, Dict, Any
 import numpy as np
 from abc import ABC, abstractmethod
@@ -65,9 +66,22 @@ def _parameter_prefers_vector(parameter: inspect.Parameter) -> bool:
 
 
 def _parameter_vector(params, label: str = "parameters") -> np.ndarray:
-    vector = np.asarray(params, dtype=float).reshape(-1)
-    if not np.all(np.isfinite(vector)):
-        raise ValueError(f"{label} must be finite.")
+    if isinstance(params, (str, bytes)) or isinstance(params, (bool, np.bool_)):
+        raise ValueError(f"{label} must be finite numeric values.")
+    try:
+        raw_values = np.asarray(params, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be finite numeric values.") from exc
+
+    values = []
+    for value in raw_values:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+            raise ValueError(f"{label} must be finite numeric values.")
+        normalized = float(value)
+        if not np.isfinite(normalized):
+            raise ValueError(f"{label} must be finite.")
+        values.append(normalized)
+    vector = np.asarray(values, dtype=float)
     return vector
 
 
@@ -236,6 +250,8 @@ class VQE_Solver:
             shift = np.pi / 2.0
             scale = 0.5
         elif method in {"finite_diff", "finite_difference"}:
+            if isinstance(step, (bool, np.bool_)) or not isinstance(step, Real):
+                raise ValueError("finite_diff step must be a positive finite real number.")
             shift = float(step)
             if not np.isfinite(shift) or shift <= 0:
                 raise ValueError("finite_diff step must be positive and finite.")

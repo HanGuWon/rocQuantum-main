@@ -12,8 +12,9 @@ Current supported subset:
   scalar single-parameter inputs are normalized to one-element vectors for
   gradient and optimizer entry points, and gradient probes do not mutate the
   optimizer `intermediate_results` trace. VQE objective, optimizer initial
-  parameters, and gradient parameters must be finite; finite-difference steps
-  must be positive and finite.
+  parameters, and gradient parameters must be finite real values; boolean or
+  string parameters are rejected instead of being coerced to numeric values.
+  Finite-difference steps must be positive finite real values.
 - `make_maxcut_qaoa_kernel()` builds a MaxCut-style QAOA ansatz using H, CNOT,
   RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.
@@ -21,9 +22,10 @@ Current supported subset:
   `0.5 * w * (I - Zi Zj)` for each edge, aggregating duplicate or reversed
   undirected edges before emitting ansatz cost phases or cost terms. MaxCut
   helpers reject non-integer endpoints, non-positive `num_qubits` / `layers`,
-  self-loops, out-of-range endpoints, and non-finite weights instead of
-  silently truncating or propagating invalid problem data. QAOA ansatz runtime
-  parameters and `solve_maxcut_qaoa()` initial parameters must also be finite.
+  self-loops, out-of-range endpoints, and non-finite or non-real weights
+  instead of silently truncating or propagating invalid problem data. QAOA
+  ansatz runtime parameters and `solve_maxcut_qaoa()` initial parameters must
+  also be finite real values.
 - `solve_maxcut_qaoa()` wires that ansatz into `VQE_Solver` by minimizing the
   negated cost operator, so the reported `optimal_cut_value` maximizes the
   weighted MaxCut objective while preserving the positive `cost_operator` for

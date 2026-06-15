@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from numbers import Real
 from typing import Iterable, Sequence, Tuple
 
 import numpy as np
@@ -31,6 +32,8 @@ def _validate_qubit_index(value, name: str) -> int:
 
 
 def _validate_finite_weight(value) -> float:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+        raise ValueError("QAOA edge weights must be finite numeric values.")
     weight = float(value)
     if not np.isfinite(weight):
         raise ValueError("QAOA edge weights must be finite.")
@@ -43,7 +46,18 @@ def _validate_parameter_vector(
     layers: int,
     label: str = "QAOA",
 ) -> np.ndarray:
-    params = np.asarray(parameters, dtype=float).reshape(-1)
+    if isinstance(parameters, (str, bytes)) or isinstance(parameters, (bool, np.bool_)):
+        raise ValueError(f"{label} must be finite numeric values.")
+    try:
+        raw_params = np.asarray(parameters, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be finite numeric values.") from exc
+    params = []
+    for value in raw_params:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+            raise ValueError(f"{label} must be finite numeric values.")
+        params.append(float(value))
+    params = np.asarray(params, dtype=float)
     if params.size != expected_params:
         if label == "initial_params":
             raise ValueError(
