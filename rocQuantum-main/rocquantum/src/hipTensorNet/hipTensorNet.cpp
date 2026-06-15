@@ -463,7 +463,7 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
     if (!handle || !U || !S || !V || !A || !A->data_) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    if (handle->dtype != ROC_DATATYPE_C64) {
+    if (handle->dtype != ROC_TENSORNET_COMPILED_COMPLEX_DTYPE) {
         return ROCQ_STATUS_NOT_IMPLEMENTED;
     }
     if (A->rank() != 2 || A->dimensions_.size() != 2) {
@@ -525,15 +525,23 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
         return ROCQ_STATUS_HIP_ERROR;
     }
 
-    float* d_singular_values = nullptr;
-    if (hipMalloc(&d_singular_values, static_cast<size_t>(min_mn) * sizeof(float)) != hipSuccess) {
+#ifdef ROCQ_PRECISION_DOUBLE
+    using RocSolverReal = double;
+    using RocSolverComplex = rocblas_double_complex;
+#else
+    using RocSolverReal = float;
+    using RocSolverComplex = rocblas_float_complex;
+#endif
+
+    RocSolverReal* d_singular_values = nullptr;
+    if (hipMalloc(&d_singular_values, static_cast<size_t>(min_mn) * sizeof(RocSolverReal)) != hipSuccess) {
         rocquantum::util::rocTensorFree(&A_work);
         return ROCQ_STATUS_ALLOCATION_FAILED;
     }
 
-    float* d_superdiag = nullptr;
+    RocSolverReal* d_superdiag = nullptr;
     const size_t superdiag_size = static_cast<size_t>(std::max<rocblas_int>(1, min_mn - 1));
-    if (hipMalloc(&d_superdiag, superdiag_size * sizeof(float)) != hipSuccess) {
+    if (hipMalloc(&d_superdiag, superdiag_size * sizeof(RocSolverReal)) != hipSuccess) {
         hipFree(d_singular_values);
         rocquantum::util::rocTensorFree(&A_work);
         return ROCQ_STATUS_ALLOCATION_FAILED;
@@ -563,21 +571,39 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
         return ROCQ_STATUS_FAILURE;
     }
 
+#ifdef ROCQ_PRECISION_DOUBLE
+    const rocblas_status svd_status = rocsolver_zgesvd(blas_handle,
+                                                       rocblas_svect_all,
+                                                       rocblas_svect_all,
+                                                       m,
+                                                       n,
+                                                       reinterpret_cast<RocSolverComplex*>(A_work.data_),
+                                                       m,
+                                                       d_singular_values,
+                                                       reinterpret_cast<RocSolverComplex*>(U->data_),
+                                                       m,
+                                                       reinterpret_cast<RocSolverComplex*>(V->data_),
+                                                       n,
+                                                       d_superdiag,
+                                                       rocblas_outofplace,
+                                                       d_info);
+#else
     const rocblas_status svd_status = rocsolver_cgesvd(blas_handle,
                                                        rocblas_svect_all,
                                                        rocblas_svect_all,
                                                        m,
                                                        n,
-                                                       reinterpret_cast<rocblas_float_complex*>(A_work.data_),
+                                                       reinterpret_cast<RocSolverComplex*>(A_work.data_),
                                                        m,
                                                        d_singular_values,
-                                                       reinterpret_cast<rocblas_float_complex*>(U->data_),
+                                                       reinterpret_cast<RocSolverComplex*>(U->data_),
                                                        m,
-                                                       reinterpret_cast<rocblas_float_complex*>(V->data_),
+                                                       reinterpret_cast<RocSolverComplex*>(V->data_),
                                                        n,
                                                        d_superdiag,
                                                        rocblas_outofplace,
                                                        d_info);
+#endif
     rocblas_destroy_handle(blas_handle);
 
     if (svd_status != rocblas_status_success) {
@@ -604,10 +630,10 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
         return ROCQ_STATUS_FAILURE;
     }
 
-    std::vector<float> singular_values_host(static_cast<size_t>(min_mn), 0.0f);
+    std::vector<RocSolverReal> singular_values_host(static_cast<size_t>(min_mn), 0.0);
     if (hipMemcpy(singular_values_host.data(),
                   d_singular_values,
-                  singular_values_host.size() * sizeof(float),
+                  singular_values_host.size() * sizeof(RocSolverReal),
                   hipMemcpyDeviceToHost) != hipSuccess) {
         hipFree(d_info);
         hipFree(d_superdiag);
@@ -620,7 +646,7 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
     for (rocblas_int i = 0; i < min_mn; ++i) {
         singular_values_complex[static_cast<size_t>(i)] = {
             singular_values_host[static_cast<size_t>(i)],
-            0.0f};
+            0.0};
     }
 
     if (hipMemcpy(S->data_,

@@ -28,6 +28,13 @@ _TENSORNET_API = os.path.join(
     "rocquantum",
     "hipTensorNet_api.h",
 )
+_TENSOR_UTIL_SOURCE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipTensorNet",
+    "rocTensorUtil.cpp",
+)
 _BINDINGS_SOURCE = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
 
 
@@ -51,12 +58,20 @@ class TestTensorNetContract(unittest.TestCase):
 
     def test_dtype_support_is_build_precision_gated(self):
         with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
-            source = f.read()
+            tensornet_source = f.read()
+        with open(_TENSOR_UTIL_SOURCE, "r", encoding="utf-8") as f:
+            tensor_util_source = f.read()
 
-        self.assertIn("tensor_dtype_supported_by_build", source)
-        self.assertIn("ROC_TENSORNET_COMPILED_COMPLEX_DTYPE", source)
-        self.assertIn("return ROCQ_STATUS_NOT_IMPLEMENTED", source)
-        self.assertNotIn("if (dtype != ROC_DATATYPE_C64)", source)
+        self.assertIn("tensor_dtype_supported_by_build", tensornet_source)
+        self.assertIn("ROC_TENSORNET_COMPILED_COMPLEX_DTYPE", tensornet_source)
+        self.assertIn("return ROCQ_STATUS_NOT_IMPLEMENTED", tensornet_source)
+        self.assertIn("handle->dtype != ROC_TENSORNET_COMPILED_COMPLEX_DTYPE", tensornet_source)
+        self.assertIn("rocsolver_cgesvd", tensornet_source)
+        self.assertIn("rocsolver_zgesvd", tensornet_source)
+        self.assertIn("rocblas_cgemm", tensor_util_source)
+        self.assertIn("rocblas_zgemm", tensor_util_source)
+        self.assertNotIn("if (dtype != ROC_DATATYPE_C64)", tensornet_source)
+        self.assertNotIn("handle->dtype != ROC_DATATYPE_C64", tensornet_source)
 
     def test_optimizer_and_memory_limit_are_not_silent(self):
         with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:

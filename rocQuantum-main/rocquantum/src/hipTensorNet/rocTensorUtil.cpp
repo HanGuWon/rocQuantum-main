@@ -246,18 +246,30 @@ rocqStatus_t rocTensorContractPair_internal(
     int gemm_N = static_cast<int>(N);
     int gemm_K = static_cast<int>(K);
 
-    const rocComplex alpha = {1.0f, 0.0f};
-    const rocComplex beta  = {0.0f, 0.0f};
+    const rocComplex alpha = {1.0, 0.0};
+    const rocComplex beta  = {0.0, 0.0};
 
+#ifdef ROCQ_PRECISION_DOUBLE
+    blas_status_err = rocblas_zgemm(
+        blas_handle, ROCBLAS_OPERATION_NONE, ROCBLAS_OPERATION_NONE,
+        gemm_M, gemm_N, gemm_K,
+        reinterpret_cast<const rocblas_double_complex*>(&alpha),
+        reinterpret_cast<const rocblas_double_complex*>(permutedA_tensor.data_), gemm_M,
+        reinterpret_cast<const rocblas_double_complex*>(permutedB_tensor.data_), gemm_K,
+        reinterpret_cast<const rocblas_double_complex*>(&beta),
+        reinterpret_cast<rocblas_double_complex*>(result_tensor->data_), gemm_M
+    );
+#else
     blas_status_err = rocblas_cgemm(
         blas_handle, ROCBLAS_OPERATION_NONE, ROCBLAS_OPERATION_NONE,
         gemm_M, gemm_N, gemm_K,
-        &alpha,
-        permutedA_tensor.data_, gemm_M,
-        permutedB_tensor.data_, gemm_K,
-        &beta,
-        result_tensor->data_, gemm_M
+        reinterpret_cast<const rocblas_float_complex*>(&alpha),
+        reinterpret_cast<const rocblas_float_complex*>(permutedA_tensor.data_), gemm_M,
+        reinterpret_cast<const rocblas_float_complex*>(permutedB_tensor.data_), gemm_K,
+        reinterpret_cast<const rocblas_float_complex*>(&beta),
+        reinterpret_cast<rocblas_float_complex*>(result_tensor->data_), gemm_M
     );
+#endif
 
     rocTensorFree(&permutedA_tensor);
     rocTensorFree(&permutedB_tensor);
