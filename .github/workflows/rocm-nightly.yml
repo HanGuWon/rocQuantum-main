@@ -135,6 +135,7 @@ jobs:
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
           BASELINE_SUMMARY: ${{ github.workspace }}/ci-artifacts/benchmark-baseline/rocm-nightly/benchmark-summary.json
+          HISTORY_PATH: ${{ github.workspace }}/ci-artifacts/benchmark-baseline/rocm-nightly/benchmark-history.json
         run: |
           set -o pipefail
           mkdir -p "${ARTIFACT_DIR}"
@@ -146,6 +147,7 @@ jobs:
             --build-dir build-rocm-nightly \
             --output-dir "${ARTIFACT_DIR}/benchmark-artifacts" \
             "${BASELINE_ARGS[@]}" \
+            --history-path "${HISTORY_PATH}" \
             --fail-on-error \
             2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" ]; then
@@ -162,6 +164,9 @@ jobs:
           mkdir -p "${BASELINE_DIR}"
           if [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.json" ]; then
             cp "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.json" "${BASELINE_DIR}/benchmark-summary.json"
+            if [ -f "${BASELINE_DIR}/benchmark-history.json" ]; then
+              cp "${BASELINE_DIR}/benchmark-history.json" "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-history.json"
+            fi
             echo "cacheable=true" >> "${GITHUB_OUTPUT}"
           else
             echo "cacheable=false" >> "${GITHUB_OUTPUT}"

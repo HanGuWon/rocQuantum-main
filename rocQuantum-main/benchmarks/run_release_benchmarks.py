@@ -48,6 +48,13 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _read_json_object(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return payload
+
+
 def _markdown_bool(value: bool) -> str:
     return "yes" if value else "no"
 
@@ -72,6 +79,68 @@ def _speedups_by_metric(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
         for speedup in speedups
         if isinstance(speedup, dict) and isinstance(speedup.get("metric"), str)
     }
+
+
+def _history_result_entry(result: dict[str, Any]) -> dict[str, Any]:
+    entry = {
+        "id": result.get("id"),
+        "category": result.get("category"),
+        "status": result.get("status"),
+        "duration_seconds": result.get("duration_seconds"),
+        "reason": result.get("reason"),
+        "failure_reason": result.get("failure_reason"),
+        "analysis_warning": result.get("analysis_warning"),
+        "speedups": result.get("speedups"),
+        "threshold_failures": result.get("threshold_failures"),
+        "trend_regressions": result.get("trend_regressions"),
+    }
+    return {key: value for key, value in entry.items() if value is not None}
+
+
+def _history_run_entry(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "created_at_utc": summary["created_at_utc"],
+        "platform": summary.get("platform", {}),
+        "manifest": summary.get("manifest"),
+        "build_dir": summary.get("build_dir"),
+        "output_dir": summary.get("output_dir"),
+        "has_rocm_device": summary.get("has_rocm_device"),
+        "baseline_summary": summary.get("baseline_summary"),
+        "max_speedup_regression": summary.get("max_speedup_regression"),
+        "results": [
+            _history_result_entry(result)
+            for result in summary.get("results", [])
+            if isinstance(result, dict)
+        ],
+    }
+
+
+def update_benchmark_history(
+    history_path: Path,
+    summary: dict[str, Any],
+    history_limit: int,
+) -> dict[str, Any]:
+    if history_limit <= 0:
+        raise ValueError("history_limit must be positive")
+
+    if history_path.exists():
+        history = _read_json_object(history_path)
+        raw_runs = history.get("runs")
+        if not isinstance(raw_runs, list):
+            raise ValueError(f"{history_path} must contain a 'runs' list")
+        runs = [run for run in raw_runs if isinstance(run, dict)]
+    else:
+        runs = []
+
+    runs.append(_history_run_entry(summary))
+    updated = {
+        "schema_version": 1,
+        "updated_at_utc": _utc_now(),
+        "history_limit": history_limit,
+        "runs": runs[-history_limit:],
+    }
+    _write_json(history_path, updated)
+    return updated
 
 
 def extract_case_speedups(
@@ -197,10 +266,16 @@ def format_benchmark_summary_markdown(summary: dict[str, Any]) -> str:
         "",
         f"- ROCm device detected: {_markdown_bool(bool(summary.get('has_rocm_device')))}",
         f"- Output directory: `{summary.get('output_dir', '')}`",
-        "",
-        "| Benchmark | Status | Speedups | Output |",
-        "| --- | --- | --- | --- |",
     ]
+    if summary.get("history"):
+        lines.append(f"- History entries: {summary.get('history_entries', 0)} (`{summary.get('history')}`)")
+    lines.extend(
+        [
+            "",
+            "| Benchmark | Status | Speedups | Output |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
     for result in summary.get("results", []):
         if not isinstance(result, dict):
             continue
@@ -312,6 +387,8 @@ def run(
     output_dir: Path,
     baseline_summary_path: Path | None = None,
     max_speedup_regression: float = 0.20,
+    history_path: Path | None = None,
+    history_limit: int = 20,
 ) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -336,10 +413,14 @@ def run(
         "results": results,
     }
     if baseline_summary_path is not None:
-        baseline_summary = json.loads(baseline_summary_path.read_text(encoding="utf-8"))
+        baseline_summary = _read_json_object(baseline_summary_path)
         summary["baseline_summary"] = str(baseline_summary_path)
         summary["max_speedup_regression"] = max_speedup_regression
         apply_speedup_trend_gate(summary, baseline_summary, max_speedup_regression)
+    if history_path is not None:
+        history = update_benchmark_history(history_path, summary, history_limit)
+        summary["history"] = str(history_path)
+        summary["history_entries"] = len(history["runs"])
     markdown_path = output_dir / "benchmark-summary.md"
     summary["markdown_summary"] = str(markdown_path)
     _write_json(output_dir / "benchmark-summary.json", summary)
@@ -350,6 +431,8 @@ def run(
 def parse_args(argv: list[str]) -> argparse.Namespace:
     baseline_default = os.environ.get("ROCQ_BENCHMARK_BASELINE_SUMMARY", "").strip()
     regression_default = float(os.environ.get("ROCQ_BENCHMARK_MAX_SPEEDUP_REGRESSION", "0.20"))
+    history_default = os.environ.get("ROCQ_BENCHMARK_HISTORY_PATH", "").strip()
+    history_limit_default = int(os.environ.get("ROCQ_BENCHMARK_HISTORY_LIMIT", "20"))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--build-dir", type=Path, default=PROJECT_ROOT / "build-ci")
@@ -371,6 +454,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=regression_default,
         help="Allowed fractional speedup drop versus --baseline-summary before failing, default 0.20.",
     )
+    parser.add_argument(
+        "--history-path",
+        type=Path,
+        default=Path(history_default) if history_default else None,
+        help="Optional benchmark-history.json path to update with a bounded run history.",
+    )
+    parser.add_argument(
+        "--history-limit",
+        type=int,
+        default=history_limit_default,
+        help="Maximum number of runs retained in --history-path, default 20.",
+    )
     return parser.parse_args(argv)
 
 
@@ -382,6 +477,8 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=args.output_dir.resolve(),
         baseline_summary_path=args.baseline_summary.resolve() if args.baseline_summary else None,
         max_speedup_regression=args.max_speedup_regression,
+        history_path=args.history_path.resolve() if args.history_path else None,
+        history_limit=args.history_limit,
     )
     failed = [result for result in summary["results"] if result["status"] == "failed"]
     print(json.dumps(summary, indent=2, sort_keys=True))

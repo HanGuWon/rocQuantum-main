@@ -137,7 +137,8 @@ emits one JSON file per benchmark plus `benchmark-summary.json` and `benchmark-s
 distributed RCCL-vs-host artifacts include host-fallback-over-RCCL speedup ratios when both cases
 run, and configured minimum speedups fail the benchmark job through `--fail-on-error`. If a native
 binary or ROCm device is unavailable, it writes an explicit skipped artifact instead of pretending
-a result exists.
+a result exists. Passing `--history-path` also updates a bounded `benchmark-history.json` so CI
+artifacts can retain recent speedup/status trends.
 
 ```bash
 python3 benchmarks/run_release_benchmarks.py \
@@ -152,13 +153,14 @@ python3 benchmarks/run_release_benchmarks.py \
   --build-dir build-ci \
   --output-dir benchmark-artifacts \
   --baseline-summary previous-benchmark-artifacts/benchmark-summary.json \
+  --history-path previous-benchmark-artifacts/benchmark-history.json \
   --max-speedup-regression 0.20 \
   --fail-on-error
 ```
 
-The self-hosted ROCm workflows restore the previous benchmark summary from the GitHub Actions
-cache and pass it as a baseline automatically when one is available; each run saves its current
-summary back to the cache for the next run.
+The self-hosted ROCm workflows restore the previous benchmark summary and bounded history from the
+GitHub Actions cache, pass the summary as a baseline automatically when one is available, and save
+the current summary/history back to the cache for the next run.
 
 On a ROCm multi-GPU runner, the distributed reduction benchmark can also be run directly:
 

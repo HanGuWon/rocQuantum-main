@@ -321,6 +321,67 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertFalse(result["trend_regressions"][0]["passes_trend_gate"])
         self.assertIn("trend baseline 4.000x min 3.000x=fail", markdown)
 
+    def test_release_runner_updates_bounded_history_artifact(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "rccl_ms = float(sys.argv[2])\n"
+                "payload = {'cases': [\n"
+                "    {'name': 'rccl', 'status': 0, 'expectation_ms': rccl_ms},\n"
+                "    {'name': 'host_fallback', 'status': 0, 'expectation_ms': 8.0},\n"
+                "]}\n"
+                "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                "    json.dump(payload, f)\n",
+                encoding="utf-8",
+            )
+            history_path = tmp_path / "benchmark-history.json"
+
+            summary = {}
+            for index, rccl_ms in enumerate([4.0, 2.0, 1.0]):
+                manifest_path = tmp_path / f"manifest-{index}.json"
+                manifest_path.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "benchmarks": [
+                                {
+                                    "id": "fake_distributed",
+                                    "category": "distributed",
+                                    "executable": sys.executable,
+                                    "output": "fake-distributed.json",
+                                    "args": [str(fake_benchmark), "{output}", str(rccl_ms)],
+                                    "requires_rocm_device": False,
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                summary = runner.run(
+                    manifest_path=manifest_path,
+                    build_dir=tmp_path / "build",
+                    output_dir=tmp_path / f"artifacts-{index}",
+                    history_path=history_path,
+                    history_limit=2,
+                )
+
+            history = json.loads(history_path.read_text(encoding="utf-8"))
+            markdown = (tmp_path / "artifacts-2" / "benchmark-summary.md").read_text(encoding="utf-8")
+
+        self.assertEqual(summary["history"], str(history_path))
+        self.assertEqual(summary["history_entries"], 2)
+        self.assertEqual(history["schema_version"], 1)
+        self.assertEqual(history["history_limit"], 2)
+        self.assertEqual(len(history["runs"]), 2)
+        first_retained = history["runs"][0]["results"][0]["speedups"][0]
+        latest = history["runs"][1]["results"][0]["speedups"][0]
+        self.assertAlmostEqual(first_retained["speedup"], 4.0)
+        self.assertAlmostEqual(latest["speedup"], 8.0)
+        self.assertIn("History entries: 2", markdown)
+
     def test_cmake_exposes_release_benchmark_targets(self):
         statevec_cmake = os.path.join(PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "CMakeLists.txt")
         tensornet_cmake = os.path.join(PROJECT_ROOT, "rocquantum", "src", "hipTensorNet", "CMakeLists.txt")
@@ -366,8 +427,10 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmarks/run_release_benchmarks.py", combined)
         self.assertIn("benchmark-artifacts", combined)
         self.assertIn("benchmark-summary.md", combined)
+        self.assertIn("benchmark-history.json", combined)
         self.assertIn("GITHUB_STEP_SUMMARY", combined)
         self.assertIn("--fail-on-error", combined)
+        self.assertIn("--history-path", combined)
         self.assertGreaterEqual(combined.count("set -o pipefail"), 3)
         self.assertIn("actions/cache/restore@v4", combined)
         self.assertIn("actions/cache/save@v4", combined)
@@ -384,9 +447,10 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmarks/run_release_benchmarks.py", readme)
         self.assertIn("benchmark-summary.json", readme)
         self.assertIn("benchmark-summary.md", readme)
+        self.assertIn("benchmark-history.json", readme)
         self.assertIn("speedup ratios", readme)
         self.assertIn("--baseline-summary", readme)
-        self.assertIn("self-hosted ROCm workflows restore the previous benchmark summary", readme)
+        self.assertIn("self-hosted ROCm workflows restore the previous benchmark summary and bounded history", readme)
         self.assertIn("dense expectation, sparse moments, and generic matrix", readme)
 
 
