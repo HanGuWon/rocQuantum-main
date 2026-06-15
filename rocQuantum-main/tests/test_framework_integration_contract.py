@@ -196,6 +196,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("std::size_t batch_size", header)
         self.assertIn("QuantumSimulator::set_statevector", implementation)
         self.assertIn("QuantumSimulator::set_statevectors", implementation)
+        state_upload_body = implementation.split("void QuantumSimulator::set_statevectors", 1)[1].split(
+            "std::vector<std::complex<double>> QuantumSimulator::get_statevector", 1
+        )[0]
+        self.assertIn("validate_finite_complex_payload(states, \"Statevector payload\")", state_upload_body)
         self.assertIn("QuantumSimulator::get_statevector(std::size_t batch_index)", implementation)
         self.assertIn("QuantumSimulator::get_statevectors", implementation)
         self.assertIn("rocsvAllocateState(sim_handle_, num_qubits_, &device_state_vector_, batch_size_)", implementation)

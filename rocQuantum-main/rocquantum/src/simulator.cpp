@@ -848,6 +848,7 @@ void QuantumSimulator::set_statevectors(const std::vector<std::complex<double>>&
     if (states.size() != batch_size_ * state_vec_size_) {
         throw std::invalid_argument("set_statevectors input size must equal batch_size * 2^num_qubits.");
     }
+    validate_finite_complex_payload(states, "Statevector payload");
 
     std::vector<rocComplex> raw(states.size());
     for (std::size_t i = 0; i < states.size(); ++i) {

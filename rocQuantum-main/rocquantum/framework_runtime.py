@@ -134,6 +134,8 @@ def statevector_to_little_endian_wires(statevector: object) -> np.ndarray:
     dimension = normalized.shape[0]
     if dimension == 0 or dimension & (dimension - 1):
         raise ValueError("Statevector length must be a power of two.")
+    if not np.all(np.isfinite(normalized)):
+        raise ValueError("Statevector amplitudes must be finite.")
 
     num_wires = int(np.log2(dimension))
     if num_wires <= 1:
@@ -738,6 +740,8 @@ class RocQuantumRuntime:
 
     def set_statevector(self, statevector: object) -> None:
         normalized_state = np.ascontiguousarray(np.asarray(statevector, dtype=np.complex128).reshape(-1))
+        if not np.all(np.isfinite(normalized_state)):
+            raise ValueError("Statevector amplitudes must be finite.")
         setter = getattr(self.simulator, "set_statevector", None)
         if callable(setter):
             setter(normalized_state)
@@ -752,6 +756,8 @@ class RocQuantumRuntime:
 
     def set_statevectors(self, statevectors: object) -> None:
         normalized_states = np.ascontiguousarray(np.asarray(statevectors, dtype=np.complex128).reshape(-1))
+        if not np.all(np.isfinite(normalized_states)):
+            raise ValueError("Statevector amplitudes must be finite.")
         setter = getattr(self.simulator, "set_statevectors", None)
         if callable(setter):
             setter(normalized_states)

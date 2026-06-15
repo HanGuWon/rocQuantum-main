@@ -748,6 +748,34 @@ def test_framework_runtime_converts_full_statevectors_to_little_endian_order():
     )
 
 
+def test_framework_runtime_rejects_nonfinite_statevector_uploads(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import RocQuantumRuntime, statevector_to_little_endian_wires
+
+    invalid_states = (
+        np.array([1.0, np.nan], dtype=np.complex128),
+        np.array([1.0, np.inf], dtype=np.complex128),
+        np.array([1.0, 1.0j * np.inf], dtype=np.complex128),
+    )
+    for state in invalid_states:
+        with pytest.raises(ValueError, match="Statevector amplitudes"):
+            statevector_to_little_endian_wires(state)
+
+    runtime = RocQuantumRuntime.from_bindings(1)
+    sim = _FakeQuantumSimulator.instances[-1]
+    for state in invalid_states:
+        with pytest.raises(ValueError, match="Statevector amplitudes"):
+            runtime.set_statevector(state)
+    assert sim.statevectors == []
+
+    batch_runtime = RocQuantumRuntime.from_bindings(1, batch_size=2)
+    batch_sim = _FakeQuantumSimulator.instances[-1]
+    with pytest.raises(ValueError, match="Statevector amplitudes"):
+        batch_runtime.set_statevectors(np.array([[1.0, 0.0], [np.nan, 0.0]], dtype=np.complex128))
+    assert batch_sim.statevectors == []
+
+
 def test_framework_runtime_rejects_ambiguous_gate_parameters(monkeypatch):
     _install_fake_binding(monkeypatch)
 
