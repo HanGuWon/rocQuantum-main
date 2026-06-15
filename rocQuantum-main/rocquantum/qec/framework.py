@@ -272,6 +272,8 @@ def _validate_error_qubit_schedule(
 
 
 def _syndrome_from_bitstring(bitstring: str) -> List[int]:
+    if len(bitstring) > 2:
+        raise ValueError("Repetition-code syndrome count keys must contain at most two bits.")
     if len(bitstring) < 2:
         bitstring = bitstring.zfill(2)
     # rocq packs measured qubits in request order, then formats the integer as

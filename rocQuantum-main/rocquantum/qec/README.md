@@ -27,9 +27,9 @@ Current supported subset:
   orchestration also requires positive integer `num_qubits` plus in-range
   integer `ancilla_qubit_indices`; repeated-round helpers require positive
   integer `rounds`; and count/bit/syndrome inputs are validated as non-empty
-  binary strings, non-negative integer counts, length-2 syndrome bits, and
-  non-boolean data/error/logical bits plus finite measurement error
-  probabilities in `[0, 0.5)`.
+  one- or two-bit binary count keys, non-negative integer counts, length-2
+  decoder syndrome bits, and non-boolean data/error/logical bits plus finite
+  measurement error probabilities in `[0, 0.5)`.
 
 Minimal example:
 

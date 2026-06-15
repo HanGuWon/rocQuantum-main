@@ -846,6 +846,12 @@ class TestQecHelpers(unittest.TestCase):
         self.assertEqual(numpy_integer_analysis["initial_data_bits"], [0, 0, 0])
         self.assertEqual(numpy_integer_analysis["observed_data_bits"], [0, 1, 0])
 
+        one_bit_key_analysis = analyze_repetition_code_counts({"1": 2})
+        self.assertEqual(
+            one_bit_key_analysis["syndrome_histogram"],
+            {"00": 0, "10": 2, "11": 0, "01": 0},
+        )
+
     def test_repetition_code_measurement_error_mitigation_scores_syndromes(self):
         from rocquantum.qec import (
             analyze_repetition_code_counts,
@@ -885,6 +891,8 @@ class TestQecHelpers(unittest.TestCase):
             analyze_repetition_code_counts({"2": 1})
         with self.assertRaisesRegex(ValueError, "non-empty binary strings"):
             analyze_repetition_code_counts({"": 1})
+        with self.assertRaisesRegex(ValueError, "at most two bits"):
+            analyze_repetition_code_counts({"101": 1})
         with self.assertRaisesRegex(ValueError, "non-negative integers"):
             analyze_repetition_code_counts({"00": -1})
         with self.assertRaisesRegex(ValueError, "non-negative integers"):
