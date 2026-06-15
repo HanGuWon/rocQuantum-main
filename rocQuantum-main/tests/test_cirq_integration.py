@@ -38,15 +38,18 @@ class _MatrixGate:
 
 
 class _RxGate:
-    pass
+    def __init__(self, rads):
+        self._rads = rads
 
 
 class _RyGate:
-    pass
+    def __init__(self, rads):
+        self._rads = rads
 
 
 class _RzGate:
-    pass
+    def __init__(self, rads):
+        self._rads = rads
 
 
 class _XGate:
@@ -266,6 +269,42 @@ class TestCirqAdapterRuntime(unittest.TestCase):
         self.assertEqual(matrix_indices, (0,))
         np.testing.assert_allclose(matrix_call, matrix)
         self.assertEqual(len(state), 2)
+
+    def test_cirq_rotations_dispatch_to_native_modern_runtime(self):
+        adapter, cirq = _load_adapter_module(include_modern_simulator=True)
+        sim = adapter.RocQuantumSimulator()
+
+        circuit = _FakeCircuit([
+            _FakeOp(cirq.Rx(0.125), 0),
+            _FakeOp(cirq.Ry(0.25), 0),
+            _FakeOp(cirq.Rz(0.5), 0),
+        ])
+
+        sim._get_final_statevector(circuit, [0])
+        modern = _FakeQuantumSimulator.instances[-1]
+
+        self.assertEqual(
+            modern.applied_gates,
+            [
+                ("RX", (0,), (0.125,)),
+                ("RY", (0,), (0.25,)),
+                ("RZ", (0,), (0.5,)),
+            ],
+        )
+        self.assertFalse(modern.applied_matrices)
+
+    def test_cirq_rotations_fall_back_to_matrix_on_legacy_qsim(self):
+        adapter, cirq = _load_adapter_module()
+        sim = adapter.RocQuantumSimulator()
+
+        circuit = _FakeCircuit([_FakeOp(cirq.Rx(0.125), 0)])
+
+        sim._get_final_statevector(circuit, [0])
+        qsim = _FakeQSim.instances[-1]
+
+        matrix_call, matrix_indices = qsim.applied_gates[0]
+        self.assertEqual(matrix_indices, (0,))
+        np.testing.assert_allclose(matrix_call, np.eye(2, dtype=np.complex128))
 
     def test_unsupported_gate_raises(self):
         adapter, _ = _load_adapter_module()

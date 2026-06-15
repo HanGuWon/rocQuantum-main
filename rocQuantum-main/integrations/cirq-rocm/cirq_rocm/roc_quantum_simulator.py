@@ -21,6 +21,26 @@ CIRQ_TO_ROCQ_GATES = {
 }
 
 
+def _rotation_gate_name(gate):
+    if isinstance(gate, cirq.Rx):
+        return "RX"
+    if isinstance(gate, cirq.Ry):
+        return "RY"
+    if isinstance(gate, cirq.Rz):
+        return "RZ"
+    return None
+
+
+def _rotation_angle(gate):
+    angle = getattr(gate, "_rads", None)
+    if angle is not None:
+        return float(angle)
+    exponent = getattr(gate, "exponent", None)
+    if exponent is None:
+        raise TypeError(f"Unable to extract a rotation angle from {gate!r}.")
+    return float(exponent) * np.pi
+
+
 def _samples_to_bits(raw_samples, width):
     return np.array(
         [[(int(sample) >> bit) & 1 for bit in range(width)] for sample in raw_samples],
@@ -71,7 +91,13 @@ class RocQuantumSimulator(cirq.SimulatesFinalState, cirq.SimulatesSamples):
             indices = [q_map[q] for q in op.qubits]
             if gate_type in CIRQ_TO_ROCQ_GATES:
                 runtime.apply_operation(CIRQ_TO_ROCQ_GATES[gate_type], indices)
-            elif isinstance(op.gate, (cirq.MatrixGate, cirq.Rx, cirq.Ry, cirq.Rz)):
+            elif _rotation_gate_name(op.gate) is not None:
+                try:
+                    runtime.apply_operation(_rotation_gate_name(op.gate), indices, [_rotation_angle(op.gate)])
+                except NotImplementedError:
+                    matrix = matrix_to_little_endian_wires(cirq.unitary(op))
+                    runtime.apply_matrix(matrix, indices)
+            elif isinstance(op.gate, cirq.MatrixGate):
                 matrix = matrix_to_little_endian_wires(cirq.unitary(op))
                 runtime.apply_matrix(matrix, indices)
             else:
