@@ -675,8 +675,40 @@ class TestQecHelpers(unittest.TestCase):
         self.assertEqual(numpy_integer_analysis["initial_data_bits"], [0, 0, 0])
         self.assertEqual(numpy_integer_analysis["observed_data_bits"], [0, 1, 0])
 
+    def test_repetition_code_measurement_error_mitigation_scores_syndromes(self):
+        from rocquantum.qec import (
+            analyze_repetition_code_counts,
+            mitigate_repetition_syndrome_counts,
+        )
+
+        counts = {"01": 81, "00": 9, "11": 9, "10": 1}
+        scores = mitigate_repetition_syndrome_counts(
+            counts,
+            measurement_error_probability=0.1,
+        )
+
+        self.assertAlmostEqual(scores["10"], 100.0)
+        self.assertAlmostEqual(scores["00"], 0.0)
+        self.assertAlmostEqual(scores["11"], 0.0)
+        self.assertAlmostEqual(scores["01"], 0.0)
+
+        analysis = analyze_repetition_code_counts(
+            counts,
+            initial_bits=[0, 0, 0],
+            error_qubit=0,
+            measurement_error_probability=0.1,
+        )
+        self.assertEqual(analysis["most_likely_syndrome"], [1, 0])
+        self.assertEqual(analysis["most_likely_correction_qubit"], 0)
+        self.assertEqual(analysis["most_likely_syndrome_source"], "measurement_mitigated")
+        self.assertEqual(analysis["measurement_error_probability"], 0.1)
+        self.assertAlmostEqual(analysis["mitigated_syndrome_scores"]["10"], 100.0)
+
     def test_repetition_code_counts_analysis_validates_inputs(self):
-        from rocquantum.qec import analyze_repetition_code_counts
+        from rocquantum.qec import (
+            analyze_repetition_code_counts,
+            mitigate_repetition_syndrome_counts,
+        )
 
         with self.assertRaisesRegex(ValueError, "binary strings"):
             analyze_repetition_code_counts({"2": 1})
@@ -694,6 +726,10 @@ class TestQecHelpers(unittest.TestCase):
             analyze_repetition_code_counts({"00": 1}, error_qubit=True)
         with self.assertRaisesRegex(ValueError, "expected_logical_bit"):
             analyze_repetition_code_counts({"00": 1}, expected_logical_bit=True)
+        with self.assertRaisesRegex(ValueError, "measurement_error_probability"):
+            analyze_repetition_code_counts({"00": 1}, measurement_error_probability=True)
+        with self.assertRaisesRegex(ValueError, "measurement_error_probability"):
+            mitigate_repetition_syndrome_counts({"00": 1}, measurement_error_probability=0.5)
 
     def test_repetition_code_rounds_analysis_tracks_feed_forward(self):
         from rocquantum.qec import analyze_repetition_code_rounds
@@ -723,6 +759,19 @@ class TestQecHelpers(unittest.TestCase):
         self.assertEqual(drifted["expected_logical_bit"], 0)
         self.assertEqual(drifted["round_results"][1]["analysis"]["expected_logical_bit"], 0)
         self.assertEqual(drifted["logical_success_rate"], 0.0)
+
+        mitigated = analyze_repetition_code_rounds(
+            [{"01": 81, "00": 9, "11": 9, "10": 1}],
+            initial_bits=[0, 0, 0],
+            error_qubits=[0],
+            measurement_error_probability=0.1,
+        )
+        self.assertEqual(mitigated["measurement_error_probability"], 0.1)
+        self.assertEqual(
+            mitigated["round_results"][0]["analysis"]["most_likely_syndrome_source"],
+            "measurement_mitigated",
+        )
+        self.assertEqual(mitigated["round_results"][0]["correction_qubit"], 0)
 
     def test_repetition_code_rounds_analysis_validates_schedule(self):
         from rocquantum.qec import analyze_repetition_code_rounds

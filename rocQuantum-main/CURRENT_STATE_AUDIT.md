@@ -139,7 +139,7 @@ What is not real today:
 | `python/rocq/*` | Separate legacy-ish Python surface with top-level CMake-built `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers and common circuit/gate/sample/Pauli coefficient inputs reject ambiguous bool, non-integral, duplicate, or non-finite values before backend dispatch, but broader runtime behavior remains split |
 | `integrations/*` | Thin framework adapters with mixed native and host-side behavior |
 | `rocquantum/backends/*` | Mixed remote-provider clients, local mocks, and skeleton placeholders |
-| `rocquantum/qec`, `rocquantum/solvers` | Experimental VQE/QAOA/repetition-code helpers, including a VQE-backed MaxCut QAOA solve wrapper and repeated-round repetition-code aggregation, not production-ready CUDA-QX analogs |
+| `rocquantum/qec`, `rocquantum/solvers` | Experimental VQE/QAOA/repetition-code helpers, including a VQE-backed MaxCut QAOA solve wrapper, repeated-round repetition-code aggregation, and narrow syndrome readout-error mitigation, not production-ready CUDA-QX analogs |
 
 ## What Works Today
 
@@ -219,7 +219,7 @@ What is not real today:
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling now reduces measured-qubit marginal probabilities on device before host-side shot drawing, avoiding full density-matrix or full-diagonal host transfer for subset measurements, but it is still not a fully GPU-resident sampling path.
 - The canonical `stabilizer` / `tableau` / `clifford` aliases now route to an experimental Python `StabilizerBackend` with Clifford-only Pauli propagation, Pauli-sum expectations, and terminal marginal sampling; mid-circuit measurement, noise, non-Clifford simulation, and GPU-accelerated stabilizer execution remain absent.
-- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, CUDA-Q-style spin factories, VQE-compatible MaxCut-style QAOA kernel/cost/solve helper, generic sampled stabilizer-fragment QEC orchestration with positive-integer shot validation, and a 3-qubit repetition-code syndrome subset with single/repeated-round aggregation plus positive-integer shot/round and bool-safe binary count/bit validation.
+- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, CUDA-Q-style spin factories, VQE-compatible MaxCut-style QAOA kernel/cost/solve helper, generic sampled stabilizer-fragment QEC orchestration with positive-integer shot validation, and a 3-qubit repetition-code syndrome subset with single/repeated-round aggregation, independent syndrome readout-error mitigation, positive-integer shot/round validation, bool-safe binary count/bit validation, and finite measurement-error probability validation.
 
 ## Highest-Risk Overclaims Before This Audit
 

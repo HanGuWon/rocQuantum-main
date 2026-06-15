@@ -15,10 +15,15 @@ Current supported subset:
 - Lookup-table correction through `RepetitionCodeDecoder`.
 - Syndrome histogram, repeated-round correction summary, and correction-success
   analysis for sampled counts.
+- Optional independent syndrome-bit measurement error mitigation through
+  `mitigate_repetition_syndrome_counts()` and the
+  `measurement_error_probability=` option on repetition-code analysis and
+  execution helpers.
 - Execution helpers require positive integer `shots`, repeated-round helpers
   require positive integer `rounds`, and count/bit inputs are validated as
   non-empty binary strings, non-negative integer counts, and non-boolean
-  data/error/logical bits.
+  data/error/logical bits plus finite measurement error probabilities in
+  `[0, 0.5)`.
 
 Minimal example:
 
@@ -43,10 +48,23 @@ print(result["correction_summary"])
 print(result["logical_success_rate"])
 ```
 
+Measurement-error mitigation example:
+
+```python
+from rocquantum.qec import analyze_repetition_code_counts
+
+analysis = analyze_repetition_code_counts(
+    {"01": 81, "00": 9, "11": 9, "10": 1},
+    measurement_error_probability=0.1,
+)
+print(analysis["mitigated_syndrome_scores"])
+```
+
 Limitations:
 
 - No mid-circuit measurement or classical feedback.
 - Repeated rounds are sequential sampled helper calls with classical
   most-likely feed-forward, not an in-circuit dynamic-control workflow.
-- No noise-aware decoder beyond deterministic single-X syndrome lookup.
+- No general noise-aware decoder beyond deterministic single-X syndrome lookup
+  plus the independent syndrome readout-error mitigation helper above.
 - No performance-tuned syndrome extraction.

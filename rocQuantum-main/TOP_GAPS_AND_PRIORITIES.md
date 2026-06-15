@@ -13,7 +13,7 @@ Audit date: 2026-04-05
 7. `hipTensorNet` has real core functionality and now exposes optimizer/dtype/slicing capabilities, but METIS/KAHYPAR pathfinders and runtime slicing remain unsupported unless compiled in.
 8. `hipDensityMat` is real but narrow; single- and multi-qubit Kraus channels, canonical CCX/CSWAP decomposition, GPU-side measured-marginal reduction for density sampling, and small dense-observable reductions now exist, while GPU-resident shot sampling, GPU-resident channel planning, native broad multi-control density kernels, and richer observable support are still missing.
 9. Framework integrations now cover native sampling, native selected-qubit probability vectors, native Pauli-observable paths, native sparse moments for PennyLane SparseHamiltonian, default multi-control gate dispatch, and selected sparse-observable correctness fallbacks for PennyLane/Qiskit more directly, and self-hosted ROCm CI now has a native binding/PennyLane/Qiskit/Cirq Bell-state smoke path; native ROCm proof still depends on uploaded runner artifacts.
-10. Higher-level CUDA-QX-style libraries now have an experimental VQE/QAOA/repetition-code subset, including repeated-round repetition-code aggregation, but this is still far from a serious supported CUDA-QX analogue.
+10. Higher-level CUDA-QX-style libraries now have an experimental VQE/QAOA/repetition-code subset, including repeated-round repetition-code aggregation and narrow syndrome readout-error mitigation, but this is still far from a serious supported CUDA-QX analogue.
 
 ## Priority Framework
 

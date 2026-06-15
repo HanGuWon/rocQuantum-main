@@ -12,7 +12,8 @@ on a "Circuit Fragmentation" strategy.
 """
 
 from abc import ABC, abstractmethod
-from numbers import Integral
+import math
+from numbers import Integral, Real
 from typing import List, Dict, Callable, Any, Optional, Tuple
 
 # --- rocQuantum Imports ---
@@ -27,6 +28,8 @@ except ImportError:
 
 # --- Type Hinting Definitions ---
 AnsatzKernel = Callable[..., None]
+
+_REPETITION_SYNDROME_KEYS = ("00", "10", "11", "01")
 
 
 def _validate_binary_count_key(bitstring: str, label: str) -> str:
@@ -61,6 +64,20 @@ def _validate_optional_binary_bit(value: Optional[int], name: str) -> Optional[i
     if value is None:
         return None
     return _validate_binary_bit(value, name)
+
+
+def _validate_optional_measurement_error_probability(
+    value: Optional[float],
+) -> Optional[float]:
+    message = "measurement_error_probability must be a finite real number in [0, 0.5)."
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError(message)
+    probability = float(value)
+    if not math.isfinite(probability) or probability < 0.0 or probability >= 0.5:
+        raise ValueError(message)
+    return probability
 
 
 class QuantumErrorCode(ABC):
@@ -240,6 +257,41 @@ def _syndrome_key(syndrome: List[int]) -> str:
     return f"{syndrome[0]}{syndrome[1]}"
 
 
+def _select_syndrome_from_scores(scores: Dict[str, float]) -> List[int]:
+    syndrome_key = max(_REPETITION_SYNDROME_KEYS, key=lambda key: scores.get(key, 0.0))
+    return [int(syndrome_key[0]), int(syndrome_key[1])]
+
+
+def _inverse_measurement_weight(true_bit: str, observed_bit: str, probability: float) -> float:
+    if probability == 0.0:
+        return 1.0 if true_bit == observed_bit else 0.0
+    scale = 1.0 / (1.0 - (2.0 * probability))
+    return ((1.0 - probability) if true_bit == observed_bit else -probability) * scale
+
+
+def _measurement_mitigated_syndrome_scores(
+    histogram: Dict[str, int],
+    measurement_error_probability: float,
+) -> Dict[str, float]:
+    probability = _validate_optional_measurement_error_probability(
+        measurement_error_probability
+    )
+    if probability is None:
+        raise ValueError("measurement_error_probability is required.")
+
+    scores: Dict[str, float] = {}
+    for true_key in _REPETITION_SYNDROME_KEYS:
+        score = 0.0
+        for observed_key, count in histogram.items():
+            weight = (
+                _inverse_measurement_weight(true_key[0], observed_key[0], probability)
+                * _inverse_measurement_weight(true_key[1], observed_key[1], probability)
+            )
+            score += weight * count
+        scores[true_key] = 0.0 if abs(score) < 1e-12 else score
+    return scores
+
+
 def _correction_qubit_for_syndrome(syndrome: List[int]) -> Optional[int]:
     lookup: Dict[Tuple[int, int], Optional[int]] = {
         (0, 0): None,
@@ -270,7 +322,7 @@ def repetition_syndrome_histogram(counts: Dict[str, int]) -> Dict[str, int]:
     if not counts:
         raise ValueError("No syndrome samples were produced.")
 
-    histogram = {"00": 0, "10": 0, "11": 0, "01": 0}
+    histogram = {key: 0 for key in _REPETITION_SYNDROME_KEYS}
     for bitstring, count in counts.items():
         _validate_binary_count_key(bitstring, "counts")
         count = _validate_nonnegative_count(count, "counts")
@@ -279,10 +331,38 @@ def repetition_syndrome_histogram(counts: Dict[str, int]) -> Dict[str, int]:
     return histogram
 
 
-def _most_likely_syndrome(counts: Dict[str, int]) -> List[int]:
+def mitigate_repetition_syndrome_counts(
+    counts: Dict[str, int],
+    measurement_error_probability: float,
+) -> Dict[str, float]:
+    """Estimate true repetition-code syndrome counts after readout bit flips.
+
+    The mitigation model assumes each measured syndrome bit flips independently
+    with the supplied probability. This is a small classical post-processing
+    helper for the experimental repetition-code subset, not a full QEC decoder.
+    """
     histogram = repetition_syndrome_histogram(counts)
-    syndrome_key = max(histogram.items(), key=lambda item: item[1])[0]
-    return [int(syndrome_key[0]), int(syndrome_key[1])]
+    return _measurement_mitigated_syndrome_scores(
+        histogram,
+        measurement_error_probability,
+    )
+
+
+def _most_likely_syndrome(
+    counts: Dict[str, int],
+    measurement_error_probability: Optional[float] = None,
+) -> List[int]:
+    histogram = repetition_syndrome_histogram(counts)
+    probability = _validate_optional_measurement_error_probability(
+        measurement_error_probability
+    )
+    if probability is None:
+        return _select_syndrome_from_scores(
+            {key: float(value) for key, value in histogram.items()}
+        )
+    return _select_syndrome_from_scores(
+        _measurement_mitigated_syndrome_scores(histogram, probability)
+    )
 
 
 def analyze_repetition_code_counts(
@@ -290,6 +370,7 @@ def analyze_repetition_code_counts(
     initial_bits: Optional[List[int]] = None,
     error_qubit: Optional[int] = None,
     expected_logical_bit: Optional[int] = None,
+    measurement_error_probability: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Decode sampled repetition-code syndromes and summarize correction quality."""
     bits = _validate_repetition_bits(initial_bits)
@@ -297,6 +378,9 @@ def analyze_repetition_code_counts(
     expected_logical_bit = _validate_optional_binary_bit(
         expected_logical_bit,
         "expected_logical_bit",
+    )
+    measurement_error_probability = _validate_optional_measurement_error_probability(
+        measurement_error_probability
     )
 
     encoded_logical_bit = bits[0] if bits.count(bits[0]) == 3 else None
@@ -330,7 +414,19 @@ def analyze_repetition_code_counts(
             }
         )
 
-    most_likely_syndrome = _most_likely_syndrome(counts)
+    if measurement_error_probability is None:
+        syndrome_scores = {key: float(value) for key, value in histogram.items()}
+        syndrome_source = "raw_histogram"
+        mitigated_syndrome_scores = None
+    else:
+        mitigated_syndrome_scores = _measurement_mitigated_syndrome_scores(
+            histogram,
+            measurement_error_probability,
+        )
+        syndrome_scores = mitigated_syndrome_scores
+        syndrome_source = "measurement_mitigated"
+
+    most_likely_syndrome = _select_syndrome_from_scores(syndrome_scores)
     most_likely = next(
         outcome
         for outcome in decoded_outcomes
@@ -340,7 +436,7 @@ def analyze_repetition_code_counts(
     if expected_logical_bit is not None:
         logical_success_rate = successful_shots / total_shots
 
-    return {
+    result = {
         "syndrome_histogram": histogram,
         "total_shots": total_shots,
         "initial_data_bits": bits,
@@ -348,10 +444,15 @@ def analyze_repetition_code_counts(
         "expected_logical_bit": expected_logical_bit,
         "decoded_outcomes": decoded_outcomes,
         "most_likely_syndrome": most_likely_syndrome,
+        "most_likely_syndrome_source": syndrome_source,
         "most_likely_correction_qubit": most_likely["correction_qubit"],
         "most_likely_corrected_data_bits": most_likely["corrected_data_bits"],
         "logical_success_rate": logical_success_rate,
+        "measurement_error_probability": measurement_error_probability,
     }
+    if mitigated_syndrome_scores is not None:
+        result["mitigated_syndrome_scores"] = mitigated_syndrome_scores
+    return result
 
 
 def analyze_repetition_code_rounds(
@@ -359,6 +460,7 @@ def analyze_repetition_code_rounds(
     initial_bits: Optional[List[int]] = None,
     error_qubits: Optional[List[Optional[int]]] = None,
     expected_logical_bit: Optional[int] = None,
+    measurement_error_probability: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Aggregate repeated 3-qubit repetition-code syndrome rounds.
 
@@ -374,6 +476,9 @@ def analyze_repetition_code_rounds(
         raise ValueError("round_counts must contain at least one round.")
     _validate_repetition_rounds(len(counts_by_round))
     error_schedule = _validate_error_qubit_schedule(error_qubits, len(counts_by_round))
+    measurement_error_probability = _validate_optional_measurement_error_probability(
+        measurement_error_probability
+    )
 
     initial_data_bits = _validate_repetition_bits(initial_bits)
     expected_for_rounds = expected_logical_bit
@@ -396,6 +501,7 @@ def analyze_repetition_code_rounds(
             initial_bits=current_bits,
             error_qubit=error_schedule[round_index],
             expected_logical_bit=expected_for_rounds,
+            measurement_error_probability=measurement_error_probability,
         )
         for syndrome_key, count in analysis["syndrome_histogram"].items():
             aggregate_histogram[syndrome_key] += count
@@ -437,6 +543,7 @@ def analyze_repetition_code_rounds(
         "error_qubits": error_schedule,
         "expected_logical_bit": expected_for_rounds,
         "logical_success_rate": logical_success_rate,
+        "measurement_error_probability": measurement_error_probability,
         "experimental_supported_subset": "three_qubit_repetition_repeated_rounds",
     }
 
@@ -446,6 +553,7 @@ def run_repetition_code_single_round(
     error_qubit: Optional[int] = None,
     shots: int = 1,
     backend: str = "state_vector",
+    measurement_error_probability: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Run one experimental 3-qubit bit-flip repetition-code syndrome round.
 
@@ -459,6 +567,9 @@ def run_repetition_code_single_round(
             "before running QEC experiments."
         )
     shots = _validate_positive_integer(shots, "shots")
+    measurement_error_probability = _validate_optional_measurement_error_probability(
+        measurement_error_probability
+    )
 
     bits = _validate_repetition_bits(initial_bits)
     error_qubit = _validate_error_qubit(error_qubit)
@@ -478,8 +589,16 @@ def run_repetition_code_single_round(
         rocq.cnot(q[2], q[4])
 
     counts = rocq.sample(repetition_round, shots, backend=backend, qubits=[3, 4])
-    syndrome = _most_likely_syndrome(counts)
-    analysis = analyze_repetition_code_counts(counts, bits, error_qubit=error_qubit)
+    syndrome = _most_likely_syndrome(
+        counts,
+        measurement_error_probability=measurement_error_probability,
+    )
+    analysis = analyze_repetition_code_counts(
+        counts,
+        bits,
+        error_qubit=error_qubit,
+        measurement_error_probability=measurement_error_probability,
+    )
 
     from rocquantum.qec.decoders.repetition_decoder import RepetitionCodeDecoder
 
@@ -492,6 +611,7 @@ def run_repetition_code_single_round(
         "analysis": analysis,
         "logical_success_rate": analysis["logical_success_rate"],
         "most_likely_corrected_data_bits": analysis["most_likely_corrected_data_bits"],
+        "measurement_error_probability": measurement_error_probability,
         "experimental_supported_subset": "three_qubit_repetition_single_round",
     }
 
@@ -502,10 +622,14 @@ def run_repetition_code_rounds(
     rounds: int = 1,
     shots: int = 1,
     backend: str = "state_vector",
+    measurement_error_probability: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Run repeated experimental 3-qubit repetition-code syndrome rounds."""
     rounds = _validate_repetition_rounds(rounds)
     shots = _validate_positive_integer(shots, "shots")
+    measurement_error_probability = _validate_optional_measurement_error_probability(
+        measurement_error_probability
+    )
 
     bits = _validate_repetition_bits(initial_bits)
     error_schedule = _validate_error_qubit_schedule(error_qubits, rounds)
@@ -518,6 +642,7 @@ def run_repetition_code_rounds(
             error_qubit=error_schedule[round_index],
             shots=shots,
             backend=backend,
+            measurement_error_probability=measurement_error_probability,
         )
         round_counts.append(result["counts"])
         current_bits = result["most_likely_corrected_data_bits"]
@@ -526,7 +651,9 @@ def run_repetition_code_rounds(
         round_counts,
         initial_bits=bits,
         error_qubits=error_schedule,
+        measurement_error_probability=measurement_error_probability,
     )
     analysis["shots_per_round"] = shots
     analysis["backend"] = backend
+    analysis["measurement_error_probability"] = measurement_error_probability
     return analysis
