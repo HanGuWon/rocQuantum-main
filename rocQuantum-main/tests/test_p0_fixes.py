@@ -421,6 +421,8 @@ class TestCliRigettiPreflight(unittest.TestCase):
 
         output = stdout.getvalue()
         self.assertIn("iqm\tunsupported_stub\trequires experimental opt-in", output)
+        self.assertIn("job submission disabled", output)
+        self.assertIn("Provider SDK/API integration is not implemented", output)
 
 
 if __name__ == "__main__":

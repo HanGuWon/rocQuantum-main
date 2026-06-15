@@ -32,6 +32,19 @@ _SKELETON_BACKENDS: Dict[str, str] = {
     "alice_bob": "rocquantum.backends.alice_bob.AliceBobBackend",
 }
 
+_UNSUPPORTED_STUB_METADATA = {
+    "safe_to_submit_jobs": False,
+    "unsupported_reason": "Provider SDK/API integration is not implemented in this repository.",
+    "missing_capabilities": [
+        "authentication",
+        "authorization_headers",
+        "payload_builder",
+        "job_submission",
+        "status_polling",
+        "result_retrieval",
+    ],
+}
+
 _BACKEND_METADATA: Dict[str, Dict[str, object]] = {
     "qristal": {
         "status": "local_cli_client",
@@ -66,6 +79,8 @@ def list_backends(include_experimental: bool = False) -> Dict[str, Dict[str, obj
             "status": "unsupported_stub" if is_skeleton else "client",
             "requires_experimental_opt_in": is_skeleton,
         }
+        if is_skeleton:
+            entry.update(_UNSUPPORTED_STUB_METADATA)
         entry.update(_BACKEND_METADATA.get(name, {}))
         result[name] = entry
     return result

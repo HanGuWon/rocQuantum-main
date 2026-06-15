@@ -139,9 +139,26 @@ class UnsupportedBackend(RocqBackend):
     """Explicit placeholder for provider integrations that are not implemented."""
 
     provider_name = "unsupported"
+    unsupported_reason = "Provider SDK/API integration is not implemented in this repository."
+    missing_capabilities = [
+        "authentication",
+        "authorization_headers",
+        "payload_builder",
+        "job_submission",
+        "status_polling",
+        "result_retrieval",
+    ]
 
     def __init__(self, backend_name: str = None, api_endpoint: str = ""):
         super().__init__(backend_name or self.provider_name, api_endpoint)
+
+    def capabilities(self) -> Dict[str, Any]:
+        return {
+            "status": "unsupported_stub",
+            "safe_to_submit_jobs": False,
+            "unsupported_reason": self.unsupported_reason,
+            "missing_capabilities": list(self.missing_capabilities),
+        }
 
     def _unsupported(self, action: str):
         raise UnsupportedBackendError(

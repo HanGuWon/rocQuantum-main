@@ -54,6 +54,10 @@ def print_backend_capabilities(include_experimental: bool = False) -> None:
             notes.append(f"requires {info.get('runtime', 'local runtime')}")
         if info.get("requires_experimental_opt_in"):
             notes.append("requires experimental opt-in")
+        if info.get("safe_to_submit_jobs") is False:
+            notes.append("job submission disabled")
+        if info.get("unsupported_reason"):
+            notes.append(str(info["unsupported_reason"]))
         print(f"{name}\t{info['status']}\t{', '.join(notes) if notes else '-'}")
 
 

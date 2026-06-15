@@ -35,6 +35,19 @@ class TestUnsupportedProviderBackends(unittest.TestCase):
 
         self.assertEqual(backends["iqm"]["status"], "unsupported_stub")
         self.assertTrue(backends["iqm"]["requires_experimental_opt_in"])
+        self.assertFalse(backends["iqm"]["safe_to_submit_jobs"])
+        self.assertIn("Provider SDK/API integration", backends["iqm"]["unsupported_reason"])
+        self.assertEqual(
+            backends["iqm"]["missing_capabilities"],
+            [
+                "authentication",
+                "authorization_headers",
+                "payload_builder",
+                "job_submission",
+                "status_polling",
+                "result_retrieval",
+            ],
+        )
         self.assertIn("rocquantum.backends.iqm.IQMBackend", backends["iqm"]["import_path"])
 
     def test_set_target_blocks_skeleton_provider_by_default(self):
@@ -150,6 +163,10 @@ class TestUnsupportedProviderBackends(unittest.TestCase):
         for backend_cls in backend_classes:
             backend = backend_cls()
             with self.subTest(backend=backend_cls.__name__):
+                capabilities = backend.capabilities()
+                self.assertEqual(capabilities["status"], "unsupported_stub")
+                self.assertFalse(capabilities["safe_to_submit_jobs"])
+                self.assertIn("job_submission", capabilities["missing_capabilities"])
                 with self.assertRaises(UnsupportedBackendError):
                     backend.authenticate()
                 with self.assertRaises(UnsupportedBackendError):
