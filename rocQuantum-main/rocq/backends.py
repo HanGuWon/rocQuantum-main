@@ -244,11 +244,23 @@ def _finalize_expectation(value: complex):
     return value.real if abs(value.imag) < 1e-12 else value
 
 
-def _combined_pauli_terms(operator):
+def _combined_pauli_terms(operator, num_qubits: Optional[int] = None):
+    qubit_count = None if num_qubits is None else int(num_qubits)
     combined = {}
     order = []
     for coefficient, paulis in iter_pauli_terms(operator):
-        key = tuple((pauli, int(qubit)) for pauli, qubit in paulis)
+        key_terms = []
+        for pauli, qubit in paulis:
+            qubit_index = int(qubit)
+            if qubit_count is not None and (
+                qubit_index < 0 or qubit_index >= qubit_count
+            ):
+                raise ValueError(
+                    f"Pauli observable qubit index {qubit_index} is out of range "
+                    f"for {qubit_count} qubits."
+                )
+            key_terms.append((pauli, qubit_index))
+        key = tuple(key_terms)
         if key not in combined:
             combined[key] = 0.0 + 0.0j
             order.append(key)
@@ -861,11 +873,11 @@ class _MockStateVectorState:
 
         if isinstance(operator, SumOperator):
             try:
-                terms = _combined_pauli_terms(operator)
+                terms = _combined_pauli_terms(operator, self._num_qubits)
             except NotImplementedError:
                 return _expect_mixed_sum_operator(operator, self._num_qubits, self.expectation)
         else:
-            terms = _combined_pauli_terms(operator)
+            terms = _combined_pauli_terms(operator, self._num_qubits)
 
         total = 0.0 + 0.0j
         for coefficient, paulis in terms:
@@ -1158,11 +1170,11 @@ class _HipStateVectorState:
 
         if isinstance(operator, SumOperator):
             try:
-                terms = _combined_pauli_terms(operator)
+                terms = _combined_pauli_terms(operator, self._num_qubits)
             except NotImplementedError:
                 return _expect_mixed_sum_operator(operator, self._num_qubits, self.expectation)
         else:
-            terms = _combined_pauli_terms(operator)
+            terms = _combined_pauli_terms(operator, self._num_qubits)
 
         total = 0.0 + 0.0j
         for coefficient, paulis in terms:
@@ -1534,9 +1546,9 @@ class StabilizerBackend(_BaseBackend):
         if isinstance(operator, (HermitianOperator, SparseHamiltonianOperator)):
             raise NotImplementedError("The stabilizer backend supports Pauli observables only.")
         if isinstance(operator, SumOperator):
-            terms = _combined_pauli_terms(operator)
+            terms = _combined_pauli_terms(operator, self.num_qubits)
         else:
-            terms = _combined_pauli_terms(operator)
+            terms = _combined_pauli_terms(operator, self.num_qubits)
 
         total = 0.0 + 0.0j
         for coefficient, paulis in terms:
@@ -1904,11 +1916,11 @@ class DensityMatrixBackend(_BaseBackend):
 
         if isinstance(operator, SumOperator):
             try:
-                terms = _combined_pauli_terms(operator)
+                terms = _combined_pauli_terms(operator, self.num_qubits)
             except NotImplementedError:
                 return _expect_mixed_sum_operator(operator, self.num_qubits, self.expectation)
         else:
-            terms = _combined_pauli_terms(operator)
+            terms = _combined_pauli_terms(operator, self.num_qubits)
 
         total = 0.0 + 0.0j
         for coefficient, paulis in terms:

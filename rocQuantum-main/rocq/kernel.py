@@ -68,6 +68,7 @@ _RUNTIME_SUPPORTED_FEATURES = (
     "positive-integer direct backend size validation",
     "direct backend gate-target validation",
     "finite direct backend gate-angle validation",
+    "Pauli observable target validation before backend dispatch",
     "density-matrix noise model execution",
     "experimental Clifford stabilizer Pauli propagation backend",
 )

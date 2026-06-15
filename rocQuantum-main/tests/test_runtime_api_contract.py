@@ -116,6 +116,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "Pauli observable target validation before backend dispatch",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "native HIP-stream futures",
             capabilities["unsupported_features"],
         )
@@ -739,6 +743,49 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "target qubits must be distinct"):
             backend._apply_op(GateOp("cnot", [0, 0], {}))
         backend._state.apply_cnot.assert_not_called()
+
+    def test_backends_reject_out_of_range_pauli_observables_before_native_dispatch(self):
+        from rocq.backends import DensityMatrixBackend, StabilizerBackend, _HipStateVectorState
+
+        invalid_operator = PauliOperator("Z1")
+        partially_invalid_sum = PauliOperator("Z0") + PauliOperator("X1")
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+        fake_hip_backend = mock.Mock()
+        fake_hip_backend.get_expectation_value_z.side_effect = AssertionError(
+            "native Pauli expectation should not receive out-of-range observable targets"
+        )
+        with mock.patch("rocq.backends.hip_backend", fake_hip_backend):
+            with self.assertRaisesRegex(ValueError, "Pauli observable qubit index 1"):
+                state.expectation(invalid_operator)
+            with self.assertRaisesRegex(ValueError, "Pauli observable qubit index 1"):
+                state.expectation(partially_invalid_sum)
+        fake_hip_backend.get_expectation_value_z.assert_not_called()
+
+        density_backend = DensityMatrixBackend.__new__(DensityMatrixBackend)
+        density_backend.num_qubits = 1
+        density_backend._uses_mock = False
+        density_backend._state = mock.Mock()
+        with self.assertRaisesRegex(ValueError, "Pauli observable qubit index 1"):
+            density_backend.expectation(invalid_operator)
+        density_backend._state.compute_expectation.assert_not_called()
+
+        mock_density_backend = self._make_mock_density_backend(1)
+        mock_density_backend._state = mock.Mock()
+        with self.assertRaisesRegex(ValueError, "Pauli observable qubit index 1"):
+            mock_density_backend.expectation(invalid_operator)
+        mock_density_backend._state.compute_expectation.assert_not_called()
+
+        mock_statevector_backend = self._make_mock_statevector_backend(1)
+        with self.assertRaisesRegex(ValueError, "Pauli observable qubit index 1"):
+            mock_statevector_backend.expectation(invalid_operator)
+
+        stabilizer_backend = StabilizerBackend(1)
+        with self.assertRaisesRegex(ValueError, "Pauli observable qubit index 1"):
+            stabilizer_backend.expectation(invalid_operator)
 
     def test_observe_uses_backend_expectation(self):
         @kernel
