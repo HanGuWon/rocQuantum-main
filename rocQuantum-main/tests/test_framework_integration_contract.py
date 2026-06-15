@@ -308,6 +308,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def normalize_probability_matrix", source)
         self.assertIn("def sample_indices_from_probabilities", source)
         self.assertIn("def sample_indices_batch_from_probabilities", source)
+        self.assertIn("def normalize_sparse_hamiltonian_csr", source)
         self.assertIn("def expectation_pauli_string_batch", source)
         self.assertIn("def apply_operation_batch", source)
         self.assertIn("def validate_finite_complex_array", source)

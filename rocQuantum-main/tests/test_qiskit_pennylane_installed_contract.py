@@ -896,6 +896,54 @@ def test_framework_runtime_validates_matrix_shapes_and_sparse_csr_before_native_
     assert sparse_sim.statevector_reads == 0
 
 
+def test_framework_runtime_revalidates_sparse_hamiltonian_moments_before_native_dispatch(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        sparse_hamiltonian_moments_from_statevector,
+    )
+
+    _FakeQuantumSimulator.enable_sparse_moments = True
+    runtime = RocQuantumRuntime.from_bindings(1)
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    invalid_sparse_moments = (
+        ([True], [0], [0, 1, 1], (2, 2)),
+        (["1.0"], [0], [0, 1, 1], (2, 2)),
+        ([np.nan], [0], [0, 1, 1], (2, 2)),
+        ([1.0], [True], [0, 1, 1], (2, 2)),
+        ([1.0], ["0"], [0, 1, 1], (2, 2)),
+        ([1.0], [0], [0, True, 1], (2, 2)),
+        ([1.0], [0], [0, 1, 1], (True, 2)),
+        ([1.0], [0], [0, 1, 1], "22"),
+        ([1.0], [2], [0, 1, 1], (2, 2)),
+    )
+
+    for data, indices, indptr, shape in invalid_sparse_moments:
+        with pytest.raises(ValueError, match="Sparse Hamiltonian"):
+            runtime.sparse_hamiltonian_moments(data, indices, indptr, shape)
+        with pytest.raises(ValueError, match="Sparse Hamiltonian"):
+            sparse_hamiltonian_moments_from_statevector(
+                np.array([1.0, 0.0], dtype=np.complex128),
+                data,
+                indices,
+                indptr,
+                shape,
+            )
+
+    assert sim.sparse_moments == []
+
+    batch_runtime = RocQuantumRuntime.from_bindings(1, batch_size=2)
+    batch_sim = _FakeQuantumSimulator.instances[-1]
+    for data, indices, indptr, shape in invalid_sparse_moments:
+        with pytest.raises(ValueError, match="Sparse Hamiltonian"):
+            batch_runtime.sparse_hamiltonian_moments_batch(data, indices, indptr, shape)
+
+    assert batch_sim.sparse_moments == []
+    assert batch_sim.sparse_batch_moments == []
+
+
 def test_framework_runtime_rejects_nonfinite_probability_payloads():
     from rocquantum.framework_runtime import (
         RocQuantumRuntime,

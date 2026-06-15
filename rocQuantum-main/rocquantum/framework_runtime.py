@@ -244,22 +244,22 @@ def normalize_sparse_operation_csr(
     )
 
 
-def _normalize_sparse_shape(shape: Iterable[int]) -> tuple[int, int]:
+def _normalize_sparse_shape(shape: Iterable[int], prefix: str = "Sparse operation") -> tuple[int, int]:
     if isinstance(shape, (str, bytes)):
-        raise ValueError("Sparse operation matrix shape must have two dimensions.")
+        raise ValueError(f"{prefix} matrix shape must have two dimensions.")
     try:
         raw_shape = list(shape)
     except TypeError as exc:
-        raise ValueError("Sparse operation matrix shape must have two dimensions.") from exc
+        raise ValueError(f"{prefix} matrix shape must have two dimensions.") from exc
     if len(raw_shape) != 2:
-        raise ValueError("Sparse operation matrix shape must have two dimensions.")
+        raise ValueError(f"{prefix} matrix shape must have two dimensions.")
 
-    rows = _normalize_positive_dimension(raw_shape[0], "Sparse operation matrix shape")
-    cols = _normalize_positive_dimension(raw_shape[1], "Sparse operation matrix shape")
+    rows = _normalize_positive_dimension(raw_shape[0], f"{prefix} matrix shape")
+    cols = _normalize_positive_dimension(raw_shape[1], f"{prefix} matrix shape")
     if rows != cols:
-        raise ValueError("Sparse operation matrix must be square.")
+        raise ValueError(f"{prefix} matrix must be square.")
     if rows & (rows - 1):
-        raise ValueError("Sparse operation matrix dimension must be a power of two.")
+        raise ValueError(f"{prefix} matrix dimension must be a power of two.")
     return rows, cols
 
 
@@ -272,23 +272,27 @@ def _normalize_positive_dimension(value: object, label: str) -> int:
     return normalized
 
 
-def _normalize_sparse_index_vector(values: object, label: str) -> np.ndarray:
+def _normalize_sparse_index_vector(
+    values: object,
+    label: str,
+    prefix: str = "Sparse operation",
+) -> np.ndarray:
     if isinstance(values, (str, bytes)):
-        raise ValueError(f"Sparse operation CSR {label} must contain integer indices.")
+        raise ValueError(f"{prefix} CSR {label} must contain integer indices.")
     try:
         raw_values = np.asarray(values, dtype=object).reshape(-1)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            f"Sparse operation CSR {label} must contain integer indices."
+            f"{prefix} CSR {label} must contain integer indices."
         ) from exc
 
     normalized = []
     for value in raw_values:
         if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
-            raise ValueError(f"Sparse operation CSR {label} must contain integer indices.")
+            raise ValueError(f"{prefix} CSR {label} must contain integer indices.")
         integer = int(value)
         if integer < 0:
-            raise ValueError(f"Sparse operation CSR {label} must be non-negative.")
+            raise ValueError(f"{prefix} CSR {label} must be non-negative.")
         normalized.append(integer)
     return np.ascontiguousarray(np.asarray(normalized, dtype=np.int64))
 
@@ -604,19 +608,14 @@ def sparse_hamiltonian_moments_from_statevector(
     shape: Sequence[int],
 ) -> tuple[complex, complex]:
     state = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
-    normalized_data = np.asarray(data, dtype=np.complex128).reshape(-1)
-    normalized_indices = np.asarray(indices, dtype=np.int64).reshape(-1)
-    normalized_indptr = np.asarray(indptr, dtype=np.int64).reshape(-1)
-    rows, cols = (int(dim) for dim in shape)
-    if rows != state.size or cols != state.size:
-        raise ValueError("Sparse Hamiltonian shape must match the statevector length.")
-    if normalized_indptr.size != rows + 1:
-        raise ValueError("Sparse Hamiltonian CSR indptr length must equal rows + 1.")
-    if normalized_data.size != normalized_indices.size:
-        raise ValueError("Sparse Hamiltonian CSR data and indices lengths must match.")
-    if normalized_indptr[0] != 0 or normalized_indptr[-1] != normalized_data.size:
-        raise ValueError("Sparse Hamiltonian CSR indptr must start at 0 and end at nnz.")
-    validate_finite_complex_array(normalized_data, "Sparse Hamiltonian CSR data")
+    normalized_data, normalized_indices, normalized_indptr, normalized_shape = normalize_sparse_hamiltonian_csr(
+        data,
+        indices,
+        indptr,
+        shape,
+        state.size,
+    )
+    rows, cols = normalized_shape
 
     h_state = np.zeros_like(state)
     for row in range(rows):
@@ -632,6 +631,55 @@ def sparse_hamiltonian_moments_from_statevector(
     mean = np.vdot(state, h_state)
     second_moment = np.vdot(h_state, h_state)
     return complex(mean), complex(second_moment)
+
+
+def normalize_sparse_hamiltonian_csr(
+    data: object,
+    indices: object,
+    indptr: object,
+    shape: Iterable[int],
+    state_dimension: int | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[int, int]]:
+    try:
+        raw_data = np.asarray(data, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Sparse Hamiltonian CSR data must contain finite numeric values.") from exc
+
+    normalized_data_values = []
+    for value in raw_data:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError("Sparse Hamiltonian CSR data must contain finite numeric values.")
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError("Sparse Hamiltonian CSR data must contain finite values.")
+        normalized_data_values.append(scalar)
+    normalized_data = np.ascontiguousarray(
+        np.asarray(normalized_data_values, dtype=np.complex128)
+    )
+
+    normalized_indices = _normalize_sparse_index_vector(indices, "indices", "Sparse Hamiltonian")
+    normalized_indptr = _normalize_sparse_index_vector(indptr, "indptr", "Sparse Hamiltonian")
+    rows, cols = _normalize_sparse_shape(shape, "Sparse Hamiltonian")
+    expected_dimension = None if state_dimension is None else int(state_dimension)
+
+    if expected_dimension is not None and (rows != expected_dimension or cols != expected_dimension):
+        raise ValueError("Sparse Hamiltonian shape must match the statevector length.")
+    if normalized_indptr.size != rows + 1:
+        raise ValueError("Sparse Hamiltonian CSR indptr length must equal rows + 1.")
+    if normalized_data.size != normalized_indices.size:
+        raise ValueError("Sparse Hamiltonian CSR data and indices lengths must match.")
+    if (
+        normalized_indptr.size == 0
+        or int(normalized_indptr[0]) != 0
+        or int(normalized_indptr[-1]) != normalized_data.size
+    ):
+        raise ValueError("Sparse Hamiltonian CSR indptr must start at 0 and end at nnz.")
+    if np.any(normalized_indptr[:-1] > normalized_indptr[1:]):
+        raise ValueError("Sparse Hamiltonian CSR indptr must be monotonic.")
+    if np.any(normalized_indices < 0) or np.any(normalized_indices >= cols):
+        raise ValueError("Sparse Hamiltonian CSR column index is out of bounds.")
+
+    return normalized_data, normalized_indices, normalized_indptr, (rows, cols)
 
 
 def apply_sparse_matrix_to_statevector(
@@ -1412,11 +1460,14 @@ class RocQuantumRuntime:
         indptr: object,
         shape: Iterable[int],
     ) -> tuple[complex, complex]:
-        normalized_data = np.ascontiguousarray(np.asarray(data, dtype=np.complex128).reshape(-1))
-        normalized_indices = np.ascontiguousarray(np.asarray(indices, dtype=np.int64).reshape(-1))
-        normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
-        normalized_shape = tuple(int(dim) for dim in shape)
-        validate_finite_complex_array(normalized_data, "Sparse Hamiltonian CSR data")
+        num_qubits = self.num_qubits()
+        normalized_data, normalized_indices, normalized_indptr, normalized_shape = normalize_sparse_hamiltonian_csr(
+            data,
+            indices,
+            indptr,
+            shape,
+            None if num_qubits <= 0 else 1 << num_qubits,
+        )
 
         def _native_sparse_unavailable(exc: Exception) -> bool:
             message = str(exc)
@@ -1468,11 +1519,14 @@ class RocQuantumRuntime:
         indptr: object,
         shape: Iterable[int],
     ) -> tuple[np.ndarray, np.ndarray]:
-        normalized_data = np.ascontiguousarray(np.asarray(data, dtype=np.complex128).reshape(-1))
-        normalized_indices = np.ascontiguousarray(np.asarray(indices, dtype=np.int64).reshape(-1))
-        normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
-        normalized_shape = tuple(int(dim) for dim in shape)
-        validate_finite_complex_array(normalized_data, "Sparse Hamiltonian CSR data")
+        num_qubits = self.num_qubits()
+        normalized_data, normalized_indices, normalized_indptr, normalized_shape = normalize_sparse_hamiltonian_csr(
+            data,
+            indices,
+            indptr,
+            shape,
+            None if num_qubits <= 0 else 1 << num_qubits,
+        )
 
         def _native_sparse_unavailable(exc: Exception) -> bool:
             message = str(exc)
