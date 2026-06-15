@@ -323,6 +323,14 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("void ApplyControlledGate", header)
         self.assertIn("QuantumSimulator::apply_controlled_matrix", implementation)
         self.assertIn("rocsvApplyControlledMatrix", implementation)
+        matrix_body = implementation.split("void QuantumSimulator::apply_matrix", 1)[1].split(
+            "void QuantumSimulator::apply_sparse_matrix", 1
+        )[0]
+        self.assertIn("validate_finite_complex_payload(matrix, \"Matrix payload\")", matrix_body)
+        controlled_body = implementation.split("QuantumSimulator::apply_controlled_matrix", 1)[1].split(
+            "void QuantumSimulator::set_statevector", 1
+        )[0]
+        self.assertIn("validate_finite_complex_payload(matrix, \"Controlled matrix payload\")", controlled_body)
         self.assertIn(".def(\"apply_controlled_matrix\"", bindings)
         self.assertIn(".def(\"ApplyControlledGate\"", bindings)
         self.assertIn("def apply_controlled_matrix", runtime)
@@ -401,6 +409,11 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("rocsvGetExpectationMatrixBatch", hip_header)
         self.assertIn("rocsvGetExpectationMatrixMoments", implementation)
         self.assertIn("rocsvGetExpectationMatrixMomentsBatch", implementation)
+        self.assertIn("validate_finite_complex_payload", implementation)
+        self.assertGreaterEqual(
+            implementation.count("validate_finite_complex_payload(matrix, \"Expectation matrix payload\")"),
+            4,
+        )
         self.assertIn("rocsvGetExpectationMatrixMoments", hip_header)
         self.assertIn("rocsvGetExpectationMatrixMomentsBatch", hip_header)
         self.assertIn("reduce_expectation_matrix_moments_kernel", hipstatevec)

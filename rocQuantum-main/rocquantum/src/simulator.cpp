@@ -58,6 +58,14 @@ void validate_finite_batch_params(const std::vector<double>& params_by_batch) {
     }
 }
 
+void validate_finite_complex_payload(const std::vector<std::complex<double>>& values, const char* label) {
+    for (const std::complex<double>& value : values) {
+        if (!std::isfinite(value.real()) || !std::isfinite(value.imag())) {
+            throw std::invalid_argument(std::string(label) + " must contain finite values.");
+        }
+    }
+}
+
 bool matrix_expectation_host_fallback_allowed() {
     const char* value = std::getenv("ROCQ_ALLOW_HOST_MATRIX_FALLBACK");
     if (!value) {
@@ -613,6 +621,7 @@ void QuantumSimulator::apply_matrix(const std::vector<std::complex<double>>& mat
     if (matrix_dim > static_cast<std::size_t>(std::numeric_limits<unsigned>::max())) {
         throw std::invalid_argument("Matrix dimension exceeds API limit.");
     }
+    validate_finite_complex_payload(matrix, "Matrix payload");
 
     const std::vector<rocComplex> matrix_col_major = row_major_to_column_major(matrix, matrix_dim);
 
@@ -795,6 +804,7 @@ void QuantumSimulator::apply_controlled_matrix(const std::vector<std::complex<do
     if (matrix.size() != expected_elements) {
         throw std::invalid_argument("Controlled matrix element count does not match target qubit count.");
     }
+    validate_finite_complex_payload(matrix, "Controlled matrix payload");
 
     const std::vector<rocComplex> matrix_col_major = row_major_to_column_major(matrix, matrix_dim);
 
@@ -1078,6 +1088,7 @@ std::complex<double> QuantumSimulator::expectation_matrix(
     if (matrix.size() != expected_elements) {
         throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
     }
+    validate_finite_complex_payload(matrix, "Expectation matrix payload");
 
     const std::vector<rocComplex> matrix_col_major = row_major_to_column_major(matrix, matrix_dim);
     rocComplex* d_matrix = nullptr;
@@ -1133,6 +1144,7 @@ std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::expectat
     if (matrix.size() != matrix_dim * matrix_dim) {
         throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
     }
+    validate_finite_complex_payload(matrix, "Expectation matrix payload");
 
     const auto squared_matrix = square_matrix_row_major(matrix, matrix_dim);
     const std::vector<rocComplex> matrix_col_major = row_major_to_column_major(matrix, matrix_dim);
@@ -1215,6 +1227,7 @@ std::vector<std::complex<double>> QuantumSimulator::expectation_matrix_batch(
     if (matrix.size() != expected_elements) {
         throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
     }
+    validate_finite_complex_payload(matrix, "Expectation matrix payload");
 
     const std::vector<rocComplex> matrix_col_major = row_major_to_column_major(matrix, matrix_dim);
     rocComplex* d_matrix = nullptr;
@@ -1275,6 +1288,7 @@ QuantumSimulator::expectation_matrix_moments_batch(
     if (matrix.size() != matrix_dim * matrix_dim) {
         throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
     }
+    validate_finite_complex_payload(matrix, "Expectation matrix payload");
 
     const auto squared_matrix = square_matrix_row_major(matrix, matrix_dim);
     const std::vector<rocComplex> matrix_col_major = row_major_to_column_major(matrix, matrix_dim);
