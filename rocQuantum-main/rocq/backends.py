@@ -1287,12 +1287,64 @@ class DensityMatrixBackend(_BaseBackend):
             value = None
         return None if value is None else float(value)
 
+    def _apply_single_qubit_gate_matrix(self, gate_name: str, target: int) -> None:
+        self._state.apply_gate_matrix(self._gate_matrix(gate_name), target)
+
+    def _apply_ccx_decomposition(self, control_a: int, control_b: int, target: int) -> None:
+        self._apply_single_qubit_gate_matrix("h", target)
+        self._state.apply_cnot(control_b, target)
+        self._apply_single_qubit_gate_matrix("tdg", target)
+        self._state.apply_cnot(control_a, target)
+        self._apply_single_qubit_gate_matrix("t", target)
+        self._state.apply_cnot(control_b, target)
+        self._apply_single_qubit_gate_matrix("tdg", target)
+        self._state.apply_cnot(control_a, target)
+        self._apply_single_qubit_gate_matrix("t", control_b)
+        self._apply_single_qubit_gate_matrix("t", target)
+        self._apply_single_qubit_gate_matrix("h", target)
+        self._state.apply_cnot(control_a, control_b)
+        self._apply_single_qubit_gate_matrix("t", control_a)
+        self._apply_single_qubit_gate_matrix("tdg", control_b)
+        self._state.apply_cnot(control_a, control_b)
+
+    def _apply_mcx_decomposition(self, targets: Sequence[int]) -> None:
+        if len(targets) < 2:
+            raise ValueError("Gate 'mcx' requires at least one control qubit and one target qubit.")
+        if len(targets) == 2:
+            self._state.apply_cnot(targets[0], targets[1])
+            return
+        if len(targets) == 3:
+            self._apply_ccx_decomposition(targets[0], targets[1], targets[2])
+            return
+        raise NotImplementedError(
+            "DensityMatrixBackend supports mcx with at most two controls; "
+            "larger MCX needs an explicit ancilla/decomposition policy."
+        )
+
+    def _apply_cswap_decomposition(self, control: int, target_a: int, target_b: int) -> None:
+        self._apply_ccx_decomposition(control, target_b, target_a)
+        self._apply_ccx_decomposition(control, target_a, target_b)
+        self._apply_ccx_decomposition(control, target_b, target_a)
+
     def _apply_op(self, op):
         params = op.params or {}
         name = op.name.lower()
 
         if name == "cnot":
             self._state.apply_cnot(op.targets[0], op.targets[1])
+            return
+        if name in {"ccx", "toffoli"}:
+            if len(op.targets) != 3:
+                raise ValueError(f"Gate '{op.name}' requires [control_a, control_b, target].")
+            self._apply_ccx_decomposition(op.targets[0], op.targets[1], op.targets[2])
+            return
+        if name == "mcx":
+            self._apply_mcx_decomposition(op.targets)
+            return
+        if name in {"cswap", "fredkin"}:
+            if len(op.targets) != 3:
+                raise ValueError(f"Gate '{op.name}' requires [control, target_a, target_b].")
+            self._apply_cswap_decomposition(op.targets[0], op.targets[1], op.targets[2])
             return
         if name == "swap":
             control, target = op.targets

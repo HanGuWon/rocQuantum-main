@@ -149,6 +149,17 @@ class TestDensityMatContract(unittest.TestCase):
         self.assertIn("apply_amplitude_damping_channel", backend)
         self.assertNotIn("does not expose a native sampling path yet", backend)
 
+    def test_canonical_density_backend_decomposes_multi_control_gates(self):
+        with open(_CANONICAL_BACKEND, "r", encoding="utf-8") as f:
+            backend = f.read()
+
+        self.assertIn("def _apply_ccx_decomposition", backend)
+        self.assertIn("def _apply_cswap_decomposition", backend)
+        self.assertIn("def _apply_mcx_decomposition", backend)
+        self.assertIn('if name in {"ccx", "toffoli"}', backend)
+        self.assertIn('if name in {"cswap", "fredkin"}', backend)
+        self.assertIn("larger MCX needs an explicit ancilla/decomposition policy", backend)
+
 
 if __name__ == "__main__":
     unittest.main()

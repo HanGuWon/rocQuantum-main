@@ -15,7 +15,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 import rocq
-from rocq.kernel import kernel
+from rocq.kernel import GateOp, kernel
 from rocq.operator import HermitianOperator, PauliOperator, SparseHamiltonianOperator, get_expectation_value
 
 rocq_kernel_module = importlib.import_module("rocq.kernel")
@@ -178,6 +178,75 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         self.assertEqual(rocq.observe(prep_state, PauliOperator("X0"), backend="tableau"), 1.0)
         self.assertEqual(rocq.observe(prep_state, PauliOperator("X0"), backend="clifford"), 1.0)
+
+    def test_density_matrix_backend_decomposes_toffoli(self):
+        from rocq.backends import DensityMatrixBackend
+
+        class RecordingDensityState:
+            def __init__(self):
+                self.calls = []
+
+            def apply_gate_matrix(self, matrix, target, adjoint=False):
+                self.calls.append(("gate", np.asarray(matrix), int(target)))
+
+            def apply_cnot(self, control, target):
+                self.calls.append(("cnot", int(control), int(target)))
+
+        state = RecordingDensityState()
+        backend = DensityMatrixBackend.__new__(DensityMatrixBackend)
+        backend.num_qubits = 3
+        backend._state = state
+
+        backend._apply_op(GateOp("ccx", [0, 1, 2], {}))
+
+        def gate_label(matrix):
+            for name in ("h", "t", "tdg"):
+                if np.allclose(matrix, backend._gate_matrix(name)):
+                    return name
+            return "unknown"
+
+        labeled_calls = [
+            (call[0], gate_label(call[1]), call[2]) if call[0] == "gate" else call
+            for call in state.calls
+        ]
+        self.assertEqual(
+            labeled_calls,
+            [
+                ("gate", "h", 2),
+                ("cnot", 1, 2),
+                ("gate", "tdg", 2),
+                ("cnot", 0, 2),
+                ("gate", "t", 2),
+                ("cnot", 1, 2),
+                ("gate", "tdg", 2),
+                ("cnot", 0, 2),
+                ("gate", "t", 1),
+                ("gate", "t", 2),
+                ("gate", "h", 2),
+                ("cnot", 0, 1),
+                ("gate", "t", 0),
+                ("gate", "tdg", 1),
+                ("cnot", 0, 1),
+            ],
+        )
+
+    def test_density_matrix_backend_decomposes_cswap_and_bounds_mcx(self):
+        from rocq.backends import DensityMatrixBackend
+
+        backend = DensityMatrixBackend.__new__(DensityMatrixBackend)
+        backend.num_qubits = 4
+        backend._state = mock.Mock()
+
+        decomposed = []
+        backend._apply_ccx_decomposition = lambda a, b, target: decomposed.append((a, b, target))
+        backend._apply_op(GateOp("cswap", [0, 1, 2], {}))
+
+        self.assertEqual(decomposed, [(0, 2, 1), (0, 1, 2), (0, 2, 1)])
+
+        backend._apply_op(GateOp("mcx", [0, 1], {}))
+        backend._state.apply_cnot.assert_called_once_with(0, 1)
+        with self.assertRaisesRegex(NotImplementedError, "at most two controls"):
+            backend._apply_op(GateOp("mcx", [0, 1, 2, 3], {}))
 
     def test_qir_missing_binding_error_is_actionable(self):
         @kernel
