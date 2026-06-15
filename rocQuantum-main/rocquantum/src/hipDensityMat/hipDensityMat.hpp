@@ -246,8 +246,9 @@ hipDensityMatStatus_t hipDensityMatApplyChannel(hipDensityMatState_t state, int 
 /**
  * @brief Samples computational-basis outcomes from the density-matrix diagonal.
  *
- * This correctness path copies the density matrix diagonal information to host
- * memory before drawing samples.
+ * This correctness path reduces measured-qubit marginal probabilities on the
+ * GPU, copies only the outcome probability vector to host memory, then draws
+ * samples on the host.
  *
  * @param[in] state The state handle.
  * @param[in] measured_qubits Array of qubits to sample.

@@ -138,6 +138,33 @@ __global__ void extract_density_diagonal_kernel(const hipComplex* rho, double* d
     }
 }
 
+__global__ void accumulate_density_marginal_probabilities_kernel(
+    const hipComplex* rho,
+    double* outcome_probs,
+    int64_t dim,
+    const int* measured_qubits,
+    int num_measured_qubits)
+{
+    int64_t basis = blockIdx.x * blockDim.x + threadIdx.x;
+    if (basis >= dim) {
+        return;
+    }
+
+    size_t outcome = 0;
+    for (int m = 0; m < num_measured_qubits; ++m) {
+        if ((basis >> measured_qubits[m]) & 1LL) {
+            outcome |= (size_t{1} << m);
+        }
+    }
+
+    const size_t diagonal_index =
+        static_cast<size_t>(basis) * static_cast<size_t>(dim) + static_cast<size_t>(basis);
+    const double prob = static_cast<double>(rho[diagonal_index].x);
+    if (prob > 0.0) {
+        atomicAdd(&outcome_probs[outcome], prob);
+    }
+}
+
 namespace {
 
 hipDensityMatStatus_t apply_kraus_channel(
@@ -399,6 +426,75 @@ hipDensityMatStatus_t copy_density_diagonal_to_host(
     }
 
     hipFree(diagonal_device);
+    return check_hip_error(hip_err);
+}
+
+hipDensityMatStatus_t compute_density_marginal_probabilities(
+    hipDensityMatState* internal_state,
+    const int* measured_qubits,
+    int num_measured_qubits,
+    std::vector<double>& outcome_probs_host)
+{
+    if (internal_state == nullptr || measured_qubits == nullptr || num_measured_qubits <= 0) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
+
+    const int64_t dim = 1LL << internal_state->num_qubits_;
+    const size_t num_outcomes = size_t{1} << num_measured_qubits;
+    outcome_probs_host.assign(num_outcomes, 0.0);
+
+    int* measured_qubits_device = nullptr;
+    hipError_t hip_err = hipMalloc(
+        &measured_qubits_device,
+        static_cast<size_t>(num_measured_qubits) * sizeof(int));
+    if (hip_err != hipSuccess) {
+        return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
+    }
+
+    double* outcome_probs_device = nullptr;
+    hip_err = hipMalloc(&outcome_probs_device, num_outcomes * sizeof(double));
+    if (hip_err != hipSuccess) {
+        hipFree(measured_qubits_device);
+        return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
+    }
+
+    hip_err = hipMemcpy(
+        measured_qubits_device,
+        measured_qubits,
+        static_cast<size_t>(num_measured_qubits) * sizeof(int),
+        hipMemcpyHostToDevice);
+    if (hip_err == hipSuccess) {
+        hip_err = hipMemset(outcome_probs_device, 0, num_outcomes * sizeof(double));
+    }
+    if (hip_err == hipSuccess) {
+        const int block_size = 256;
+        const int grid_size = static_cast<int>((dim + block_size - 1) / block_size);
+        hipLaunchKernelGGL(
+            accumulate_density_marginal_probabilities_kernel,
+            grid_size,
+            block_size,
+            0,
+            internal_state->stream_,
+            static_cast<const hipComplex*>(internal_state->device_data_),
+            outcome_probs_device,
+            dim,
+            measured_qubits_device,
+            num_measured_qubits);
+        hip_err = hipGetLastError();
+    }
+    if (hip_err == hipSuccess) {
+        hip_err = hipStreamSynchronize(internal_state->stream_);
+    }
+    if (hip_err == hipSuccess) {
+        hip_err = hipMemcpy(
+            outcome_probs_host.data(),
+            outcome_probs_device,
+            num_outcomes * sizeof(double),
+            hipMemcpyDeviceToHost);
+    }
+
+    hipFree(outcome_probs_device);
+    hipFree(measured_qubits_device);
     return check_hip_error(hip_err);
 }
 
@@ -1120,25 +1216,14 @@ hipDensityMatStatus_t hipDensityMatSample(
         return status;
     }
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
-    const size_t num_outcomes = size_t{1} << num_measured_qubits;
-    std::vector<double> diagonal_probs;
-
-    status = copy_density_diagonal_to_host(internal_state, diagonal_probs);
+    std::vector<double> outcome_probs;
+    status = compute_density_marginal_probabilities(
+        internal_state,
+        measured_qubits,
+        num_measured_qubits,
+        outcome_probs);
     if (status != HIPDENSITYMAT_STATUS_SUCCESS) {
         return status;
-    }
-
-    std::vector<double> outcome_probs(num_outcomes, 0.0);
-    for (int64_t basis = 0; basis < dim; ++basis) {
-        size_t outcome = 0;
-        for (int m = 0; m < num_measured_qubits; ++m) {
-            if ((basis >> measured_qubits[m]) & 1LL) {
-                outcome |= (size_t{1} << m);
-            }
-        }
-        const double prob = std::max(0.0, diagonal_probs[static_cast<size_t>(basis)]);
-        outcome_probs[outcome] += prob;
     }
 
     double total_prob = 0.0;
