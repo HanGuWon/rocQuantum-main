@@ -62,7 +62,9 @@ class TestDensityMatContract(unittest.TestCase):
         self.assertIn("rocdmChannel_t", public_header)
         self.assertIn("target_qubits_host", public_header)
         self.assertIn("rocdmSample", public_header)
+        self.assertIn("rocdmComputeExpectationMatrix", public_header)
         self.assertIn("hipDensityMatSample", compat)
+        self.assertIn("hipDensityMatComputeExpectationMatrix", compat)
 
     def test_channels_share_kraus_helper_instead_of_placeholder(self):
         with open(_DENSITY_SOURCE, "r", encoding="utf-8") as f:
@@ -95,6 +97,33 @@ class TestDensityMatContract(unittest.TestCase):
         self.assertNotIn("density_host[basis * dim + basis]", source)
         self.assertIn("validate_measured_qubits", source)
         self.assertIn("num_measured_qubits > 20", source)
+
+    def test_dense_observable_expectation_is_native_for_supported_targets(self):
+        with open(_DENSITY_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+        with open(_DENSITY_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_PY_BINDINGS, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_CANONICAL_BACKEND, "r", encoding="utf-8") as f:
+            backend = f.read()
+
+        self.assertIn("hipDensityMatComputeExpectationMatrix", header)
+        self.assertIn("density_matrix_expectation_matrix_kernel", source)
+        self.assertIn("Tr(M rho)", header)
+        self.assertIn("num_target_qubits > 4", source)
+        self.assertIn("HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED", source)
+        self.assertIn('.def("compute_expectation_matrix"', bindings)
+        self.assertIn("hipDensityMatComputeExpectationMatrix", bindings)
+        self.assertIn("def compute_expectation_matrix(self, matrix: np.ndarray, targets: Sequence[int])", backend)
+        self.assertIn("native(matrix, targets)", backend)
+        density_expectation_block = backend.split("class DensityMatrixBackend", 1)[1].split(
+            "if isinstance(operator, SparseHamiltonianOperator)", 1
+        )[0]
+        self.assertLess(
+            density_expectation_block.find("native(matrix, targets)"),
+            density_expectation_block.find("_density_matrix_expectation_matrix"),
+        )
 
     def test_python_binding_exposes_channel_and_sampling_surface(self):
         with open(_PY_BINDINGS, "r", encoding="utf-8") as f:

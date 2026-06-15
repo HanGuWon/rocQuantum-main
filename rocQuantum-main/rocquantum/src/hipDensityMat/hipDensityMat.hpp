@@ -157,6 +157,29 @@ hipDensityMatStatus_t hipDensityMatComputePauliZProductExpectation(
     double* result_host);
 
 /**
+ * @brief Computes Tr(M rho) for a dense matrix acting on target qubits.
+ *
+ * Supports up to four target qubits in the native HIP reduction path. Larger
+ * target sets return HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED so callers can use
+ * an explicit correctness fallback.
+ *
+ * @param[in] state The state handle.
+ * @param[in] target_qubits_host Array of target qubit indices.
+ * @param[in] num_target_qubits Number of target qubits.
+ * @param[in] matrix_host Row-major dense matrix with dimension 2^num_target_qubits.
+ * @param[in] matrix_dim Matrix dimension.
+ * @param[out] result_host Host pointer for the complex expectation value.
+ * @return hipDensityMatStatus_t Status of the operation.
+ */
+hipDensityMatStatus_t hipDensityMatComputeExpectationMatrix(
+    hipDensityMatState_t state,
+    const int* target_qubits_host,
+    int num_target_qubits,
+    const hipComplex* matrix_host,
+    int matrix_dim,
+    hipComplex* result_host);
+
+/**
  * @brief Applies a single-qubit Amplitude Damping noise channel.
  *
  * This channel models energy dissipation, e.g., a |1> state decaying to |0>.

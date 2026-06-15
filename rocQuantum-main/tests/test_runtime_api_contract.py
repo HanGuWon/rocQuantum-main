@@ -520,6 +520,39 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         self.assertEqual(backend.expectation(operator), 1.0)
 
+    def test_native_density_backend_prefers_dense_expectation_hook(self):
+        from rocq.backends import DensityMatrixBackend
+
+        class _FakeDensityState:
+            instances = []
+
+            def __init__(self, num_qubits):
+                self.num_qubits = int(num_qubits)
+                self.calls = []
+                _FakeDensityState.instances.append(self)
+
+            def compute_expectation_matrix(self, matrix, targets):
+                self.calls.append((np.asarray(matrix).dtype, np.asarray(matrix).shape, list(targets)))
+                return 0.25 + 0.0j
+
+            def get_density_matrix(self):
+                raise AssertionError("native dense expectation should avoid full density readback")
+
+        class _FakeDensityModule:
+            DensityMatrixState = _FakeDensityState
+
+        with mock.patch("rocq.backends.dm_backend", _FakeDensityModule):
+            backend = DensityMatrixBackend(1)
+            operator = HermitianOperator(
+                np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128),
+                coefficient=2.0,
+                targets=[0],
+            )
+
+            self.assertEqual(backend.expectation(operator), 0.5)
+
+        self.assertEqual(_FakeDensityState.instances[-1].calls, [(np.dtype(np.complex64), (2, 2), [0])])
+
     def test_mock_density_backend_applies_multi_qubit_kraus_noise_model(self):
         from rocq.kernel import GateOp
 

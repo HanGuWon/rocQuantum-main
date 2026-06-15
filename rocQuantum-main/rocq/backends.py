@@ -819,6 +819,14 @@ class _HipDensityMatrixState:
     def compute_z_product_expectation(self, targets: Sequence[int]):
         return self._state._compute_z_product_expectation(list(targets))
 
+    def compute_expectation_matrix(self, matrix: np.ndarray, targets: Sequence[int]):
+        if len(targets) > 4:
+            raise NotImplementedError("Native density-matrix dense expectation supports at most four target qubits.")
+        native = getattr(self._state, "compute_expectation_matrix", None)
+        if not callable(native):
+            raise NotImplementedError("The active density-matrix binding does not expose dense expectation.")
+        return native(_coerce_complex64_matrix(matrix), list(targets))
+
     def sample(self, measured_qubits: Sequence[int], num_shots: int):
         return self._state.sample(list(measured_qubits), int(num_shots))
 
@@ -1354,12 +1362,21 @@ class DensityMatrixBackend(_BaseBackend):
     def expectation(self, operator):
         if isinstance(operator, HermitianOperator):
             matrix, targets = _normalize_matrix_targets(operator.matrix, operator.targets, self.num_qubits)
-            value = _density_matrix_expectation_matrix(
-                self.get_state(),
-                matrix,
-                targets,
-                self.num_qubits,
-            )
+            value = None
+            if not self._uses_mock:
+                native = getattr(self._state, "compute_expectation_matrix", None)
+                if callable(native) and len(targets) <= 4:
+                    try:
+                        value = native(matrix, targets)
+                    except NotImplementedError:
+                        value = None
+            if value is None:
+                value = _density_matrix_expectation_matrix(
+                    self.get_state(),
+                    matrix,
+                    targets,
+                    self.num_qubits,
+                )
             return _finalize_expectation(operator.coefficient * value)
 
         if isinstance(operator, SparseHamiltonianOperator):

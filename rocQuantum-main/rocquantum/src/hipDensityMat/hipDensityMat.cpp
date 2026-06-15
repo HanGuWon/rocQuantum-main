@@ -165,6 +165,73 @@ __global__ void accumulate_density_marginal_probabilities_kernel(
     }
 }
 
+__global__ void density_matrix_expectation_matrix_kernel(
+    const hipComplex* rho,
+    const hipComplex* matrix,
+    const int* target_qubits,
+    int num_target_qubits,
+    int64_t dim,
+    int matrix_dim,
+    hipComplex* block_sums)
+{
+    extern __shared__ double shared[];
+    double* real_sums = shared;
+    double* imag_sums = shared + blockDim.x;
+
+    const unsigned int tid = threadIdx.x;
+    const int64_t row_start = static_cast<int64_t>(blockIdx.x) * blockDim.x + tid;
+    const int64_t stride = static_cast<int64_t>(gridDim.x) * blockDim.x;
+
+    double local_re = 0.0;
+    double local_im = 0.0;
+    for (int64_t row_index = row_start; row_index < dim; row_index += stride) {
+        int row_target = 0;
+        int64_t base_index = row_index;
+        for (int bit = 0; bit < num_target_qubits; ++bit) {
+            const int qubit = target_qubits[bit];
+            const int64_t mask = int64_t{1} << qubit;
+            if ((row_index & mask) != 0) {
+                row_target |= (1 << bit);
+            }
+            base_index &= ~mask;
+        }
+
+        for (int col_target = 0; col_target < matrix_dim; ++col_target) {
+            int64_t col_index = base_index;
+            for (int bit = 0; bit < num_target_qubits; ++bit) {
+                if ((col_target >> bit) & 1) {
+                    col_index |= (int64_t{1} << target_qubits[bit]);
+                }
+            }
+
+            const hipComplex m = matrix[row_target * matrix_dim + col_target];
+            const hipComplex rho_value =
+                rho[static_cast<size_t>(col_index) * static_cast<size_t>(dim) + static_cast<size_t>(row_index)];
+            local_re += static_cast<double>(m.x) * static_cast<double>(rho_value.x) -
+                        static_cast<double>(m.y) * static_cast<double>(rho_value.y);
+            local_im += static_cast<double>(m.x) * static_cast<double>(rho_value.y) +
+                        static_cast<double>(m.y) * static_cast<double>(rho_value.x);
+        }
+    }
+
+    real_sums[tid] = local_re;
+    imag_sums[tid] = local_im;
+    __syncthreads();
+
+    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            real_sums[tid] += real_sums[tid + s];
+            imag_sums[tid] += imag_sums[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        block_sums[blockIdx.x] =
+            make_hipFloatComplex(static_cast<float>(real_sums[0]), static_cast<float>(imag_sums[0]));
+    }
+}
+
 namespace {
 
 hipDensityMatStatus_t apply_kraus_channel(
@@ -879,6 +946,118 @@ hipDensityMatStatus_t hipDensityMatComputePauliZProductExpectation(
     hipFree(z_qubit_indices_device);
     hipFree(partial_sums_device);
 
+    return HIPDENSITYMAT_STATUS_SUCCESS;
+}
+
+hipDensityMatStatus_t hipDensityMatComputeExpectationMatrix(
+    hipDensityMatState_t state,
+    const int* target_qubits_host,
+    int num_target_qubits,
+    const hipComplex* matrix_host,
+    int matrix_dim,
+    hipComplex* result_host)
+{
+    if (state == nullptr || target_qubits_host == nullptr || matrix_host == nullptr ||
+        result_host == nullptr || num_target_qubits <= 0 || matrix_dim <= 0) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
+
+    hipDensityMatState* internal_state = static_cast<hipDensityMatState*>(state);
+    const hipDensityMatStatus_t target_status =
+        validate_measured_qubits(target_qubits_host, num_target_qubits, internal_state->num_qubits_);
+    if (target_status != HIPDENSITYMAT_STATUS_SUCCESS) {
+        return target_status;
+    }
+    if (num_target_qubits > 4) {
+        return HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED;
+    }
+    if (matrix_dim != (1 << num_target_qubits)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
+
+    const int64_t dim = 1LL << internal_state->num_qubits_;
+    const size_t matrix_elements = static_cast<size_t>(matrix_dim) * static_cast<size_t>(matrix_dim);
+
+    int* target_qubits_device = nullptr;
+    hipError_t hip_err = hipMalloc(
+        &target_qubits_device,
+        static_cast<size_t>(num_target_qubits) * sizeof(int));
+    if (hip_err != hipSuccess) {
+        return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
+    }
+
+    hipComplex* matrix_device = nullptr;
+    hip_err = hipMalloc(&matrix_device, matrix_elements * sizeof(hipComplex));
+    if (hip_err != hipSuccess) {
+        hipFree(target_qubits_device);
+        return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
+    }
+
+    const int block_size = 256;
+    const int num_blocks = std::min(static_cast<int>((dim + block_size - 1) / block_size), 2048);
+    hipComplex* block_sums_device = nullptr;
+    hip_err = hipMalloc(&block_sums_device, static_cast<size_t>(num_blocks) * sizeof(hipComplex));
+    if (hip_err != hipSuccess) {
+        hipFree(matrix_device);
+        hipFree(target_qubits_device);
+        return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
+    }
+
+    hip_err = hipMemcpy(
+        target_qubits_device,
+        target_qubits_host,
+        static_cast<size_t>(num_target_qubits) * sizeof(int),
+        hipMemcpyHostToDevice);
+    if (hip_err == hipSuccess) {
+        hip_err = hipMemcpy(
+            matrix_device,
+            matrix_host,
+            matrix_elements * sizeof(hipComplex),
+            hipMemcpyHostToDevice);
+    }
+    if (hip_err == hipSuccess) {
+        hipLaunchKernelGGL(
+            density_matrix_expectation_matrix_kernel,
+            num_blocks,
+            block_size,
+            2 * block_size * sizeof(double),
+            internal_state->stream_,
+            static_cast<const hipComplex*>(internal_state->device_data_),
+            matrix_device,
+            target_qubits_device,
+            num_target_qubits,
+            dim,
+            matrix_dim,
+            block_sums_device);
+        hip_err = hipGetLastError();
+    }
+    if (hip_err == hipSuccess) {
+        hip_err = hipStreamSynchronize(internal_state->stream_);
+    }
+
+    std::vector<hipComplex> block_sums_host(static_cast<size_t>(num_blocks));
+    if (hip_err == hipSuccess) {
+        hip_err = hipMemcpy(
+            block_sums_host.data(),
+            block_sums_device,
+            static_cast<size_t>(num_blocks) * sizeof(hipComplex),
+            hipMemcpyDeviceToHost);
+    }
+
+    hipFree(block_sums_device);
+    hipFree(matrix_device);
+    hipFree(target_qubits_device);
+    if (hip_err != hipSuccess) {
+        return HIPDENSITYMAT_STATUS_EXECUTION_FAILED;
+    }
+
+    double total_re = 0.0;
+    double total_im = 0.0;
+    for (const hipComplex& block_sum : block_sums_host) {
+        total_re += static_cast<double>(block_sum.x);
+        total_im += static_cast<double>(block_sum.y);
+    }
+    *result_host = make_hipFloatComplex(static_cast<float>(total_re), static_cast<float>(total_im));
     return HIPDENSITYMAT_STATUS_SUCCESS;
 }
 
