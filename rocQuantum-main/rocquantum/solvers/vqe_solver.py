@@ -64,8 +64,15 @@ def _parameter_prefers_vector(parameter: inspect.Parameter) -> bool:
     return any(token in annotation_text for token in ("ndarray", "array", "sequence", "list", "tuple"))
 
 
+def _parameter_vector(params, label: str = "parameters") -> np.ndarray:
+    vector = np.asarray(params, dtype=float).reshape(-1)
+    if not np.all(np.isfinite(vector)):
+        raise ValueError(f"{label} must be finite.")
+    return vector
+
+
 def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
-    params = np.asarray(params, dtype=float).reshape(-1)
+    params = _parameter_vector(params)
     underlying = getattr(ansatz_kernel, "_func", ansatz_kernel)
     try:
         signature = inspect.signature(underlying)
@@ -85,10 +92,6 @@ def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
     if len(positional) == 1 and (params.size != 1 or _parameter_prefers_vector(positional[0])):
         return (params.copy(),)
     return tuple(float(value) for value in params)
-
-
-def _parameter_vector(params) -> np.ndarray:
-    return np.asarray(params, dtype=float).reshape(-1)
 
 # --- Optimizer Strategy Pattern Definition ---
 
@@ -234,6 +237,8 @@ class VQE_Solver:
             scale = 0.5
         elif method in {"finite_diff", "finite_difference"}:
             shift = float(step)
+            if not np.isfinite(shift) or shift <= 0:
+                raise ValueError("finite_diff step must be positive and finite.")
             scale = 1.0 / (2.0 * shift)
         else:
             raise ValueError("method must be 'parameter_shift' or 'finite_diff'.")
@@ -276,7 +281,7 @@ class VQE_Solver:
 
         result = self.optimizer.minimize(
             fun=self._objective_function,
-            x0=_parameter_vector(initial_params),
+            x0=_parameter_vector(initial_params, label="initial_params"),
             args=(hamiltonian, ansatz_kernel, num_qubits)
         )
 

@@ -11,7 +11,9 @@ Current supported subset:
 - `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`;
   scalar single-parameter inputs are normalized to one-element vectors for
   gradient and optimizer entry points, and gradient probes do not mutate the
-  optimizer `intermediate_results` trace.
+  optimizer `intermediate_results` trace. VQE objective, optimizer initial
+  parameters, and gradient parameters must be finite; finite-difference steps
+  must be positive and finite.
 - `make_maxcut_qaoa_kernel()` builds a MaxCut-style QAOA ansatz using H, CNOT,
   RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.

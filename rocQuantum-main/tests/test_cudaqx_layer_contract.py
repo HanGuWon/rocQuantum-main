@@ -133,6 +133,60 @@ class TestVqeSolverContract(unittest.TestCase):
         self.assertEqual(solver._intermediate_results[0]["energy"], -0.25)
         self.assertEqual(patched_observe.call_count, 2)
 
+    def test_vqe_rejects_nonfinite_parameters_before_backend_use(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import Optimizer, VQE_Solver
+
+        class RecordingOptimizer(Optimizer):
+            def __init__(self):
+                self.called = False
+
+            def minimize(self, fun, x0, args=()):
+                self.called = True
+                return types.SimpleNamespace(fun=0.0, x=np.asarray(x0, dtype=float))
+
+        def ansatz(theta):
+            return None
+
+        solver = VQE_Solver()
+        hamiltonian = PauliOperator("Z0")
+        with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+            with self.assertRaisesRegex(ValueError, "parameters must be finite"):
+                solver._objective_function(np.array([np.inf]), hamiltonian, ansatz, 1)
+        patched_observe.assert_not_called()
+
+        optimizer = RecordingOptimizer()
+        with self.assertRaisesRegex(ValueError, "initial_params must be finite"):
+            VQE_Solver(optimizer=optimizer).solve(
+                hamiltonian,
+                ansatz,
+                1,
+                initial_params=[np.nan],
+            )
+        self.assertFalse(optimizer.called)
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+            with self.assertRaisesRegex(ValueError, "parameters must be finite"):
+                solver.estimate_gradient(
+                    np.array([np.nan]),
+                    hamiltonian,
+                    ansatz,
+                    1,
+                )
+        patched_observe.assert_not_called()
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+            with self.assertRaisesRegex(ValueError, "finite_diff step"):
+                solver.estimate_gradient(
+                    np.array([0.25]),
+                    hamiltonian,
+                    ansatz,
+                    1,
+                    method="finite_diff",
+                    step=0.0,
+                )
+        patched_observe.assert_not_called()
+
     def test_solve_normalizes_scalar_initial_parameter(self):
         from rocq.operator import PauliOperator
         from rocquantum.solvers.vqe_solver import Optimizer, VQE_Solver
