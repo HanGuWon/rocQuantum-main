@@ -128,6 +128,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "dense matrix operation validation before native device upload",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "native HIP-stream futures",
             capabilities["unsupported_features"],
         )
@@ -791,6 +795,80 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "target qubits must be distinct"):
             backend._apply_op(GateOp("cnot", [0, 0], {}))
         backend._state.apply_cnot.assert_not_called()
+
+    def test_hip_statevector_matrix_paths_validate_inputs_before_device_upload(self):
+        from rocq.backends import _HipStateVectorState
+
+        invalid_apply_matrix_cases = (
+            ([0, 0], np.eye(4, dtype=np.complex128)),
+            ([True], np.eye(2, dtype=np.complex128)),
+            ([0, 1], np.eye(2, dtype=np.complex128)),
+            ([0], np.array([[1.0, 0.0]], dtype=np.complex128)),
+            ([0], np.array([[1.0, 0.0], [0.0, np.nan]], dtype=np.complex128)),
+            ([0], [[1.0, 0.0], [0.0, True]]),
+            ([0], [[1.0, 0.0], [0.0, "1.0"]]),
+        )
+
+        invalid_controlled_cases = (
+            ([], [1], np.eye(2, dtype=np.complex128)),
+            ([0], [0], np.eye(2, dtype=np.complex128)),
+            ([0, 0], [1], np.eye(2, dtype=np.complex128)),
+            ([0], [1, 1], np.eye(4, dtype=np.complex128)),
+            ([0], [1], np.eye(4, dtype=np.complex128)),
+            ([0], [1], np.array([[1.0, 0.0], [0.0, np.inf]], dtype=np.complex128)),
+        )
+
+        for targets, matrix in invalid_apply_matrix_cases:
+            with self.subTest(apply_matrix_targets=targets, matrix=np.asarray(matrix, dtype=object).shape):
+                state = _HipStateVectorState.__new__(_HipStateVectorState)
+                state._handle = object()
+                state._d_state = object()
+                state._num_qubits = 2
+                fake_hip_backend = mock.Mock()
+                fake_hip_backend.create_device_matrix_from_numpy.side_effect = AssertionError(
+                    "invalid apply_matrix inputs should fail before device upload"
+                )
+                with mock.patch("rocq.backends.hip_backend", fake_hip_backend):
+                    with self.assertRaises((TypeError, ValueError)):
+                        state.apply_matrix(targets, matrix)
+                fake_hip_backend.create_device_matrix_from_numpy.assert_not_called()
+
+        for controls, targets, matrix in invalid_controlled_cases:
+            with self.subTest(controlled_controls=controls, targets=targets, matrix=np.asarray(matrix, dtype=object).shape):
+                state = _HipStateVectorState.__new__(_HipStateVectorState)
+                state._handle = object()
+                state._d_state = object()
+                state._num_qubits = 2
+                fake_hip_backend = mock.Mock()
+                fake_hip_backend.create_device_matrix_from_numpy.side_effect = AssertionError(
+                    "invalid apply_controlled_matrix inputs should fail before device upload"
+                )
+                with mock.patch("rocq.backends.hip_backend", fake_hip_backend):
+                    with self.assertRaises((TypeError, ValueError)):
+                        state.apply_controlled_matrix(controls, targets, matrix)
+                fake_hip_backend.create_device_matrix_from_numpy.assert_not_called()
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 2
+        fake_hip_backend = mock.Mock()
+        fake_hip_backend.rocqStatus.SUCCESS = "success"
+        fake_hip_backend.create_device_matrix_from_numpy.return_value = "device-matrix"
+        fake_hip_backend.apply_matrix.return_value = "success"
+        with mock.patch("rocq.backends.hip_backend", fake_hip_backend):
+            state.apply_matrix([0], np.eye(2, dtype=np.complex128))
+
+        uploaded_matrix = fake_hip_backend.create_device_matrix_from_numpy.call_args.args[0]
+        self.assertEqual(uploaded_matrix.dtype, np.dtype(np.complex64))
+        fake_hip_backend.apply_matrix.assert_called_once_with(
+            state._handle,
+            state._d_state,
+            2,
+            [0],
+            "device-matrix",
+            2,
+        )
 
     def test_backends_reject_out_of_range_pauli_observables_before_native_dispatch(self):
         from rocq.backends import DensityMatrixBackend, StabilizerBackend, _HipStateVectorState

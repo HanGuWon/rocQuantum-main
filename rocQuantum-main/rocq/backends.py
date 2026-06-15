@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import os
 import warnings
-from numbers import Integral, Real
+from numbers import Integral, Number, Real
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -238,6 +238,47 @@ def _normalize_gate_targets(
     if len(set(normalized)) != len(normalized):
         raise ValueError(f"Gate '{op_name}' target qubits must be distinct.")
     return normalized
+
+
+def _normalize_operation_matrix(
+    op_name: str,
+    targets,
+    matrix,
+    num_qubits: int,
+) -> tuple[List[int], np.ndarray]:
+    normalized_targets = _normalize_gate_targets(
+        op_name,
+        targets,
+        num_qubits,
+        min_count=1,
+    )
+
+    try:
+        raw_matrix = np.asarray(matrix, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{op_name} matrix must contain finite numeric values.") from exc
+
+    if raw_matrix.ndim != 2 or raw_matrix.shape[0] != raw_matrix.shape[1]:
+        raise ValueError(f"{op_name} expects a square complex matrix.")
+
+    target_dim = 1 << len(normalized_targets)
+    if raw_matrix.shape != (target_dim, target_dim):
+        raise ValueError(
+            f"{op_name} matrix dimension must be 2^len(targets) "
+            f"({target_dim}x{target_dim})."
+        )
+
+    normalized = []
+    for value in raw_matrix.reshape(-1):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError(f"{op_name} matrix must contain finite numeric values.")
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError(f"{op_name} matrix must contain finite numeric values.")
+        normalized.append(scalar)
+
+    matrix_array = np.asarray(normalized, dtype=np.complex64).reshape(raw_matrix.shape)
+    return normalized_targets, np.ascontiguousarray(matrix_array, dtype=np.complex64)
 
 
 def _finalize_expectation(value: complex):
@@ -1101,28 +1142,48 @@ class _HipStateVectorState:
         raise ValueError(f"Gate '{op_name}' is not supported by the hipStateVec backend.")
 
     def apply_matrix(self, targets: Sequence[int], matrix: np.ndarray):
-        d_matrix = hip_backend.create_device_matrix_from_numpy(_coerce_complex64_matrix(matrix))
+        targets, matrix = _normalize_operation_matrix(
+            "apply_matrix",
+            targets,
+            matrix,
+            self._num_qubits,
+        )
+        d_matrix = hip_backend.create_device_matrix_from_numpy(matrix)
         return self._call(
             "apply_matrix",
             hip_backend.apply_matrix,
             self._handle,
             self._d_state,
             self._num_qubits,
-            list(targets),
+            targets,
             d_matrix,
             1 << len(targets),
         )
 
     def apply_controlled_matrix(self, controls: Sequence[int], targets: Sequence[int], matrix: np.ndarray):
-        d_matrix = hip_backend.create_device_matrix_from_numpy(_coerce_complex64_matrix(matrix))
+        controls = _normalize_gate_targets(
+            "apply_controlled_matrix controls",
+            controls,
+            self._num_qubits,
+            min_count=1,
+        )
+        targets, matrix = _normalize_operation_matrix(
+            "apply_controlled_matrix",
+            targets,
+            matrix,
+            self._num_qubits,
+        )
+        if set(controls).intersection(targets):
+            raise ValueError("control qubits and target qubits must be disjoint.")
+        d_matrix = hip_backend.create_device_matrix_from_numpy(matrix)
         return self._call(
             "apply_controlled_matrix",
             hip_backend.apply_controlled_matrix,
             self._handle,
             self._d_state,
             self._num_qubits,
-            list(controls),
-            list(targets),
+            controls,
+            targets,
             d_matrix,
         )
 
