@@ -1874,7 +1874,7 @@ class DensityMatrixBackend(_BaseBackend):
         return _finalize_expectation(total)
 
 
-def get_backend(backend_name: str, num_qubits: int) -> _BaseBackend:
+def get_backend(backend_name: str, num_qubits: int, *, enable_fusion: Optional[bool] = None) -> _BaseBackend:
     """Factory function to instantiate a simulation backend."""
 
     supported = {
@@ -1886,4 +1886,10 @@ def get_backend(backend_name: str, num_qubits: int) -> _BaseBackend:
     }
     if backend_name not in supported:
         raise ValueError(f"Unsupported backend '{backend_name}'. Supported backends are: {list(supported.keys())}")
+    if enable_fusion is not None and not isinstance(enable_fusion, bool):
+        raise ValueError("enable_fusion must be a boolean when provided.")
+    if backend_name == "state_vector":
+        return StateVectorBackend(num_qubits, enable_fusion=enable_fusion)
+    if enable_fusion is not None:
+        raise ValueError("enable_fusion only applies to the 'state_vector' backend.")
     return supported[backend_name](num_qubits)

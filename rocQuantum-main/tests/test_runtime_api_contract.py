@@ -414,6 +414,60 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual([op.name.lower() for op in fake_backend.ops], ["h", "cnot"])
         self.assertIsNone(fake_backend.noise_model)
 
+    def test_execute_sample_observe_forward_explicit_fusion_option(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        fake_backend = _FakeBackend()
+        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend) as patched_get_backend:
+            rocq.execute(prep_state, backend="state_vector", enable_fusion=False)
+        patched_get_backend.assert_called_once_with("state_vector", 1, enable_fusion=False)
+
+        fake_backend = _FakeBackend()
+        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend) as patched_get_backend:
+            rocq.sample(prep_state, 8, backend="state_vector", enable_fusion=True)
+        patched_get_backend.assert_called_once_with("state_vector", 1, enable_fusion=True)
+
+        fake_backend = _FakeBackend()
+        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend) as patched_get_backend:
+            rocq.observe(
+                prep_state,
+                PauliOperator("Z0"),
+                backend="state_vector",
+                enable_fusion=False,
+            )
+        patched_get_backend.assert_called_once_with("state_vector", 1, enable_fusion=False)
+
+    def test_execute_async_forwards_explicit_fusion_option(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        fake_backend = _FakeBackend()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with mock.patch("rocq.kernel.get_backend", return_value=fake_backend) as patched_get_backend:
+                future = rocq.execute_async(
+                    prep_state,
+                    backend="state_vector",
+                    enable_fusion=False,
+                    executor=executor,
+                )
+                self.assertEqual(future.result(timeout=5), "fake-state")
+
+        patched_get_backend.assert_called_once_with("state_vector", 1, enable_fusion=False)
+
+    def test_backend_factory_validates_fusion_option_scope(self):
+        from rocq.backends import get_backend
+
+        with self.assertRaisesRegex(ValueError, "enable_fusion must be a boolean"):
+            get_backend("state_vector", 1, enable_fusion="false")
+
+        with self.assertRaisesRegex(ValueError, "enable_fusion only applies"):
+            get_backend("density_matrix", 1, enable_fusion=False)
+
     def test_get_state_alias_uses_execute_backend_contract(self):
         @kernel
         def bell():

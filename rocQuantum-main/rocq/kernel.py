@@ -160,11 +160,15 @@ class QuantumKernel:
             self.num_qubits = ctx._next_qubit_index
             return ctx
 
-    def _prepare_backend(self, backend: str, *args, **kwargs):
+    def _prepare_backend(self, backend: str, *args, enable_fusion: Optional[bool] = None, **kwargs):
         ctx = self.build(*args, **kwargs)
         if ctx._next_qubit_index == 0:
             raise ValueError("Kernel did not allocate any qubits.")
-        backend_impl = get_backend(backend, ctx._next_qubit_index)
+        backend_impl = get_backend(
+            backend,
+            ctx._next_qubit_index,
+            enable_fusion=enable_fusion,
+        )
         return ctx, backend_impl
 
     _GATE_TO_MLIR = {
@@ -360,28 +364,60 @@ class QuantumKernel:
             executor=executor,
         )
 
-    def execute(self, *args, backend: str = "state_vector", noise_model=None, **kwargs):
-        ctx, backend_impl = self._prepare_backend(backend, *args, **kwargs)
+    def execute(
+        self,
+        *args,
+        backend: str = "state_vector",
+        noise_model=None,
+        enable_fusion: Optional[bool] = None,
+        **kwargs,
+    ):
+        ctx, backend_impl = self._prepare_backend(
+            backend,
+            *args,
+            enable_fusion=enable_fusion,
+            **kwargs,
+        )
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
         return backend_impl.get_state()
 
-    def get_state(self, *args, backend: str = "state_vector", noise_model=None, **kwargs):
+    def get_state(
+        self,
+        *args,
+        backend: str = "state_vector",
+        noise_model=None,
+        enable_fusion: Optional[bool] = None,
+        **kwargs,
+    ):
         """Return the final state through the canonical execution path."""
 
-        return self.execute(*args, backend=backend, noise_model=noise_model, **kwargs)
+        return self.execute(
+            *args,
+            backend=backend,
+            noise_model=noise_model,
+            enable_fusion=enable_fusion,
+            **kwargs,
+        )
 
     def execute_async(
         self,
         *args,
         backend: str = "state_vector",
         noise_model=None,
+        enable_fusion: Optional[bool] = None,
         executor: Optional[Executor] = None,
         **kwargs,
     ) -> Future:
         """Submit execution work to a host-side Future."""
 
         return _submit_async(
-            lambda: self.execute(*args, backend=backend, noise_model=noise_model, **kwargs),
+            lambda: self.execute(
+                *args,
+                backend=backend,
+                noise_model=noise_model,
+                enable_fusion=enable_fusion,
+                **kwargs,
+            ),
             executor=executor,
         )
 
@@ -390,23 +426,43 @@ class QuantumKernel:
         *args,
         backend: str = "state_vector",
         noise_model=None,
+        enable_fusion: Optional[bool] = None,
         executor: Optional[Executor] = None,
         **kwargs,
     ) -> Future:
         """Submit state readback work to a host-side Future."""
 
         return _submit_async(
-            lambda: self.get_state(*args, backend=backend, noise_model=noise_model, **kwargs),
+            lambda: self.get_state(
+                *args,
+                backend=backend,
+                noise_model=noise_model,
+                enable_fusion=enable_fusion,
+                **kwargs,
+            ),
             executor=executor,
         )
 
-    def sample(self, shots: int, *args, backend: str = "state_vector", qubits=None, noise_model=None, **kwargs):
+    def sample(
+        self,
+        shots: int,
+        *args,
+        backend: str = "state_vector",
+        qubits=None,
+        noise_model=None,
+        enable_fusion: Optional[bool] = None,
+        **kwargs,
+    ):
         shots = _validate_positive_integer(shots, "shots")
         ctx = self.build(*args, **kwargs)
         if ctx._next_qubit_index == 0:
             raise ValueError("Kernel did not allocate any qubits.")
         sample_qubits = _normalize_sample_qubits(qubits, ctx._next_qubit_index)
-        backend_impl = get_backend(backend, ctx._next_qubit_index)
+        backend_impl = get_backend(
+            backend,
+            ctx._next_qubit_index,
+            enable_fusion=enable_fusion,
+        )
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
         return backend_impl.sample(shots, qubits=sample_qubits)
 
@@ -417,20 +473,42 @@ class QuantumKernel:
         backend: str = "state_vector",
         qubits=None,
         noise_model=None,
+        enable_fusion: Optional[bool] = None,
         executor: Optional[Executor] = None,
         **kwargs,
     ) -> Future:
         """Submit sampling work to a host-side Future."""
 
         return _submit_async(
-            lambda: self.sample(shots, *args, backend=backend, qubits=qubits, noise_model=noise_model, **kwargs),
+            lambda: self.sample(
+                shots,
+                *args,
+                backend=backend,
+                qubits=qubits,
+                noise_model=noise_model,
+                enable_fusion=enable_fusion,
+                **kwargs,
+            ),
             executor=executor,
         )
 
-    def observe(self, operator, *args, backend: str = "state_vector", noise_model=None, **kwargs):
+    def observe(
+        self,
+        operator,
+        *args,
+        backend: str = "state_vector",
+        noise_model=None,
+        enable_fusion: Optional[bool] = None,
+        **kwargs,
+    ):
         if operator is None:
             raise TypeError("observe() requires a quantum operator.")
-        ctx, backend_impl = self._prepare_backend(backend, *args, **kwargs)
+        ctx, backend_impl = self._prepare_backend(
+            backend,
+            *args,
+            enable_fusion=enable_fusion,
+            **kwargs,
+        )
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
         return backend_impl.expectation(operator)
 
@@ -440,13 +518,21 @@ class QuantumKernel:
         *args,
         backend: str = "state_vector",
         noise_model=None,
+        enable_fusion: Optional[bool] = None,
         executor: Optional[Executor] = None,
         **kwargs,
     ) -> Future:
         """Submit expectation work to a host-side Future."""
 
         return _submit_async(
-            lambda: self.observe(operator, *args, backend=backend, noise_model=noise_model, **kwargs),
+            lambda: self.observe(
+                operator,
+                *args,
+                backend=backend,
+                noise_model=noise_model,
+                enable_fusion=enable_fusion,
+                **kwargs,
+            ),
             executor=executor,
         )
 
@@ -455,16 +541,42 @@ def kernel(func):
     return QuantumKernel(func)
 
 
-def execute(kernel_obj: QuantumKernel, *args, backend: str = "state_vector", noise_model=None, **kwargs):
+def execute(
+    kernel_obj: QuantumKernel,
+    *args,
+    backend: str = "state_vector",
+    noise_model=None,
+    enable_fusion: Optional[bool] = None,
+    **kwargs,
+):
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("execute() expects a QuantumKernel instance.")
-    return kernel_obj.execute(*args, backend=backend, noise_model=noise_model, **kwargs)
+    return kernel_obj.execute(
+        *args,
+        backend=backend,
+        noise_model=noise_model,
+        enable_fusion=enable_fusion,
+        **kwargs,
+    )
 
 
-def get_state(kernel_obj: QuantumKernel, *args, backend: str = "state_vector", noise_model=None, **kwargs):
+def get_state(
+    kernel_obj: QuantumKernel,
+    *args,
+    backend: str = "state_vector",
+    noise_model=None,
+    enable_fusion: Optional[bool] = None,
+    **kwargs,
+):
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("get_state() expects a QuantumKernel instance.")
-    return kernel_obj.get_state(*args, backend=backend, noise_model=noise_model, **kwargs)
+    return kernel_obj.get_state(
+        *args,
+        backend=backend,
+        noise_model=noise_model,
+        enable_fusion=enable_fusion,
+        **kwargs,
+    )
 
 
 def compile_and_execute(
@@ -503,10 +615,27 @@ def compile_and_execute_async(
     )
 
 
-def sample(kernel_obj: QuantumKernel, shots: int, *args, backend: str = "state_vector", qubits=None, noise_model=None, **kwargs):
+def sample(
+    kernel_obj: QuantumKernel,
+    shots: int,
+    *args,
+    backend: str = "state_vector",
+    qubits=None,
+    noise_model=None,
+    enable_fusion: Optional[bool] = None,
+    **kwargs,
+):
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("sample() expects a QuantumKernel instance.")
-    return kernel_obj.sample(shots, *args, backend=backend, qubits=qubits, noise_model=noise_model, **kwargs)
+    return kernel_obj.sample(
+        shots,
+        *args,
+        backend=backend,
+        qubits=qubits,
+        noise_model=noise_model,
+        enable_fusion=enable_fusion,
+        **kwargs,
+    )
 
 
 def execute_async(
@@ -514,12 +643,20 @@ def execute_async(
     *args,
     backend: str = "state_vector",
     noise_model=None,
+    enable_fusion: Optional[bool] = None,
     executor: Optional[Executor] = None,
     **kwargs,
 ) -> Future:
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("execute_async() expects a QuantumKernel instance.")
-    return kernel_obj.execute_async(*args, backend=backend, noise_model=noise_model, executor=executor, **kwargs)
+    return kernel_obj.execute_async(
+        *args,
+        backend=backend,
+        noise_model=noise_model,
+        enable_fusion=enable_fusion,
+        executor=executor,
+        **kwargs,
+    )
 
 
 def get_state_async(
@@ -527,12 +664,20 @@ def get_state_async(
     *args,
     backend: str = "state_vector",
     noise_model=None,
+    enable_fusion: Optional[bool] = None,
     executor: Optional[Executor] = None,
     **kwargs,
 ) -> Future:
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("get_state_async() expects a QuantumKernel instance.")
-    return kernel_obj.get_state_async(*args, backend=backend, noise_model=noise_model, executor=executor, **kwargs)
+    return kernel_obj.get_state_async(
+        *args,
+        backend=backend,
+        noise_model=noise_model,
+        enable_fusion=enable_fusion,
+        executor=executor,
+        **kwargs,
+    )
 
 
 def sample_async(
@@ -542,6 +687,7 @@ def sample_async(
     backend: str = "state_vector",
     qubits=None,
     noise_model=None,
+    enable_fusion: Optional[bool] = None,
     executor: Optional[Executor] = None,
     **kwargs,
 ) -> Future:
@@ -553,15 +699,31 @@ def sample_async(
         backend=backend,
         qubits=qubits,
         noise_model=noise_model,
+        enable_fusion=enable_fusion,
         executor=executor,
         **kwargs,
     )
 
 
-def observe(kernel_obj: QuantumKernel, operator, *args, backend: str = "state_vector", noise_model=None, **kwargs):
+def observe(
+    kernel_obj: QuantumKernel,
+    operator,
+    *args,
+    backend: str = "state_vector",
+    noise_model=None,
+    enable_fusion: Optional[bool] = None,
+    **kwargs,
+):
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("observe() expects a QuantumKernel instance.")
-    return kernel_obj.observe(operator, *args, backend=backend, noise_model=noise_model, **kwargs)
+    return kernel_obj.observe(
+        operator,
+        *args,
+        backend=backend,
+        noise_model=noise_model,
+        enable_fusion=enable_fusion,
+        **kwargs,
+    )
 
 
 def observe_async(
@@ -570,6 +732,7 @@ def observe_async(
     *args,
     backend: str = "state_vector",
     noise_model=None,
+    enable_fusion: Optional[bool] = None,
     executor: Optional[Executor] = None,
     **kwargs,
 ) -> Future:
@@ -580,6 +743,7 @@ def observe_async(
         *args,
         backend=backend,
         noise_model=noise_model,
+        enable_fusion=enable_fusion,
         executor=executor,
         **kwargs,
     )
