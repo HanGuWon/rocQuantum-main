@@ -37,7 +37,7 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | Native HIP simulator core | IMPLEMENTED | Core statevector, tensor-network, and limited density-matrix primitives are real |
 | Compiler-driven execution | PARTIAL | `compile_and_execute()` has a narrow source-level qalloc/H/X/Y/Z/S/Sdg/T/Tdg/CNOT/CZ/SWAP/CCX/MCX/CSWAP/RX/RY/RZ/P/CRX/CRY/CRZ/CP MLIR subset; default Python bindings and the unwired `ROCQUANTUM_ENABLE_MLIR_COMPILER` CMake option now fail fast instead of linking unresolved MLIR compiler symbols, and broad compiler/runtime parity is still absent |
 | High-level expectation APIs | PARTIAL | Native kernels exist, and canonical `rocq` now has an experimental Clifford-only stabilizer/tableau path for Pauli propagation, but public API coverage is split and inconsistent |
-| Multi-GPU / distributed | PARTIAL | Real scaffolding exists, but many paths remain `NOT_IMPLEMENTED` |
+| Multi-GPU / distributed | PARTIAL | Real single-node scaffolding exists, multi-node requests now fail fast as explicit unsupported stubs, and many distributed paths remain `NOT_IMPLEMENTED` |
 | Packaging / install / export | PARTIAL | Native build exists, but releasable packaging is not coherent |
 | Python surfaces | PARTIAL | Two divergent stacks exist, one with mock fallbacks |
 | Integrations | PARTIAL | Thin adapters exist, but PennyLane/Cirq/Qiskit sampling now prefers native `measure()` where available; Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, loop-local `break_loop` / `continue_loop`, and `switch_case` sampling can use state-collapsing `measure_qubit()` trajectories; Qiskit/PennyLane Pauli-observable paths avoid mandatory statevector readback; PennyLane `qml.Hermitian` and supported Qiskit dense `Operator` observables can use native dense-matrix single/batch expectation paths for supported targets; default multi-control gates route to native `MCX` / `CSWAP`; PennyLane `SparseHamiltonian` can use native CSR moments, including local batch readouts, with a correctness-first CSR statevector fallback; self-hosted ROCm CI now has a native binding/PennyLane/Qiskit/Cirq Bell-state smoke path, but artifacts are still required for hardware proof |
@@ -73,7 +73,7 @@ Compared with the official CUDA-Q baseline (`https://nvidia.github.io/cuda-quant
 - no fully unified compiler/runtime/kernel story; the default bindings now separate the canonical runtime compiler guard from the legacy conceptual MLIR holder
 - only a narrow mid-circuit measurement and classical-control story: Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, loop-local `break_loop` / `continue_loop`, and `switch_case` sampling trajectories work, but estimator/statevector dynamic semantics remain open
 - no broad arbitrary-operator expectation coverage beyond the supported Pauli, dense Hermitian / Qiskit dense Operator, and full-state CSR sparse paths
-- no bounded, tested `mqpu`-style distributed story
+- no bounded, tested `mqpu`-style distributed story; multi-node requests are explicit unsupported stubs
 
 What the repo does have:
 

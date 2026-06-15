@@ -36,6 +36,14 @@ _SWAP_KERNELS_SOURCE = os.path.join(
     "swap_kernels.hip",
 )
 _BINDINGS_SOURCE = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
+_LEGACY_API = os.path.join(_PROJECT_ROOT, "python", "rocq", "api.py")
+_MULTI_GPU_GUIDE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "MULTI_GPU_GUIDE.md",
+)
 
 
 class TestRcclDistributedContract(unittest.TestCase):
@@ -190,6 +198,33 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("compute_sparse_matrix_moments_host_state", source)
         self.assertIn("expectation_matrix_distributed_host_fallback", source)
         self.assertIn("compute_expectation_matrix_host_state", source)
+
+    def test_multi_node_requests_are_explicitly_unsupported(self):
+        with open(_STATEVEC_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+        with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_LEGACY_API, "r", encoding="utf-8") as f:
+            legacy_api = f.read()
+        with open(_MULTI_GPU_GUIDE, "r", encoding="utf-8") as f:
+            guide = f.read()
+
+        self.assertIn("rocsvAllocateMultiNodeDistributedState", header)
+        self.assertIn("rocsvAllocateMultiNodeDistributedState", source)
+        multi_node_block = source.split("rocsvAllocateMultiNodeDistributedState", 1)[1].split(
+            "rocsvAllocateDistributedState", 1
+        )[0]
+        self.assertIn("nodeCount < 2", multi_node_block)
+        self.assertIn("return ROCQ_STATUS_NOT_IMPLEMENTED", multi_node_block)
+        self.assertIn("allocate_multi_node_distributed_state", bindings)
+        self.assertIn("_MULTI_NODE_UNSUPPORTED_NOTE", legacy_api)
+        self.assertIn("multi_node: bool = False", legacy_api)
+        self.assertIn("node_count: int = 1", legacy_api)
+        self.assertIn("raise NotImplementedError(_MULTI_NODE_UNSUPPORTED_NOTE)", legacy_api)
+        self.assertIn("Multi-node execution", guide)
+        self.assertIn("Not implemented", guide)
 
 
 if __name__ == "__main__":

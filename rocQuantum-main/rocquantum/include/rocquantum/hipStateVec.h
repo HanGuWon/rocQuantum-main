@@ -174,6 +174,22 @@ rocqStatus_t rocsvInitializeState(rocsvHandle_t handle, rocComplex* d_state, uns
 rocqStatus_t rocsvAllocateDistributedState(rocsvHandle_t handle, unsigned totalNumQubits);
 
 /**
+ * @brief Explicit unsupported boundary for multi-node distributed allocation.
+ *
+ * Single-node multi-GPU allocation is handled by rocsvAllocateDistributedState.
+ * Multi-node execution is not release-wired and this function returns
+ * ROCQ_STATUS_NOT_IMPLEMENTED for nodeCount > 1.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] totalNumQubits The total number of qubits for the global state vector.
+ * @param[in] nodeCount Number of requested compute nodes.
+ * @return rocqStatus_t ROCQ_STATUS_NOT_IMPLEMENTED for multi-node requests.
+ */
+rocqStatus_t rocsvAllocateMultiNodeDistributedState(rocsvHandle_t handle,
+                                                    unsigned totalNumQubits,
+                                                    unsigned nodeCount);
+
+/**
  * @brief Initializes a distributed state vector to the |0...0> state.
  *
  * This function assumes rocsvAllocateDistributedState has been successfully called.

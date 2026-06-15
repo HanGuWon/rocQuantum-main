@@ -22,7 +22,7 @@ This document describes the current implementation status, not the eventual desi
 | Sparse matrix apply | Local-domain distributed slices can use the CSR kernel | HIP CSR apply for local-domain slices | Explicit distributed host fallback for non-local distributed sparse apply | Avoids dense materialization only on supported local-domain paths |
 | Expectation reductions over local-domain qubits | RCCL can sum per-rank expectation scalars when communicators are ready | `distributed_expectation_rccl`, `distributed_expectation_matrix_rccl`, and `distributed_sparse_matrix_moments_rccl` with `ncclAllReduce` | Host fallback after `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` | RCCL path covers local-domain Pauli/dense and rank-local CSR sparse reductions; broader observables remain limited |
 | Sampling probabilities over local-domain measured qubits | RCCL can sum per-rank probabilities when measured qubits are local-domain | `distributed_sample_rccl` / `accumulate_distributed_sample_probabilities_rccl` | Host fallback after `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` | Measured slice-domain bits remain unsupported without host fallback |
-| Multi-node execution | Not implemented | None | None | Out of scope today |
+| Multi-node execution | Not implemented; `rocsvAllocateMultiNodeDistributedState` returns `ROCQ_STATUS_NOT_IMPLEMENTED` for `nodeCount > 1`, and legacy `Circuit(..., multi_node=True)` / `node_count > 1` raises `NotImplementedError` | None | None | Explicit unsupported boundary; use one-host `multi_gpu=True` only |
 | Public Python multi-GPU contract | Legacy `Circuit(..., multi_gpu=True)` exposes only experimental partial behavior | Binding-dependent | Warning and execution notes describe the boundary | Do not treat as a stable CUDA-Q-style distributed target |
 
 ## Runtime Switches
@@ -60,6 +60,7 @@ This document describes the current implementation status, not the eventual desi
 ## User-Facing Guidance
 
 - Treat `multi_gpu=True` as experimental partial support.
+- Treat multi-node execution as unsupported; requests through `rocsvAllocateMultiNodeDistributedState`, `Circuit(..., multi_node=True)`, or `node_count > 1` fail fast.
 - Unsupported operations should be expected to raise `ROCQ_STATUS_NOT_IMPLEMENTED` or a higher-level `NotImplementedError` unless an explicit fallback mode covers that path.
 - Set `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1` only for slow/debug correctness checks.
 - Set `ROCQ_DISTRIBUTED_COMM=rccl` or `ROCQ_REQUIRE_RCCL=1` when a ROCm runner should fail fast if RCCL cannot initialize.

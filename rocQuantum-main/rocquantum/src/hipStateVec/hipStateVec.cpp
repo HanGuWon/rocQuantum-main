@@ -5579,6 +5579,16 @@ rocqStatus_t rocsvInitializeState(rocsvHandle_t handle,
 
 // --- Single-GPU compatibility helpers for distributed APIs ------------------
 
+rocqStatus_t rocsvAllocateMultiNodeDistributedState(rocsvHandle_t handle,
+                                                    unsigned totalNumQubits,
+                                                    unsigned nodeCount) {
+    (void)totalNumQubits;
+    if (!handle || nodeCount < 2) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    return ROCQ_STATUS_NOT_IMPLEMENTED;
+}
+
 rocqStatus_t rocsvAllocateDistributedState(rocsvHandle_t handle,
                                            unsigned totalNumQubits) {
     if (!handle) return ROCQ_STATUS_INVALID_VALUE;

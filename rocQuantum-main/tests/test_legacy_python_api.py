@@ -222,6 +222,20 @@ class TestLegacyCircuitBatchState(unittest.TestCase):
         self.assertIn(("allocate_distributed_state", ("handle", 2)), backend.calls)
         self.assertIn(("initialize_distributed_state", ("handle",)), backend.calls)
 
+    def test_multi_node_constructor_fails_fast(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        simulator = _make_simulator(module)
+
+        with self.assertRaisesRegex(NotImplementedError, "multi-node distributed execution is not implemented"):
+            module.Circuit(2, simulator, multi_node=True)
+
+        with self.assertRaisesRegex(NotImplementedError, "multi-node distributed execution is not implemented"):
+            module.Circuit(2, simulator, node_count=2)
+
+        with self.assertRaisesRegex(ValueError, "node_count must be a positive integer"):
+            module.Circuit(2, simulator, node_count=0)
+
     def test_batched_statevector_readback_can_return_slice_or_full_batch(self):
         backend = _fake_backend()
         backend.get_state_vector_slice = lambda *args: (

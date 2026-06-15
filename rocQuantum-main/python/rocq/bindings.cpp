@@ -409,6 +409,20 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             }
         }, py::arg("handle"), py::arg("total_num_qubits"), "Allocates a distributed state vector across multiple GPUs.");
 
+    m.def("allocate_multi_node_distributed_state",
+        [](RocsvHandleWrapper& handle_wrapper, unsigned totalNumQubits, unsigned nodeCount) {
+            rocqStatus_t status =
+                rocsvAllocateMultiNodeDistributedState(handle_wrapper.get(), totalNumQubits, nodeCount);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error(
+                    "rocsvAllocateMultiNodeDistributedState failed: " + std::to_string(status));
+            }
+        },
+        py::arg("handle"),
+        py::arg("total_num_qubits"),
+        py::arg("node_count"),
+        "Explicit unsupported boundary for multi-node distributed state allocation.");
+
     m.def("initialize_distributed_state",
         [](RocsvHandleWrapper& handle_wrapper) {
             rocqStatus_t status = rocsvInitializeDistributedState(handle_wrapper.get());

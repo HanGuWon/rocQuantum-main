@@ -19,6 +19,11 @@ _MULTI_GPU_PARTIAL_NOTE = (
     "non-local correctness fallbacks must be enabled explicitly and are slow/debug "
     "paths, not CUDA-Q/cuStateVec-style full distributed execution."
 )
+_MULTI_NODE_UNSUPPORTED_NOTE = (
+    "multi-node distributed execution is not implemented. rocQuantum currently "
+    "supports only experimental single-node multi-GPU scaffolding; use "
+    "multi_gpu=True on one ROCm host or run separate jobs explicitly."
+)
 
 
 class LegacyCompilerReplayWarning(RuntimeWarning):
@@ -62,13 +67,27 @@ class Simulator:
 
 
 class Circuit:
-    def __init__(self, num_qubits: int, simulator: Simulator, multi_gpu: bool = False, batch_size: int = 1):
+    def __init__(
+        self,
+        num_qubits: int,
+        simulator: Simulator,
+        multi_gpu: bool = False,
+        batch_size: int = 1,
+        multi_node: bool = False,
+        node_count: int = 1,
+    ):
         if not isinstance(simulator, Simulator):
             raise TypeError("A valid Simulator instance is required.")
         if num_qubits < 0:
             raise ValueError("Number of qubits must be non-negative.")
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("batch_size must be a positive integer.")
+        if not isinstance(multi_node, bool):
+            raise ValueError("multi_node must be a boolean.")
+        if isinstance(node_count, bool) or not isinstance(node_count, int) or node_count < 1:
+            raise ValueError("node_count must be a positive integer.")
+        if multi_node or node_count > 1:
+            raise NotImplementedError(_MULTI_NODE_UNSUPPORTED_NOTE)
         if multi_gpu and batch_size != 1:
             raise NotImplementedError("batch_size > 1 is not supported with multi_gpu=True.")
 
