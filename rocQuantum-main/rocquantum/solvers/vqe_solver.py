@@ -7,6 +7,7 @@
 High-level Variational Quantum Eigensolver (VQE) using rocQuantum primitives.
 """
 
+from collections.abc import Mapping
 import inspect
 from numbers import Integral, Real
 from typing import Callable, List, Dict, Any
@@ -188,7 +189,11 @@ class SciPyOptimizer(Optimizer):
         if options is None:
             self.options = {'method': 'COBYLA', 'tol': 1e-6}
         else:
-            self.options = options
+            if not isinstance(options, Mapping):
+                raise ValueError("SciPyOptimizer options must be a mapping.")
+            if any(not isinstance(key, str) for key in options):
+                raise ValueError("SciPyOptimizer option keys must be strings.")
+            self.options = dict(options)
 
     def minimize(
         self,

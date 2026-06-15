@@ -347,6 +347,21 @@ class TestVqeSolverContract(unittest.TestCase):
         np.testing.assert_allclose(optimizer.x0, np.array([0.25]))
         np.testing.assert_allclose(result["optimal_parameters"], np.array([0.25]))
 
+    def test_scipy_optimizer_validates_option_mapping(self):
+        from rocquantum.solvers.vqe_solver import SciPyOptimizer
+
+        source_options = {"method": "COBYLA", "tol": 1.0e-4}
+        optimizer = SciPyOptimizer(options=source_options)
+        source_options["method"] = "BFGS"
+
+        self.assertEqual(optimizer.options, {"method": "COBYLA", "tol": 1.0e-4})
+
+        with self.assertRaisesRegex(ValueError, "options must be a mapping"):
+            SciPyOptimizer(options=[("method", "COBYLA")])
+
+        with self.assertRaisesRegex(ValueError, "option keys must be strings"):
+            SciPyOptimizer(options={1: "COBYLA"})
+
     def test_solve_is_quiet_by_default_with_verbose_opt_in(self):
         from rocq.operator import PauliOperator
         from rocquantum.solvers.vqe_solver import Optimizer, VQE_Solver

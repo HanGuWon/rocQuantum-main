@@ -20,6 +20,9 @@ Current supported subset:
   string parameters are rejected instead of being coerced to numeric values.
   Observed energies and optimizer result energies/parameters must also be finite
   real values; finite-difference steps must be positive finite real values.
+  `SciPyOptimizer` options must be a string-keyed mapping and are copied at
+  construction so later caller-side mutation cannot silently change solver
+  configuration.
 - `make_maxcut_qaoa_kernel()` builds a MaxCut-style QAOA ansatz using H, CNOT,
   RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.
