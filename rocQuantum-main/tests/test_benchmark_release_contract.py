@@ -86,6 +86,13 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
             self.assertTrue(all(result["status"] == "skipped" for result in summary["results"]))
             for result in summary["results"]:
                 self.assertTrue(os.path.exists(result["output"]))
+            markdown_path = os.path.join(output_dir, "benchmark-summary.md")
+            self.assertTrue(os.path.exists(markdown_path))
+            with open(markdown_path, "r", encoding="utf-8") as f:
+                markdown = f.read()
+            self.assertIn("# Release Benchmark Summary", markdown)
+            self.assertIn("ROCm device detected", markdown)
+            self.assertIn("skipped", markdown)
 
     def test_release_runner_extracts_distributed_speedup_metrics(self):
         runner = _load_runner_module()
@@ -162,12 +169,16 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                 build_dir=tmp_path / "build",
                 output_dir=tmp_path / "artifacts",
             )
+            markdown_path = tmp_path / "artifacts" / "benchmark-summary.md"
+            markdown = markdown_path.read_text(encoding="utf-8")
 
         result = summary["results"][0]
         by_metric = {entry["metric"]: entry for entry in result["speedups"]}
         self.assertEqual(result["status"], "passed")
         self.assertAlmostEqual(by_metric["expectation_ms"]["speedup"], 5.0)
         self.assertAlmostEqual(by_metric["sparse_moments_ms"]["speedup"], 3.0)
+        self.assertIn("`expectation_ms`: 5.000x", markdown)
+        self.assertIn("`sparse_moments_ms`: 3.000x", markdown)
 
     def test_cmake_exposes_release_benchmark_targets(self):
         statevec_cmake = os.path.join(PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "CMakeLists.txt")
@@ -213,6 +224,8 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
 
         self.assertIn("benchmarks/run_release_benchmarks.py", combined)
         self.assertIn("benchmark-artifacts", combined)
+        self.assertIn("benchmark-summary.md", combined)
+        self.assertIn("GITHUB_STEP_SUMMARY", combined)
         self.assertIn("actions/upload-artifact@v4", combined)
 
     def test_readme_describes_release_benchmark_registry(self):
@@ -222,6 +235,8 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmarks/benchmark_manifest.json", readme)
         self.assertIn("benchmarks/run_release_benchmarks.py", readme)
         self.assertIn("benchmark-summary.json", readme)
+        self.assertIn("benchmark-summary.md", readme)
+        self.assertIn("speedup ratios", readme)
         self.assertIn("dense expectation, sparse moments, and generic matrix", readme)
 
 

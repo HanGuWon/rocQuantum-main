@@ -48,6 +48,10 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _markdown_bool(value: bool) -> str:
+    return "yes" if value else "no"
+
+
 def extract_case_speedups(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract host-fallback-over-RCCL speedups from benchmark case timings."""
     cases = payload.get("cases")
@@ -88,6 +92,38 @@ def extract_case_speedups(payload: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return speedups
+
+
+def format_benchmark_summary_markdown(summary: dict[str, Any]) -> str:
+    lines = [
+        "# Release Benchmark Summary",
+        "",
+        f"- ROCm device detected: {_markdown_bool(bool(summary.get('has_rocm_device')))}",
+        f"- Output directory: `{summary.get('output_dir', '')}`",
+        "",
+        "| Benchmark | Status | Speedups | Output |",
+        "| --- | --- | --- | --- |",
+    ]
+    for result in summary.get("results", []):
+        if not isinstance(result, dict):
+            continue
+        speedups = result.get("speedups")
+        if isinstance(speedups, list) and speedups:
+            speedup_text = "<br>".join(
+                f"`{entry['metric']}`: {entry['speedup']:.3f}x "
+                f"({entry['baseline_case']} / {entry['optimized_case']})"
+                for entry in speedups
+                if isinstance(entry, dict)
+                and {"metric", "speedup", "baseline_case", "optimized_case"}.issubset(entry)
+            )
+        else:
+            speedup_text = str(result.get("reason") or result.get("analysis_warning") or "-")
+        lines.append(
+            f"| `{result.get('id', '')}` | `{result.get('status', '')}` | "
+            f"{speedup_text} | `{result.get('output', '')}` |"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _skip_result(entry: dict[str, Any], output_path: Path, reason: str, executable: Path) -> dict[str, Any]:
@@ -188,7 +224,10 @@ def run(manifest_path: Path, build_dir: Path, output_dir: Path) -> dict[str, Any
         "has_rocm_device": has_device,
         "results": results,
     }
+    markdown_path = output_dir / "benchmark-summary.md"
+    summary["markdown_summary"] = str(markdown_path)
     _write_json(output_dir / "benchmark-summary.json", summary)
+    markdown_path.write_text(format_benchmark_summary_markdown(summary), encoding="utf-8")
     return summary
 
 
