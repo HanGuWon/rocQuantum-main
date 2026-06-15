@@ -160,6 +160,7 @@ void validate_sparse_operation_csr(const std::vector<std::complex<double>>& data
     if (data.size() != indices.size()) {
         throw std::invalid_argument("Sparse operation CSR data and indices lengths must match.");
     }
+    validate_finite_complex_payload(data, "Sparse operation CSR data");
     if (indptr.empty() || indptr.front() != 0 || indptr.back() != data.size()) {
         throw std::invalid_argument("Sparse operation CSR indptr must start at 0 and end at nnz.");
     }
@@ -1366,6 +1367,7 @@ std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::sparse_h
     if (data.size() != indices.size()) {
         throw std::invalid_argument("Sparse Hamiltonian CSR data and indices lengths must match.");
     }
+    validate_finite_complex_payload(data, "Sparse Hamiltonian CSR data");
     if (indptr.empty() || indptr.front() != 0 || indptr.back() != data.size()) {
         throw std::invalid_argument("Sparse Hamiltonian CSR indptr must start at 0 and end at nnz.");
     }
@@ -1478,6 +1480,7 @@ std::pair<std::vector<std::complex<double>>, std::vector<std::complex<double>>> 
     if (data.size() != indices.size()) {
         throw std::invalid_argument("Sparse Hamiltonian CSR data and indices lengths must match.");
     }
+    validate_finite_complex_payload(data, "Sparse Hamiltonian CSR data");
     if (indptr.empty() || indptr.front() != 0 || indptr.back() != data.size()) {
         throw std::invalid_argument("Sparse Hamiltonian CSR indptr must start at 0 and end at nnz.");
     }

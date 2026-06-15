@@ -433,6 +433,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("sparse_matrix_moments_distributed_host_fallback", hipstatevec)
         self.assertIn("compute_sparse_matrix_moments_host_state", hipstatevec)
         self.assertIn("Sparse Hamiltonian CSR indptr", implementation)
+        self.assertGreaterEqual(
+            implementation.count("validate_finite_complex_payload(data, \"Sparse Hamiltonian CSR data\")"),
+            2,
+        )
         sparse_body = implementation.split("QuantumSimulator::sparse_hamiltonian_moments", 1)[1].split(
             "unsigned QuantumSimulator::num_qubits", 1
         )[0]
@@ -544,6 +548,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("QuantumSimulator::apply_sparse_matrix", implementation)
         self.assertIn("QuantumSimulator::ApplySparseMatrix", implementation)
         self.assertIn("validate_sparse_operation_csr", implementation)
+        self.assertIn("validate_finite_complex_payload(data, \"Sparse operation CSR data\")", implementation)
         self.assertIn("apply_sparse_operation_to_state_slice", implementation)
         self.assertIn("rocsvApplySparseMatrix", implementation)
         self.assertIn("sparse_status == ROCQ_STATUS_NOT_IMPLEMENTED", implementation)
