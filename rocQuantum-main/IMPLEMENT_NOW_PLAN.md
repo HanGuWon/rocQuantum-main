@@ -63,14 +63,14 @@ Audit date: 2026-04-05
 
 ## 5. Replace placeholder advanced-gate tests with honest status
 
-- Change: stop passing blueprint tests as if they verified runtime correctness
+- Change: stop passing blueprint tests as if they verified runtime correctness; canonical mock state-vector tests now compare actual statevectors for advanced named gates when native ROCm hardware is unavailable
 - Files:
   - `tests/test_advanced_gates.py`
   - follow-up runtime tests should target `python/rocq/api.py` and native bindings
 - Tests to add or update:
-  - replace skip-only blueprint with actual statevector comparisons when ROCm runtime is available
+  - `tests/test_advanced_gates.py` replaces the skip-only blueprint with explicit CPU mock statevector comparisons for phase, controlled phase/rotation, Toffoli, and CSWAP semantics
 - Validation:
-  - `python -m unittest tests.test_advanced_gates -v`
+  - `python -m pytest tests/test_advanced_gates.py -q`
   - ROCm runtime regression on CRX, CCX, and CSWAP
 - Risk: Low
 

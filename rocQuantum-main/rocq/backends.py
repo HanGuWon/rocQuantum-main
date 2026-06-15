@@ -485,20 +485,264 @@ class _MockStateVectorState:
         self._state = np.zeros(1 << n_qubits, dtype=np.complex64)
         self._state[0] = 1.0 + 0.0j
 
+    def _validate_qubit(self, qubit: int) -> int:
+        if isinstance(qubit, bool) or not isinstance(qubit, Integral):
+            raise ValueError("Gate target must be an integer qubit index.")
+        normalized = int(qubit)
+        if normalized < 0 or normalized >= int(self._num_qubits):
+            raise ValueError(f"Qubit index {normalized} is out of range for {self._num_qubits} qubits.")
+        return normalized
+
+    def _validate_qubits(self, qubits: Sequence[int], name: str) -> List[int]:
+        normalized = [self._validate_qubit(qubit) for qubit in qubits]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError(f"{name} must be unique.")
+        return normalized
+
+    def _angle(self, op_name: str, params: Optional[Dict[str, float]], primary_key: str, secondary_key: str) -> float:
+        if isinstance(params, dict):
+            angle = params.get(primary_key, params.get(secondary_key))
+        elif isinstance(params, (list, tuple)) and params:
+            angle = params[0]
+        else:
+            angle = None
+        if angle is None:
+            raise ValueError(f"Gate '{op_name}' requires a rotation angle.")
+        if isinstance(angle, bool) or not isinstance(angle, Real):
+            raise ValueError(f"Gate '{op_name}' angle must be a finite real number.")
+        value = float(angle)
+        if not math.isfinite(value):
+            raise ValueError(f"Gate '{op_name}' angle must be finite.")
+        return value
+
+    def _single_qubit_matrix(self, op_name: str, params: Optional[Dict[str, float]]) -> np.ndarray:
+        op = op_name.lower()
+        if op == "h":
+            return (1.0 / math.sqrt(2.0)) * np.array([[1, 1], [1, -1]], dtype=np.complex128)
+        if op == "x":
+            return np.array([[0, 1], [1, 0]], dtype=np.complex128)
+        if op == "y":
+            return np.array([[0, -1j], [1j, 0]], dtype=np.complex128)
+        if op == "z":
+            return np.array([[1, 0], [0, -1]], dtype=np.complex128)
+        if op == "s":
+            return np.array([[1, 0], [0, 1j]], dtype=np.complex128)
+        if op == "sdg":
+            return np.array([[1, 0], [0, -1j]], dtype=np.complex128)
+        if op == "t":
+            phase = math.pi / 4.0
+            return np.array([[1, 0], [0, complex(math.cos(phase), math.sin(phase))]], dtype=np.complex128)
+        if op in {"tdg", "tdag"}:
+            phase = -math.pi / 4.0
+            return np.array([[1, 0], [0, complex(math.cos(phase), math.sin(phase))]], dtype=np.complex128)
+        if op == "rx":
+            angle = self._angle(op_name, params, "theta", "phi")
+            c = math.cos(angle / 2.0)
+            s = math.sin(angle / 2.0)
+            return np.array([[c, -1j * s], [-1j * s, c]], dtype=np.complex128)
+        if op == "ry":
+            angle = self._angle(op_name, params, "theta", "phi")
+            c = math.cos(angle / 2.0)
+            s = math.sin(angle / 2.0)
+            return np.array([[c, -s], [s, c]], dtype=np.complex128)
+        if op == "rz":
+            angle = self._angle(op_name, params, "phi", "theta")
+            c = math.cos(angle / 2.0)
+            s = math.sin(angle / 2.0)
+            return np.array([[c - 1j * s, 0], [0, c + 1j * s]], dtype=np.complex128)
+        if op in {"p", "phase"}:
+            angle = self._angle(op_name, params, "phi", "theta")
+            return np.array([[1, 0], [0, complex(math.cos(angle), math.sin(angle))]], dtype=np.complex128)
+        raise ValueError(f"Gate '{op_name}' is not supported by the mock state-vector backend.")
+
+    def _basis_parts(self, index: int, targets: Sequence[int]) -> tuple[int, int]:
+        base_index = int(index)
+        target_index = 0
+        for bit, qubit in enumerate(targets):
+            mask = 1 << int(qubit)
+            if index & mask:
+                target_index |= 1 << bit
+            base_index &= ~mask
+        return base_index, target_index
+
+    def _embed_target_bits(self, base_index: int, target_index: int, targets: Sequence[int]) -> int:
+        output = int(base_index)
+        for bit, qubit in enumerate(targets):
+            if (int(target_index) >> bit) & 1:
+                output |= 1 << int(qubit)
+        return output
+
+    def _apply_matrix_to_targets(self, targets: Sequence[int], matrix: np.ndarray) -> None:
+        targets = self._validate_qubits(targets, "matrix targets")
+        if not targets:
+            raise ValueError("matrix targets must include at least one qubit.")
+        target_dim = 1 << len(targets)
+        matrix = np.asarray(matrix, dtype=np.complex128)
+        if matrix.shape != (target_dim, target_dim):
+            raise ValueError(f"Matrix shape must be ({target_dim}, {target_dim}) for selected targets.")
+
+        old_state = np.asarray(self._state, dtype=np.complex128)
+        new_state = np.zeros_like(old_state)
+        for basis_index, amplitude in enumerate(old_state):
+            if amplitude == 0:
+                continue
+            base_index, col_target = self._basis_parts(basis_index, targets)
+            for row_target in range(target_dim):
+                output_index = self._embed_target_bits(base_index, row_target, targets)
+                new_state[output_index] += matrix[row_target, col_target] * amplitude
+        self._state = new_state.astype(np.complex64)
+
+    def _apply_controlled_matrix_to_targets(
+        self,
+        controls: Sequence[int],
+        targets: Sequence[int],
+        matrix: np.ndarray,
+    ) -> None:
+        controls = self._validate_qubits(controls, "control qubits")
+        targets = self._validate_qubits(targets, "target qubits")
+        if set(controls).intersection(targets):
+            raise ValueError("control qubits and target qubits must be disjoint.")
+
+        target_dim = 1 << len(targets)
+        matrix = np.asarray(matrix, dtype=np.complex128)
+        if matrix.shape != (target_dim, target_dim):
+            raise ValueError(f"Matrix shape must be ({target_dim}, {target_dim}) for selected targets.")
+
+        control_mask = sum(1 << control for control in controls)
+        old_state = np.asarray(self._state, dtype=np.complex128)
+        new_state = old_state.copy()
+        for basis_index, amplitude in enumerate(old_state):
+            if amplitude == 0 or (basis_index & control_mask) != control_mask:
+                continue
+            base_index, col_target = self._basis_parts(basis_index, targets)
+            new_state[basis_index] -= amplitude
+            for row_target in range(target_dim):
+                output_index = self._embed_target_bits(base_index, row_target, targets)
+                new_state[output_index] += matrix[row_target, col_target] * amplitude
+        self._state = new_state.astype(np.complex64)
+
+    def _apply_mcx(self, controls: Sequence[int], target: int) -> None:
+        controls = self._validate_qubits(controls, "control qubits")
+        target = self._validate_qubit(target)
+        if target in controls:
+            raise ValueError("control qubits and target qubit must be disjoint.")
+        self._apply_controlled_matrix_to_targets(controls, [target], self._single_qubit_matrix("x", None))
+
+    def _apply_cswap(self, control: int, target_a: int, target_b: int) -> None:
+        control = self._validate_qubit(control)
+        target_a = self._validate_qubit(target_a)
+        target_b = self._validate_qubit(target_b)
+        if len({control, target_a, target_b}) != 3:
+            raise ValueError("CSWAP control and targets must be distinct.")
+        swap_matrix = np.array(
+            [
+                [1, 0, 0, 0],
+                [0, 0, 1, 0],
+                [0, 1, 0, 0],
+                [0, 0, 0, 1],
+            ],
+            dtype=np.complex128,
+        )
+        self._apply_controlled_matrix_to_targets([control], [target_a, target_b], swap_matrix)
+
     def apply_named_gate(self, op_name: str, targets: List[int], params: Optional[Dict[str, float]] = None):
-        return None
+        params = params or {}
+        op = op_name.lower()
+        if op in {"h", "x", "y", "z", "s", "sdg", "t", "tdg", "tdag", "rx", "ry", "rz", "p", "phase"}:
+            if len(targets) != 1:
+                raise ValueError(f"Gate '{op_name}' expects one target.")
+            self._apply_matrix_to_targets([targets[0]], self._single_qubit_matrix(op_name, params))
+            return None
+        if op in {"cnot", "cx"}:
+            if len(targets) != 2:
+                raise ValueError(f"Gate '{op_name}' expects [control, target].")
+            self._apply_mcx([targets[0]], targets[1])
+            return None
+        if op == "cz":
+            if len(targets) != 2:
+                raise ValueError(f"Gate '{op_name}' expects [control, target].")
+            self._apply_controlled_matrix_to_targets([targets[0]], [targets[1]], self._single_qubit_matrix("z", None))
+            return None
+        if op == "swap":
+            if len(targets) != 2:
+                raise ValueError(f"Gate '{op_name}' expects two targets.")
+            swap_matrix = np.array(
+                [[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]],
+                dtype=np.complex128,
+            )
+            self._apply_matrix_to_targets(targets, swap_matrix)
+            return None
+        if op in {"crx", "cry", "crz", "cp", "cphase"}:
+            if len(targets) != 2:
+                raise ValueError(f"Gate '{op_name}' expects [control, target].")
+            base_name = "p" if op in {"cp", "cphase"} else op[1:]
+            self._apply_controlled_matrix_to_targets(
+                [targets[0]],
+                [targets[1]],
+                self._single_qubit_matrix(base_name, params),
+            )
+            return None
+        if op in {"mcx", "ccx", "toffoli"}:
+            if len(targets) < 2:
+                raise ValueError(f"Gate '{op_name}' requires at least one control and one target.")
+            self._apply_mcx(targets[:-1], targets[-1])
+            return None
+        if op in {"cswap", "fredkin"}:
+            if len(targets) != 3:
+                raise ValueError(f"Gate '{op_name}' expects [control, target_a, target_b].")
+            self._apply_cswap(targets[0], targets[1], targets[2])
+            return None
+        raise ValueError(f"Gate '{op_name}' is not supported by the mock state-vector backend.")
 
     def apply_matrix(self, targets: Sequence[int], matrix: np.ndarray):
+        self._apply_matrix_to_targets(targets, matrix)
         return None
 
     def apply_controlled_matrix(self, controls: Sequence[int], targets: Sequence[int], matrix: np.ndarray):
+        self._apply_controlled_matrix_to_targets(controls, targets, matrix)
         return None
 
     def get_state_vector(self):
         return self._state.copy()
 
     def sample(self, measured_qubits: Sequence[int], num_shots: int):
-        return np.zeros(num_shots, dtype=np.uint64)
+        measured = self._validate_qubits(measured_qubits, "measured qubits")
+        probs = np.zeros(1 << len(measured), dtype=np.float64)
+        for basis_index, amplitude in enumerate(self._state):
+            outcome = 0
+            for bit, qubit in enumerate(measured):
+                if (basis_index >> int(qubit)) & 1:
+                    outcome |= 1 << bit
+            probs[outcome] += float(abs(amplitude) ** 2)
+        total = probs.sum()
+        if total <= 0.0:
+            raise RuntimeError("Statevector has no probability mass.")
+        probs /= total
+        return np.random.choice(len(probs), size=int(num_shots), p=probs).astype(np.uint64)
+
+    def _pauli_expectation(self, paulis: Sequence[tuple[str, int]]) -> complex:
+        state = np.asarray(self._state, dtype=np.complex128)
+        transformed = np.zeros_like(state)
+        for basis_index, amplitude in enumerate(state):
+            if amplitude == 0:
+                continue
+            output_index = int(basis_index)
+            phase = 1.0 + 0.0j
+            for pauli, qubit in paulis:
+                qubit = self._validate_qubit(qubit)
+                mask = 1 << qubit
+                bit_set = bool(basis_index & mask)
+                if pauli == "X":
+                    output_index ^= mask
+                elif pauli == "Y":
+                    output_index ^= mask
+                    phase *= -1j if bit_set else 1j
+                elif pauli == "Z":
+                    phase *= -1.0 if bit_set else 1.0
+                else:
+                    raise NotImplementedError(f"Unsupported Pauli observable '{pauli}'.")
+            transformed[output_index] += phase * amplitude
+        return np.vdot(state, transformed)
 
     def expectation(self, operator):
         if isinstance(operator, HermitianOperator):
@@ -523,6 +767,8 @@ class _MockStateVectorState:
         for coefficient, paulis in terms:
             if not paulis:
                 total += coefficient
+            else:
+                total += coefficient * self._pauli_expectation(paulis)
         return _finalize_expectation(total)
 
 

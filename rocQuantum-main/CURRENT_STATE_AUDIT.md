@@ -11,6 +11,7 @@ Runtime update note (2026-04-06):
 - Canonical sampling now rejects non-positive or non-integral shots and invalid selected-qubit lists before native backend dispatch; direct canonical backends share the same positive-integer shot and qubit-list validation.
 - Canonical kernel recording now rejects non-integer or out-of-range gate targets and non-finite gate parameters before native backend dispatch.
 - Canonical spin factories, dense-observable scalar/list targets, sparse-observable square power-of-two shapes/CSR payloads, and observable coefficients now reject invalid, duplicate, or non-finite inputs instead of truncating or propagating them.
+- Canonical mock state-vector fallback now performs CPU statevector semantics for named-gate contract tests, including phase, controlled phase/rotation, Toffoli, and CSWAP cases; this remains local correctness smoke coverage rather than native ROCm performance proof.
 - Canonical noise models now reject non-finite probabilities, invalid channel names, invalid `after_op` names, and non-integral or duplicate channel targets before density-matrix backend dispatch; direct Kraus backend calls share the stricter target normalization, and valid channel registration is quiet by default.
 - Canonical top-level `rocq` now exports the recorded phase-gate aliases (`tdg`/`tdag`, `p`/`phase`, `cp`/`cphase`) instead of requiring users to reach into `rocq.gates`.
 - Packaging has moved to a CMake-first `scikit-build-core` path.
