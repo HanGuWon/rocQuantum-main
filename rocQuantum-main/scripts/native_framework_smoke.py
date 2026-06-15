@@ -27,10 +27,14 @@ for path in [
     sys.path.insert(0, str(path))
 
 
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _rocm_device_probe() -> dict[str, Any]:
     if Path("/dev/kfd").exists():
         return {"has_rocm_device": True, "device_probe": "actual_dev_kfd"}
-    if os.environ.get("ROCQ_NATIVE_SMOKE_ASSUME_ROCM_DEVICE", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if _env_truthy("ROCQ_NATIVE_SMOKE_ASSUME_ROCM_DEVICE"):
         return {"has_rocm_device": True, "device_probe": "assumed_rocm_device"}
     return {"has_rocm_device": False, "device_probe": "missing_dev_kfd"}
 
@@ -148,6 +152,7 @@ def _make_report(
     status: str,
     results: list[dict[str, Any]],
     device_probe: dict[str, Any] | None = None,
+    require_native_rocm_evidence: bool = False,
     **extra: Any,
 ) -> dict[str, Any]:
     probe = dict(device_probe or _rocm_device_probe())
@@ -173,9 +178,14 @@ def _make_report(
         "device_probe": probe["device_probe"],
         "native_rocm_evidence": suite_is_evidence,
         "native_rocm_evidence_count": evidence_count,
+        "native_rocm_evidence_required": require_native_rocm_evidence,
         "evidence_kind": "native_rocm" if suite_is_evidence else _native_evidence_kind(status, probe["device_probe"]),
         "results": annotated_results,
     }
+    if require_native_rocm_evidence and not suite_is_evidence:
+        report["native_rocm_evidence_failure"] = (
+            "no passed native ROCm framework smoke suite was produced"
+        )
     report.update(extra)
     return report
 
@@ -193,6 +203,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Return success with a skipped report when /dev/kfd is unavailable.",
     )
+    parser.add_argument(
+        "--require-native-rocm-evidence",
+        action="store_true",
+        default=_env_truthy("ROCQ_NATIVE_SMOKE_REQUIRE_NATIVE_EVIDENCE"),
+        help="Return non-zero unless the full smoke suite passes on an actual /dev/kfd ROCm device.",
+    )
     return parser.parse_args(argv)
 
 
@@ -202,9 +218,15 @@ def main(argv: list[str] | None = None) -> int:
         device_probe = _require_rocm_device()
     except RuntimeError as exc:
         status = "skipped" if args.allow_missing_device_skip else "failed"
-        report = _make_report(status, [], _rocm_device_probe(), reason=str(exc))
+        report = _make_report(
+            status,
+            [],
+            _rocm_device_probe(),
+            require_native_rocm_evidence=args.require_native_rocm_evidence,
+            reason=str(exc),
+        )
         _write_report(report, args.json_output)
-        if args.allow_missing_device_skip:
+        if args.allow_missing_device_skip and not report.get("native_rocm_evidence_failure"):
             print(f"native framework smoke: skipped: {exc}")
             return 0
         print(f"native framework smoke: failed: {exc}", file=sys.stderr)
@@ -218,8 +240,15 @@ def main(argv: list[str] | None = None) -> int:
     ]
     results = [_run_step(name, callback) for name, callback in steps]
     status = "passed" if all(result["status"] == "passed" for result in results) else "failed"
-    report = _make_report(status, results, device_probe)
+    report = _make_report(
+        status,
+        results,
+        device_probe,
+        require_native_rocm_evidence=args.require_native_rocm_evidence,
+    )
     _write_report(report, args.json_output)
+    if report.get("native_rocm_evidence_failure"):
+        return 1
     return 0 if status == "passed" else 1
 
 

@@ -204,6 +204,7 @@ jobs:
           set -o pipefail
           python3 scripts/native_framework_smoke.py \
             --json-output "${ARTIFACT_DIR}/native-framework-smoke.json" \
+            --require-native-rocm-evidence \
             2>&1 | tee "${ARTIFACT_DIR}/native-framework-smoke.log"
 
       - name: Run ROCm runtime tests (1 GPU smoke)

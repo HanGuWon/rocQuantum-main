@@ -109,14 +109,18 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("native_framework_smoke", smoke)
         self.assertIn("\"schema_version\": 1", smoke)
         self.assertIn("native_rocm_evidence", smoke)
+        self.assertIn("native_rocm_evidence_required", smoke)
+        self.assertIn("ROCQ_NATIVE_SMOKE_REQUIRE_NATIVE_EVIDENCE", smoke)
         self.assertIn("actual_dev_kfd", smoke)
         self.assertIn("assumed_rocm_device", smoke)
         self.assertIn("allow-missing-device-skip", smoke)
+        self.assertIn("--require-native-rocm-evidence", smoke)
         self.assertIn("Build native Python bindings for framework smoke", workflow)
         self.assertIn("ROCQUANTUM_BUILD_BINDINGS=ON", workflow)
         self.assertIn("python3 -m pybind11 --cmakedir", workflow)
         self.assertIn("Run native framework integration smoke", workflow)
         self.assertIn("scripts/native_framework_smoke.py", workflow)
+        self.assertIn("--require-native-rocm-evidence", workflow)
         self.assertIn("native-framework-smoke.log", workflow)
         self.assertIn("native-framework-smoke.json", workflow)
         self.assertIn("pennylane>=0.35", workflow)
@@ -159,6 +163,40 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             self.assertFalse(payload["native_rocm_evidence"])
             self.assertEqual(payload["native_rocm_evidence_count"], 0)
             self.assertEqual(payload["evidence_kind"], "skip")
+            self.assertFalse(payload["native_rocm_evidence_required"])
+
+    def test_native_rocm_framework_smoke_can_require_native_evidence(self):
+        assume_rocm_device = os.environ.get("ROCQ_NATIVE_SMOKE_ASSUME_ROCM_DEVICE", "").strip().lower()
+        if os.path.exists("/dev/kfd") or assume_rocm_device in {"1", "true", "yes", "on"}:
+            self.skipTest("requires a local environment without a ROCm device override")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = os.path.join(tmp, "native-framework-smoke.json")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    _NATIVE_FRAMEWORK_SMOKE,
+                    "--allow-missing-device-skip",
+                    "--require-native-rocm-evidence",
+                    "--json-output",
+                    output_path,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 1, completed.stdout)
+            with open(output_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+
+        self.assertEqual(payload["status"], "skipped")
+        self.assertTrue(payload["native_rocm_evidence_required"])
+        self.assertFalse(payload["native_rocm_evidence"])
+        self.assertEqual(
+            payload["native_rocm_evidence_failure"],
+            "no passed native ROCm framework smoke suite was produced",
+        )
 
     def test_native_rocm_framework_smoke_report_labels_only_real_device_passes_as_evidence(self):
         spec = importlib.util.spec_from_file_location("native_framework_smoke", _NATIVE_FRAMEWORK_SMOKE)
@@ -174,11 +212,13 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             "passed",
             passed_steps,
             {"has_rocm_device": True, "device_probe": "actual_dev_kfd"},
+            require_native_rocm_evidence=True,
         )
         assumed_report = module._make_report(
             "passed",
             passed_steps,
             {"has_rocm_device": True, "device_probe": "assumed_rocm_device"},
+            require_native_rocm_evidence=True,
         )
         failed_report = module._make_report(
             "failed",
@@ -187,20 +227,27 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
                 {"name": "pennylane", "status": "failed", "elapsed_ms": 2.0},
             ],
             {"has_rocm_device": True, "device_probe": "actual_dev_kfd"},
+            require_native_rocm_evidence=True,
         )
 
         self.assertTrue(real_report["native_rocm_evidence"])
         self.assertEqual(real_report["native_rocm_evidence_count"], 2)
+        self.assertTrue(real_report["native_rocm_evidence_required"])
+        self.assertNotIn("native_rocm_evidence_failure", real_report)
         self.assertEqual(real_report["evidence_kind"], "native_rocm")
         self.assertTrue(all(result["native_rocm_evidence"] for result in real_report["results"]))
 
         self.assertFalse(assumed_report["native_rocm_evidence"])
         self.assertEqual(assumed_report["native_rocm_evidence_count"], 0)
+        self.assertTrue(assumed_report["native_rocm_evidence_required"])
+        self.assertIn("native_rocm_evidence_failure", assumed_report)
         self.assertEqual(assumed_report["evidence_kind"], "assumed_rocm_device")
         self.assertTrue(all(not result["native_rocm_evidence"] for result in assumed_report["results"]))
 
         self.assertFalse(failed_report["native_rocm_evidence"])
         self.assertEqual(failed_report["native_rocm_evidence_count"], 1)
+        self.assertTrue(failed_report["native_rocm_evidence_required"])
+        self.assertIn("native_rocm_evidence_failure", failed_report)
         self.assertEqual(failed_report["evidence_kind"], "native_rocm_failed")
         self.assertEqual(failed_report["results"][0]["evidence_kind"], "native_rocm")
         self.assertEqual(failed_report["results"][1]["evidence_kind"], "native_rocm_failed")
