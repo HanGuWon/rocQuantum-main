@@ -204,6 +204,7 @@ What is not real today:
 ### Packaging and CI
 
 - Native CMake build exists and now follows the ROCm HIP-language floor of CMake `3.21` plus official config-package targets such as `hip` / `hip::host`, `roc::rocblas`, and `roc::rocsolver`. The install package config uses the same ROCm package naming, and the root build activates `python/rocq` for `_rocq_hip_backend`; Python packaging is still split between canonical and legacy surfaces.
+- Adapter-local Qiskit/PennyLane/Cirq `setup.py` files are now explicit compatibility installers that read the root `pyproject.toml` version through `integrations/_compat_setup.py` and keep their adapter dependency floors aligned with root optional extras; the repository root remains the supported Python install path.
 - CI covers Python import/package contracts, one GPU runtime regression, and a release benchmark artifact registry. The registry records statevec, distributed reduction, TensorNet, and DensityMat benchmark JSON when native ROCm binaries are available, emits explicit skipped JSON when they are not, fails runnable benchmarks that omit or corrupt their declared JSON output, and fails configured speedup gates when required speedup metrics are missing. The framework QFT benchmark helper now writes machine-readable PennyLane/Qiskit JSON and records skipped framework results when native bindings are unavailable, but local skipped output is not ROCm performance proof.
 
 ## What Is Stubbed Or Absent

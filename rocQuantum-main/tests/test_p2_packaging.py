@@ -7,6 +7,7 @@ Validate canonical imports, legacy shim, and pyproject.toml existence.
 """
 
 import os
+import importlib.util
 import re
 import sys
 import unittest
@@ -23,6 +24,13 @@ _INSTALL_CONSUMER_SCRIPT = os.path.join(_PROJECT_ROOT, "scripts", "validate_cmak
 _ROCM_LINUX_WORKFLOW = os.path.join(_REPO_ROOT, ".github", "workflows", "rocm-linux-build.yml")
 _README = os.path.join(_PROJECT_ROOT, "README.md")
 _ROOT_CMAKE = os.path.join(_PROJECT_ROOT, "CMakeLists.txt")
+_INTEGRATIONS_DIR = os.path.join(_PROJECT_ROOT, "integrations")
+_COMPAT_SETUP_HELPER = os.path.join(_INTEGRATIONS_DIR, "_compat_setup.py")
+_INTEGRATION_SETUP_FILES = {
+    "qiskit": os.path.join(_INTEGRATIONS_DIR, "qiskit-rocquantum-provider", "setup.py"),
+    "pennylane": os.path.join(_INTEGRATIONS_DIR, "pennylane-rocq", "setup.py"),
+    "cirq": os.path.join(_INTEGRATIONS_DIR, "cirq-rocm", "setup.py"),
+}
 
 
 class TestCanonicalImports(unittest.TestCase):
@@ -202,6 +210,52 @@ class TestPyprojectExists(unittest.TestCase):
         self.assertIn("cirq-core>=1.0", optional["cirq"])
         self.assertIn("scipy>=1.10", optional["solvers"])
         self.assertIn("rocquantum[backends,pennylane,qiskit,cirq,solvers,dev]", optional["all"])
+
+    def test_integration_setup_py_files_are_compatibility_installers(self):
+        for setup_path in _INTEGRATION_SETUP_FILES.values():
+            with self.subTest(setup_path=setup_path):
+                with open(setup_path, "r", encoding="utf-8") as f:
+                    source = f.read()
+
+                self.assertIn("root_project_version(__file__)", source)
+                self.assertIn("compatibility_long_description", source)
+                self.assertIn("Compatibility installer", source)
+                self.assertIn("python_requires=\">=3.9\"", source)
+                self.assertNotIn("author=\"Gemini\"", source)
+
+    def test_integration_setup_py_versions_follow_root_pyproject(self):
+        import tomllib
+        path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
+        with open(path, "rb") as f:
+            pyproject_version = tomllib.load(f)["project"]["version"]
+
+        spec = importlib.util.spec_from_file_location("compat_setup", _COMPAT_SETUP_HELPER)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        compat_setup = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(compat_setup)
+
+        for setup_path in _INTEGRATION_SETUP_FILES.values():
+            with self.subTest(setup_path=setup_path):
+                self.assertEqual(compat_setup.root_project_version(setup_path), pyproject_version)
+
+    def test_integration_setup_py_dependencies_match_root_optional_extras(self):
+        import tomllib
+        path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        optional = data["project"]["optional-dependencies"]
+        expected_dependencies = {
+            "qiskit": optional["qiskit"][0],
+            "pennylane": optional["pennylane"][0],
+            "cirq": optional["cirq"][0],
+        }
+        for name, setup_path in _INTEGRATION_SETUP_FILES.items():
+            with self.subTest(name=name):
+                with open(setup_path, "r", encoding="utf-8") as f:
+                    source = f.read()
+                self.assertIn(expected_dependencies[name], source)
 
 
 class TestCMakeInstallConsumerSmoke(unittest.TestCase):
