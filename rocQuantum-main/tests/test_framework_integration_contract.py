@@ -709,6 +709,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def _native_adjoint_trainable_param_specs", source)
         self.assertIn("def _process_native_adjoint_jacobian", source)
         self.assertIn("def _native_adjoint_observable_payloads", source)
+        self.assertIn("if op.name == \"GlobalPhase\":\n                if len(raw_params) != 1:", source)
         self.assertIn("op.name == \"Rot\"", source)
         self.assertIn("op.name == \"CRot\"", source)
         self.assertIn("(\"CRZ\", \"CRY\", \"CRZ\")", source)

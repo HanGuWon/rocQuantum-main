@@ -12235,6 +12235,42 @@ def test_pennylane_native_adjoint_lowers_phase_payloads(monkeypatch):
     ]
 
 
+def test_pennylane_native_adjoint_elides_trainable_global_phase_payload(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=1)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.GlobalPhase(0.123),
+            qml.RY(0.321, wires=0),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0, 1]
+
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    assert trainable_params == [0, 1]
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert operations == [
+        {
+            "name": "RY",
+            "rocq_name": "RY",
+            "wires": [0],
+            "params": [0.321],
+            "param_indices": [1],
+            "trainable_param_indices": [1],
+            "trainable_param_positions": [0],
+        }
+    ]
+
+
 def test_pennylane_native_adjoint_lowers_controlled_global_phase_wrapper(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

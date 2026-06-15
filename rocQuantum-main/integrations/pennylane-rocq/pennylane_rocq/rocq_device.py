@@ -5248,6 +5248,11 @@ class RocQDevice(QubitDevice):
             params = []
             wire_indices = [int(self.wire_map[wire]) for wire in op.wires]
 
+            if op.name == "GlobalPhase":
+                if len(raw_params) != 1:
+                    return None
+                continue
+
             if op.name == "QubitUnitary":
                 if len(raw_params) != 1:
                     return None

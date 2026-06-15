@@ -8,6 +8,8 @@ Recent PennyLane note: general multi-control `qml.ctrl(...)` wrappers for single
 
 Recent PennyLane controlled-global-phase note: targetless controlled `qml.GlobalPhase` wrappers now use native phase-projector decomposition for execution, compatible `batch_execute` sweeps, and explicit adjoint payloads, including open controls, instead of the previous small controlled-matrix fallback for multi-control cases.
 
+Recent PennyLane global-phase adjoint note: plain `qml.GlobalPhase` operations are elided from explicit adjoint payloads, so trainable global-phase parameters keep zero-gradient native columns instead of forcing Python statevector fallback.
+
 Recent PennyLane controlled-sequence note: `qml.ControlledSequence` covers native single-qubit bases through native controlled-power decompositions, including adjoint phase-root bases (`Adjoint(S)` / `Adjoint(T)`) inside compatible `batch_execute`; fixed bases and trainable scalar `RX` / `RY` / `RZ` / `PhaseShift` base angles now lower into primitive native adjoint payloads with power-aware derivative scales.
 
 Recent PennyLane Select-adjoint note: full and partial `qml.Select` branches whose selected operations are covered by the controlled-wrapper adjoint path now lower into primitive native adjoint payloads, including selected scalar rotations and fixed Pauli branches. Fixed selected `BasisEmbedding`, selected products that mix fixed BasisEmbedding with native operations, simple selected basis/phase or multi-native products, and fixed selected matrix operations now lower to primitive adjoint payloads; trainable selected `BasisEmbedding` arrays and trainable selected matrix payloads remain explicit fallback boundaries.
