@@ -5,6 +5,7 @@
 #define HIPDENSITYMAT_HPP
 
 #include <hip/hip_runtime.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +26,13 @@ typedef enum {
     HIPDENSITYMAT_STATUS_EXECUTION_FAILED = 3,
     HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED = 4
 } hipDensityMatStatus_t;
+
+typedef struct {
+    int num_kraus;
+    const hipComplex* kraus_matrices_host;
+    int num_targets;
+    const int* target_qubits_host;
+} hipDensityMatChannel_t;
 
 /**
  * @brief Creates and initializes a density matrix state for a given number of qubits.
@@ -149,6 +157,29 @@ hipDensityMatStatus_t hipDensityMatComputePauliZProductExpectation(
     double* result_host);
 
 /**
+ * @brief Computes Tr(M rho) for a dense matrix acting on target qubits.
+ *
+ * Supports up to four target qubits in the native HIP reduction path. Larger
+ * target sets return HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED so callers can use
+ * an explicit correctness fallback.
+ *
+ * @param[in] state The state handle.
+ * @param[in] target_qubits_host Array of target qubit indices.
+ * @param[in] num_target_qubits Number of target qubits.
+ * @param[in] matrix_host Row-major dense matrix with dimension 2^num_target_qubits.
+ * @param[in] matrix_dim Matrix dimension.
+ * @param[out] result_host Host pointer for the complex expectation value.
+ * @return hipDensityMatStatus_t Status of the operation.
+ */
+hipDensityMatStatus_t hipDensityMatComputeExpectationMatrix(
+    hipDensityMatState_t state,
+    const int* target_qubits_host,
+    int num_target_qubits,
+    const hipComplex* matrix_host,
+    int matrix_dim,
+    hipComplex* result_host);
+
+/**
  * @brief Applies a single-qubit Amplitude Damping noise channel.
  *
  * This channel models energy dissipation, e.g., a |1> state decaying to |0>.
@@ -216,18 +247,45 @@ hipDensityMatStatus_t hipDensityMatApplyControlledGate(
 
 
 /**
- * @brief Applies a quantum channel to a target qubit. (Placeholder)
+ * @brief Applies a generic Kraus channel to one or more target qubits.
  *
- * This function will be the core entry point for simulating noisy operations.
- * Specific channel implementations (e.g., Bit Flip, Phase Flip, Depolarizing)
- * will be added in the future.
+ * For legacy single-qubit callers, channel_params may point to a
+ * hipDensityMatChannel_t with num_targets <= 0 or target_qubits_host == nullptr;
+ * target_qubit is then used and kraus_matrices_host is interpreted as
+ * num_kraus contiguous 2x2 row-major matrices.
+ *
+ * For multi-qubit channels, target_qubits_host supplies num_targets unique
+ * target qubits and kraus_matrices_host is interpreted as num_kraus contiguous
+ * (2^num_targets)x(2^num_targets) row-major matrices. The target-qubit order
+ * defines the local matrix bit order.
  *
  * @param[in] state The state handle.
- * @param[in] target_qubit The index of the qubit to apply the channel to.
- * @param[in] channel_params Placeholder for channel-specific parameters (e.g., noise probability).
+ * @param[in] target_qubit Legacy single-qubit target when channel_params does not provide target_qubits_host.
+ * @param[in] channel_params Pointer to a hipDensityMatChannel_t.
  * @return hipDensityMatStatus_t Status of the operation.
  */
 hipDensityMatStatus_t hipDensityMatApplyChannel(hipDensityMatState_t state, int target_qubit, const void* channel_params);
+
+/**
+ * @brief Samples computational-basis outcomes from the density-matrix diagonal.
+ *
+ * This correctness path reduces measured-qubit marginal probabilities on the
+ * GPU, copies only the outcome probability vector to host memory, then draws
+ * samples on the host.
+ *
+ * @param[in] state The state handle.
+ * @param[in] measured_qubits Array of qubits to sample.
+ * @param[in] num_measured_qubits Number of measured qubits.
+ * @param[in] num_shots Number of samples to draw.
+ * @param[out] results_host Host array of num_shots uint64_t outcomes.
+ * @return hipDensityMatStatus_t Status of the operation.
+ */
+hipDensityMatStatus_t hipDensityMatSample(
+    hipDensityMatState_t state,
+    const int* measured_qubits,
+    int num_measured_qubits,
+    int num_shots,
+    uint64_t* results_host);
 
 
 #ifdef __cplusplus

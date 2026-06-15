@@ -1,17 +1,16 @@
 import numpy as np
 import os
 import sys
+import pytest
 
 # Add build directory to path to find the compiled module
 build_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'build'))
 sys.path.insert(0, build_path)
 
-try:
-    import rocquantum_bind
-except ImportError:
-    print(f"Error: Could not import rocquantum_bind from '{build_path}'.")
-    print("Please ensure the module is compiled.")
-    sys.exit(1)
+rocquantum_bind = pytest.importorskip(
+    "rocquantum_bind",
+    reason=f"compiled rocquantum_bind module is unavailable in '{build_path}'",
+)
 
 def test_bell_state_simulation():
     """

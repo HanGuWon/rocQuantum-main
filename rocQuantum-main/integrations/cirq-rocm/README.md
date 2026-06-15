@@ -15,7 +15,7 @@ This package provides a `cirq.Simulator` implementation that offloads quantum ci
 
 ### Prerequisites
 
-Before installing this package, you must have the `rocQuantum-1` library and its Python binding (`rocquantum_bind`) already built and installed. Please follow the instructions in the `rocQuantum-1` project repository.
+Before executing circuits with this package, you must have the `rocQuantum-1` library and its Python binding (`rocquantum_bind`) already built and installed. The package can be imported before the native extension is present; simulator execution raises a clear binding-install error.
 
 ### Installation Steps
 

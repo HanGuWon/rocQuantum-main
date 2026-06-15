@@ -6,6 +6,7 @@ from collections import Counter
 
 @pytest.fixture(scope="module")
 def RocQuantumSimulator():
+    pytest.importorskip("rocquantum_bind", reason="compiled rocquantum_bind module is unavailable")
     try:
         from cirq_rocm import RocQuantumSimulator
         return RocQuantumSimulator

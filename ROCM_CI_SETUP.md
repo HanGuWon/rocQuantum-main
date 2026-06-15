@@ -4,15 +4,15 @@
 | Lane | ROCm Toolchain | AMD GPU Targets | Scope |
 |---|---|---|---|
 | Primary | `rocm/dev-ubuntu-22.04:6.2.2` | `gfx90a` | Minimum supported ROCm lane and release gate baseline. |
-| Latest | `rocm/dev-ubuntu-22.04:7.2.0` | `gfx90a` | Forward-compatibility lane. |
-| Optional Legacy | `rocm/dev-ubuntu-22.04:{6.2.2,7.2.0}` | `gfx906;gfx908` | Best-effort compatibility lane (non-blocking by default). |
+| Latest production | `rocm/dev-ubuntu-22.04:7.2.4` | `gfx950;gfx942;gfx90a` | Forward-compatibility lane; experimental until runner/container availability is proven. |
+| Optional Legacy | `rocm/dev-ubuntu-22.04:{6.2.2,7.2.4}` | `gfx906;gfx908` | Best-effort compatibility lane (non-blocking by default). |
 
 ## Reproducible Container Environment
 Use `docker/rocm/Dockerfile` to build deterministic ROCm toolchain images:
 
 ```bash
 docker build --build-arg ROCM_VERSION=6.2.2 -t rocq-dev:rocm-6.2.2 -f docker/rocm/Dockerfile .
-docker build --build-arg ROCM_VERSION=7.2.0 -t rocq-dev:rocm-7.2.0 -f docker/rocm/Dockerfile .
+docker build --build-arg ROCM_VERSION=7.2.4 -t rocq-dev:rocm-7.2.4 -f docker/rocm/Dockerfile .
 ```
 
 ROCm runtime shell (GPU-enabled host):
@@ -36,7 +36,7 @@ cmake -S . -B build-ci -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON \
   -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc \
-  -DAMDGPU_TARGETS=gfx90a
+  -DCMAKE_HIP_ARCHITECTURES=gfx90a
 ```
 
 Optional legacy lane configure:
@@ -46,7 +46,7 @@ cmake -S . -B build-legacy -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON \
   -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc \
-  -DAMDGPU_TARGETS=gfx906\;gfx908
+  -DCMAKE_HIP_ARCHITECTURES=gfx906\;gfx908
 ```
 
 ## Full Build/Test Commands
@@ -54,12 +54,13 @@ From `rocQuantum-main/`:
 
 ```bash
 bash scripts/check_async_contract.sh
+bash scripts/probe_rocm_runtime.sh
 
 cmake -S . -B build-ci -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON \
   -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc \
-  -DAMDGPU_TARGETS=gfx90a
+  -DCMAKE_HIP_ARCHITECTURES=gfx90a
 
 cmake --build build-ci --parallel
 
@@ -92,13 +93,10 @@ Required profiles for this repo's workflows:
 
 ## ROCm Installation + Validation Checklist
 
-Install ROCm from the official AMD package channel for your chosen lane (`6.2.2` or `7.2.0`), then validate:
+Install ROCm from the official AMD package channel for your chosen lane (`6.2.2` or `7.2.4`), then validate:
 
 ```bash
-hipcc --version
-rocminfo
-rocm-smi
-ls -l /dev/kfd
+bash scripts/probe_rocm_runtime.sh
 ```
 
 Expected:

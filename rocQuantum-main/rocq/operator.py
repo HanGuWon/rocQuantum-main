@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import math
 import re
 from abc import ABC, abstractmethod
-from numbers import Number
+from numbers import Integral, Number
 from typing import TYPE_CHECKING, Iterable, List, Sequence, Tuple
+
+import numpy as np
 
 if TYPE_CHECKING:
     from .kernel import QuantumKernel
@@ -12,27 +15,233 @@ if TYPE_CHECKING:
 _PAULI_TOKEN_RE = re.compile(r"([IXYZixyz])(\d+)")
 
 
+def _validate_positive_integer(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a positive integer.")
+    index = int(value)
+    if index <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return index
+
+
+def _validate_nonnegative_integer(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a non-negative integer.")
+    index = int(value)
+    if index < 0:
+        raise ValueError(f"{name} must be non-negative.")
+    return index
+
+
+def _normalize_observable_targets(targets, name: str):
+    if targets is None:
+        return None
+    if isinstance(targets, bool) or isinstance(targets, (str, bytes)):
+        raise ValueError(f"{name} must be an integer index or a sequence of integer indices.")
+    if isinstance(targets, Integral):
+        raw_targets = [targets]
+    else:
+        try:
+            raw_targets = list(targets)
+        except TypeError as exc:
+            raise ValueError(
+                f"{name} must be an integer index or a sequence of integer indices."
+            ) from exc
+
+    normalized = [_validate_nonnegative_integer(target, name) for target in raw_targets]
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{name}s must be unique.")
+    return normalized
+
+
+def _normalize_hermitian_matrix(matrix):
+    try:
+        raw_matrix = np.asarray(matrix, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "HermitianOperator matrix must be a finite numeric square matrix."
+        ) from exc
+
+    if raw_matrix.ndim != 2 or raw_matrix.shape[0] != raw_matrix.shape[1]:
+        raise ValueError("HermitianOperator matrix must be square.")
+
+    matrix_dim = int(raw_matrix.shape[0])
+    if matrix_dim <= 0 or matrix_dim & (matrix_dim - 1):
+        raise ValueError("HermitianOperator matrix dimension must be a power of two.")
+
+    normalized = []
+    for value in raw_matrix.reshape(-1):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError("HermitianOperator matrix must contain finite numeric values.")
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError("HermitianOperator matrix must be finite.")
+        normalized.append(scalar)
+    return np.asarray(normalized, dtype=np.complex128).reshape(raw_matrix.shape)
+
+
+def _normalize_sparse_shape(shape) -> tuple[int, int]:
+    if isinstance(shape, (str, bytes)):
+        raise ValueError("SparseHamiltonianOperator shape must have two dimensions.")
+    try:
+        raw_shape = list(shape)
+    except TypeError as exc:
+        raise ValueError("SparseHamiltonianOperator shape must have two dimensions.") from exc
+    if len(raw_shape) != 2:
+        raise ValueError("SparseHamiltonianOperator shape must have two dimensions.")
+
+    rows = _validate_positive_integer(
+        raw_shape[0],
+        "SparseHamiltonianOperator shape dimension",
+    )
+    cols = _validate_positive_integer(
+        raw_shape[1],
+        "SparseHamiltonianOperator shape dimension",
+    )
+    if rows != cols:
+        raise ValueError("SparseHamiltonianOperator shape must be square.")
+    if rows & (rows - 1):
+        raise ValueError("SparseHamiltonianOperator shape dimension must be a power of two.")
+    return rows, cols
+
+
+def _normalize_sparse_data(data):
+    try:
+        raw_data = np.asarray(data, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "SparseHamiltonianOperator CSR data must contain finite numeric values."
+        ) from exc
+
+    normalized = []
+    for value in raw_data:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError(
+                "SparseHamiltonianOperator CSR data must contain finite numeric values."
+            )
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError("SparseHamiltonianOperator CSR data must be finite.")
+        normalized.append(scalar)
+    return np.asarray(normalized, dtype=np.complex128)
+
+
+def _normalize_sparse_index_vector(values, label: str):
+    if isinstance(values, (str, bytes)):
+        raise ValueError(f"SparseHamiltonianOperator CSR {label} must contain integer indices.")
+    try:
+        raw_values = np.asarray(values, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"SparseHamiltonianOperator CSR {label} must contain integer indices."
+        ) from exc
+    normalized = [
+        _validate_nonnegative_integer(value, f"SparseHamiltonianOperator CSR {label}")
+        for value in raw_values
+    ]
+    try:
+        return np.asarray(normalized, dtype=np.int64)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(
+            f"SparseHamiltonianOperator CSR {label} must fit in signed 64-bit integers."
+        ) from exc
+
+
+def _normalize_sparse_csr(data, indices, indptr, shape: tuple[int, int]):
+    data_array = _normalize_sparse_data(data)
+    indices_array = _normalize_sparse_index_vector(indices, "indices")
+    indptr_array = _normalize_sparse_index_vector(indptr, "indptr")
+    rows, cols = shape
+
+    if data_array.size != indices_array.size:
+        raise ValueError("SparseHamiltonianOperator CSR data and indices lengths must match.")
+    if indptr_array.size != rows + 1:
+        raise ValueError("SparseHamiltonianOperator CSR indptr length must equal rows + 1.")
+    if (
+        indptr_array.size == 0
+        or int(indptr_array[0]) != 0
+        or int(indptr_array[-1]) != data_array.size
+    ):
+        raise ValueError("SparseHamiltonianOperator CSR indptr must start at 0 and end at nnz.")
+    if np.any(indptr_array[:-1] > indptr_array[1:]):
+        raise ValueError("SparseHamiltonianOperator CSR indptr must be monotonic.")
+    if np.any(indices_array < 0) or np.any(indices_array >= cols):
+        raise ValueError("SparseHamiltonianOperator CSR column index is out of bounds.")
+    return data_array, indices_array, indptr_array
+
+
+def _normalize_coefficient(value, name: str = "coefficient") -> complex:
+    if isinstance(value, bool) or not isinstance(value, Number):
+        raise ValueError(f"{name} must be a finite numeric value.")
+    coefficient = complex(value)
+    if not math.isfinite(coefficient.real) or not math.isfinite(coefficient.imag):
+        raise ValueError(f"{name} must be finite.")
+    return coefficient
+
+
 class QuantumOperator(ABC):
     """Abstract base class for quantum observables."""
 
     def __init__(self, coefficient: Number = 1.0):
-        self.coefficient = complex(coefficient)
+        self.coefficient = _normalize_coefficient(coefficient)
 
     def __mul__(self, other):
         if isinstance(other, Number):
+            scalar = _normalize_coefficient(other, "scalar")
             new_op = self.__class__.__new__(self.__class__)
             new_op.__dict__.update(self.__dict__)
-            new_op.coefficient = self.coefficient * other
+            new_op.coefficient = _normalize_coefficient(self.coefficient * scalar)
             return new_op
-        raise NotImplementedError(f"Cannot multiply QuantumOperator by {type(other)}")
+        if isinstance(other, QuantumOperator):
+            return _multiply_operator_pauli_terms(self, other)
+        raise TypeError(f"Cannot multiply QuantumOperator by {type(other).__name__}.")
 
     def __rmul__(self, other):
         return self.__mul__(other)
 
+    def __truediv__(self, other):
+        if isinstance(other, Number):
+            scalar = _normalize_coefficient(other, "divisor")
+            if scalar == 0:
+                raise ValueError("divisor must be non-zero.")
+            return self * (1 / scalar)
+        raise TypeError(f"Cannot divide QuantumOperator by {type(other).__name__}.")
+
     def __add__(self, other):
         if isinstance(other, QuantumOperator):
             return SumOperator([self, other])
-        raise NotImplementedError(f"Cannot add QuantumOperator to {type(other)}")
+        if isinstance(other, Number):
+            scalar = _normalize_coefficient(other, "scalar")
+            if scalar == 0:
+                return self
+            return SumOperator([self, _identity_operator(scalar)])
+        raise TypeError(f"Cannot add QuantumOperator to {type(other).__name__}.")
+
+    def __radd__(self, other):
+        if isinstance(other, Number):
+            scalar = _normalize_coefficient(other, "scalar")
+            if scalar == 0:
+                return self
+            return SumOperator([_identity_operator(scalar), self])
+        raise TypeError(f"Cannot add {type(other).__name__} to QuantumOperator.")
+
+    def __neg__(self):
+        return -1 * self
+
+    def __sub__(self, other):
+        if isinstance(other, QuantumOperator):
+            return self + (-other)
+        if isinstance(other, Number):
+            scalar = _normalize_coefficient(other, "scalar")
+            if scalar == 0:
+                return self
+            return self + _identity_operator(-scalar)
+        raise TypeError(f"Cannot subtract {type(other).__name__} from QuantumOperator.")
+
+    def __rsub__(self, other):
+        if isinstance(other, Number):
+            return _identity_operator(_normalize_coefficient(other, "scalar")) + (-self)
+        raise TypeError(f"Cannot subtract QuantumOperator from {type(other).__name__}.")
 
     @abstractmethod
     def to_string(self) -> str:
@@ -47,19 +256,50 @@ class PauliOperator(QuantumOperator):
         self.pauli_string = pauli_string
         _parse_pauli_string(pauli_string)
 
+    def __mul__(self, other):
+        if isinstance(other, PauliOperator):
+            phase, paulis = _multiply_pauli_terms(
+                _parse_pauli_string(self.pauli_string),
+                _parse_pauli_string(other.pauli_string),
+            )
+            return PauliOperator(_format_pauli_string(paulis), self.coefficient * other.coefficient * phase)
+        return super().__mul__(other)
+
     def to_string(self) -> str:
         return f"{self.coefficient} * {self.pauli_string}"
+
+
+def _identity_operator(coefficient: Number) -> PauliOperator:
+    return PauliOperator("I", coefficient=coefficient)
 
 
 class HermitianOperator(QuantumOperator):
     """Represents an operator defined by a Hermitian matrix."""
 
-    def __init__(self, matrix, coefficient: Number = 1.0):
+    def __init__(self, matrix, coefficient: Number = 1.0, targets=None):
         super().__init__(coefficient)
-        self.matrix = matrix
+        self.matrix = _normalize_hermitian_matrix(matrix)
+        self.targets = _normalize_observable_targets(targets, "HermitianOperator target")
 
     def to_string(self) -> str:
         return f"{self.coefficient} * Hermitian(matrix)"
+
+
+class SparseHamiltonianOperator(QuantumOperator):
+    """Represents a full-state sparse Hamiltonian in CSR form."""
+
+    def __init__(self, data, indices, indptr, shape, coefficient: Number = 1.0):
+        super().__init__(coefficient)
+        self.shape = _normalize_sparse_shape(shape)
+        self.data, self.indices, self.indptr = _normalize_sparse_csr(
+            data,
+            indices,
+            indptr,
+            self.shape,
+        )
+
+    def to_string(self) -> str:
+        return f"{self.coefficient} * SparseHamiltonian(CSR, shape={self.shape})"
 
 
 class SumOperator(QuantumOperator):
@@ -69,15 +309,28 @@ class SumOperator(QuantumOperator):
         super().__init__(coefficient)
         self.terms = operators
 
+    def _add_terms(self) -> list[QuantumOperator]:
+        if self.coefficient == 1:
+            return list(self.terms)
+        return [SumOperator(list(self.terms), coefficient=self.coefficient)]
+
     def __add__(self, other):
         if isinstance(other, SumOperator):
-            return SumOperator(list(self.terms) + list(other.terms))
+            return SumOperator(self._add_terms() + other._add_terms())
         if isinstance(other, QuantumOperator):
-            return SumOperator(list(self.terms) + [other])
-        raise NotImplementedError
+            return SumOperator(self._add_terms() + [other])
+        if isinstance(other, Number):
+            scalar = _normalize_coefficient(other, "scalar")
+            if scalar == 0:
+                return self
+            return SumOperator(self._add_terms() + [_identity_operator(scalar)])
+        raise TypeError(f"Cannot add SumOperator to {type(other).__name__}.")
 
     def to_string(self) -> str:
-        return " + ".join(f"({term.to_string()})" for term in self.terms)
+        joined_terms = " + ".join(f"({term.to_string()})" for term in self.terms)
+        if self.coefficient == 1:
+            return joined_terms
+        return f"{self.coefficient} * ({joined_terms})"
 
 
 def _parse_pauli_string(pauli_string: str) -> List[Tuple[str, int]]:
@@ -115,6 +368,64 @@ def _parse_pauli_string(pauli_string: str) -> List[Tuple[str, int]]:
     return parsed
 
 
+_PAULI_PRODUCT_TABLE = {
+    ("X", "Y"): (1j, "Z"),
+    ("Y", "X"): (-1j, "Z"),
+    ("Y", "Z"): (1j, "X"),
+    ("Z", "Y"): (-1j, "X"),
+    ("Z", "X"): (1j, "Y"),
+    ("X", "Z"): (-1j, "Y"),
+}
+
+
+def _multiply_pauli_terms(
+    left: Sequence[Tuple[str, int]],
+    right: Sequence[Tuple[str, int]],
+) -> Tuple[complex, List[Tuple[str, int]]]:
+    phase = 1.0 + 0.0j
+    by_qubit = {int(qubit): pauli for pauli, qubit in left}
+
+    for pauli, qubit in right:
+        qubit = int(qubit)
+        if qubit not in by_qubit:
+            by_qubit[qubit] = pauli
+            continue
+
+        existing = by_qubit[qubit]
+        if existing == pauli:
+            del by_qubit[qubit]
+            continue
+
+        local_phase, product_pauli = _PAULI_PRODUCT_TABLE[(existing, pauli)]
+        phase *= local_phase
+        by_qubit[qubit] = product_pauli
+
+    return phase, [(pauli, qubit) for qubit, pauli in sorted(by_qubit.items())]
+
+
+def _format_pauli_string(paulis: Sequence[Tuple[str, int]]) -> str:
+    if not paulis:
+        return "I"
+    return " ".join(f"{pauli}{int(qubit)}" for pauli, qubit in paulis)
+
+
+def _multiply_operator_pauli_terms(left: QuantumOperator, right: QuantumOperator) -> QuantumOperator:
+    product_terms = []
+    for left_coefficient, left_paulis in iter_pauli_terms(left):
+        for right_coefficient, right_paulis in iter_pauli_terms(right):
+            phase, paulis = _multiply_pauli_terms(left_paulis, right_paulis)
+            product_terms.append(
+                PauliOperator(
+                    _format_pauli_string(paulis),
+                    coefficient=left_coefficient * right_coefficient * phase,
+                )
+            )
+
+    if len(product_terms) == 1:
+        return product_terms[0]
+    return SumOperator(product_terms)
+
+
 def iter_pauli_terms(operator: QuantumOperator) -> List[Tuple[complex, List[Tuple[str, int]]]]:
     """Expand an operator into ``(coefficient, pauli-term)`` pairs."""
 
@@ -128,10 +439,10 @@ def iter_pauli_terms(operator: QuantumOperator) -> List[Tuple[complex, List[Tupl
                 terms.append((operator.coefficient * coefficient, paulis))
         return terms
 
-    if isinstance(operator, HermitianOperator):
+    if isinstance(operator, (HermitianOperator, SparseHamiltonianOperator)):
         raise NotImplementedError(
-            "HermitianOperator expectation values are not wired to a native backend yet. "
-            "Use PauliOperator or SumOperator for the current ROCm-native observe path."
+            f"{operator.__class__.__name__} cannot be expanded by iter_pauli_terms(). "
+            "Use rocq.observe() or get_expectation_value() to evaluate matrix observables."
         )
 
     raise TypeError(f"Unsupported quantum operator type: {type(operator)!r}")

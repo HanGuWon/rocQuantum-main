@@ -144,7 +144,7 @@ Baseline: `dbfd6816d4307b2f869487d0bf36f1c2ad324b3a`
 #### P2-3 Ecosystem Polish (Owner: Python + Integrations)
 - Scope: provider maturity lift, test modernization, stable capability reporting.
 - Acceptance criteria:
-  - No TODO-only provider tests for exposed backends.
+  - No TODO-only provider tests for exposed backends. Current provider test files now contain explicit unsupported-stub, credential, payload-shape, or SDK-boundary contracts instead of TODO-only placeholders.
 - Test plan:
   - Provider-level contract tests with explicit skip conditions.
 - Risk:

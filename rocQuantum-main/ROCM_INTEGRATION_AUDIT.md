@@ -1,20 +1,19 @@
 # ROCm Integration Audit
 
 Audit date: 2026-04-05
+Refresh date: 2026-06-10
 
 ## External ROCm Ground Truth
 
 Official sources checked:
 
-- ROCm release history: `https://rocm.docs.amd.com/en/latest/about/release-history.html`
+- ROCm release history: `https://rocm.docs.amd.com/en/latest/release/versions.html`
 - ROCm compatibility matrix: `https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html`
 - ROCm Linux install and system requirements: `https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html`
 
-### Latest Stable ROCm At Audit Time
+### Latest Production ROCm At Refresh Time
 
-The official AMD docs inspected in this pass showed ROCm `7.2.0` as the latest stable release, with release date `2026-01-21`.
-
-I did not find official AMD evidence for ROCm `7.2.1` on 2026-04-05, so the earlier planning assumption of `7.2.1` was downgraded. All compatibility recommendations in this audit therefore use `7.2.0` as the latest stable target.
+The official AMD docs inspected on 2026-06-10 showed ROCm `7.2.4` as the production release, with release date `2026-05-29`. The earlier 2026-04-05 snapshot used ROCm `7.2.0`; this refresh updates policy and CI recommendations to `7.2.4`.
 
 ### Latest AMD GPU Target At Audit Time
 
@@ -26,19 +25,18 @@ Maturity assessment: `PARTIAL`, early productization stage
 
 What is wired:
 
-- Root `CMakeLists.txt` requires `HIP`, `hiprand`, `rocblas`, and `rocsolver`.
+- Root `CMakeLists.txt` requires CMake `3.21`, enables the CMake HIP language, and consumes ROCm packages through official config-package targets: `hip` / `hip::host`, `hiprand`, `roc::rocblas`, and `roc::rocsolver`.
 - Native component libraries are built from `rocquantum/src/hipStateVec`, `rocquantum/src/hipTensorNet`, and `rocquantum/src/hipDensityMat`.
-- `hipStateVec` optionally looks for RCCL via `rocquantum/src/hipStateVec/CMakeLists.txt`.
-- CI builds inside ROCm containers and can execute one tensor-network GPU regression if `/dev/kfd` is present.
+- `hipStateVec` optionally looks for RCCL via `rocquantum/src/hipStateVec/CMakeLists.txt`, preferring the official `rccl` CMake target and retaining `rccl::rccl` / library-variable fallbacks for older layouts.
+- CI builds inside ROCm containers, can execute tensor-network GPU regressions if `/dev/kfd` is present, and now uploads release benchmark JSON artifacts.
 
 What is missing or weak:
 
-- No repository-wide `CMAKE_HIP_ARCHITECTURES` policy existed before this audit pass.
-- No release-grade ROCm/GPU matrix is documented in-repo.
+- The default architecture policy covers only Tier 1 datacenter targets (`gfx950`, `gfx942`, `gfx90a`); Radeon/workstation targets require explicit user override.
+- No release-grade ROCm/GPU matrix is fully proven across all target families.
 - Python packaging is split across inconsistent module names and version metadata.
-- The `_rocq_hip_backend` binding path exists on disk but is not built by the root CMake flow.
-- Install/export is incomplete for downstream consumption.
-- CI proves only a narrow subset of runtime behavior.
+- Install/export is improved but still needs downstream consumption tests across ROCm installs.
+- CI proves more than the original audit did, but full statevector/density/distributed runtime coverage still depends on ROCm self-hosted runners.
 
 ## Repo-Verified Compatibility Story
 
@@ -49,10 +47,12 @@ This section is about what the repo can defend today from code and CI, not what 
 | Primary OS | Linux x86_64 |
 | Windows | Development helper scripts exist, but Windows is not a release-grade path |
 | Non-experimental ROCm in CI | `6.2.2` |
-| Experimental ROCm in CI | `7.2.0` |
-| GPU architecture policy | Not explicitly encoded in the repo before this audit |
-| Runtime GPU proof | Only `HipTensorNetContractionRegression` in CI |
-| Multi-GPU proof | No release-grade multi-GPU CI proof |
+| Experimental ROCm in CI | `7.2.4` |
+| Native CMake floor | CMake `3.21` for HIP language support |
+| ROCm CMake package style | Official config packages and imported targets: `hip` / `hip::host`, `roc::rocblas`, `roc::rocsolver`, optional `rccl` |
+| GPU architecture policy | `gfx950;gfx942;gfx90a` by default; older ROCm lane uses `gfx942;gfx90a` |
+| Runtime GPU proof | TensorNet smoke plus benchmark artifact registry; broader runtime coverage still pending |
+| Multi-GPU proof | MultiGPUTests and RCCL benchmark hooks exist, but release-grade multi-GPU CI proof is still partial |
 
 ## Recommended Compatibility Policy
 
@@ -60,7 +60,8 @@ This is the proposed release policy after the audit, not a claim that the repo a
 
 ### Tier 1 Target
 
-- ROCm: `7.2.0`
+- ROCm: `7.2.4`
+- CMake: `3.21` or newer
 - GPU architectures: `gfx950`, `gfx942`, `gfx90a`
 - OS: Linux x86_64
 - Python: `3.10`, `3.11`, `3.12`
@@ -86,10 +87,9 @@ Rationale:
 
 ### Build system
 
-- Root CMake does not encode a default HIP architecture list.
 - The compiler stack is not coherently built as part of the root product.
-- The install tree does not provide a complete package config and version story.
-- Exported targets still publish source-tree include paths instead of install interfaces.
+- Downstream install-tree consumption is not yet tested against multiple ROCm package layouts.
+- RCCL remains optional; builds without RCCL must still make the missing distributed fast path obvious.
 
 ### Python packaging
 
@@ -122,7 +122,8 @@ Rationale:
 
 ### Native ROCm lane
 
-- ROCm `7.2.0`
+- ROCm `7.2.4`
+- CMake `3.21+`
 - `CMAKE_HIP_ARCHITECTURES="gfx950;gfx942;gfx90a"`
 - build native libraries and bindings
 - run statevector, density-matrix, tensor-network, and expectation tests
@@ -135,7 +136,7 @@ Rationale:
 
 ### Multi-GPU lane
 
-- ROCm `7.2.0`
+- ROCm `7.2.4`
 - at least 2 GPUs
 - distributed allocation, local-domain gates, local-domain measurement smoke
 - explicit skip/fail for currently unsupported distributed operations
@@ -174,7 +175,8 @@ Separate current truth from forward policy:
 
 - Unify Python package identity, versioning, and binding name
 - Add explicit HIP architecture matrix to CI and build docs
-- Add complete install/export package config
+- Keep CMake at `3.21+` and use ROCm config-package targets (`hip::host`, `roc::rocblas`, `roc::rocsolver`, optional `rccl`)
+- Validate the install/export package config from an installed ROCm tree
 - Add runtime tests for statevector, density matrix, expectations, and multi-GPU smoke
 - Publish a single Linux-first support statement
 - Stop implying Windows release support until a real Windows ROCm path is validated

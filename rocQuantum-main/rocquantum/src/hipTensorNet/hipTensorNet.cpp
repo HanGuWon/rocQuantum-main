@@ -13,12 +13,64 @@
 #include <rocblas/rocblas.h>
 #include <rocsolver/rocsolver.h>
 
+#ifdef HAS_METIS
+#include <metis.h>
+#endif
+
 struct rocTnStruct {
     rocquantum::TensorNetworkBase* tn_instance = nullptr;
-    rocDataType_t dtype = ROC_DATATYPE_C64;
+    rocDataType_t dtype = ROC_TENSORNET_COMPILED_COMPLEX_DTYPE;
 };
 
 namespace {
+
+inline bool tensor_dtype_supported_by_build(rocDataType_t dtype) {
+    return dtype == ROC_TENSORNET_COMPILED_COMPLEX_DTYPE;
+}
+
+inline size_t tensor_element_size_bytes() {
+    return sizeof(rocComplex);
+}
+
+inline bool pathfinder_algorithm_available(rocPathfinderAlgorithm_t algorithm) {
+    switch (algorithm) {
+        case ROCTN_PATHFINDER_ALGO_GREEDY:
+            return true;
+        case ROCTN_PATHFINDER_ALGO_KAHYPAR:
+#ifdef HAS_KAHYPAR
+            return true;
+#else
+            return false;
+#endif
+        case ROCTN_PATHFINDER_ALGO_METIS:
+#ifdef HAS_METIS
+            return true;
+#else
+            return false;
+#endif
+        default:
+            return false;
+    }
+}
+
+inline rocPathfinderAlgorithm_t effective_pathfinder_algorithm(rocPathfinderAlgorithm_t algorithm) {
+    return pathfinder_algorithm_available(algorithm) ? algorithm : ROCTN_PATHFINDER_ALGO_GREEDY;
+}
+
+inline rocqStatus_t validate_optimizer_config(const hipTensorNetContractionOptimizerConfig_t& config) {
+    switch (config.pathfinder_algorithm) {
+        case ROCTN_PATHFINDER_ALGO_GREEDY:
+        case ROCTN_PATHFINDER_ALGO_KAHYPAR:
+        case ROCTN_PATHFINDER_ALGO_METIS:
+            break;
+        default:
+            return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (config.num_slices < 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
 
 inline bool contains_mode_index(const std::vector<std::pair<int, int>>& pairs,
                                 int mode,
@@ -52,8 +104,145 @@ inline size_t estimate_pair_memory_bytes(const rocquantum::util::rocTensor& a,
     const long long b_elems = b.get_element_count();
     const long long r_elems = product_dims(result_dims);
     const long long total_elems = a_elems + b_elems + r_elems;
-    return static_cast<size_t>(total_elems) * sizeof(rocComplex);
+    return static_cast<size_t>(total_elems) * tensor_element_size_bytes();
 }
+
+inline size_t selection_cost_for_algorithm(const hipTensorNetContractionOptimizerConfig_t& config,
+                                           size_t required_bytes,
+                                           size_t contracted_modes) {
+    const rocPathfinderAlgorithm_t algorithm =
+        effective_pathfinder_algorithm(config.pathfinder_algorithm);
+    size_t cost = required_bytes;
+
+    if (algorithm == ROCTN_PATHFINDER_ALGO_GREEDY) {
+        cost += contracted_modes;
+    }
+
+    if (config.memory_limit_bytes > 0 && required_bytes > config.memory_limit_bytes) {
+        const size_t automatic_slices =
+            (required_bytes + config.memory_limit_bytes - 1) / config.memory_limit_bytes;
+        const size_t requested_slices =
+            config.num_slices > 0 ? static_cast<size_t>(config.num_slices) : automatic_slices;
+        const size_t effective_slices = std::max<size_t>(1, requested_slices);
+        const size_t sliced_required_bytes =
+            (required_bytes + effective_slices - 1) / effective_slices;
+        cost = sliced_required_bytes + (effective_slices * 1024);
+    }
+
+    return cost;
+}
+
+#ifdef HAS_METIS
+inline idx_t metis_shared_mode_weight(const rocquantum::util::rocTensor& a,
+                                      const rocquantum::util::rocTensor& b) {
+    idx_t weight = 0;
+    for (size_t i = 0; i < a.labels_.size(); ++i) {
+        for (size_t j = 0; j < b.labels_.size(); ++j) {
+            if (a.labels_[i] == b.labels_[j] && a.dimensions_[i] == b.dimensions_[j]) {
+                const long long dim = std::max<long long>(1, a.dimensions_[i]);
+                const long long capped = std::min<long long>(
+                    dim, static_cast<long long>(std::numeric_limits<idx_t>::max()));
+                weight += static_cast<idx_t>(capped);
+            }
+        }
+    }
+    return weight;
+}
+
+inline bool metis_partition_active_tensors(
+    const std::map<int, rocquantum::util::rocTensor>& active,
+    const hipTensorNetContractionOptimizerConfig_t& config,
+    std::map<int, int>* partition_by_id) {
+    if (!partition_by_id || active.size() < 3) {
+        return false;
+    }
+
+    std::vector<int> tensor_ids;
+    tensor_ids.reserve(active.size());
+    std::vector<const rocquantum::util::rocTensor*> tensors;
+    tensors.reserve(active.size());
+    for (const auto& entry : active) {
+        tensor_ids.push_back(entry.first);
+        tensors.push_back(&entry.second);
+    }
+
+    std::vector<std::vector<std::pair<idx_t, idx_t>>> adjacency(tensors.size());
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        for (size_t j = i + 1; j < tensors.size(); ++j) {
+            const idx_t weight = metis_shared_mode_weight(*tensors[i], *tensors[j]);
+            if (weight <= 0) {
+                continue;
+            }
+            adjacency[i].push_back({static_cast<idx_t>(j), weight});
+            adjacency[j].push_back({static_cast<idx_t>(i), weight});
+        }
+    }
+
+    size_t edge_entries = 0;
+    for (const auto& neighbors : adjacency) {
+        edge_entries += neighbors.size();
+    }
+    if (edge_entries == 0) {
+        return false;
+    }
+
+    std::vector<idx_t> xadj(tensors.size() + 1, 0);
+    std::vector<idx_t> adjncy;
+    std::vector<idx_t> adjwgt;
+    adjncy.reserve(edge_entries);
+    adjwgt.reserve(edge_entries);
+    for (size_t i = 0; i < adjacency.size(); ++i) {
+        xadj[i + 1] = xadj[i] + static_cast<idx_t>(adjacency[i].size());
+        for (const auto& neighbor : adjacency[i]) {
+            adjncy.push_back(neighbor.first);
+            adjwgt.push_back(neighbor.second);
+        }
+    }
+
+    idx_t nvtxs = static_cast<idx_t>(tensors.size());
+    idx_t ncon = 1;
+    idx_t nparts = 2;
+    idx_t edgecut = 0;
+    std::vector<idx_t> part(tensors.size(), 0);
+    std::vector<idx_t> options(METIS_NOPTIONS);
+    METIS_SetDefaultOptions(options.data());
+    if (config.algo_config.metis_config.num_iterations > 0) {
+        options[METIS_OPTION_NITER] =
+            static_cast<idx_t>(config.algo_config.metis_config.num_iterations);
+    }
+
+    const int metis_status = METIS_PartGraphKway(&nvtxs,
+                                                 &ncon,
+                                                 xadj.data(),
+                                                 adjncy.data(),
+                                                 nullptr,
+                                                 nullptr,
+                                                 adjwgt.data(),
+                                                 &nparts,
+                                                 nullptr,
+                                                 nullptr,
+                                                 options.data(),
+                                                 &edgecut,
+                                                 part.data());
+    if (metis_status != METIS_OK) {
+        return false;
+    }
+
+    partition_by_id->clear();
+    for (size_t i = 0; i < tensor_ids.size(); ++i) {
+        (*partition_by_id)[tensor_ids[i]] = static_cast<int>(part[i]);
+    }
+    return true;
+}
+
+inline size_t add_metis_partition_penalty(size_t selection_cost) {
+    constexpr size_t penalty = std::numeric_limits<size_t>::max() / 4;
+    if (selection_cost > std::numeric_limits<size_t>::max() - penalty) {
+        return std::numeric_limits<size_t>::max();
+    }
+    return selection_cost + penalty;
+}
+#endif
 
 } // namespace
 
@@ -142,6 +331,10 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
     if (!blas_handle) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
+    rocqStatus_t config_status = validate_optimizer_config(*config);
+    if (config_status != ROCQ_STATUS_SUCCESS) {
+        return config_status;
+    }
 
     if (rocblas_set_stream(blas_handle, stream) != rocblas_status_success) {
         return ROCQ_STATUS_FAILURE;
@@ -175,6 +368,15 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
         std::vector<long long> best_result_dims;
         std::vector<std::string> best_result_labels;
 
+        std::map<int, int> metis_partition;
+#ifdef HAS_METIS
+        const bool using_metis_partition =
+            effective_pathfinder_algorithm(config->pathfinder_algorithm) == ROCTN_PATHFINDER_ALGO_METIS &&
+            metis_partition_active_tensors(active, *config, &metis_partition);
+#else
+        constexpr bool using_metis_partition = false;
+#endif
+
         for (auto it_a = active.begin(); it_a != active.end(); ++it_a) {
             auto it_b = it_a;
             ++it_b;
@@ -189,11 +391,14 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
 
                 const size_t required_bytes = estimate_pair_memory_bytes(a, b, result_dims);
 
-                size_t selection_cost = required_bytes;
-                if (config->memory_limit_bytes > 0 && required_bytes > config->memory_limit_bytes) {
-                    // Bias toward smaller temporary footprints when over limit.
-                    selection_cost = required_bytes + static_cast<size_t>(1) << 30;
+                size_t selection_cost =
+                    selection_cost_for_algorithm(*config, required_bytes, mode_pairs.size());
+#ifdef HAS_METIS
+                if (using_metis_partition &&
+                    metis_partition[it_a->first] != metis_partition[it_b->first]) {
+                    selection_cost = add_metis_partition_penalty(selection_cost);
                 }
+#endif
 
                 if (!found || selection_cost < best_cost) {
                     found = true;
@@ -246,7 +451,9 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
                                                                    result_a_modes_order,
                                                                    result_b_modes_order,
                                                                    blas_handle,
-                                                                   stream);
+                                                                   stream,
+                                                                   config->memory_limit_bytes,
+                                                                   config->num_slices);
         if (status != ROCQ_STATUS_SUCCESS) {
             util::rocTensorFree(&contracted);
             return status;
@@ -294,6 +501,28 @@ template class TensorNetwork<rocComplex>;
 
 extern "C" {
 
+rocqStatus_t rocTensorNetworkGetCapabilities(hipTensorNetCapabilities_t* capabilities) {
+    if (!capabilities) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    capabilities->supports_c64 = (ROC_TENSORNET_COMPILED_COMPLEX_DTYPE == ROC_DATATYPE_C64) ? 1 : 0;
+    capabilities->supports_c128 = (ROC_TENSORNET_COMPILED_COMPLEX_DTYPE == ROC_DATATYPE_C128) ? 1 : 0;
+    capabilities->supports_pathfinder_greedy = 1;
+#ifdef HAS_KAHYPAR
+    capabilities->supports_pathfinder_kahypar = 1;
+#else
+    capabilities->supports_pathfinder_kahypar = 0;
+#endif
+#ifdef HAS_METIS
+    capabilities->supports_pathfinder_metis = 1;
+#else
+    capabilities->supports_pathfinder_metis = 0;
+#endif
+    capabilities->supports_memory_limit_planning = 1;
+    capabilities->supports_runtime_slicing = 1;
+    return ROCQ_STATUS_SUCCESS;
+}
+
 rocqStatus_t rocTensorNetworkCreate(rocTensorNetworkHandle_t* handle, rocDataType_t dtype) {
     if (!handle) {
         return ROCQ_STATUS_INVALID_VALUE;
@@ -305,7 +534,7 @@ rocqStatus_t rocTensorNetworkCreate(rocTensorNetworkHandle_t* handle, rocDataTyp
     }
 
     try {
-        if (dtype != ROC_DATATYPE_C64) {
+        if (!tensor_dtype_supported_by_build(dtype)) {
             delete h;
             return ROCQ_STATUS_NOT_IMPLEMENTED;
         }
@@ -370,7 +599,7 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
     if (!handle || !U || !S || !V || !A || !A->data_) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    if (handle->dtype != ROC_DATATYPE_C64) {
+    if (handle->dtype != ROC_TENSORNET_COMPILED_COMPLEX_DTYPE) {
         return ROCQ_STATUS_NOT_IMPLEMENTED;
     }
     if (A->rank() != 2 || A->dimensions_.size() != 2) {
@@ -432,15 +661,23 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
         return ROCQ_STATUS_HIP_ERROR;
     }
 
-    float* d_singular_values = nullptr;
-    if (hipMalloc(&d_singular_values, static_cast<size_t>(min_mn) * sizeof(float)) != hipSuccess) {
+#ifdef ROCQ_PRECISION_DOUBLE
+    using RocSolverReal = double;
+    using RocSolverComplex = rocblas_double_complex;
+#else
+    using RocSolverReal = float;
+    using RocSolverComplex = rocblas_float_complex;
+#endif
+
+    RocSolverReal* d_singular_values = nullptr;
+    if (hipMalloc(&d_singular_values, static_cast<size_t>(min_mn) * sizeof(RocSolverReal)) != hipSuccess) {
         rocquantum::util::rocTensorFree(&A_work);
         return ROCQ_STATUS_ALLOCATION_FAILED;
     }
 
-    float* d_superdiag = nullptr;
+    RocSolverReal* d_superdiag = nullptr;
     const size_t superdiag_size = static_cast<size_t>(std::max<rocblas_int>(1, min_mn - 1));
-    if (hipMalloc(&d_superdiag, superdiag_size * sizeof(float)) != hipSuccess) {
+    if (hipMalloc(&d_superdiag, superdiag_size * sizeof(RocSolverReal)) != hipSuccess) {
         hipFree(d_singular_values);
         rocquantum::util::rocTensorFree(&A_work);
         return ROCQ_STATUS_ALLOCATION_FAILED;
@@ -470,21 +707,39 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
         return ROCQ_STATUS_FAILURE;
     }
 
+#ifdef ROCQ_PRECISION_DOUBLE
+    const rocblas_status svd_status = rocsolver_zgesvd(blas_handle,
+                                                       rocblas_svect_all,
+                                                       rocblas_svect_all,
+                                                       m,
+                                                       n,
+                                                       reinterpret_cast<RocSolverComplex*>(A_work.data_),
+                                                       m,
+                                                       d_singular_values,
+                                                       reinterpret_cast<RocSolverComplex*>(U->data_),
+                                                       m,
+                                                       reinterpret_cast<RocSolverComplex*>(V->data_),
+                                                       n,
+                                                       d_superdiag,
+                                                       rocblas_outofplace,
+                                                       d_info);
+#else
     const rocblas_status svd_status = rocsolver_cgesvd(blas_handle,
                                                        rocblas_svect_all,
                                                        rocblas_svect_all,
                                                        m,
                                                        n,
-                                                       reinterpret_cast<rocblas_float_complex*>(A_work.data_),
+                                                       reinterpret_cast<RocSolverComplex*>(A_work.data_),
                                                        m,
                                                        d_singular_values,
-                                                       reinterpret_cast<rocblas_float_complex*>(U->data_),
+                                                       reinterpret_cast<RocSolverComplex*>(U->data_),
                                                        m,
-                                                       reinterpret_cast<rocblas_float_complex*>(V->data_),
+                                                       reinterpret_cast<RocSolverComplex*>(V->data_),
                                                        n,
                                                        d_superdiag,
                                                        rocblas_outofplace,
                                                        d_info);
+#endif
     rocblas_destroy_handle(blas_handle);
 
     if (svd_status != rocblas_status_success) {
@@ -511,10 +766,10 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
         return ROCQ_STATUS_FAILURE;
     }
 
-    std::vector<float> singular_values_host(static_cast<size_t>(min_mn), 0.0f);
+    std::vector<RocSolverReal> singular_values_host(static_cast<size_t>(min_mn), 0.0);
     if (hipMemcpy(singular_values_host.data(),
                   d_singular_values,
-                  singular_values_host.size() * sizeof(float),
+                  singular_values_host.size() * sizeof(RocSolverReal),
                   hipMemcpyDeviceToHost) != hipSuccess) {
         hipFree(d_info);
         hipFree(d_superdiag);
@@ -527,7 +782,7 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
     for (rocblas_int i = 0; i < min_mn; ++i) {
         singular_values_complex[static_cast<size_t>(i)] = {
             singular_values_host[static_cast<size_t>(i)],
-            0.0f};
+            0.0};
     }
 
     if (hipMemcpy(S->data_,

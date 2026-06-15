@@ -28,10 +28,29 @@ target_include_directories(rocqsim_tensornet
 
 target_link_libraries(rocqsim_tensornet
     PUBLIC
-        HIP::hip_runtime
+        hip::host
         roc::rocblas
         roc::rocsolver
 )
+
+option(ROCQUANTUM_TENSORNET_ENABLE_METIS "Enable optional METIS pathfinder integration" OFF)
+if(ROCQUANTUM_TENSORNET_ENABLE_METIS)
+    find_path(METIS_INCLUDE_DIR metis.h)
+    find_library(METIS_LIBRARY NAMES metis)
+    if(NOT METIS_INCLUDE_DIR OR NOT METIS_LIBRARY)
+        message(FATAL_ERROR "ROCQUANTUM_TENSORNET_ENABLE_METIS=ON requires METIS headers and library")
+    endif()
+    target_compile_definitions(rocqsim_tensornet PRIVATE HAS_METIS=1)
+    target_include_directories(rocqsim_tensornet PRIVATE ${METIS_INCLUDE_DIR})
+    target_link_libraries(rocqsim_tensornet PUBLIC ${METIS_LIBRARY})
+endif()
+
+option(ROCQUANTUM_TENSORNET_ENABLE_KAHYPAR "Enable optional KaHyPar pathfinder integration" OFF)
+if(ROCQUANTUM_TENSORNET_ENABLE_KAHYPAR)
+    message(FATAL_ERROR
+        "ROCQUANTUM_TENSORNET_ENABLE_KAHYPAR=ON is not release-wired yet; "
+        "use ROCTN_PATHFINDER_ALGO_GREEDY or ROCQUANTUM_TENSORNET_ENABLE_METIS=ON")
+endif()
 
 install(
     TARGETS rocqsim_tensornet
@@ -50,6 +69,12 @@ if(BUILD_TESTING)
 
     add_executable(test_contraction_regression test_hipTensorNet_contraction_regression.cpp)
     target_link_libraries(test_contraction_regression PRIVATE rocqsim_tensornet)
+
+    add_executable(
+        benchmark_hipTensorNet_contraction
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../benchmarks/tensornet_contraction_benchmark.cpp
+    )
+    target_link_libraries(benchmark_hipTensorNet_contraction PRIVATE rocqsim_tensornet)
 
     add_executable(test_permutation ../../tests/hipTensorNet/test_PermutationKernels.cpp)
     target_link_libraries(test_permutation PRIVATE rocqsim_tensornet)

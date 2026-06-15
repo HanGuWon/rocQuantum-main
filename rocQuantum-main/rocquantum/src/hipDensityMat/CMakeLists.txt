@@ -23,7 +23,7 @@ target_include_directories(rocq_hip_density_mat
 
 target_link_libraries(rocq_hip_density_mat
     PUBLIC
-        HIP::hip_runtime
+        hip::host
 )
 
 install(
@@ -39,3 +39,14 @@ install(
         "${CMAKE_CURRENT_SOURCE_DIR}/hipDensityMat.hpp"
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/rocquantum
 )
+
+if(BUILD_TESTING)
+    add_executable(
+        benchmark_hipDensityMat_channel_sampling
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../benchmarks/densitymat_channel_benchmark.cpp
+    )
+    target_link_libraries(
+        benchmark_hipDensityMat_channel_sampling
+        PRIVATE rocq_hip_density_mat hip::host
+    )
+endif()

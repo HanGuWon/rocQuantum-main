@@ -86,8 +86,32 @@ rocqStatus_t rocdmComputePauliZProductExpectation(rocdmHandle_t state,
         hipDensityMatComputePauliZProductExpectation(state, num_z_qubits, z_qubit_indices, result_host));
 }
 
+rocqStatus_t rocdmComputeExpectationMatrix(rocdmHandle_t state,
+                                           const int* target_qubits,
+                                           int num_target_qubits,
+                                           const hipComplex* matrix_host,
+                                           int matrix_dim,
+                                           hipComplex* result_host) {
+    return map_density_status(hipDensityMatComputeExpectationMatrix(
+        state,
+        target_qubits,
+        num_target_qubits,
+        matrix_host,
+        matrix_dim,
+        result_host));
+}
+
 rocqStatus_t rocdmApplyChannel(rocdmHandle_t state, int target_qubit, const void* channel_params) {
     return map_density_status(hipDensityMatApplyChannel(state, target_qubit, channel_params));
+}
+
+rocqStatus_t rocdmSample(rocdmHandle_t state,
+                         const int* measured_qubits,
+                         int num_measured_qubits,
+                         int num_shots,
+                         uint64_t* results_host) {
+    return map_density_status(
+        hipDensityMatSample(state, measured_qubits, num_measured_qubits, num_shots, results_host));
 }
 
 }  // extern "C"

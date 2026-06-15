@@ -9,12 +9,14 @@ No GPU / HIP / ROCm / requests / boto3 required.
 
 import ast
 import inspect
+import io
 import json
 import os
 import sys
 import tempfile
 import types
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -97,6 +99,160 @@ class TestSumOperatorImmutability(unittest.TestCase):
         s3 = s1 + s2
         self.assertEqual(len(s1.terms), s1_len)
         self.assertEqual(len(s3.terms), s1_len + len(s2.terms))
+
+    def test_add_preserves_scaled_sum_coefficients(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        scaled_sum = 2 * (PauliOperator("X0") + PauliOperator("Y1"))
+        combined = scaled_sum + PauliOperator("Z0", -0.5)
+
+        self.assertEqual(
+            iter_pauli_terms(combined),
+            [
+                (2 + 0j, [("X", 0)]),
+                (2 + 0j, [("Y", 1)]),
+                (-0.5 + 0j, [("Z", 0)]),
+            ],
+        )
+
+    def test_add_two_scaled_sums_preserves_both_coefficients(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        left = 2 * (PauliOperator("X0") + PauliOperator("Y1"))
+        right = -3 * (PauliOperator("Z0") + PauliOperator("I"))
+
+        self.assertEqual(
+            iter_pauli_terms(left + right),
+            [
+                (2 + 0j, [("X", 0)]),
+                (2 + 0j, [("Y", 1)]),
+                (-3 + 0j, [("Z", 0)]),
+                (-3 + 0j, []),
+            ],
+        )
+
+    def test_subtract_preserves_operator_coefficients(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = 0.5 * (PauliOperator("I") - PauliOperator("Z0 Z1", coefficient=2.0))
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.5 + 0j, []),
+                (-1 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
+        self.assertIn("(0.5+0j)", operator.to_string())
+
+    def test_numeric_constants_expand_to_identity_terms(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = 0.5 + PauliOperator("X0") - 0.25 * PauliOperator("Z1")
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.5 + 0j, []),
+                (1 + 0j, [("X", 0)]),
+                (-0.25 + 0j, [("Z", 1)]),
+            ],
+        )
+
+    def test_numeric_left_subtraction_expands_to_identity_term(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = 1.5 - PauliOperator("Z0")
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1.5 + 0j, []),
+                (-1 + 0j, [("Z", 0)]),
+            ],
+        )
+
+    def test_python_sum_works_for_operator_terms(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = sum([0.25 * PauliOperator("X0"), 0.75 * PauliOperator("Z1")])
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.25 + 0j, [("X", 0)]),
+                (0.75 + 0j, [("Z", 1)]),
+            ],
+        )
+
+    def test_pauli_product_combines_distinct_qubits(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = 0.25 * PauliOperator("Z0") * PauliOperator("Z1")
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (0.25 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
+
+    def test_pauli_product_reduces_same_qubit_identity(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = PauliOperator("X0") * PauliOperator("X0")
+
+        self.assertEqual(iter_pauli_terms(operator), [(1 + 0j, [])])
+
+    def test_pauli_product_preserves_noncommuting_phase(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        xy = PauliOperator("X0") * PauliOperator("Y0")
+        yx = PauliOperator("Y0") * PauliOperator("X0")
+
+        self.assertEqual(iter_pauli_terms(xy), [(1j, [("Z", 0)])])
+        self.assertEqual(iter_pauli_terms(yx), [(-1j, [("Z", 0)])])
+
+    def test_sum_operator_right_product_distributes_pauli_terms(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = (PauliOperator("X0") + 2 * PauliOperator("Y1")) * PauliOperator("Z2")
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1 + 0j, [("X", 0), ("Z", 2)]),
+                (2 + 0j, [("Y", 1), ("Z", 2)]),
+            ],
+        )
+
+    def test_sum_operator_left_product_distributes_pauli_terms(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = PauliOperator("Z2") * (PauliOperator("X0") + 2 * PauliOperator("Y1"))
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1 + 0j, [("X", 0), ("Z", 2)]),
+                (2 + 0j, [("Y", 1), ("Z", 2)]),
+            ],
+        )
+
+    def test_sum_operator_product_preserves_identity_and_phase_terms(self):
+        from rocq.operator import PauliOperator, iter_pauli_terms
+
+        operator = (1 + PauliOperator("X0")) * (PauliOperator("Y0") + PauliOperator("Z1"))
+
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1 + 0j, [("Y", 0)]),
+                (1 + 0j, [("Z", 1)]),
+                (1j, [("Z", 0)]),
+                (1 + 0j, [("X", 0), ("Z", 1)]),
+            ],
+        )
 
 
 # ===================================================================
@@ -232,6 +388,41 @@ class TestCliRigettiPreflight(unittest.TestCase):
             source = f.read()
         self.assertIn("ROCQ_RIGETTI_S3_OUTPUT", source,
                        "CLI check_environment_vars must validate ROCQ_RIGETTI_S3_OUTPUT")
+
+    def test_list_backends_prints_status_metadata(self):
+        _ensure_fake_module("requests")
+        import importlib
+        import rocq_cli
+
+        rocq_cli = importlib.reload(rocq_cli)
+        stdout = io.StringIO()
+
+        with mock.patch.object(sys, "argv", ["rocq", "list-backends"]):
+            with redirect_stdout(stdout):
+                rocq_cli.main()
+
+        output = stdout.getvalue()
+        self.assertIn("Backend\tStatus\tNotes", output)
+        self.assertIn("qristal\tlocal_cli_client\trequires Qristal SDK CLI", output)
+        self.assertIn("ionq\tclient\t-", output)
+        self.assertNotIn("iqm\tunsupported_stub", output)
+
+    def test_list_backends_can_show_experimental_stubs(self):
+        _ensure_fake_module("requests")
+        import importlib
+        import rocq_cli
+
+        rocq_cli = importlib.reload(rocq_cli)
+        stdout = io.StringIO()
+
+        with mock.patch.object(sys, "argv", ["rocq", "list-backends", "--include-experimental"]):
+            with redirect_stdout(stdout):
+                rocq_cli.main()
+
+        output = stdout.getvalue()
+        self.assertIn("iqm\tunsupported_stub\trequires experimental opt-in", output)
+        self.assertIn("job submission disabled", output)
+        self.assertIn("Provider SDK/API integration is not implemented", output)
 
 
 if __name__ == "__main__":

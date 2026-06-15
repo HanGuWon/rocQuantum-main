@@ -9,8 +9,18 @@ Concrete implementation of a decoder for the 3-qubit bit-flip repetition code.
 
 from typing import List
 
-from rocquantum.python.rocq import PauliOperator
-from rocquantum.qec.framework import Decoder
+from rocq.operator import PauliOperator
+from rocquantum.qec.framework import Decoder, _validate_binary_bit
+
+
+def _validate_repetition_syndrome(syndrome: List[int]) -> List[int]:
+    try:
+        bits = list(syndrome)
+    except TypeError as exc:
+        raise ValueError("syndrome must be a length-2 sequence containing only 0 or 1.") from exc
+    if len(bits) != 2:
+        raise ValueError("syndrome must be a length-2 sequence containing only 0 or 1.")
+    return [_validate_binary_bit(bit, "syndrome") for bit in bits]
 
 class RepetitionCodeDecoder(Decoder):
     """
@@ -21,19 +31,15 @@ class RepetitionCodeDecoder(Decoder):
         Decodes the 2-bit syndrome to find the location of a single X error.
         Syndrome bits correspond to [Z0Z1, Z1Z2] measurements.
         """
+        syndrome = _validate_repetition_syndrome(syndrome)
         if syndrome == [0, 0]:
             # No error detected
-            return PauliOperator()
-        elif syndrome == [1, 0]:
+            return PauliOperator("I")
+        if syndrome == [1, 0]:
             # Error on data qubit 0
-            return PauliOperator({"X0": 1.0})
-        elif syndrome == [1, 1]:
+            return PauliOperator("X0")
+        if syndrome == [1, 1]:
             # Error on data qubit 1
-            return PauliOperator({"X1": 1.0})
-        elif syndrome == [0, 1]:
-            # Error on data qubit 2
-            return PauliOperator({"X2": 1.0})
-        else:
-            # This case implies more than one error, which this simple
-            # code cannot correct. Return no correction.
-            return PauliOperator()
+            return PauliOperator("X1")
+        # Error on data qubit 2
+        return PauliOperator("X2")

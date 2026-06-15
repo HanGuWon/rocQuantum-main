@@ -27,10 +27,10 @@ typedef struct hipTensorNetContractionOptimizerConfig_t {
     /**
      * @brief The memory limit in bytes for any single intermediate tensor.
      *
-     * If the pathfinder determines that a pairwise contraction will produce an
-     * intermediate tensor larger than this limit, slicing will be triggered for
-     * that specific contraction.
-     * A value of 0 (the default) disables the slicing feature entirely.
+     * If the runtime estimates that a pairwise contraction exceeds this limit,
+     * the GEMM contracted dimension is split into deterministic K-slices and
+     * accumulated into the output tensor. A value of 0 disables memory-limit
+     * slicing and leaves the contraction as a single GEMM.
      */
     size_t memory_limit_bytes;
 
@@ -38,7 +38,7 @@ typedef struct hipTensorNetContractionOptimizerConfig_t {
      * @brief (Optional) Manually specifies the number of slices to use.
      *
      * If this value is greater than 0, the library will use this fixed number
-     * of slices for the identified slicing contraction.
+     * of K-slices for eligible pair contractions.
      * If this value is 0 (the default), the library will automatically calculate
      * the minimum number of slices required to ensure the largest sliced
      * intermediate fits within 'memory_limit_bytes'.
@@ -46,5 +46,15 @@ typedef struct hipTensorNetContractionOptimizerConfig_t {
     int num_slices;
 
 } hipTensorNetContractionOptimizerConfig_t;
+
+typedef struct hipTensorNetCapabilities_t {
+    int supports_c64;
+    int supports_c128;
+    int supports_pathfinder_greedy;
+    int supports_pathfinder_kahypar;
+    int supports_pathfinder_metis;
+    int supports_memory_limit_planning;
+    int supports_runtime_slicing;
+} hipTensorNetCapabilities_t;
 
 #endif // HIP_TENSOR_NET_API_H

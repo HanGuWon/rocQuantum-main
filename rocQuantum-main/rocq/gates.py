@@ -26,6 +26,12 @@ def sdg(target):
 def t(target):
     _KernelBuildContext.add_gate("t", [target])
 
+def tdg(target):
+    _KernelBuildContext.add_gate("tdg", [target])
+
+def tdag(target):
+    _KernelBuildContext.add_gate("tdg", [target])
+
 def rx(angle, target):
     _KernelBuildContext.add_gate("rx", [target], params={"theta": angle})
 
@@ -34,6 +40,12 @@ def ry(angle, target):
 
 def rz(angle, target):
     _KernelBuildContext.add_gate("rz", [target], params={"phi": angle})
+
+def p(angle, target):
+    _KernelBuildContext.add_gate("p", [target], params={"phi": angle})
+
+def phase(angle, target):
+    _KernelBuildContext.add_gate("p", [target], params={"phi": angle})
 
 def cnot(control, target):
     _KernelBuildContext.add_gate("cnot", [control, target])
@@ -47,6 +59,25 @@ def cz(control, target):
 def swap(qubit_a, qubit_b):
     _KernelBuildContext.add_gate("swap", [qubit_a, qubit_b])
 
+def mcx(controls, target):
+    try:
+        control_list = list(controls)
+    except TypeError:
+        control_list = [controls]
+    _KernelBuildContext.add_gate("mcx", control_list + [target])
+
+def ccx(control_a, control_b, target):
+    _KernelBuildContext.add_gate("ccx", [control_a, control_b, target])
+
+def toffoli(control_a, control_b, target):
+    _KernelBuildContext.add_gate("ccx", [control_a, control_b, target])
+
+def cswap(control, target_a, target_b):
+    _KernelBuildContext.add_gate("cswap", [control, target_a, target_b])
+
+def fredkin(control, target_a, target_b):
+    _KernelBuildContext.add_gate("cswap", [control, target_a, target_b])
+
 def crx(angle, control, target):
     _KernelBuildContext.add_gate("crx", [control, target], params={"theta": angle})
 
@@ -55,3 +86,9 @@ def cry(angle, control, target):
 
 def crz(angle, control, target):
     _KernelBuildContext.add_gate("crz", [control, target], params={"phi": angle})
+
+def cp(angle, control, target):
+    _KernelBuildContext.add_gate("cp", [control, target], params={"phi": angle})
+
+def cphase(angle, control, target):
+    _KernelBuildContext.add_gate("cp", [control, target], params={"phi": angle})

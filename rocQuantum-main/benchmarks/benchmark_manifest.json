@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "artifact_directory": "benchmark-artifacts",
+  "benchmarks": [
+    {
+      "id": "statevec_core_paths",
+      "category": "statevec",
+      "description": "Fast matrix path, explicit host matrix fallback, GateFusion, sampling, and observe timing.",
+      "executable": "rocquantum/src/hipStateVec/benchmark_hipStateVec_core_paths",
+      "output": "statevec-core-paths.json",
+      "args": ["--qubits", "20", "--trials", "20", "--shots", "4096", "--output", "{output}"],
+      "requires_rocm_device": true,
+      "covers": [
+        "statevec_fastpath_vs_fallback",
+        "gate_fusion_vs_unfused",
+        "sampling_observe"
+      ]
+    },
+    {
+      "id": "distributed_reduction_rccl_vs_host",
+      "category": "distributed",
+      "description": "RCCL reduction path compared with explicit host fallback for distributed expectation, rank-local sparse moments, and sampling.",
+      "executable": "rocquantum/src/hipStateVec/benchmark_hipStateVec_distributed_reductions",
+      "output": "distributed-reductions.json",
+      "args": ["--qubits", "24", "--trials", "20", "--shots", "4096", "--output", "{output}"],
+      "requires_rocm_device": true,
+      "speedup_thresholds": {
+        "expectation_ms": 1.0,
+        "dense_expectation_ms": 1.0,
+        "sparse_moments_ms": 1.0,
+        "generic_matrix_ms": 1.0
+      },
+      "covers": [
+        "distributed_rccl_vs_host_fallback",
+        "distributed_sampling_observe",
+        "distributed_sparse_moments"
+      ]
+    },
+    {
+      "id": "tensornet_contraction",
+      "category": "tensornet",
+      "description": "Tensor-network contraction timing with greedy pathfinder and memory-limit planning.",
+      "executable": "rocquantum/src/hipTensorNet/benchmark_hipTensorNet_contraction",
+      "output": "tensornet-contraction.json",
+      "args": ["--trials", "20", "--output", "{output}"],
+      "requires_rocm_device": true,
+      "covers": [
+        "tensor_contraction",
+        "optimizer_memory_limit_planning"
+      ]
+    },
+    {
+      "id": "densitymat_channel_sampling",
+      "category": "densitymat",
+      "description": "Density-matrix named/generic channel, observable, and sampling timing.",
+      "executable": "rocquantum/src/hipDensityMat/benchmark_hipDensityMat_channel_sampling",
+      "output": "densitymat-channel-sampling.json",
+      "args": ["--qubits", "10", "--trials", "20", "--shots", "4096", "--output", "{output}"],
+      "requires_rocm_device": true,
+      "covers": [
+        "densitymat_channel",
+        "densitymat_sampling",
+        "densitymat_observe"
+      ]
+    }
+  ]
+}

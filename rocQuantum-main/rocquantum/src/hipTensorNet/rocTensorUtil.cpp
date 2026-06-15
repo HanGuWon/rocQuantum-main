@@ -11,6 +11,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <limits>
 
 
 // Forward declare the kernel (it's in rocTensorUtil_kernels.hip, but this .cpp file compiles separately)
@@ -156,12 +157,15 @@ rocqStatus_t rocTensorContractPair_internal(
     const std::vector<int>& result_A_modes_initial_order,
     const std::vector<int>& result_B_modes_initial_order,
     rocblas_handle blas_handle,
-    hipStream_t stream) {
+    hipStream_t stream,
+    size_t memory_limit_bytes,
+    int num_slices) {
 
     if (!result_tensor || !tensorA || !tensorB || !blas_handle || !result_tensor->data_) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
     if (!tensorA->data_ || !tensorB->data_) return ROCQ_STATUS_INVALID_VALUE;
+    if (num_slices < 0) return ROCQ_STATUS_INVALID_VALUE;
 
     rocqStatus_t status_check = ROCQ_STATUS_SUCCESS; // Using rocqStatus_t for internal checks too
     rocblas_status blas_status_err = rocblas_set_stream(blas_handle, stream);
@@ -242,27 +246,78 @@ rocqStatus_t rocTensorContractPair_internal(
     status_check = rocTensorPermute(&permutedB_tensor, tensorB, permB_map_new_idx_is_old_idx, stream);
     if (status_check != ROCQ_STATUS_SUCCESS) { rocTensorFree(&permutedA_tensor); rocTensorFree(&permutedB_tensor); return status_check; }
 
+    if (M > std::numeric_limits<int>::max() ||
+        N > std::numeric_limits<int>::max() ||
+        K > std::numeric_limits<int>::max()) {
+        rocTensorFree(&permutedA_tensor);
+        rocTensorFree(&permutedB_tensor);
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
     int gemm_M = static_cast<int>(M);
     int gemm_N = static_cast<int>(N);
     int gemm_K = static_cast<int>(K);
 
-    const rocComplex alpha = {1.0f, 0.0f};
-    const rocComplex beta  = {0.0f, 0.0f};
+    size_t runtime_slices = 1;
+    const size_t result_elements = result_tensor->get_element_count() > 0
+        ? static_cast<size_t>(result_tensor->get_element_count())
+        : 0;
+    const size_t pair_bytes =
+        (static_cast<size_t>(std::max<long long>(1, M)) * static_cast<size_t>(std::max<long long>(1, K)) +
+         static_cast<size_t>(std::max<long long>(1, K)) * static_cast<size_t>(std::max<long long>(1, N)) +
+         result_elements) * sizeof(rocComplex);
+    if (num_slices > 0) {
+        runtime_slices = static_cast<size_t>(num_slices);
+    } else if (memory_limit_bytes > 0 && pair_bytes > memory_limit_bytes) {
+        runtime_slices = (pair_bytes + memory_limit_bytes - 1) / memory_limit_bytes;
+    }
+    runtime_slices = std::max<size_t>(1, std::min<size_t>(runtime_slices, static_cast<size_t>(gemm_K)));
 
-    blas_status_err = rocblas_cgemm(
-        blas_handle, ROCBLAS_OPERATION_NONE, ROCBLAS_OPERATION_NONE,
-        gemm_M, gemm_N, gemm_K,
-        &alpha,
-        permutedA_tensor.data_, gemm_M,
-        permutedB_tensor.data_, gemm_K,
-        &beta,
-        result_tensor->data_, gemm_M
-    );
+    const rocComplex alpha = {1.0, 0.0};
+    const rocComplex beta_zero = {0.0, 0.0};
+    const rocComplex beta_accumulate = {1.0, 0.0};
+
+    for (size_t slice = 0; slice < runtime_slices; ++slice) {
+        const size_t k_begin = (static_cast<size_t>(gemm_K) * slice) / runtime_slices;
+        const size_t k_end = (static_cast<size_t>(gemm_K) * (slice + 1)) / runtime_slices;
+        const int gemm_K_slice = static_cast<int>(k_end - k_begin);
+        if (gemm_K_slice <= 0) {
+            continue;
+        }
+        const rocComplex& beta = (slice == 0) ? beta_zero : beta_accumulate;
+        const rocComplex* a_slice = permutedA_tensor.data_ + (static_cast<size_t>(gemm_M) * k_begin);
+        const rocComplex* b_slice = permutedB_tensor.data_ + k_begin;
+#ifdef ROCQ_PRECISION_DOUBLE
+        blas_status_err = rocblas_zgemm(
+            blas_handle, ROCBLAS_OPERATION_NONE, ROCBLAS_OPERATION_NONE,
+            gemm_M, gemm_N, gemm_K_slice,
+            reinterpret_cast<const rocblas_double_complex*>(&alpha),
+            reinterpret_cast<const rocblas_double_complex*>(a_slice), gemm_M,
+            reinterpret_cast<const rocblas_double_complex*>(b_slice), gemm_K,
+            reinterpret_cast<const rocblas_double_complex*>(&beta),
+            reinterpret_cast<rocblas_double_complex*>(result_tensor->data_), gemm_M
+        );
+#else
+        blas_status_err = rocblas_cgemm(
+            blas_handle, ROCBLAS_OPERATION_NONE, ROCBLAS_OPERATION_NONE,
+            gemm_M, gemm_N, gemm_K_slice,
+            reinterpret_cast<const rocblas_float_complex*>(&alpha),
+            reinterpret_cast<const rocblas_float_complex*>(a_slice), gemm_M,
+            reinterpret_cast<const rocblas_float_complex*>(b_slice), gemm_K,
+            reinterpret_cast<const rocblas_float_complex*>(&beta),
+            reinterpret_cast<rocblas_float_complex*>(result_tensor->data_), gemm_M
+        );
+#endif
+        if (blas_status_err != rocblas_status_success) {
+            rocTensorFree(&permutedA_tensor);
+            rocTensorFree(&permutedB_tensor);
+            return ROCQ_STATUS_FAILURE;
+        }
+    }
 
     rocTensorFree(&permutedA_tensor);
     rocTensorFree(&permutedB_tensor);
 
-    if (blas_status_err != rocblas_status_success) return ROCQ_STATUS_FAILURE;
     if (hipGetLastError() != hipSuccess) return ROCQ_STATUS_HIP_ERROR;
 
     return ROCQ_STATUS_SUCCESS;

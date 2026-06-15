@@ -1,127 +1,82 @@
-# rocQuantum QEC Framework
+# Experimental QEC Helpers
 
-## Architectural Overview
+This package contains a small, executable QEC subset over the canonical `rocq`
+runtime. It is not a full CUDA-QX QEC library.
 
-This document details the Quantum Error Correction (QEC) framework within rocQuantum. The framework is designed to provide a flexible and extensible platform for simulating QEC codes.
+Current supported subset:
 
-### The "Circuit Fragmentation" Strategy
+- `rocquantum.qec.qec_capabilities()` and the package-level `capabilities()`
+  alias expose the experimental supported/unsupported QEC contract, entry
+  points, code-family scope, measurement-error model, docs path, and ROCm
+  validation limit for CUDA-QX comparisons.
+- 3 data qubits plus 2 ancilla qubits; concrete repetition-code circuit
+  generation requires a positive integer `num_qubits >= 5` and an
+  `initial_state_kernel` that is callable or `None`.
+- One bit-flip repetition-code syndrome round plus sequential repeated-round
+  aggregation over the same 3-qubit code.
+- End-of-circuit ancilla sampling through `rocq.sample()`.
+- Generic `QEC_Experiment.run_single_round()` can execute generated canonical
+  stabilizer fragments through `rocq.sample()` when legacy `circuit_ref`
+  measurement hooks are unavailable. Custom code and decoder objects must expose
+  callable `generate_stabilizer_circuits()`, `define_logical_operators()`, and
+  `decode()` methods, and generated stabilizer fragments must be returned as a
+  non-string sequence or iterable. Decoder results must be canonical
+  `rocq.operator.PauliOperator` corrections.
+- Lookup-table correction through `RepetitionCodeDecoder`.
+- Syndrome histogram, repeated-round correction summary, and correction-success
+  analysis for sampled counts.
+- Optional independent syndrome-bit measurement error mitigation through
+  `mitigate_repetition_syndrome_counts()` and the
+  `measurement_error_probability=` option on repetition-code analysis and
+  execution helpers.
+- Execution helpers require positive integer `shots`; generic single-round
+  orchestration also requires canonical runtime backend names, positive integer
+  `num_qubits` plus in-range integer `ancilla_qubit_indices`; repeated-round
+  helpers require positive integer `rounds`; and count/bit/syndrome inputs are validated as non-empty
+  one- or two-bit binary count keys, non-negative integer counts, length-2
+  decoder syndrome bits, and non-boolean data/error/logical bits plus finite
+  measurement error probabilities in `[0, 0.5)`.
 
-A core design principle of this framework is the **"Circuit Fragmentation"** strategy. Due to the current rocQuantum API's lack of native support for mid-circuit measurement with classical feedback (i.e., conditional operations based on measurement outcomes), a single simulation run cannot perform a full QEC cycle.
-
-To overcome this, our framework treats one round of error correction as a sequence of separate, independent circuit simulations orchestrated by classical Python code. The workflow is as follows:
-
-1.  A circuit fragment is generated for each stabilizer measurement. Each fragment is a complete simulation that prepares an initial state, applies the stabilizer measurement gates, and measures a single ancilla qubit.
-2.  The `QEC_Experiment` class executes each of these fragments sequentially, collecting the classical measurement outcomes.
-3.  The collected outcomes form a classical "syndrome" string.
-4.  This syndrome is passed to a `Decoder`, which uses classical logic to determine the most likely error and the required correction.
-
-This approach, while less performant than a native implementation, provides a powerful and fully general way to simulate any QEC code on the existing rocQuantum backend.
-
-### Core Classes
-
--   **`QuantumErrorCode`**: An abstract base class that defines the structure of a specific QEC code. Its primary responsibility is to generate the list of circuit fragments needed for the stabilizer measurements.
--   **`Decoder`**: An abstract base class for a classical decoder. Its role is to take a syndrome (e.g., `[1, 0, 1]`) and return the corresponding correction operator (e.g., `PauliOperator({"X1": 1.0})`).
--   **`QEC_Experiment`**: The main orchestrator class. It manages the end-to-end workflow, executing the circuit fragments, collecting the syndrome, invoking the decoder, and reporting the results.
-
-## Basic Usage
-
-The following example demonstrates a full workflow for detecting and identifying an error in a 3-qubit repetition code.
+Minimal example:
 
 ```python
-# --- 1. Setup ---
-import rocquantum.python.rocq as roc_q
-from rocquantum.qec.framework import QEC_Experiment
-from rocquantum.qec.codes.repetition_code import ThreeQubitRepetitionCode
-from rocquantum.qec.decoders.repetition_decoder import RepetitionCodeDecoder
+from rocquantum.qec import run_repetition_code_single_round
 
-# Initialize the simulator and the QEC components
-sim = roc_q.Simulator()
-code = ThreeQubitRepetitionCode()
-decoder = RepetitionCodeDecoder()
-experiment = QEC_Experiment(simulator=sim)
+result = run_repetition_code_single_round(error_qubit=1, shots=32)
+print(result["syndrome"])
+print(result["correction_applied"])
+print(result["logical_success_rate"])
+print(result["most_likely_corrected_data_bits"])
+```
 
-NUM_QUBITS = 5 # 3 data + 2 ancilla
-ANCILLA_INDICES = [3, 4]
+Repeated-round example:
 
-# --- 2. Define Initial State with an Injected Error ---
-# We define a kernel that prepares a logical |+> state and then
-# manually injects an X error on data qubit 1 for testing.
-@roc_q.kernel
-def error_state_kernel(q):
-    # Prepare logical |+> state: H(q0), CX(q0,q1), CX(q0,q2)
-    q.h(0)
-    q.cx(0, 1)
-    q.cx(0, 2)
-    # Inject error
-    q.x(1)
+```python
+from rocquantum.qec import run_repetition_code_rounds
 
-# --- 3. Run the Experiment ---
-# The orchestrator runs the fragments, gets the syndrome, and decodes it.
-results = experiment.run_single_round(
-    code=code,
-    decoder=decoder,
-    initial_state_kernel=error_state_kernel,
-    num_qubits=NUM_QUBITS,
-    ancilla_qubit_indices=ANCILLA_INDICES
+result = run_repetition_code_rounds(error_qubits=[0, 1], rounds=2, shots=32)
+print(result["aggregate_syndrome_histogram"])
+print(result["correction_summary"])
+print(result["logical_success_rate"])
+```
+
+Measurement-error mitigation example:
+
+```python
+from rocquantum.qec import analyze_repetition_code_counts
+
+analysis = analyze_repetition_code_counts(
+    {"01": 81, "00": 9, "11": 9, "10": 1},
+    measurement_error_probability=0.1,
 )
-
-# --- 4. Verify Results ---
-print(f"Measured Syndrome: {results['syndrome']}")
-print(f"Decoded Correction: {results['correction_applied']}")
-
-# For an X error on qubit 1, the expected syndrome is [1, 1]
-assert results['syndrome'] == [1, 1]
+print(analysis["mitigated_syndrome_scores"])
 ```
 
-## Extensibility Guide
+Limitations:
 
-### How to Add a New Error-Correcting Code
-
-To add a new code (e.g., the 5-qubit code), you must implement two new classes: one for the code definition and one for its corresponding decoder.
-
-**Step 1: Implement the `QuantumErrorCode`**
-
-Create a new class that inherits from `QuantumErrorCode` and implement its abstract methods.
-
-```python
-# in file: rocquantum/qec/codes/five_qubit_code.py
-from rocquantum.qec.framework import QuantumErrorCode
-# ... other imports
-
-class FiveQubitCode(QuantumErrorCode):
-    def generate_stabilizer_circuits(self, initial_state_kernel, num_qubits, simulator):
-        # Implement the logic to generate the 4 stabilizer measurement
-        # circuit fragments for the 5-qubit code.
-        # Return a list of 4 roc_q.QuantumProgram objects.
-        stabilizer_programs = []
-        # ... logic to build and append each program
-        return stabilizer_programs
-
-    def define_logical_operators(self):
-        # Return the logical X and Z operators for the 5-qubit code.
-        return {
-            "logical_X": PauliOperator({"X0 X1 X2 X3 X4": 1.0}), # Example
-            "logical_Z": PauliOperator({"Z0 Z1 Z2 Z3 Z4": 1.0})  # Example
-        }
-```
-
-**Step 2: Implement the `Decoder`**
-
-Create a corresponding decoder class that inherits from `Decoder`.
-
-```python
-# in file: rocquantum/qec/decoders/five_qubit_decoder.py
-from rocquantum.qec.framework import Decoder
-# ... other imports
-
-class FiveQubitDecoder(Decoder):
-    def decode(self, syndrome: List[int]) -> PauliOperator:
-        # The syndrome will be a list of 4 bits.
-        # Implement the logic to map each of the 16 possible syndromes
-        # to the appropriate 1-qubit Pauli correction (or Identity).
-        if syndrome == [0, 0, 0, 0]:
-            return PauliOperator() # No error
-        elif syndrome == [1, 0, 0, 1]:
-            return PauliOperator({"X0": 1.0}) # Example for X error on qubit 0
-        # ... other 14 cases
-```
+- No mid-circuit measurement or classical feedback.
+- Repeated rounds are sequential sampled helper calls with classical
+  most-likely feed-forward, not an in-circuit dynamic-control workflow.
+- No general noise-aware decoder beyond deterministic single-X syndrome lookup
+  plus the independent syndrome readout-error mitigation helper above.
+- No performance-tuned syndrome extraction.

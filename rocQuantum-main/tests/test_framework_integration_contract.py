@@ -1,0 +1,1308 @@
+"""Source contracts for framework adapters using native sampling surfaces."""
+
+from __future__ import annotations
+
+import json
+import importlib.util
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_FRAMEWORK_RUNTIME = os.path.join(_PROJECT_ROOT, "rocquantum", "framework_runtime.py")
+_PENNYLANE_ADAPTER = os.path.join(
+    _PROJECT_ROOT,
+    "integrations",
+    "pennylane-rocq",
+    "pennylane_rocq",
+    "rocq_device.py",
+)
+_CIRQ_ADAPTER = os.path.join(
+    _PROJECT_ROOT,
+    "integrations",
+    "cirq-rocm",
+    "cirq_rocm",
+    "roc_quantum_simulator.py",
+)
+_QISKIT_BACKEND = os.path.join(
+    _PROJECT_ROOT,
+    "integrations",
+    "qiskit-rocquantum-provider",
+    "qiskit_rocquantum_provider",
+    "backend.py",
+)
+_QISKIT_ESTIMATOR = os.path.join(
+    _PROJECT_ROOT,
+    "integrations",
+    "qiskit-rocquantum-provider",
+    "qiskit_rocquantum_provider",
+    "estimator.py",
+)
+_QISKIT_SAMPLER = os.path.join(
+    _PROJECT_ROOT,
+    "integrations",
+    "qiskit-rocquantum-provider",
+    "qiskit_rocquantum_provider",
+    "sampler.py",
+)
+_QUANTUM_SIMULATOR_CPP = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "simulator.cpp",
+)
+_QUANTUM_SIMULATOR_HEADER = os.path.join(
+    _PROJECT_ROOT,
+    "include",
+    "rocquantum",
+    "QuantumSimulator.h",
+)
+_HIPSTATEVEC_HEADER = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "include",
+    "rocquantum",
+    "hipStateVec.h",
+)
+_HIPSTATEVEC_SOURCE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "hipStateVec.cpp",
+)
+_HIPSTATEVEC_SINGLE_QUBIT_KERNELS = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "single_qubit_kernels.hip",
+)
+_BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "bindings.cpp")
+_LOW_LEVEL_BINDINGS_CPP = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
+_WINDOWS_BUILD_BAT = os.path.join(_PROJECT_ROOT, "build.bat")
+_WINDOWS_BUILD_ROCQ_BAT = os.path.join(_PROJECT_ROOT, "build_rocq.bat")
+_NATIVE_FRAMEWORK_SMOKE = os.path.join(_PROJECT_ROOT, "scripts", "native_framework_smoke.py")
+_ROCM_CI_WORKFLOW = os.path.join(os.path.dirname(_PROJECT_ROOT), ".github", "workflows", "rocm-ci.yml")
+
+
+class TestFrameworkIntegrationContract(unittest.TestCase):
+    def test_native_rocm_framework_smoke_is_source_defined_for_ci(self):
+        with open(_NATIVE_FRAMEWORK_SMOKE, "r", encoding="utf-8") as f:
+            smoke = f.read()
+        with open(_ROCM_CI_WORKFLOW, "r", encoding="utf-8") as f:
+            workflow = f.read()
+
+        self.assertIn("Path(\"/dev/kfd\").exists()", smoke)
+        self.assertIn("rocquantum_bind", smoke)
+        self.assertIn("smoke_native_binding", smoke)
+        self.assertIn("smoke_pennylane", smoke)
+        self.assertIn("pennylane_rocq.RocqDevice", smoke)
+        self.assertIn("smoke_qiskit", smoke)
+        self.assertIn("RocQuantumProvider", smoke)
+        self.assertIn("smoke_cirq", smoke)
+        self.assertIn("RocQuantumSimulator", smoke)
+        self.assertIn("--json-output", smoke)
+        self.assertIn("native_framework_smoke", smoke)
+        self.assertIn("\"schema_version\": 1", smoke)
+        self.assertIn("format_native_smoke_markdown", smoke)
+        self.assertIn("native_rocm_evidence", smoke)
+        self.assertIn("native_rocm_evidence_required", smoke)
+        self.assertIn("ROCQ_NATIVE_SMOKE_REQUIRE_NATIVE_EVIDENCE", smoke)
+        self.assertIn("actual_dev_kfd", smoke)
+        self.assertIn("assumed_rocm_device", smoke)
+        self.assertIn("allow-missing-device-skip", smoke)
+        self.assertIn("--markdown-output", smoke)
+        self.assertIn("--require-native-rocm-evidence", smoke)
+        self.assertIn("Build native Python bindings for framework smoke", workflow)
+        self.assertIn("ROCQUANTUM_BUILD_BINDINGS=ON", workflow)
+        self.assertIn("python3 -m pybind11 --cmakedir", workflow)
+        self.assertIn("Run native framework integration smoke", workflow)
+        self.assertIn("scripts/native_framework_smoke.py", workflow)
+        self.assertIn("--require-native-rocm-evidence", workflow)
+        self.assertIn("native-framework-smoke.log", workflow)
+        self.assertIn("native-framework-smoke.json", workflow)
+        self.assertIn("native-framework-smoke.md", workflow)
+        self.assertIn("GITHUB_STEP_SUMMARY", workflow)
+        self.assertIn("pennylane>=0.35", workflow)
+        self.assertIn("qiskit>=0.45", workflow)
+        self.assertIn("cirq-core>=1.0", workflow)
+
+    def test_native_rocm_framework_smoke_can_emit_explicit_local_skip_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = os.path.join(tmp, "native-framework-smoke.json")
+            markdown_path = os.path.join(tmp, "native-framework-smoke.md")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    _NATIVE_FRAMEWORK_SMOKE,
+                    "--allow-missing-device-skip",
+                    "--json-output",
+                    output_path,
+                    "--markdown-output",
+                    markdown_path,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(os.path.exists(output_path))
+            with open(output_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            with open(markdown_path, "r", encoding="utf-8") as f:
+                markdown = f.read()
+
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["suite"], "native_framework_smoke")
+        assume_rocm_device = os.environ.get("ROCQ_NATIVE_SMOKE_ASSUME_ROCM_DEVICE", "").strip().lower()
+        if os.path.exists("/dev/kfd") or assume_rocm_device in {"1", "true", "yes", "on"}:
+            self.assertIn(payload["status"], {"passed", "failed"})
+            self.assertTrue(payload["results"])
+        else:
+            self.assertEqual(payload["status"], "skipped")
+            self.assertEqual(payload["results"], [])
+            self.assertIn("/dev/kfd", payload["reason"])
+            self.assertFalse(payload["has_rocm_device"])
+            self.assertEqual(payload["device_probe"], "missing_dev_kfd")
+            self.assertFalse(payload["native_rocm_evidence"])
+            self.assertEqual(payload["native_rocm_evidence_count"], 0)
+            self.assertEqual(payload["evidence_kind"], "skip")
+            self.assertFalse(payload["native_rocm_evidence_required"])
+            self.assertIn("# Native Framework Smoke", markdown)
+            self.assertIn("ROCm device probe: `missing_dev_kfd`", markdown)
+            self.assertIn("Native ROCm evidence: no", markdown)
+            self.assertIn("Reason:", markdown)
+
+    def test_native_rocm_framework_smoke_can_require_native_evidence(self):
+        assume_rocm_device = os.environ.get("ROCQ_NATIVE_SMOKE_ASSUME_ROCM_DEVICE", "").strip().lower()
+        if os.path.exists("/dev/kfd") or assume_rocm_device in {"1", "true", "yes", "on"}:
+            self.skipTest("requires a local environment without a ROCm device override")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = os.path.join(tmp, "native-framework-smoke.json")
+            markdown_path = os.path.join(tmp, "native-framework-smoke.md")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    _NATIVE_FRAMEWORK_SMOKE,
+                    "--allow-missing-device-skip",
+                    "--require-native-rocm-evidence",
+                    "--json-output",
+                    output_path,
+                    "--markdown-output",
+                    markdown_path,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 1, completed.stdout)
+            with open(output_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            with open(markdown_path, "r", encoding="utf-8") as f:
+                markdown = f.read()
+
+        self.assertEqual(payload["status"], "skipped")
+        self.assertTrue(payload["native_rocm_evidence_required"])
+        self.assertFalse(payload["native_rocm_evidence"])
+        self.assertEqual(
+            payload["native_rocm_evidence_failure"],
+            "no passed native ROCm framework smoke suite was produced",
+        )
+        self.assertIn("Native ROCm evidence required: yes", markdown)
+        self.assertIn("Native ROCm evidence gate: failed", markdown)
+
+    def test_native_rocm_framework_smoke_report_labels_only_real_device_passes_as_evidence(self):
+        spec = importlib.util.spec_from_file_location("native_framework_smoke", _NATIVE_FRAMEWORK_SMOKE)
+        module = importlib.util.module_from_spec(spec)
+        self.assertIsNotNone(spec.loader)
+        spec.loader.exec_module(module)
+
+        passed_steps = [
+            {"name": "native_binding", "status": "passed", "elapsed_ms": 1.0},
+            {"name": "pennylane", "status": "passed", "elapsed_ms": 2.0},
+        ]
+        real_report = module._make_report(
+            "passed",
+            passed_steps,
+            {"has_rocm_device": True, "device_probe": "actual_dev_kfd"},
+            require_native_rocm_evidence=True,
+        )
+        assumed_report = module._make_report(
+            "passed",
+            passed_steps,
+            {"has_rocm_device": True, "device_probe": "assumed_rocm_device"},
+            require_native_rocm_evidence=True,
+        )
+        failed_report = module._make_report(
+            "failed",
+            [
+                {"name": "native_binding", "status": "passed", "elapsed_ms": 1.0},
+                {"name": "pennylane", "status": "failed", "elapsed_ms": 2.0},
+            ],
+            {"has_rocm_device": True, "device_probe": "actual_dev_kfd"},
+            require_native_rocm_evidence=True,
+        )
+
+        self.assertTrue(real_report["native_rocm_evidence"])
+        self.assertEqual(real_report["native_rocm_evidence_count"], 2)
+        self.assertTrue(real_report["native_rocm_evidence_required"])
+        self.assertNotIn("native_rocm_evidence_failure", real_report)
+        self.assertEqual(real_report["evidence_kind"], "native_rocm")
+        self.assertTrue(all(result["native_rocm_evidence"] for result in real_report["results"]))
+
+        self.assertFalse(assumed_report["native_rocm_evidence"])
+        self.assertEqual(assumed_report["native_rocm_evidence_count"], 0)
+        self.assertTrue(assumed_report["native_rocm_evidence_required"])
+        self.assertIn("native_rocm_evidence_failure", assumed_report)
+        self.assertEqual(assumed_report["evidence_kind"], "assumed_rocm_device")
+        self.assertTrue(all(not result["native_rocm_evidence"] for result in assumed_report["results"]))
+
+        self.assertFalse(failed_report["native_rocm_evidence"])
+        self.assertEqual(failed_report["native_rocm_evidence_count"], 1)
+        self.assertTrue(failed_report["native_rocm_evidence_required"])
+        self.assertIn("native_rocm_evidence_failure", failed_report)
+        self.assertEqual(failed_report["evidence_kind"], "native_rocm_failed")
+        self.assertEqual(failed_report["results"][0]["evidence_kind"], "native_rocm")
+        self.assertEqual(failed_report["results"][1]["evidence_kind"], "native_rocm_failed")
+        markdown = module.format_native_smoke_markdown(real_report)
+        self.assertIn("# Native Framework Smoke", markdown)
+        self.assertIn("Native ROCm evidence: yes", markdown)
+        self.assertIn("| `native_binding` | `passed` | `native_rocm` |", markdown)
+
+    def test_shared_runtime_exposes_controlled_rotation_aliases(self):
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("\"CRX\": \"CRX\"", source)
+        self.assertIn("\"CRY\": \"CRY\"", source)
+        self.assertIn("\"CRZ\": \"CRZ\"", source)
+        self.assertIn("\"CP\": \"CP\"", source)
+        self.assertIn("\"P\": \"P\"", source)
+        self.assertIn("\"PHASE\": \"P\"", source)
+        self.assertIn("\"TDG\": \"TDG\"", source)
+        self.assertIn("\"CCX\": \"MCX\"", source)
+        self.assertIn("\"TOFFOLI\": \"MCX\"", source)
+        self.assertIn("\"CSWAP\": \"CSWAP\"", source)
+        self.assertIn("from numbers import Integral", source)
+        self.assertIn("def normalize_targets", source)
+        self.assertIn("not isinstance(target, Integral)", source)
+        self.assertIn("def normalize_shots", source)
+        self.assertIn("shots must be a positive integer", source)
+        self.assertIn("def statevector_to_little_endian_wires", source)
+        self.assertIn("def probabilities_from_statevector", source)
+        self.assertIn("def probabilities(self, qubits", source)
+        self.assertIn("def probabilities_batch(self, qubits", source)
+        self.assertIn("def measure_batch(self, qubits", source)
+        self.assertIn("def normalize_probability_vector", source)
+        self.assertIn("def normalize_probability_matrix", source)
+        self.assertIn("def sample_indices_from_probabilities", source)
+        self.assertIn("def sample_indices_batch_from_probabilities", source)
+        self.assertIn("def expectation_pauli_string_batch", source)
+        self.assertIn("def apply_operation_batch", source)
+        self.assertIn("def validate_finite_complex_array", source)
+        self.assertIn("validate_finite_complex_array(normalized_data, \"Sparse operation CSR data\")", source)
+        self.assertIn("as_complex_matrix(matrix, \"Dense expectation matrix\")", source)
+        self.assertIn("def expectation_matrix(self, matrix", source)
+        self.assertIn("def expectation_matrix_moments", source)
+        self.assertIn("def set_statevector", source)
+        self.assertIn("def supports_adjoint_jacobian", source)
+        self.assertIn("def adjoint_jacobian", source)
+
+    def test_public_simulator_dispatches_native_multi_control_gates(self):
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("normalized == \"MCX\"", source)
+        self.assertIn("normalized == \"CSWAP\"", source)
+        self.assertIn("rocsvApplyMultiControlledX", source)
+        self.assertIn("rocsvApplyCSWAP", source)
+
+    def test_public_simulator_exposes_native_phase_gates(self):
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            simulator = f.read()
+        with open(_HIPSTATEVEC_HEADER, "r", encoding="utf-8") as f:
+            hip_header = f.read()
+        with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            hip_source = f.read()
+        with open(_LOW_LEVEL_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            low_level_bindings = f.read()
+        with open(_QISKIT_BACKEND, "r", encoding="utf-8") as f:
+            qiskit_backend = f.read()
+        with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
+            pennylane_adapter = f.read()
+
+        self.assertIn("normalized == \"P\"", simulator)
+        self.assertIn("normalized == \"CP\"", simulator)
+        self.assertIn("rocsvApplyP", simulator)
+        self.assertIn("rocsvApplyCP", simulator)
+        self.assertIn("rocqStatus_t rocsvApplyP", hip_header)
+        self.assertIn("rocqStatus_t rocsvApplyCP", hip_header)
+        self.assertIn("rocqStatus_t rocsvApplyP", hip_source)
+        self.assertIn("rocqStatus_t rocsvApplyCP", hip_source)
+        self.assertIn("make_complex(std::cos(theta), std::sin(theta))", hip_source)
+        self.assertIn("m.def(\"apply_p\"", low_level_bindings)
+        self.assertIn("m.def(\"apply_cp\"", low_level_bindings)
+        self.assertIn("self._runtime.apply_operation(\"p\"", qiskit_backend)
+        self.assertIn("self._runtime.apply_operation(\"cp\"", qiskit_backend)
+        self.assertIn("self._runtime.apply_operation_batch(\"p\"", qiskit_backend)
+        self.assertIn("self._runtime.apply_operation_batch(\"cp\"", qiskit_backend)
+        self.assertIn("runtime.apply_operation(\"P\"", pennylane_adapter)
+        self.assertIn("runtime.apply_operation(\"CP\"", pennylane_adapter)
+        self.assertIn("runtime.apply_operation_batch(\"P\"", pennylane_adapter)
+        self.assertIn("runtime.apply_operation_batch(\"CP\"", pennylane_adapter)
+
+    def test_public_simulator_exposes_statevector_upload(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+
+        self.assertIn("void set_statevector", header)
+        self.assertIn("void set_statevectors", header)
+        self.assertIn("std::vector<std::complex<double>> get_statevectors", header)
+        self.assertIn("std::size_t batch_size", header)
+        self.assertIn("QuantumSimulator::set_statevector", implementation)
+        self.assertIn("QuantumSimulator::set_statevectors", implementation)
+        state_upload_body = implementation.split("void QuantumSimulator::set_statevectors", 1)[1].split(
+            "std::vector<std::complex<double>> QuantumSimulator::get_statevector", 1
+        )[0]
+        self.assertIn("validate_finite_complex_payload(states, \"Statevector payload\")", state_upload_body)
+        self.assertIn("QuantumSimulator::get_statevector(std::size_t batch_index)", implementation)
+        self.assertIn("QuantumSimulator::get_statevectors", implementation)
+        self.assertIn("rocsvAllocateState(sim_handle_, num_qubits_, &device_state_vector_, batch_size_)", implementation)
+        self.assertIn("rocsvGetStateVectorSlice", implementation)
+        self.assertIn("rocsvGetStateVectorFull", implementation)
+        self.assertIn("hipMemcpyHostToDevice", implementation)
+        self.assertIn(".def(\"set_statevector\"", bindings)
+        self.assertIn(".def(\"set_statevectors\"", bindings)
+        self.assertIn(".def(\"get_statevectors\"", bindings)
+        self.assertIn(".def(\"batch_size\"", bindings)
+
+    def test_public_simulator_exposes_batched_parametric_gates(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_HIPSTATEVEC_HEADER, "r", encoding="utf-8") as f:
+            hip_header = f.read()
+        with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            hip_source = f.read()
+        with open(_HIPSTATEVEC_SINGLE_QUBIT_KERNELS, "r", encoding="utf-8") as f:
+            single_qubit_kernels = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("void apply_gate_batch", header)
+        self.assertIn("void ApplyGateBatch", header)
+        self.assertIn("QuantumSimulator::apply_gate_batch", implementation)
+        self.assertIn("require_finite_angle_param", implementation)
+        self.assertGreaterEqual(implementation.count("require_finite_angle_param(params,"), 8)
+        self.assertIn("std::isfinite(angle)", implementation)
+        self.assertIn("validate_finite_batch_params(params_by_batch)", implementation)
+        self.assertIn("Batched gate parameters must be finite", implementation)
+        self.assertIn("rocsvApplyRxBatch", implementation)
+        self.assertIn("rocsvApplyRyBatch", implementation)
+        self.assertIn("rocsvApplyRzBatch", implementation)
+        self.assertIn("rocsvApplyPBatch", implementation)
+        self.assertIn("rocsvApplyCRXBatch", implementation)
+        self.assertIn("rocsvApplyCRYBatch", implementation)
+        self.assertIn("rocsvApplyCRZBatch", implementation)
+        self.assertIn("rocsvApplyCPBatch", implementation)
+        self.assertIn("rocsvApplyRxBatch", hip_header)
+        self.assertIn("rocsvApplyRyBatch", hip_header)
+        self.assertIn("rocsvApplyRzBatch", hip_header)
+        self.assertIn("rocsvApplyPBatch", hip_header)
+        self.assertIn("rocsvApplyCRXBatch", hip_header)
+        self.assertIn("rocsvApplyCRYBatch", hip_header)
+        self.assertIn("rocsvApplyCRZBatch", hip_header)
+        self.assertIn("rocsvApplyCPBatch", hip_header)
+        self.assertIn("make_phase_matrices", hip_source)
+        self.assertIn("launch_single_qubit_matrix_batch", hip_source)
+        self.assertIn("launch_controlled_single_qubit_matrix_batch", hip_source)
+        self.assertIn("apply_single_qubit_matrix_batch_kernel", single_qubit_kernels)
+        self.assertIn("apply_controlled_single_qubit_matrix_batch_kernel", single_qubit_kernels)
+        self.assertIn(".def(\"apply_gate_batch\"", bindings)
+        self.assertIn(".def(\"ApplyGateBatch\"", bindings)
+        self.assertIn("def apply_operation_batch", runtime)
+        self.assertIn("\"P\", \"CRX\"", runtime)
+        self.assertIn("\"CP\"", runtime)
+
+    def test_public_simulator_exposes_native_probabilities(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_HIPSTATEVEC_HEADER, "r", encoding="utf-8") as f:
+            hip_header = f.read()
+        with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            hip_source = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_LOW_LEVEL_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            low_level_bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("std::vector<double> probabilities", header)
+        self.assertIn("std::vector<double> probabilities_batch", header)
+        self.assertIn("std::vector<long long> measure_batch", header)
+        self.assertIn("std::vector<double> Probabilities", header)
+        self.assertIn("std::vector<double> ProbabilitiesBatch", header)
+        self.assertIn("std::vector<long long> MeasureBatch", header)
+        self.assertIn("QuantumSimulator::probabilities", implementation)
+        self.assertIn("QuantumSimulator::probabilities_batch", implementation)
+        self.assertIn("QuantumSimulator::measure_batch", implementation)
+        self.assertIn("device_state_vector_ + batch_index * state_vec_size_", implementation)
+        self.assertIn("rocsvSample(sim_handle_", implementation)
+        self.assertIn("QuantumSimulator::MeasureBatch", implementation)
+        self.assertIn("rocsvProbabilities", implementation)
+        self.assertIn("rocsvProbabilitiesBatch", implementation)
+        self.assertIn("rocsvProbabilities", hip_header)
+        self.assertIn("rocsvProbabilitiesBatch", hip_header)
+        self.assertRegex(hip_source, r"rocqStatus_t\s+rocsvProbabilities\s*\(")
+        self.assertRegex(hip_source, r"rocqStatus_t\s+rocsvProbabilitiesBatch\s*\(")
+        self.assertIn("accumulate_local_sample_probabilities", hip_source)
+        self.assertIn("accumulate_sample_probabilities_batch_kernel", hip_source)
+        self.assertIn("compute_local_sample_probabilities_batch", hip_source)
+        self.assertIn("accumulate_distributed_sample_probabilities_rccl", hip_source)
+        self.assertIn("compute_distributed_sample_probabilities", hip_source)
+        self.assertIn("return compute_distributed_sample_probabilities", hip_source)
+        self.assertIn(".def(\"probabilities\"", bindings)
+        self.assertIn(".def(\"probabilities_batch\"", bindings)
+        self.assertIn(".def(\"measure_batch\"", bindings)
+        self.assertIn(".def(\"Probabilities\"", bindings)
+        self.assertIn(".def(\"ProbabilitiesBatch\"", bindings)
+        self.assertIn(".def(\"MeasureBatch\"", bindings)
+        self.assertIn("m.def(\"probabilities\"", low_level_bindings)
+        self.assertIn("_native_probabilities_unavailable", runtime)
+        self.assertIn("def probabilities_batch", runtime)
+        self.assertIn("def measure_batch", runtime)
+
+    def test_public_simulator_exposes_controlled_matrix_application(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("void apply_controlled_matrix", header)
+        self.assertIn("void ApplyControlledGate", header)
+        self.assertIn("QuantumSimulator::apply_controlled_matrix", implementation)
+        self.assertIn("rocsvApplyControlledMatrix", implementation)
+        matrix_body = implementation.split("void QuantumSimulator::apply_matrix", 1)[1].split(
+            "void QuantumSimulator::apply_sparse_matrix", 1
+        )[0]
+        self.assertIn("validate_finite_complex_payload(matrix, \"Matrix payload\")", matrix_body)
+        controlled_body = implementation.split("QuantumSimulator::apply_controlled_matrix", 1)[1].split(
+            "void QuantumSimulator::set_statevector", 1
+        )[0]
+        self.assertIn("validate_finite_complex_payload(matrix, \"Controlled matrix payload\")", controlled_body)
+        self.assertIn(".def(\"apply_controlled_matrix\"", bindings)
+        self.assertIn(".def(\"ApplyControlledGate\"", bindings)
+        self.assertIn("def apply_controlled_matrix", runtime)
+
+    def test_public_simulator_exposes_qubit_measure_and_reset(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("int measure_qubit", header)
+        self.assertIn("void reset_qubit", header)
+        self.assertIn("int MeasureQubit", header)
+        self.assertIn("void ResetQubit", header)
+        self.assertIn("QuantumSimulator::measure_qubit", implementation)
+        self.assertIn("QuantumSimulator::reset_qubit", implementation)
+        self.assertIn("rocsvMeasure", implementation)
+        self.assertIn("rocsvApplyX", implementation)
+        self.assertIn(".def(\"measure_qubit\"", bindings)
+        self.assertIn(".def(\"reset_qubit\"", bindings)
+        self.assertIn(".def(\"MeasureQubit\"", bindings)
+        self.assertIn(".def(\"ResetQubit\"", bindings)
+        self.assertIn("def measure_qubit", runtime)
+        self.assertIn("def reset_qubit", runtime)
+
+    def test_public_simulator_exposes_sparse_hamiltonian_moments(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_HIPSTATEVEC_HEADER, "r", encoding="utf-8") as f:
+            hip_header = f.read()
+        with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            hipstatevec = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_LOW_LEVEL_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            low_level_bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+        with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
+            pennylane = f.read()
+
+        self.assertIn("sparse_hamiltonian_moments", header)
+        self.assertIn("SparseHamiltonianMoments", header)
+        self.assertIn("sparse_hamiltonian_moments_batch", header)
+        self.assertIn("SparseHamiltonianMomentsBatch", header)
+        self.assertIn("expectation_matrix", header)
+        self.assertIn("ExpectationMatrix", header)
+        self.assertIn("expectation_matrix_moments", header)
+        self.assertIn("ExpectationMatrixMoments", header)
+        self.assertIn("expectation_matrix_batch", header)
+        self.assertIn("ExpectationMatrixBatch", header)
+        self.assertIn("expectation_matrix_moments_batch", header)
+        self.assertIn("ExpectationMatrixMomentsBatch", header)
+        self.assertIn("expectation_pauli_string_batch", header)
+        self.assertIn("GetExpectationPauliStringBatch", header)
+        self.assertIn("QuantumSimulator::sparse_hamiltonian_moments", implementation)
+        self.assertIn("QuantumSimulator::sparse_hamiltonian_moments_batch", implementation)
+        self.assertIn("QuantumSimulator::expectation_matrix", implementation)
+        self.assertIn("QuantumSimulator::expectation_matrix_moments", implementation)
+        self.assertIn("QuantumSimulator::expectation_matrix_batch", implementation)
+        self.assertIn("QuantumSimulator::expectation_matrix_moments_batch", implementation)
+        self.assertIn("square_matrix_row_major", implementation)
+        self.assertIn("QuantumSimulator::expectation_pauli_string_batch", implementation)
+        self.assertIn("rocsvGetExpectationPauliStringBatch", implementation)
+        self.assertIn("rocsvGetExpectationPauliStringBatch", hip_header)
+        self.assertIn("reduce_expectation_pauli_string_batch_kernel", hipstatevec)
+        self.assertIn("compute_local_expectation_pauli_string_batch", hipstatevec)
+        self.assertIn("rocsvGetExpectationMatrix", implementation)
+        self.assertIn("rocsvGetExpectationMatrixBatch", implementation)
+        self.assertIn("rocsvGetExpectationMatrixBatch", hip_header)
+        self.assertIn("rocsvGetExpectationMatrixMoments", implementation)
+        self.assertIn("rocsvGetExpectationMatrixMomentsBatch", implementation)
+        self.assertIn("validate_finite_complex_payload", implementation)
+        self.assertGreaterEqual(
+            implementation.count("validate_finite_complex_payload(matrix, \"Expectation matrix payload\")"),
+            4,
+        )
+        self.assertIn("rocsvGetExpectationMatrixMoments", hip_header)
+        self.assertIn("rocsvGetExpectationMatrixMomentsBatch", hip_header)
+        self.assertIn("reduce_expectation_matrix_moments_kernel", hipstatevec)
+        self.assertIn("matrix_expectation_host_fallback_allowed", implementation)
+        self.assertIn("targets.size() > 4 && !matrix_expectation_host_fallback_allowed()", implementation)
+        self.assertIn("expectation_matrix_host_fallback", hipstatevec)
+        self.assertIn("expectation_matrix_batch_host_fallback", hipstatevec)
+        self.assertIn("expectation_matrix_distributed_host_fallback", hipstatevec)
+        self.assertIn("compute_expectation_matrix_host_state", hipstatevec)
+        self.assertIn("dim3(blocks, static_cast<unsigned>(batch_size))", hipstatevec)
+        self.assertIn("rocsvGetSparseMatrixMoments", implementation)
+        self.assertIn("rocsvGetSparseMatrixMomentsBatch", implementation)
+        self.assertIn("rocsvGetSparseMatrixMoments", hipstatevec)
+        self.assertIn("rocsvGetSparseMatrixMomentsBatch", hipstatevec)
+        self.assertIn("reduce_sparse_matrix_moments_kernel", hipstatevec)
+        self.assertIn("reduce_sparse_matrix_moments_batch_kernel", hipstatevec)
+        self.assertIn("sparse_matrix_moments_distributed_host_fallback", hipstatevec)
+        self.assertIn("compute_sparse_matrix_moments_host_state", hipstatevec)
+        self.assertIn("Sparse Hamiltonian CSR indptr", implementation)
+        self.assertGreaterEqual(
+            implementation.count("validate_finite_complex_payload(data, \"Sparse Hamiltonian CSR data\")"),
+            2,
+        )
+        sparse_body = implementation.split("QuantumSimulator::sparse_hamiltonian_moments", 1)[1].split(
+            "unsigned QuantumSimulator::num_qubits", 1
+        )[0]
+        self.assertIn("hipMemcpyHostToDevice", sparse_body)
+        self.assertNotIn("get_statevector()", sparse_body)
+        self.assertNotIn("h_state", sparse_body)
+        dense_moments_body = implementation.split("QuantumSimulator::expectation_matrix_moments", 1)[1].split(
+            "std::vector<std::complex<double>> QuantumSimulator::expectation_matrix_batch", 1
+        )[0]
+        dense_moments_batch_body = implementation.split(
+            "QuantumSimulator::expectation_matrix_moments_batch", 1
+        )[1].split(
+            "std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::sparse_hamiltonian_moments",
+            1,
+        )[0]
+        self.assertIn("rocsvGetExpectationMatrixMoments", dense_moments_body)
+        self.assertIn("status == ROCQ_STATUS_NOT_IMPLEMENTED", dense_moments_body)
+        self.assertIn("expectation_matrix(squared_matrix, targets)", dense_moments_body)
+        self.assertIn("rocsvGetExpectationMatrixMomentsBatch", dense_moments_batch_body)
+        self.assertIn("status == ROCQ_STATUS_NOT_IMPLEMENTED", dense_moments_batch_body)
+        self.assertIn("expectation_matrix_batch(squared_matrix, targets)", dense_moments_batch_body)
+        self.assertIn(".def(\"expectation_matrix\"", bindings)
+        self.assertIn(".def(\"ExpectationMatrix\"", bindings)
+        self.assertIn(".def(\"expectation_matrix_moments\"", bindings)
+        self.assertIn(".def(\"ExpectationMatrixMoments\"", bindings)
+        self.assertIn(".def(\"expectation_matrix_batch\"", bindings)
+        self.assertIn(".def(\"ExpectationMatrixBatch\"", bindings)
+        self.assertIn(".def(\"expectation_matrix_moments_batch\"", bindings)
+        self.assertIn(".def(\"ExpectationMatrixMomentsBatch\"", bindings)
+        self.assertIn("infer_batch_size_from_state_buffer", low_level_bindings)
+        self.assertIn("m.def(\"get_expectation_pauli_string_batch\"", low_level_bindings)
+        self.assertIn("rocsvGetExpectationPauliStringBatch", low_level_bindings)
+        self.assertIn("m.def(\"get_expectation_matrix_batch\"", low_level_bindings)
+        self.assertIn("rocsvGetExpectationMatrixBatch", low_level_bindings)
+        self.assertIn("m.def(\"get_expectation_matrix_moments\"", low_level_bindings)
+        self.assertIn("rocsvGetExpectationMatrixMoments", low_level_bindings)
+        self.assertIn("m.def(\"get_expectation_matrix_moments_batch\"", low_level_bindings)
+        self.assertIn("rocsvGetExpectationMatrixMomentsBatch", low_level_bindings)
+        self.assertIn("m.def(\"get_sparse_matrix_moments_batch\"", low_level_bindings)
+        self.assertIn("rocsvGetSparseMatrixMomentsBatch", low_level_bindings)
+        self.assertIn(".def(\"expectation_pauli_string_batch\"", bindings)
+        self.assertIn(".def(\"GetExpectationPauliStringBatch\"", bindings)
+        self.assertIn(".def(\"adjoint_jacobian\"", bindings)
+        self.assertIn(".def(\"AdjointJacobian\"", bindings)
+        self.assertIn("compute_binding_adjoint_jacobian", bindings)
+        self.assertIn("apply_observable_to_state", bindings)
+        self.assertIn("apply_dense_matrix_to_state", bindings)
+        self.assertIn("apply_sparse_matrix_to_state", bindings)
+        self.assertIn("apply_controlled_pauli_to_state", bindings)
+        self.assertIn("apply_rotation_generator_to_state", bindings)
+        self.assertIn("operation.has_matrix", bindings)
+        self.assertIn("conjugate_transpose_matrix", bindings)
+        self.assertIn("operation.controls", bindings)
+        self.assertIn("operation.control_values", bindings)
+        self.assertIn("simulator.apply_controlled_matrix(matrix, operation.controls, operation.wires)", bindings)
+        self.assertIn("binding adjoint_jacobian does not differentiate trainable matrix operation payloads", bindings)
+        self.assertIn("operation.has_sparse_matrix", bindings)
+        self.assertIn("conjugate_transpose_sparse_matrix", bindings)
+        self.assertIn("simulator.apply_sparse_matrix(payload.data, payload.indices", bindings)
+        self.assertIn("binding adjoint_jacobian does not differentiate trainable sparse matrix operation payloads", bindings)
+        self.assertIn("if op.name == \"BlockEncode\"", pennylane)
+        self.assertIn("append_sparse_matrix_payload(op.name, wire_indices, sparse_matrix, raw_param_indices)", pennylane)
+        self.assertIn("append_matrix_payload(op.name, wire_indices, matrix, raw_param_indices)", pennylane)
+        self.assertIn("payload.targets", bindings)
+        self.assertIn("Sparse adjoint observable matrix dimension does not match target count", bindings)
+        self.assertIn("replace_local_basis_index(basis, payload.targets", bindings)
+        self.assertIn("param_derivative_scales", bindings)
+        self.assertIn("derivative_scale * contribution", bindings)
+        self.assertIn("binding adjoint_jacobian full-state CSR sparse observables must match the state dimension", bindings)
+        self.assertIn("trainable_rotation_generator", bindings)
+        self.assertIn("binding adjoint_jacobian currently differentiates trainable RX/RY/RZ/P/CRX/CRY/CRZ/CP", bindings)
+        self.assertIn(".def(\"sparse_hamiltonian_moments\"", bindings)
+        self.assertIn(".def(\"SparseHamiltonianMoments\"", bindings)
+        self.assertIn(".def(\"sparse_hamiltonian_moments_batch\"", bindings)
+        self.assertIn(".def(\"SparseHamiltonianMomentsBatch\"", bindings)
+        self.assertIn("def expectation_matrix_moments", runtime)
+        self.assertIn("def expectation_matrix_moments_batch", runtime)
+        self.assertIn("expectation_matrix_moments", runtime)
+        self.assertIn("def expectation_matrix_batch", runtime)
+        self.assertIn("def sparse_hamiltonian_moments_batch", runtime)
+
+    def test_framework_runtime_exposes_sparse_matrix_fallback(self):
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("def sparse_matrix_to_little_endian_wires", runtime)
+        self.assertIn("def apply_sparse_matrix_to_statevector", runtime)
+        self.assertIn("def apply_sparse_matrix", runtime)
+        self.assertIn("apply_sparse_matrix_to_statevector(", runtime)
+        self.assertIn("self.set_statevector(", runtime)
+        self.assertIn("self.set_statevectors(", runtime)
+
+    def test_public_simulator_exposes_sparse_matrix_application(self):
+        with open(_QUANTUM_SIMULATOR_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
+            implementation = f.read()
+        with open(_HIPSTATEVEC_HEADER, "r", encoding="utf-8") as f:
+            hip_header = f.read()
+        with open(_HIPSTATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            hipstatevec = f.read()
+        with open(_BINDINGS_CPP, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:
+            runtime = f.read()
+
+        self.assertIn("void apply_sparse_matrix", header)
+        self.assertIn("void ApplySparseMatrix", header)
+        self.assertIn("QuantumSimulator::apply_sparse_matrix", implementation)
+        self.assertIn("QuantumSimulator::ApplySparseMatrix", implementation)
+        self.assertIn("validate_sparse_operation_csr", implementation)
+        self.assertIn("validate_finite_complex_payload(data, \"Sparse operation CSR data\")", implementation)
+        self.assertIn("apply_sparse_operation_to_state_slice", implementation)
+        self.assertIn("rocsvApplySparseMatrix", implementation)
+        self.assertIn("sparse_status == ROCQ_STATUS_NOT_IMPLEMENTED", implementation)
+        self.assertIn("rocsvApplySparseMatrix", hip_header)
+        self.assertIn("rocsvApplySparseMatrix", hipstatevec)
+        self.assertIn("apply_sparse_matrix_kernel", hipstatevec)
+        self.assertIn("apply_sparse_matrix_distributed_local", hipstatevec)
+        self.assertIn("apply_sparse_matrix_distributed_host_fallback", hipstatevec)
+        self.assertIn("copy_sparse_matrix_from_device", hipstatevec)
+        self.assertIn("distributed_all_qubits_local(handle, targets)", hipstatevec)
+        self.assertIn("handle->distributedSwapBuffers", hipstatevec)
+        self.assertIn("hipMemcpyDeviceToDevice", hipstatevec)
+        self.assertIn("Sparse operation CSR indptr", implementation)
+        self.assertIn(".def(\"apply_sparse_matrix\"", bindings)
+        self.assertIn(".def(\"ApplySparseMatrix\"", bindings)
+        self.assertIn("copy_nonnegative_indices", bindings)
+        self.assertIn("self.apply_sparse_matrix(", bindings)
+        self.assertIn("getattr(self.simulator, \"apply_sparse_matrix\"", runtime)
+        self.assertIn("getattr(self.simulator, \"ApplySparseMatrix\"", runtime)
+
+    def test_pennylane_sampling_prefers_native_measure(self):
+        with open(_PENNYLANE_ADAPTER, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("measure = getattr(self.sim, \"measure\", None)", source)
+        self.assertIn("NATIVE_PARAMETRIC_OPS = {\"RX\", \"RY\", \"RZ\", \"CRX\", \"CRY\", \"CRZ\"}", source)
+        self.assertIn("\"PhaseShift\", \"ControlledPhaseShift\"", source)
+        self.assertIn("\"CH\", \"CY\", \"CCZ\", \"CRot\"", source)
+        self.assertIn("\"MultiControlledX\", \"MultiRZ\"", source)
+        self.assertIn("\"IsingXX\", \"IsingYY\", \"IsingZZ\", \"IsingXY\"", source)
+        self.assertIn("\"SingleExcitation\", \"SingleExcitationPlus\", \"SingleExcitationMinus\"", source)
+        self.assertIn("\"BasisState\", \"StatePrep\", \"Rot\"", source)
+        self.assertIn("StatePrep is only supported as an initial state preparation", source)
+        self.assertIn("statevector_to_little_endian_wires", source)
+        self.assertIn("self._runtime.set_statevector", source)
+        self.assertIn("_native_mcx_wire_indices", source)
+        self.assertIn("def _apply_mcx_with_control_values", source)
+        self.assertIn("control_values", source)
+        self.assertIn("def _controlled_qubit_unitary_components", source)
+        self.assertIn("def _apply_controlled_qubit_unitary", source)
+        self.assertIn("runtime.apply_controlled_matrix", source)
+        self.assertIn("CONTROLLED_WRAPPER_OPS", source)
+        self.assertIn("\"C(RX)\"", source)
+        self.assertIn("\"C(PhaseShift)\"", source)
+        self.assertIn("\"C(PauliY)\"", source)
+        self.assertIn("\"C(Hadamard)\"", source)
+        self.assertIn("\"C(Adjoint(S))\"", source)
+        self.assertIn("\"C(Adjoint(T))\"", source)
+        self.assertIn("\"C(SWAP)\"", source)
+        self.assertIn("\"C(ISWAP)\"", source)
+        self.assertIn("\"C(PSWAP)\"", source)
+        self.assertIn("\"C(SISWAP)\"", source)
+        self.assertIn("\"C(SQISW)\"", source)
+        self.assertIn("\"C(ECR)\"", source)
+        self.assertIn("\"C(GlobalPhase)\"", source)
+        self.assertIn("CONTROLLED_PHASE_VARIANT_OPS", source)
+        self.assertIn("C(CPhaseShift00)", source)
+        self.assertIn("def _apply_controlled_wrapper", source)
+        self.assertIn("def _apply_controlled_wrapper_batch", source)
+        self.assertIn("def _apply_controlled_global_phase_batch", source)
+        self.assertIn("def _apply_multi_controlled_phase_variant", source)
+        self.assertIn("def _apply_multi_controlled_phase_variant_batch", source)
+        self.assertIn("def _apply_multi_controlled_fixed_single_qubit_op", source)
+        self.assertIn("def _apply_multi_controlled_swap", source)
+        self.assertIn("def _apply_multi_controlled_iswap", source)
+        self.assertIn("def _apply_multi_controlled_pswap", source)
+        self.assertIn("def _apply_multi_controlled_pswap_batch", source)
+        self.assertIn("def _apply_multi_controlled_siswap", source)
+        self.assertIn("def _apply_multi_controlled_ecr", source)
+        self.assertIn("def _apply_multi_controlled_parametric_single_qubit_op", source)
+        self.assertIn("def _apply_multi_controlled_parametric_single_qubit_op_batch", source)
+        self.assertIn("def _apply_multi_controlled_phase_projector", source)
+        self.assertIn("_apply_native_or_matrix(self._runtime, \"MCX\"", source)
+        self.assertIn("def _apply_multirz", source)
+        self.assertIn("_apply_multirz(self._runtime, wire_indices, theta)", source)
+        self.assertIn("def _supports_native_phase_decomposition", source)
+        self.assertIn("def _supports_native_parametric_decomposition", source)
+        self.assertIn("def _supports_native_gate_decomposition", source)
+        self.assertIn("def _apply_phase_shift", source)
+        self.assertIn("def _apply_sx", source)
+        self.assertIn("preserve_global_phase", source)
+        self.assertIn("def _circuit_preserves_global_phase", source)
+        self.assertIn("def _apply_controlled_phase_shift", source)
+        self.assertIn("def _apply_controlled_phase_variant", source)
+        self.assertIn("_apply_controlled_phase_shift(self._runtime, wire_indices, theta)", source)
+        self.assertIn("def _apply_phase_shift_batch", source)
+        self.assertIn("def _apply_controlled_phase_shift_batch", source)
+        self.assertIn("def _apply_cy", source)
+        self.assertIn("def _apply_ccz", source)
+        self.assertIn("def _apply_ch", source)
+        self.assertIn("def _apply_iswap", source)
+        self.assertIn("def _apply_pswap", source)
+        self.assertIn("def _apply_siswap", source)
+        self.assertIn("def _apply_ecr", source)
+        self.assertIn("def _apply_single_excitation", source)
+        self.assertIn("def _apply_single_excitation_phase_variant", source)
+        self.assertIn("def _apply_crot", source)
+        self.assertIn("def _apply_rot_batch", source)
+        self.assertIn("def _apply_crot_batch", source)
+        self.assertIn("def _apply_static_batch_operation", source)
+        self.assertIn("def _apply_double_excitation", source)
+        self.assertIn("def _apply_double_excitation_phase_variant", source)
+        self.assertIn("def _apply_fermionic_swap", source)
+        self.assertIn("def _apply_orbital_rotation", source)
+        self.assertIn("gate_name == \"CH\"", source)
+        self.assertIn("gate_name == \"CY\"", source)
+        self.assertIn("gate_name == \"CCZ\"", source)
+        self.assertIn("gate_name == \"ISWAP\"", source)
+        self.assertIn("gate_name == \"PSWAP\"", source)
+        self.assertIn("gate_name in {\"SISWAP\", \"SQISW\"}", source)
+        self.assertIn("gate_name == \"ECR\"", source)
+        self.assertIn("gate_name == \"SingleExcitation\"", source)
+        self.assertIn("gate_name in {\"SingleExcitationPlus\", \"SingleExcitationMinus\"}", source)
+        self.assertIn("gate_name == \"CRot\"", source)
+        self.assertIn("gate_name == \"DoubleExcitation\"", source)
+        self.assertIn("gate_name in {\"DoubleExcitationPlus\", \"DoubleExcitationMinus\"}", source)
+        self.assertIn("gate_name == \"FermionicSWAP\"", source)
+        self.assertIn("gate_name == \"OrbitalRotation\"", source)
+        self.assertIn("def _apply_isingxx", source)
+        self.assertIn("def _apply_isingyy", source)
+        self.assertIn("def _apply_isingxx_batch", source)
+        self.assertIn("def _apply_isingyy_batch", source)
+        self.assertIn("def _apply_isingxy", source)
+        self.assertIn("def _apply_isingxy_batch", source)
+        self.assertIn("def _apply_single_excitation_batch", source)
+        self.assertIn("def _apply_double_excitation_batch", source)
+        self.assertIn("def _apply_fermionic_swap_batch", source)
+        self.assertIn("def _apply_orbital_rotation_batch", source)
+        self.assertIn("gate_name == \"IsingXX\"", source)
+        self.assertIn("gate_name == \"IsingYY\"", source)
+        self.assertIn("gate_name == \"IsingXY\"", source)
+        self.assertIn("gate_name == \"IsingZZ\"", source)
+        self.assertIn("def _shot_count", source)
+        self.assertIn("shots = _shot_count(self.shots)", source)
+        self.assertIn("raw_samples = self._runtime.measure(all_wires, shots)", source)
+        self.assertIn("self._runtime.measure_batch", source)
+        self.assertIn("not all(name in {\"ProbabilityMP\", \"SampleMP\", \"CountsMP\"}", source)
+        self.assertIn("def _sample_result_from_rows", source)
+        self.assertIn("def _counts_result_from_rows", source)
+        self.assertIn("def _probability_result_from_rows", source)
+        self.assertIn("def _batched_measurement_plan", source)
+        self.assertIn("measurement_results.append", source)
+        self.assertIn("all_outcomes=all_outcomes", source)
+        self.assertIn("format(index", source)
+        self.assertIn("def _ensure_state", source)
+        self.assertIn("self._state = self._runtime.statevector()", source)
+        self.assertIn("return self._ensure_state()", source)
+        self.assertIn("samples_to_binary_rows", source)
+        self.assertIn("sample_rows_from_statevector", source, "legacy fallback should remain explicit")
+        self.assertIn("def analytic_probability", source)
+        self.assertIn("self._runtime.probabilities", source)
+        self.assertIn("_analytic_measurement_cache", source)
+        self.assertIn("(\"probabilities\", tuple(int(wire_index) for wire_index in wire_indices))", source)
+        self.assertIn("probabilities = all_probs if not wires_to_trace else self.marginal_prob", source)
+        self.assertIn("def expval", source)
+        self.assertIn("def var", source)
+        self.assertIn("def execute", source)
+        self.assertIn("def batch_execute", source)
+        self.assertIn("_try_execute_batched_parameter_circuits", source)
+        self.assertIn("measurement_names = [measurement.__class__.__name__", source)
+        self.assertIn("reference_measurement_specs = []", source)
+        self.assertIn("batched_values = []", source)
+        self.assertIn("observable_batch_cache = {}", source)
+        self.assertIn("def cached_observable", source)
+        self.assertIn("_observable_batch_payload_cache_key", source)
+        self.assertIn("\"ExpectationMP\", \"VarianceMP\", \"ProbabilityMP\"", source)
+        self.assertIn("\"ExpectationMP\", \"VarianceMP\"", source)
+        self.assertIn("_pauli_square_terms(payload[1])", source)
+        self.assertIn("self._runtime.probabilities_batch(", source)
+        self.assertIn("self._runtime.apply_operation_batch", source)
+        self.assertIn("gate_name == \"BasisState\"", source)
+        self.assertIn("_basis_state_bits(op, len(wire_indices))", source)
+        self.assertIn("gate_name == \"StatePrep\"", source)
+        self.assertIn("self._runtime.set_statevectors(statevectors)", source)
+        self.assertIn("\"PhaseShift\", \"ControlledPhaseShift\", \"MultiRZ\", \"IsingXX\", \"IsingYY\", \"IsingZZ\"", source)
+        self.assertIn("\"IsingXY\", \"PauliRot\", \"PSWAP\", \"SingleExcitation\", \"SingleExcitationPlus\"", source)
+        self.assertIn("gate_name == \"PauliRot\"", source)
+        self.assertIn("_apply_paulirot_batch", source)
+        self.assertIn("def _parameter_lists_match", source)
+        self.assertIn("gate_name == \"QubitUnitary\" and len(params) == 1", source)
+        self.assertIn("gate_name == \"ControlledQubitUnitary\"", source)
+        self.assertIn("gate_name == \"SingleExcitation\"", source)
+        self.assertIn("gate_name in {\"SingleExcitationPlus\", \"SingleExcitationMinus\"}", source)
+        self.assertIn("gate_name in {\"DoubleExcitationPlus\", \"DoubleExcitationMinus\"}", source)
+        self.assertIn("gate_name == \"FermionicSWAP\"", source)
+        self.assertIn("gate_name == \"OrbitalRotation\"", source)
+        self.assertIn("_apply_controlled_phase_variant_batch", source)
+        self.assertIn("_apply_pswap_batch", source)
+        self.assertIn("_apply_single_excitation_phase_variant_batch", source)
+        self.assertIn("_apply_double_excitation_phase_variant_batch", source)
+        self.assertIn("gate_name == \"Rot\" and all(len(params) == 3", source)
+        self.assertIn("gate_name == \"CRot\" and all(len(params) == 3", source)
+        self.assertIn("_apply_static_batch_operation(", source)
+        self.assertIn("op=reference_op", source)
+        self.assertIn("wire_map=self.wire_map", source)
+        self.assertIn("gate_name == \"ECR\" and not params", source)
+        self.assertIn("gate_name == \"SingleExcitation\" and len(params) == 1", source)
+        self.assertIn("gate_name in CONTROLLED_WRAPPER_OPS", source)
+        self.assertIn("self._runtime.probabilities_batch", source)
+        self.assertIn("_analytic_measurements_use_native_pauli", source)
+        self.assertIn("_skip_diagonalizing_rotations", source)
+        self.assertIn("_diagonalizing_rotations_applied", source)
+        self.assertIn("\"Hadamard\"", source)
+        self.assertIn("\"SparseHamiltonian\"", source)
+        self.assertIn("observable.name == \"Hadamard\"", source)
+        self.assertIn("observable.name == \"Hermitian\"", source)
+        self.assertIn("def _matrix_expectation_cached", source)
+        self.assertIn("def _matrix_moments_cached", source)
+        self.assertIn("def _observable_batch_payload", source)
+        self.assertIn("runtime.expectation_matrix", source)
+        self.assertIn("runtime.expectation_matrix_batch", source)
+        self.assertIn("def _projector_terms_from_observable", source)
+        self.assertIn("observable.name != \"Projector\"", source)
+        self.assertIn("_sparse_hamiltonian_moments_cached", source)
+        self.assertIn("_native_sparse_hamiltonian_moments_batch", source)
+        self.assertIn("runtime.sparse_hamiltonian_moments", source)
+        self.assertIn("runtime.sparse_hamiltonian_moments_batch", source)
+        self.assertIn("_sparse_hamiltonian_moments", source)
+        self.assertIn("sparse_matrix(wire_order=wire_order, format=\"csr\")", source)
+        self.assertIn("rotation_ops = list(rotations or [])", source)
+        self.assertIn("circuit_ops + rotation_ops", source)
+        self.assertIn("def execute_and_gradients", source)
+        self.assertIn("\"provides_jacobian\": True", source)
+        self.assertIn("def jacobian", source)
+        self.assertIn("def gradients", source)
+        self.assertIn("def _parameter_shift_jacobians", source)
+        self.assertIn("qml.gradients.param_shift", source)
+        self.assertIn("self.batch_execute(all_gradient_tapes)", source)
+        self.assertIn("def adjoint_jacobian", source)
+        self.assertIn("supports_adjoint_jacobian", source)
+        self.assertIn("def _native_adjoint_payload", source)
+        self.assertIn("def _native_adjoint_trainable_param_specs", source)
+        self.assertIn("def _process_native_adjoint_jacobian", source)
+        self.assertIn("def _native_adjoint_observable_payloads", source)
+        self.assertIn("if op.name == \"GlobalPhase\":\n                if len(raw_params) != 1:", source)
+        self.assertIn("op.name == \"Rot\"", source)
+        self.assertIn("op.name == \"CRot\"", source)
+        self.assertIn("(\"CRZ\", \"CRY\", \"CRZ\")", source)
+        self.assertIn("\"PhaseShift\": \"P\"", source)
+        self.assertIn("\"ControlledPhaseShift\": \"CP\"", source)
+        self.assertIn("def append_diagonal_phases", source)
+        self.assertIn("op.name == \"DiagonalQubitUnitary\"", source)
+        self.assertIn("def append_select_pauli_rot", source)
+        self.assertIn("op.name == \"SelectPauliRot\"", source)
+        self.assertIn("def append_qft", source)
+        self.assertIn("def append_basis_embedding", source)
+        self.assertIn("def append_permute", source)
+        self.assertIn("def append_qubit_sum", source)
+        self.assertIn("def append_qubit_carry", source)
+        self.assertIn("def append_grover_operator", source)
+        self.assertIn("def append_controlled_sequence", source)
+        self.assertIn("def append_select", source)
+        self.assertIn("append_controlled_x_targets(selected_controls", source)
+        self.assertIn("op_params_by_batch[0]", source)
+        self.assertIn("op.name == \"QFT\"", source)
+        self.assertIn("op.name == \"BasisEmbedding\"", source)
+        self.assertIn("op.name == \"Permute\"", source)
+        self.assertIn("op.name == \"QubitSum\"", source)
+        self.assertIn("op.name == \"QubitCarry\"", source)
+        self.assertIn("op.name == \"GroverOperator\"", source)
+        self.assertIn("op.name == \"ControlledSequence\"", source)
+        self.assertIn("op.name == \"Select\"", source)
+        self.assertIn("\"Adjoint(S)\": \"SDG\"", source)
+        self.assertIn("\"Adjoint(T)\": \"TDG\"", source)
+        self.assertIn("\"MultiControlledX\": \"MCX\"", source)
+        self.assertIn("op.name == \"CH\"", source)
+        self.assertIn("op.name == \"CY\"", source)
+        self.assertIn("op.name == \"CCZ\"", source)
+        self.assertIn("op.name == \"MultiControlledX\"", source)
+        self.assertIn("op.name in {\"CPhaseShift00\", \"CPhaseShift01\", \"CPhaseShift10\"}", source)
+        self.assertIn("op.name == \"ISWAP\"", source)
+        self.assertIn("op.name in {\"SISWAP\", \"SQISW\"}", source)
+        self.assertIn("op.name == \"ECR\"", source)
+        self.assertIn("def append_multirz", source)
+        self.assertIn("def append_phase_projector", source)
+        self.assertIn("def append_controlled_wrapper", source)
+        self.assertIn("op.name in CONTROLLED_WRAPPER_OPS", source)
+        self.assertIn("op.name == \"PauliRot\"", source)
+        self.assertIn("op.name == \"IsingXY\"", source)
+        self.assertIn("op.name == \"SingleExcitation\"", source)
+        self.assertIn("op.name in {\"SingleExcitationPlus\", \"SingleExcitationMinus\"}", source)
+        self.assertIn("op.name == \"DoubleExcitation\"", source)
+        self.assertIn("op.name in {\"DoubleExcitationPlus\", \"DoubleExcitationMinus\"}", source)
+        self.assertIn("op.name == \"PSWAP\"", source)
+        self.assertIn("op.name == \"FermionicSWAP\"", source)
+        self.assertIn("op.name == \"OrbitalRotation\"", source)
+        self.assertIn("param_derivative_scales", source)
+        self.assertIn("_uniform_rz_thetas(basis)", source)
+        self.assertIn("trainable_param_indices", source)
+        self.assertIn("trainable_param_positions", source)
+        self.assertIn("_capture_adjoint_reference_state", source)
+        self.assertIn("def _apply_unitary", source)
+        self.assertIn("_pauli_square_terms", source)
+        self.assertIn("expectation_pauli_string", source)
+        self.assertIn("_evaluate_pauli_terms_batch", source)
+        self.assertIn("expectation_pauli_string_batch", source)
+
+    def test_cirq_sampling_prefers_native_measure(self):
+        with open(_CIRQ_ADAPTER, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("def _execute_circuit", source)
+        self.assertIn("RocQuantumRuntime.from_bindings", source)
+        self.assertIn("runtime.measure(indices, repetitions)", source)
+        self.assertIn("_samples_to_bits", source)
+        self.assertIn("runtime.statevector()", source)
+        self.assertIn("np.random.choice", source, "legacy fallback should remain explicit")
+
+    def test_qiskit_counts_are_fixed_width_bitstrings(self):
+        with open(_QISKIT_BACKEND, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("qiskit_memory_from_samples", source)
+        self.assertIn("MATRIX_FALLBACK_OPS", source)
+        self.assertIn("MAX_AUTOMATIC_MATRIX_FALLBACK_QUBITS = 4", source)
+        self.assertIn("_automatic_operation_matrix", source)
+        self.assertIn("def _supports_native_phase_decomposition", source)
+        self.assertIn("def _supports_native_parametric_decomposition", source)
+        self.assertIn("def _apply_phase_gate", source)
+        self.assertIn("def _apply_phase_gate_batch", source)
+        self.assertIn("def _apply_controlled_phase_gate", source)
+        self.assertIn("def _apply_controlled_phase_gate_batch", source)
+        self.assertIn("def _apply_rxx_gate", source)
+        self.assertIn("def _apply_rxx_gate_batch", source)
+        self.assertIn("def _apply_ryy_gate", source)
+        self.assertIn("def _apply_ryy_gate_batch", source)
+        self.assertIn("def _apply_rzz_gate", source)
+        self.assertIn("def _apply_rzz_gate_batch", source)
+        self.assertIn("def _apply_rzx_gate", source)
+        self.assertIn("def _apply_rzx_gate_batch", source)
+        self.assertIn("def _apply_xx_plus_yy_gate", source)
+        self.assertIn("def _apply_xx_plus_yy_gate_batch", source)
+        self.assertIn("def _apply_xx_minus_yy_gate", source)
+        self.assertIn("def _apply_xx_minus_yy_gate_batch", source)
+        self.assertIn("def _apply_controlled_xx_plus_yy_gate", source)
+        self.assertIn("def _apply_controlled_xx_plus_yy_gate_batch", source)
+        self.assertIn("def _apply_controlled_xx_minus_yy_gate", source)
+        self.assertIn("def _apply_controlled_xx_minus_yy_gate_batch", source)
+        self.assertIn("def _apply_controlled_xx_yy_gate_batch", source)
+        self.assertIn("def _apply_multirz_gate", source)
+        self.assertIn("def _apply_multirz_gate_batch", source)
+        self.assertIn("def _apply_multi_controlled_phase_gate", source)
+        self.assertIn("def _apply_multi_controlled_phase_gate_batch", source)
+        self.assertIn("def _apply_multi_controlled_rz_gate", source)
+        self.assertIn("def _apply_multi_controlled_rz_gate_batch", source)
+        self.assertIn("def _apply_multi_controlled_rx_gate", source)
+        self.assertIn("def _apply_multi_controlled_rx_gate_batch", source)
+        self.assertIn("def _apply_multi_controlled_ry_gate", source)
+        self.assertIn("def _apply_multi_controlled_ry_gate_batch", source)
+        self.assertIn("def _apply_multi_controlled_r_gate", source)
+        self.assertIn("def _apply_multi_controlled_r_gate_batch", source)
+        self.assertIn("def _apply_multi_controlled_u3_gate", source)
+        self.assertIn("def _apply_multi_controlled_u3_gate_batch", source)
+        self.assertIn("def _apply_multi_controlled_u_gate", source)
+        self.assertIn("def _apply_multi_controlled_u_gate_batch", source)
+        self.assertIn("def _apply_controlled_pauli_rotation_gate", source)
+        self.assertIn("def _apply_controlled_pauli_rotation_gate_batch", source)
+        self.assertIn("def _apply_controlled_two_qubit_rotation_gate_batch", source)
+        self.assertIn("def _apply_pauli_evolution_gate", source)
+        self.assertIn("def _apply_pauli_evolution_gate_batch", source)
+        self.assertIn("_pauli_evolution_terms", source)
+        self.assertIn("def _apply_circuit_batch", source)
+        self.assertIn("STATEVECTOR_BATCH_SAFE_OPS", source)
+        self.assertIn("def _statevector_batch_global_phase", source)
+        self.assertIn("def _try_run_batched_statevector_circuits", source)
+        self.assertIn("self._runtime.statevectors()", source)
+        self.assertIn("cmath.exp(1j * float(phase))", source)
+        self.assertIn("\"PauliEvolution\"", source)
+        self.assertIn("set(str(label).upper()) <= {\"I\"}", source)
+        self.assertIn("require_native_phase", source)
+        self.assertIn("Statevector batching requires native P batch dispatch", source)
+        self.assertIn("Statevector batching requires native CP batch dispatch", source)
+        self.assertIn("self._runtime.apply_operation_batch", source)
+        self.assertIn("self._runtime.set_statevectors", source)
+        self.assertIn("reference_op.name == \"reset\"", source)
+        self.assertIn("identical reset layout", source)
+        self.assertIn("initial full-wire state preparation", source)
+        self.assertIn("def _operation_runtime_params", source)
+        self.assertIn("def _apply_u_gate_batch", source)
+        self.assertIn("touched_qubits = set()", source)
+        self.assertIn("circuit_num_qubits=num_qubits", source)
+        self.assertIn("reference_op.name == \"PauliEvolution\"", source)
+        self.assertIn("def _apply_controlled_base_gate_batch", source)
+        self.assertIn("self._apply_controlled_base_gate_batch(reference_op, q_indices, thetas)", source)
+        self.assertIn("def _parameter_lists_match", source)
+        self.assertIn("normalized_params_by_circuit", source)
+        self.assertIn("fixed unitary/controlled-unitary operations, open-control controlled rotations/phase", source)
+        self.assertIn("def _apply_sx_gate", source)
+        self.assertIn("def _apply_csx_gate", source)
+        self.assertIn("def _apply_u_gate", source)
+        self.assertIn("def _apply_cu3_gate", source)
+        self.assertIn("def _apply_cu3_gate_batch", source)
+        self.assertIn("def _apply_cu_gate", source)
+        self.assertIn("def _apply_cu_gate_batch", source)
+        self.assertIn("def _apply_r_gate", source)
+        self.assertIn("def _apply_r_gate_batch", source)
+        self.assertIn("def _apply_cy_gate", source)
+        self.assertIn("def _apply_ccz_gate", source)
+        self.assertIn("def _apply_ch_gate", source)
+        self.assertIn("def _apply_multi_controlled_h_gate", source)
+        self.assertIn("def _apply_dcx_gate", source)
+        self.assertIn("def _apply_iswap_gate", source)
+        self.assertIn("def _apply_ecr_gate", source)
+        self.assertIn("def _apply_multi_controlled_swap_gate", source)
+        self.assertIn("def _apply_multi_controlled_dcx_gate", source)
+        self.assertIn("def _apply_multi_controlled_ecr_gate", source)
+        self.assertIn("def _apply_multi_controlled_iswap_gate", source)
+        self.assertIn("def _apply_tdg_gate", source)
+        self.assertIn("def _apply_pauli_gate", source)
+        self.assertIn("def _apply_rccx_gate", source)
+        self.assertIn("def _apply_rcccx_gate", source)
+        self.assertIn("def _apply_controlled_global_phase_gate", source)
+        self.assertIn("def _apply_controlled_global_phase_gate_batch", source)
+        self.assertIn("def _apply_controlled_base_gate", source)
+        self.assertIn("def _apply_controlled_u_gate_batch", source)
+        self.assertIn("statevector_to_little_endian_wires", source)
+        self.assertIn("self._runtime.set_statevector", source)
+        self.assertIn("Operator(op).data", source)
+        self.assertIn("statevector=False", source)
+        self.assertIn("Target(num_qubits=int(num_qubits))", source)
+        self.assertIn("MCXGate(3)", source)
+        self.assertIn("HGate().control(2, annotated=False)", source)
+        self.assertIn("YGate().control(2, annotated=False)", source)
+        self.assertIn("ZGate().control(3, annotated=False)", source)
+        self.assertIn("CSXGate()", source)
+        self.assertIn("SGate().control(2, annotated=False)", source)
+        self.assertIn("SdgGate().control(2, annotated=False)", source)
+        self.assertIn("SXGate().control(2, annotated=False)", source)
+        self.assertIn("SXGate().control(3, annotated=False)", source)
+        self.assertIn("TGate().control(1, annotated=False)", source)
+        self.assertIn("TdgGate().control(3, annotated=False)", source)
+        self.assertIn("SwapGate().control(2, annotated=False)", source)
+        self.assertIn("SwapGate().control(3, annotated=False)", source)
+        self.assertIn("DCXGate().control(1, annotated=False)", source)
+        self.assertIn("DCXGate().control(2, annotated=False)", source)
+        self.assertIn("DCXGate().control(3, annotated=False)", source)
+        self.assertIn("ECRGate().control(1, annotated=False)", source)
+        self.assertIn("ECRGate().control(2, annotated=False)", source)
+        self.assertIn("ECRGate().control(3, annotated=False)", source)
+        self.assertIn("iSwapGate().control(1, annotated=False)", source)
+        self.assertIn("iSwapGate().control(2, annotated=False)", source)
+        self.assertIn("iSwapGate().control(3, annotated=False)", source)
+        self.assertIn("CUGate(0.0, 0.0, 0.0, 0.0)", source)
+        self.assertIn("GlobalPhaseGate(0.0)", source)
+        self.assertIn("GlobalPhaseGate(0.0).control(1, annotated=False)", source)
+        self.assertIn("GlobalPhaseGate(0.0).control(2, annotated=False)", source)
+        self.assertIn("GlobalPhaseGate(0.0).control(3, annotated=False)", source)
+        self.assertIn("MCPhaseGate(0.0, 2)", source)
+        self.assertIn("RXGate(0.0).control(2, annotated=False)", source)
+        self.assertIn("RXGate(0.0).control(3, annotated=False)", source)
+        self.assertIn("RYGate(0.0).control(2, annotated=False)", source)
+        self.assertIn("RYGate(0.0).control(3, annotated=False)", source)
+        self.assertIn("RZGate(0.0).control(2, annotated=False)", source)
+        self.assertIn("RZGate(0.0).control(3, annotated=False)", source)
+        self.assertIn("RGate(0.0, 0.0).control(1, annotated=False)", source)
+        self.assertIn("RGate(0.0, 0.0).control(2, annotated=False)", source)
+        self.assertIn("RGate(0.0, 0.0).control(3, annotated=False)", source)
+        self.assertIn("RXXGate(0.0).control(1, annotated=False)", source)
+        self.assertIn("RYYGate(0.0).control(2, annotated=False)", source)
+        self.assertIn("RZZGate(0.0).control(3, annotated=False)", source)
+        self.assertIn("RZXGate(0.0).control(1, annotated=False)", source)
+        self.assertIn("U1Gate(0.0)", source)
+        self.assertIn("U1Gate(0.0).control(2, annotated=False)", source)
+        self.assertIn("U2Gate(0.0, 0.0)", source)
+        self.assertIn("U2Gate(0.0, 0.0).control(1, annotated=False)", source)
+        self.assertIn("U2Gate(0.0, 0.0).control(2, annotated=False)", source)
+        self.assertIn("U2Gate(0.0, 0.0).control(3, annotated=False)", source)
+        self.assertIn("U3Gate(0.0, 0.0, 0.0)", source)
+        self.assertIn("U3Gate(0.0, 0.0, 0.0).control(2, annotated=False)", source)
+        self.assertIn("U3Gate(0.0, 0.0, 0.0).control(3, annotated=False)", source)
+        self.assertIn("UGate(0.0, 0.0, 0.0).control(2, annotated=False)", source)
+        self.assertIn("UGate(0.0, 0.0, 0.0).control(3, annotated=False)", source)
+        self.assertIn("XXPlusYYGate(0.0, 0.0).control(1, annotated=False)", source)
+        self.assertIn("XXPlusYYGate(0.0, 0.0).control(3, annotated=False)", source)
+        self.assertIn("XXMinusYYGate(0.0, 0.0).control(1, annotated=False)", source)
+        self.assertIn("XXMinusYYGate(0.0, 0.0).control(3, annotated=False)", source)
+        self.assertIn("reference_op.name == \"u1\"", source)
+        self.assertIn("reference_op.name == \"u2\"", source)
+        self.assertIn("reference_op.name == \"u3\"", source)
+        self.assertIn("op.name == \"global_phase\"", source)
+        self.assertIn("\"global_phase\", \"save_statevector\"", source)
+        self.assertIn("raw_samples = self._runtime.measure(qubits_to_measure, shots)", source)
+        self.assertIn("def _run_dynamic_sampling", source)
+        self.assertIn("def _apply_circuit_trajectory", source)
+        self.assertIn("if op.name == \"if_else\"", source)
+        self.assertIn("if op.name == \"for_loop\"", source)
+        self.assertIn("if op.name == \"switch_case\"", source)
+        self.assertIn("if op.name == \"while_loop\"", source)
+        self.assertIn("if op.name == \"break_loop\"", source)
+        self.assertIn("if op.name == \"continue_loop\"", source)
+        self.assertIn("_classical_value", source)
+        self.assertIn("_for_loop_metadata", source)
+        self.assertIn("_bind_for_loop_block", source)
+        self.assertIn("return \"break\"", source)
+        self.assertIn("return \"continue\"", source)
+        self.assertIn("max_dynamic_loop_iterations", source)
+        self.assertIn("measure_qubit", source)
+        self.assertIn("formatted_counts = counts_from_memory(memory)", source)
+        self.assertIn("return RocQuantumJob(self, job_id, result)", source)
+        self.assertNotIn("{bin(k): v for k, v in counts.items()}", source)
+
+    def test_qiskit_estimator_uses_native_expectation(self):
+        with open(_QISKIT_ESTIMATOR, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("class RocQuantumEstimator", source)
+        self.assertIn("EstimatorPub.coerce", source)
+        self.assertIn("_canonical_observable_label", source)
+        self.assertIn("_combine_observable_terms", source)
+        self.assertIn("def _observable_signature", source)
+        self.assertIn("observable_cache", source)
+        self.assertIn("indices_by_parameter", source)
+        self.assertIn("_try_run_pub_batched_parameters", source)
+        self.assertIn("observable_values_by_cache", source)
+        self.assertIn("observable_cache_keys", source)
+        self.assertIn("parameter_offsets", source)
+        self.assertIn("_apply_circuit_batch", source)
+        self.assertIn("_estimate_combined_observable_terms_batch", source)
+        self.assertIn("_estimate_observable_plan_batch", source)
+        self.assertIn("def _dense_operator_payload", source)
+        self.assertIn("\"targets\"", source)
+        self.assertIn("\"qargs\"", source)
+        self.assertIn("_normalize_dense_operator_targets", source)
+        self.assertIn("Dense Qiskit Operator explicit targets", source)
+        self.assertIn("_dense_operator_object_array", source)
+        self.assertIn("_dense_matrix_cache_key", source)
+        self.assertIn("contiguous.tobytes()", source)
+        self.assertIn("observable.input_dims()", source)
+        self.assertIn("observable.output_dims()", source)
+        self.assertIn("reversed(input_dims)", source)
+        self.assertIn("Dense Qiskit Operator dimension metadata", source)
+        self.assertIn("self._backend._apply_circuit", source)
+        self.assertIn("estimate_observable_batch", source)
+        self.assertIn("estimate_pauli_observable", source)
+        self.assertIn("estimate_pauli_observable_batch", source)
+        self.assertIn("expectation_pauli_string_batch", source)
+        self.assertIn("expectation_matrix_batch", source)
+        self.assertIn("shots\": 0", source)
+
+    def test_qiskit_sampler_uses_native_sampling(self):
+        with open(_QISKIT_SAMPLER, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("class RocQuantumSampler", source)
+        self.assertIn("SamplerPub.coerce", source)
+        self.assertIn("self._backend._apply_circuit", source)
+        self.assertIn("self._backend._runtime.measure", source)
+        self.assertIn("def _try_run_pub_batched_parameters", source)
+        self.assertIn("self._backend._apply_circuit_batch", source)
+        self.assertIn("self._backend._runtime.measure_batch", source)
+        self.assertIn("def _try_run_trajectory_samples", source)
+        self.assertIn("def _sample_runtime_reset_circuit", source)
+        self.assertIn("def _sample_dynamic_circuit", source)
+        self.assertIn("def _dynamic_loop_limit", source)
+        self.assertIn("self._max_dynamic_loop_iterations", source)
+        self.assertIn("allow_runtime_reset=True", source)
+        self.assertIn("_apply_circuit_trajectory", source)
+        self.assertIn("metadata[\"shot_trajectory\"] = True", source)
+        self.assertIn("\"batched_parameters\": True", source)
+        self.assertIn("BitArray.from_bool_array", source)
+
+    def test_windows_build_helpers_use_current_cmake_contract(self):
+        with open(_WINDOWS_BUILD_BAT, "r", encoding="utf-8") as f:
+            build_source = f.read()
+        with open(_WINDOWS_BUILD_ROCQ_BAT, "r", encoding="utf-8") as f:
+            build_rocq_source = f.read()
+
+        combined = build_source + "\n" + build_rocq_source
+        self.assertIn("%~dp0", combined)
+        self.assertIn("CMAKE_HIP_ARCHITECTURES", combined)
+        self.assertIn("gfx950;gfx942;gfx90a", combined)
+        self.assertNotIn("rocQuantum-1", combined)
+        self.assertNotIn("AMDGPU_TARGETS", combined)
+
+
+if __name__ == "__main__":
+    unittest.main()

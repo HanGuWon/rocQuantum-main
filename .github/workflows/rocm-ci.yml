@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: rocm-ci-${{ github.workflow }}-${{ github.ref }}
@@ -37,7 +38,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest
+          python -m pip install pytest numpy scipy
 
       - name: Run fast non-GPU tests
         env:
@@ -49,7 +50,14 @@ jobs:
             tests/test_p0_fixes.py \
             tests/test_p1_compiler.py \
             tests/test_p2_packaging.py \
+            tests/test_runtime_api_contract.py \
+            tests/test_legacy_python_api.py \
+            tests/test_statevec_fastpath_contract.py \
             tests/test_cpp_expectation.py \
+            tests/test_cirq_integration.py \
+            tests/test_pennylane_integration.py \
+            tests/test_benchmark_release_contract.py \
+            tests/test_rocm_compatibility_contract.py \
             --junitxml "${ARTIFACT_DIR}/junit-fast-checks.xml" \
             2>&1 | tee "${ARTIFACT_DIR}/pytest-fast-checks.log"
 
@@ -118,6 +126,13 @@ jobs:
             ls -l /dev/kfd || true
           } | tee "${ARTIFACT_DIR}/runner-env.log"
 
+      - name: Probe ROCm runtime prerequisites
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -o pipefail
+          bash scripts/probe_rocm_runtime.sh 2>&1 | tee "${ARTIFACT_DIR}/rocm-runtime-probe.log"
+
       - name: Async contract gate
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
@@ -145,15 +160,62 @@ jobs:
           set -o pipefail
           cmake --build build-rocm-ci --parallel 2>&1 | tee "${ARTIFACT_DIR}/build.log"
 
+      - name: Install native framework smoke dependencies
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -o pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          python3 -m pip install --user --upgrade pip \
+            2>&1 | tee "${ARTIFACT_DIR}/native-framework-deps.log"
+          python3 -m pip install --user \
+            "numpy>=1.21" \
+            scipy \
+            pytest \
+            pybind11 \
+            "qiskit>=0.45" \
+            "pennylane>=0.35" \
+            "cirq-core>=1.0" \
+            2>&1 | tee -a "${ARTIFACT_DIR}/native-framework-deps.log"
+
+      - name: Build native Python bindings for framework smoke
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -o pipefail
+          PYBIND11_CMAKE_DIR="$(python3 -m pybind11 --cmakedir)"
+          HIPCC_PATH="$(command -v hipcc)"
+          cmake -S . -B build-rocm-python -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DROCQUANTUM_BUILD_BINDINGS=ON \
+            -DCMAKE_HIP_COMPILER="${HIPCC_PATH}" \
+            -DCMAKE_HIP_ARCHITECTURES="gfx90a" \
+            -DCMAKE_PREFIX_PATH="${PYBIND11_CMAKE_DIR};/opt/rocm" \
+            2>&1 | tee "${ARTIFACT_DIR}/configure-native-framework.log"
+          cmake --build build-rocm-python --parallel \
+            2>&1 | tee "${ARTIFACT_DIR}/build-native-framework.log"
+
+      - name: Run native framework integration smoke
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+          PYTHONPATH: ${{ github.workspace }}/rocQuantum-main:${{ github.workspace }}/rocQuantum-main/build-rocm-python:${{ github.workspace }}/rocQuantum-main/build-rocm-python/python/rocq:${{ github.workspace }}/rocQuantum-main/integrations/pennylane-rocq:${{ github.workspace }}/rocQuantum-main/integrations/qiskit-rocquantum-provider:${{ github.workspace }}/rocQuantum-main/integrations/cirq-rocm
+        run: |
+          set -o pipefail
+          python3 scripts/native_framework_smoke.py \
+            --json-output "${ARTIFACT_DIR}/native-framework-smoke.json" \
+            --markdown-output "${ARTIFACT_DIR}/native-framework-smoke.md" \
+            --require-native-rocm-evidence \
+            2>&1 | tee "${ARTIFACT_DIR}/native-framework-smoke.log"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "${ARTIFACT_DIR}/native-framework-smoke.md" ]; then
+            cat "${ARTIFACT_DIR}/native-framework-smoke.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
       - name: Run ROCm runtime tests (1 GPU smoke)
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
           TEST_REGEX: HipTensorNetContractionRegression|RocTensorUtilTest|SlicingLogicTest|PermutationKernelTest
         run: |
-          if [ ! -e /dev/kfd ]; then
-            echo "ROCm runtime device /dev/kfd is missing on self-hosted runner." | tee "${ARTIFACT_DIR}/ctest-runtime.log"
-            exit 1
-          fi
           set -o pipefail
           if ctest --help | grep -q -- "--output-junit"; then
             ctest --test-dir build-rocm-ci --output-on-failure \
@@ -189,6 +251,66 @@ jobs:
             echo "Detected ${GPU_COUNT} GPU(s); skipping MultiGPUTests (need >=2)." | tee "${ARTIFACT_DIR}/ctest-multigpu.log"
           fi
 
+      - name: Restore benchmark baseline
+        if: always()
+        uses: actions/cache/restore@v4
+        with:
+          path: ci-artifacts/benchmark-baseline/rocm-runtime
+          key: benchmark-baseline-rocm-runtime-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            benchmark-baseline-rocm-runtime-${{ github.ref_name }}-
+            benchmark-baseline-rocm-runtime-
+
+      - name: Run release benchmark registry
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+          BASELINE_SUMMARY: ${{ github.workspace }}/ci-artifacts/benchmark-baseline/rocm-runtime/benchmark-summary.json
+          HISTORY_PATH: ${{ github.workspace }}/ci-artifacts/benchmark-baseline/rocm-runtime/benchmark-history.json
+        run: |
+          set -o pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          BASELINE_ARGS=()
+          if [ -f "${BASELINE_SUMMARY}" ]; then
+            BASELINE_ARGS=(--baseline-summary "${BASELINE_SUMMARY}")
+          fi
+          python3 benchmarks/run_release_benchmarks.py \
+            --build-dir build-rocm-ci \
+            --output-dir "${ARTIFACT_DIR}/benchmark-artifacts" \
+            "${BASELINE_ARGS[@]}" \
+            --history-path "${HISTORY_PATH}" \
+            --fail-on-error \
+            --require-native-performance-evidence \
+            2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" ]; then
+            cat "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Prepare benchmark baseline cache
+        id: benchmark-baseline
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+          BASELINE_DIR: ${{ github.workspace }}/ci-artifacts/benchmark-baseline/rocm-runtime
+        run: |
+          mkdir -p "${BASELINE_DIR}"
+          if [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.json" ]; then
+            cp "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.json" "${BASELINE_DIR}/benchmark-summary.json"
+            if [ -f "${BASELINE_DIR}/benchmark-history.json" ]; then
+              cp "${BASELINE_DIR}/benchmark-history.json" "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-history.json"
+            fi
+            echo "cacheable=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "cacheable=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Save benchmark baseline
+        if: always() && steps.benchmark-baseline.outputs.cacheable == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ci-artifacts/benchmark-baseline/rocm-runtime
+          key: benchmark-baseline-rocm-runtime-${{ github.ref_name }}-${{ github.run_id }}
+
       - name: Write summary
         if: always()
         env:
@@ -200,6 +322,7 @@ jobs:
             echo
             echo "- Result: ${{ job.status }}"
             echo "- Runner labels: self-hosted,linux,x64,rocm,rocm-gpu,gfx90a"
+            echo "- Benchmark artifacts: ${ARTIFACT_DIR}/benchmark-artifacts"
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } | tee "${ARTIFACT_DIR}/summary-rocm-runtime.md" >> "${GITHUB_STEP_SUMMARY}"
 

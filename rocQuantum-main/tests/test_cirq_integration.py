@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 import numpy as np
+import pytest
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
@@ -23,6 +24,8 @@ _ADAPTER_PATH = os.path.join(
     _PROJECT_ROOT, "integrations", "cirq-rocm", "cirq_rocm",
     "roc_quantum_simulator.py",
 )
+_PACKAGE_DIR = os.path.dirname(_ADAPTER_PATH)
+_PACKAGE_INIT_PATH = os.path.join(_PACKAGE_DIR, "__init__.py")
 
 
 class _MeasurementGate:
@@ -36,15 +39,18 @@ class _MatrixGate:
 
 
 class _RxGate:
-    pass
+    def __init__(self, rads):
+        self._rads = rads
 
 
 class _RyGate:
-    pass
+    def __init__(self, rads):
+        self._rads = rads
 
 
 class _RzGate:
-    pass
+    def __init__(self, rads):
+        self._rads = rads
 
 
 class _XGate:
@@ -64,11 +70,25 @@ class _HGate:
 
 
 class _SGate:
-    pass
+    def __init__(self, power=1):
+        self.power = power
+
+    def __pow__(self, power):
+        return _SGate(self.power * power)
+
+    def __eq__(self, other):
+        return isinstance(other, _SGate) and self.power == other.power
 
 
 class _TGate:
-    pass
+    def __init__(self, power=1):
+        self.power = power
+
+    def __pow__(self, power):
+        return _TGate(self.power * power)
+
+    def __eq__(self, other):
+        return isinstance(other, _TGate) and self.power == other.power
 
 
 class _CnotGate:
@@ -76,6 +96,18 @@ class _CnotGate:
 
 
 class _CzGate:
+    pass
+
+
+class _SwapGate:
+    pass
+
+
+class _ToffoliGate:
+    pass
+
+
+class _FredkinGate:
     pass
 
 
@@ -106,6 +138,7 @@ class _FakeQSim:
         self.num_qubits = num_qubits
         self.applied_gates = []
         self.executed = False
+        self.measured = []
         _FakeQSim.instances.append(self)
 
     def ApplyGate(self, gate, *indices):
@@ -119,6 +152,40 @@ class _FakeQSim:
         out = np.zeros(size, dtype=np.complex128)
         out[0] = 1.0 + 0.0j
         return out
+
+    def measure(self, qubits, shots):
+        self.measured.append((tuple(qubits), int(shots)))
+        return [0, 1, 1][: int(shots)]
+
+
+class _FakeQuantumSimulator:
+    instances = []
+
+    def __init__(self, num_qubits):
+        self._num_qubits = num_qubits
+        self.applied_gates = []
+        self.applied_matrices = []
+        self.measured = []
+        _FakeQuantumSimulator.instances.append(self)
+
+    def num_qubits(self):
+        return self._num_qubits
+
+    def apply_gate(self, name, targets, params=None):
+        self.applied_gates.append((name, tuple(targets), tuple(params or ())))
+
+    def apply_matrix(self, matrix, targets):
+        self.applied_matrices.append((np.asarray(matrix), tuple(targets)))
+
+    def get_statevector(self):
+        size = 1 << self._num_qubits
+        out = np.zeros(size, dtype=np.complex128)
+        out[0] = 1.0 + 0.0j
+        return out
+
+    def measure(self, qubits, shots):
+        self.measured.append((tuple(qubits), int(shots)))
+        return [0, 1, 1][: int(shots)]
 
 
 def _build_fake_cirq_module():
@@ -154,6 +221,9 @@ def _build_fake_cirq_module():
     cirq.T = _TGate()
     cirq.CNOT = _CnotGate()
     cirq.CZ = _CzGate()
+    cirq.SWAP = _SwapGate()
+    cirq.TOFFOLI = _ToffoliGate()
+    cirq.FREDKIN = _FredkinGate()
 
     def _unitary(op):
         gate = op.gate
@@ -165,10 +235,12 @@ def _build_fake_cirq_module():
     return cirq
 
 
-def _load_adapter_module():
+def _load_adapter_module(include_modern_simulator=False):
     fake_cirq = _build_fake_cirq_module()
     fake_bind = types.ModuleType("rocquantum_bind")
     fake_bind.QSim = _FakeQSim
+    if include_modern_simulator:
+        fake_bind.QuantumSimulator = _FakeQuantumSimulator
     module_name = "test_cirq_adapter_module"
 
     with mock.patch.dict(sys.modules, {"cirq": fake_cirq, "rocquantum_bind": fake_bind}, clear=False):
@@ -181,9 +253,26 @@ def _load_adapter_module():
     return module, fake_cirq
 
 
+def _load_adapter_module_with_real_cirq():
+    pytest.importorskip("cirq")
+    fake_bind = types.ModuleType("rocquantum_bind")
+    fake_bind.QuantumSimulator = _FakeQuantumSimulator
+    module_name = "test_cirq_adapter_real_cirq_module"
+
+    with mock.patch.dict(sys.modules, {"rocquantum_bind": fake_bind}, clear=False):
+        sys.modules.pop(module_name, None)
+        spec = importlib.util.spec_from_file_location(module_name, _ADAPTER_PATH)
+        module = importlib.util.module_from_spec(spec)
+        if spec.loader is None:
+            raise RuntimeError("Unable to load Cirq adapter module.")
+        spec.loader.exec_module(module)
+    return module
+
+
 class TestCirqAdapterRuntime(unittest.TestCase):
     def setUp(self):
         _FakeQSim.instances.clear()
+        _FakeQuantumSimulator.instances.clear()
 
     def test_core_and_matrix_gates_dispatch_to_qsim(self):
         adapter, cirq = _load_adapter_module()
@@ -207,6 +296,124 @@ class TestCirqAdapterRuntime(unittest.TestCase):
         self.assertTrue(qsim.executed)
         self.assertEqual(len(state), 4)
 
+    def test_prefers_quantum_simulator_when_binding_exposes_it(self):
+        adapter, cirq = _load_adapter_module(include_modern_simulator=True)
+        sim = adapter.RocQuantumSimulator()
+
+        matrix = np.array([[0, 1], [1, 0]], dtype=np.complex128)
+        circuit = _FakeCircuit([
+            _FakeOp(cirq.X, 0),
+            _FakeOp(cirq.MatrixGate(matrix), 0),
+        ])
+
+        state = sim._get_final_statevector(circuit, [0])
+        modern = _FakeQuantumSimulator.instances[-1]
+
+        self.assertFalse(_FakeQSim.instances)
+        self.assertEqual(modern.applied_gates, [("X", (0,), ())])
+        matrix_call, matrix_indices = modern.applied_matrices[0]
+        self.assertEqual(matrix_indices, (0,))
+        np.testing.assert_allclose(matrix_call, matrix)
+        self.assertEqual(len(state), 2)
+
+    def test_cirq_rotations_dispatch_to_native_modern_runtime(self):
+        adapter, cirq = _load_adapter_module(include_modern_simulator=True)
+        sim = adapter.RocQuantumSimulator()
+
+        circuit = _FakeCircuit([
+            _FakeOp(cirq.Rx(0.125), 0),
+            _FakeOp(cirq.Ry(0.25), 0),
+            _FakeOp(cirq.Rz(0.5), 0),
+        ])
+
+        sim._get_final_statevector(circuit, [0])
+        modern = _FakeQuantumSimulator.instances[-1]
+
+        self.assertEqual(
+            modern.applied_gates,
+            [
+                ("RX", (0,), (0.125,)),
+                ("RY", (0,), (0.25,)),
+                ("RZ", (0,), (0.5,)),
+            ],
+        )
+        self.assertFalse(modern.applied_matrices)
+
+    def test_cirq_rotations_fall_back_to_matrix_on_legacy_qsim(self):
+        adapter, cirq = _load_adapter_module()
+        sim = adapter.RocQuantumSimulator()
+
+        circuit = _FakeCircuit([_FakeOp(cirq.Rx(0.125), 0)])
+
+        sim._get_final_statevector(circuit, [0])
+        qsim = _FakeQSim.instances[-1]
+
+        matrix_call, matrix_indices = qsim.applied_gates[0]
+        self.assertEqual(matrix_indices, (0,))
+        np.testing.assert_allclose(matrix_call, np.eye(2, dtype=np.complex128))
+
+    def test_phase_root_gates_dispatch_to_exact_native_names(self):
+        adapter, cirq = _load_adapter_module(include_modern_simulator=True)
+        sim = adapter.RocQuantumSimulator()
+
+        circuit = _FakeCircuit([
+            _FakeOp(cirq.S, 0),
+            _FakeOp(cirq.S**-1, 0),
+            _FakeOp(cirq.T, 0),
+            _FakeOp(cirq.T**-1, 0),
+        ])
+
+        sim._get_final_statevector(circuit, [0])
+        modern = _FakeQuantumSimulator.instances[-1]
+
+        self.assertEqual(
+            [name for name, _, _ in modern.applied_gates],
+            ["S", "SDG", "T", "TDG"],
+        )
+
+    def test_swap_toffoli_and_fredkin_dispatch_to_native_runtime(self):
+        adapter, cirq = _load_adapter_module(include_modern_simulator=True)
+        sim = adapter.RocQuantumSimulator()
+
+        circuit = _FakeCircuit([
+            _FakeOp(cirq.SWAP, 0, 1),
+            _FakeOp(cirq.TOFFOLI, 0, 1, 2),
+            _FakeOp(cirq.FREDKIN, 0, 1, 2),
+        ])
+
+        sim._get_final_statevector(circuit, [0, 1, 2])
+        modern = _FakeQuantumSimulator.instances[-1]
+
+        self.assertEqual(
+            modern.applied_gates,
+            [
+                ("SWAP", (0, 1), ()),
+                ("MCX", (0, 1, 2), ()),
+                ("CSWAP", (0, 1, 2), ()),
+            ],
+        )
+
+    def test_real_cirq_phase_roots_are_not_collapsed_by_shared_type(self):
+        cirq = pytest.importorskip("cirq")
+        adapter = _load_adapter_module_with_real_cirq()
+        sim = adapter.RocQuantumSimulator()
+
+        q0 = cirq.LineQubit(0)
+        circuit = cirq.Circuit(
+            cirq.S(q0),
+            (cirq.S**-1)(q0),
+            cirq.T(q0),
+            (cirq.T**-1)(q0),
+        )
+
+        sim._get_final_statevector(circuit, [q0])
+        modern = _FakeQuantumSimulator.instances[-1]
+
+        self.assertEqual(
+            [name for name, _, _ in modern.applied_gates],
+            ["S", "SDG", "T", "TDG"],
+        )
+
     def test_unsupported_gate_raises(self):
         adapter, _ = _load_adapter_module()
         sim = adapter.RocQuantumSimulator()
@@ -226,17 +433,40 @@ class TestCirqAdapterRuntime(unittest.TestCase):
             _FakeOp(cirq.MeasurementGate("m"), 0),
         ])
 
-        with mock.patch.object(
-            adapter.RocQuantumSimulator,
-            "_get_final_statevector",
-            return_value=np.array([0.5 + 0.0j, 0.5 + 0.0j], dtype=np.complex128),
-        ):
-            with mock.patch("numpy.random.choice", return_value=np.array([0, 1, 1], dtype=np.int64)):
-                result = sim._run(circuit, param_resolver=None, repetitions=3)
+        result = sim._run(circuit, param_resolver=None, repetitions=3)
+        qsim = _FakeQSim.instances[-1]
 
         self.assertIn("m", result)
         self.assertEqual(result["m"].shape, (3, 1))
+        self.assertEqual(qsim.measured, [((0,), 3)])
         np.testing.assert_array_equal(result["m"][:, 0], np.array([0, 1, 1], dtype=np.int64))
+
+    def test_package_import_defers_missing_native_binding_error_until_execution(self):
+        fake_cirq = _build_fake_cirq_module()
+        module_name = "cirq_rocm"
+        submodule_name = "cirq_rocm.roc_quantum_simulator"
+
+        with mock.patch.dict(sys.modules, {"cirq": fake_cirq, "rocquantum_bind": None}, clear=False):
+            sys.modules.pop(module_name, None)
+            sys.modules.pop(submodule_name, None)
+            spec = importlib.util.spec_from_file_location(
+                module_name,
+                _PACKAGE_INIT_PATH,
+                submodule_search_locations=[_PACKAGE_DIR],
+            )
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            if spec.loader is None:
+                raise RuntimeError("Unable to load Cirq package module.")
+            spec.loader.exec_module(module)
+
+            sim = module.RocQuantumSimulator()
+            with self.assertRaises(ImportError) as ctx:
+                sim._get_final_statevector(_FakeCircuit([]), [])
+
+        self.assertIn("rocquantum_bind", str(ctx.exception))
+        sys.modules.pop(module_name, None)
+        sys.modules.pop(submodule_name, None)
 
 
 if __name__ == "__main__":

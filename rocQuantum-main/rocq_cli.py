@@ -13,7 +13,7 @@ import sys
 import time
 
 from rocquantum.circuit import QuantumCircuit
-from rocquantum.core import set_target, get_active_backend
+from rocquantum.core import get_active_backend, list_backends, set_target
 from rocquantum.backends.base import (
     BackendAuthenticationError,
     JobSubmissionError,
@@ -43,6 +43,24 @@ def check_environment_vars(backend_name: str):
         )
     # Add other backend checks here as needed
 
+
+def print_backend_capabilities(include_experimental: bool = False) -> None:
+    """Print backend status metadata before target selection."""
+    backends = list_backends(include_experimental=include_experimental)
+    print("Backend\tStatus\tNotes")
+    for name, info in sorted(backends.items()):
+        notes = []
+        if info.get("requires_local_runtime"):
+            notes.append(f"requires {info.get('runtime', 'local runtime')}")
+        if info.get("requires_experimental_opt_in"):
+            notes.append("requires experimental opt-in")
+        if info.get("safe_to_submit_jobs") is False:
+            notes.append("job submission disabled")
+        if info.get("unsupported_reason"):
+            notes.append(str(info["unsupported_reason"]))
+        print(f"{name}\t{info['status']}\t{', '.join(notes) if notes else '-'}")
+
+
 def main():
     """Parses arguments and runs the quantum circuit."""
     parser = argparse.ArgumentParser(
@@ -50,14 +68,19 @@ def main():
     )
     parser.add_argument(
         "command",
-        choices=["run"],
+        choices=["run", "list-backends"],
         help="The command to execute.",
     )
     parser.add_argument(
         "--backend",
         type=str,
-        required=True,
+        required=False,
         help="The name of the backend to run on (e.g., 'ionq', 'qristal', 'rigetti').",
+    )
+    parser.add_argument(
+        "--include-experimental",
+        action="store_true",
+        help="Include unsupported skeleton providers in backend capability output.",
     )
     parser.add_argument(
         "--shots",
@@ -67,7 +90,13 @@ def main():
     )
     args = parser.parse_args()
 
+    if args.command == "list-backends":
+        print_backend_capabilities(include_experimental=args.include_experimental)
+        return
+
     if args.command == "run":
+        if not args.backend:
+            parser.error("--backend is required for the 'run' command.")
         try:
             print(f"--> Preparing to run on backend: {args.backend}")
             

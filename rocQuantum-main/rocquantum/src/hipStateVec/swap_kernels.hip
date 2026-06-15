@@ -40,6 +40,16 @@ __device__ static inline size_t rocquant_kernel_swap_bits(size_t value, unsigned
     return value;
 }
 
+__device__ static inline size_t rocquant_kernel_insert_bit(
+    size_t compact_idx,
+    unsigned bit_pos,
+    unsigned bit_value) {
+    const size_t low_mask = (1ULL << bit_pos) - 1ULL;
+    const size_t low = compact_idx & low_mask;
+    const size_t high = (compact_idx & ~low_mask) << 1;
+    return low | high | (static_cast<size_t>(bit_value & 1U) << bit_pos);
+}
+
 /**
  * @brief Kernel to calculate send counts for each target GPU.
  */
@@ -110,5 +120,45 @@ __global__ void local_bit_swap_permutation_kernel(
     if (current_local_idx < local_slice_num_elements) {
         size_t new_local_idx = rocquant_kernel_swap_bits(current_local_idx, local_qubit_idx1, local_qubit_idx2);
         d_local_slice[new_local_idx] = d_temp_buffer_for_slice[current_local_idx];
+    }
+}
+
+/**
+ * @brief Packs the half-slice that must move when a local qubit is swapped with a rank bit.
+ */
+__global__ void pack_local_global_swap_kernel(
+    const rocComplex* d_local_slice,
+    rocComplex* d_packed_buffer,
+    size_t packed_elements,
+    unsigned local_qubit_idx,
+    unsigned rank_bit_value
+) {
+    size_t compact_idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const unsigned moving_local_bit = rank_bit_value ^ 1U;
+
+    for (; compact_idx < packed_elements; compact_idx += gridDim.x * blockDim.x) {
+        const size_t local_idx =
+            rocquant_kernel_insert_bit(compact_idx, local_qubit_idx, moving_local_bit);
+        d_packed_buffer[compact_idx] = d_local_slice[local_idx];
+    }
+}
+
+/**
+ * @brief Unpacks the received half-slice after a local/rank-bit distributed swap.
+ */
+__global__ void unpack_local_global_swap_kernel(
+    rocComplex* d_local_slice,
+    const rocComplex* d_packed_buffer,
+    size_t packed_elements,
+    unsigned local_qubit_idx,
+    unsigned rank_bit_value
+) {
+    size_t compact_idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const unsigned moving_local_bit = rank_bit_value ^ 1U;
+
+    for (; compact_idx < packed_elements; compact_idx += gridDim.x * blockDim.x) {
+        const size_t local_idx =
+            rocquant_kernel_insert_bit(compact_idx, local_qubit_idx, moving_local_bit);
+        d_local_slice[local_idx] = d_packed_buffer[compact_idx];
     }
 }

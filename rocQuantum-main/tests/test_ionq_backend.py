@@ -29,10 +29,11 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
 from rocquantum.core import set_target, get_active_backend
-from rocquantum.backends.base import \
+from rocquantum.backends.base import (
     BackendAuthenticationError,
     JobSubmissionError,
-    ResultRetrievalError
+    ResultRetrievalError,
+)
 
 # A simple Bell State circuit in OpenQASM 3.0 format.
 # This circuit creates a maximally entangled state between two qubits.

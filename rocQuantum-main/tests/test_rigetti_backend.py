@@ -2,6 +2,7 @@
 
 import os
 import pytest
+import rocquantum.backends.rigetti as rigetti_module
 from rocquantum.backends.rigetti import RigettiBackend
 from rocquantum.backends.base import JobSubmissionError, BackendAuthenticationError
 
@@ -32,6 +33,8 @@ def test_rigetti_job_submission(rigetti_backend):
     It submits a simple QASM circuit and asserts that a valid quantum task ARN
     (job ID) is returned.
     """
+    pytest.importorskip("boto3", reason="Rigetti backend requires optional boto3 dependency.")
+
     try:
         # Authenticate with AWS Braket
         rigetti_backend.authenticate()
@@ -49,13 +52,20 @@ def test_rigetti_job_submission(rigetti_backend):
     except (BackendAuthenticationError, JobSubmissionError) as e:
         pytest.fail(f"Rigetti backend test failed during authentication or submission: {e}")
 
-def test_rigetti_authentication_fails_without_credentials(mocker):
+def test_rigetti_authentication_fails_without_credentials(monkeypatch):
     """
     Tests that BackendAuthenticationError is raised if AWS credentials are not set.
     """
-    # Temporarily unset AWS environment variables
-    mocker.patch.dict(os.environ, clear=True)
-    
+    if rigetti_module.boto3 is not None:
+        class _NoCredentialsSession:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def get_credentials(self):
+                return None
+
+        monkeypatch.setattr(rigetti_module.boto3, "Session", _NoCredentialsSession)
+
     backend = RigettiBackend()
     with pytest.raises(BackendAuthenticationError):
         backend.authenticate()

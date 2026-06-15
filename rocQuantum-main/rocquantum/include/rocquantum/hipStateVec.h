@@ -50,6 +50,12 @@ typedef struct {
     size_t local_slice_elements;
 } rocsvDistributedInfo_t;
 
+typedef enum {
+    ROCSV_DISTRIBUTED_BACKEND_NONE = 0,
+    ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK = 1,
+    ROCSV_DISTRIBUTED_BACKEND_RCCL = 2
+} rocsvDistributedBackend_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -106,6 +112,19 @@ rocqStatus_t rocsvGetNumGpus(rocsvHandle_t handle, int* num_gpus);
 rocqStatus_t rocsvGetDistributedInfo(rocsvHandle_t handle, rocsvDistributedInfo_t* info);
 
 /**
+ * @brief Reports the active distributed communication/fallback backend.
+ *
+ * Returns NONE when the handle is not in distributed mode, or when no RCCL
+ * communicator or explicit host-fallback mode is active.
+ */
+rocqStatus_t rocsvGetDistributedBackend(rocsvHandle_t handle, rocsvDistributedBackend_t* backend);
+
+/**
+ * @brief Converts a distributed backend enum to a stable lowercase name.
+ */
+const char* rocsvDistributedBackendName(rocsvDistributedBackend_t backend);
+
+/**
  * @brief Explicit synchronization point for work enqueued by hipStateVec APIs.
  *
  * Enqueue-oriented APIs do not implicitly synchronize. Call this function when
@@ -153,6 +172,22 @@ rocqStatus_t rocsvInitializeState(rocsvHandle_t handle, rocComplex* d_state, uns
  * @return rocqStatus_t Status of the operation.
  */
 rocqStatus_t rocsvAllocateDistributedState(rocsvHandle_t handle, unsigned totalNumQubits);
+
+/**
+ * @brief Explicit unsupported boundary for multi-node distributed allocation.
+ *
+ * Single-node multi-GPU allocation is handled by rocsvAllocateDistributedState.
+ * Multi-node execution is not release-wired and this function returns
+ * ROCQ_STATUS_NOT_IMPLEMENTED for nodeCount > 1.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] totalNumQubits The total number of qubits for the global state vector.
+ * @param[in] nodeCount Number of requested compute nodes.
+ * @return rocqStatus_t ROCQ_STATUS_NOT_IMPLEMENTED for multi-node requests.
+ */
+rocqStatus_t rocsvAllocateMultiNodeDistributedState(rocsvHandle_t handle,
+                                                    unsigned totalNumQubits,
+                                                    unsigned nodeCount);
 
 /**
  * @brief Initializes a distributed state vector to the |0...0> state.
@@ -223,6 +258,38 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
                               unsigned matrixDim);
 
 /**
+ * @brief Applies a CSR sparse matrix to the specified target qubits in the state vector.
+ *
+ * The CSR matrix acts on the local target-qubit subspace and must have
+ * dimension 2^numTargetQubits by 2^numTargetQubits. CSR buffers are device
+ * pointers. Distributed states are currently unsupported.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector.
+ * @param[in] numQubits Total number of qubits in the state vector.
+ * @param[in] targetQubits Array of qubit indices the sparse operation acts upon.
+ * @param[in] numTargetQubits Number of target qubits.
+ * @param[in] d_data Device pointer to CSR non-zero values.
+ * @param[in] d_indices Device pointer to CSR column indices.
+ * @param[in] d_indptr Device pointer to CSR row offsets with rows + 1 entries.
+ * @param[in] rows Number of sparse matrix rows. Must equal 2^numTargetQubits.
+ * @param[in] cols Number of sparse matrix columns. Must equal rows.
+ * @param[in] nnz Number of sparse matrix non-zero entries.
+ * @return rocqStatus_t Status of the operation.
+ */
+rocqStatus_t rocsvApplySparseMatrix(rocsvHandle_t handle,
+                                    rocComplex* d_state,
+                                    unsigned numQubits,
+                                    const unsigned* targetQubits,
+                                    unsigned numTargetQubits,
+                                    const rocComplex* d_data,
+                                    const size_t* d_indices,
+                                    const size_t* d_indptr,
+                                    size_t rows,
+                                    size_t cols,
+                                    size_t nnz);
+
+/**
  * @brief Reports temporary workspace size required by rocsvApplyMatrix.
  *
  * Current implementation requires no extra workspace and reports 0.
@@ -285,6 +352,11 @@ rocqStatus_t rocsvApplyS(rocsvHandle_t handle, rocComplex* d_state, unsigned num
 rocqStatus_t rocsvApplyT(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit);
 
 /**
+ * @brief Applies a T-dagger (conjugate transpose of T) gate to the target qubit.
+ */
+rocqStatus_t rocsvApplyTdg(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit);
+
+/**
  * @brief Applies an S-dagger (conjugate transpose of S) gate to the target qubit.
  */
 rocqStatus_t rocsvApplySdg(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit);
@@ -306,6 +378,40 @@ rocqStatus_t rocsvApplyRy(rocsvHandle_t handle, rocComplex* d_state, unsigned nu
  * @param theta Rotation angle in radians.
  */
 rocqStatus_t rocsvApplyRz(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, double theta); // theta stays double for API
+
+/**
+ * @brief Applies a phase gate diag(1, exp(i theta)) to the target qubit.
+ * @param theta Phase angle in radians.
+ */
+rocqStatus_t rocsvApplyP(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, double theta);
+
+/**
+ * @brief Applies one Rx rotation per local batch state to the target qubit.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyRxBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one Ry rotation per local batch state to the target qubit.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyRyBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one Rz rotation per local batch state to the target qubit.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyRzBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one phase gate diag(1, exp(i theta)) per local batch state.
+ * @param h_thetas Host pointer to batchSize phase angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyPBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
 
 // --- Two Qubit Specific Gates ---
 
@@ -345,6 +451,39 @@ rocqStatus_t rocsvApplyCRY(rocsvHandle_t handle, rocComplex* d_state, unsigned n
  * @brief Applies a Controlled-RZ gate.
  */
 rocqStatus_t rocsvApplyCRZ(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, double theta);
+
+/**
+ * @brief Applies a controlled phase gate diag(1, 1, 1, exp(i theta)).
+ */
+rocqStatus_t rocsvApplyCP(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, double theta);
+
+/**
+ * @brief Applies one Controlled-RX rotation per local batch state.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyCRXBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one Controlled-RY rotation per local batch state.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyCRYBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one Controlled-RZ rotation per local batch state.
+ * @param h_thetas Host pointer to batchSize rotation angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyCRZBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
+
+/**
+ * @brief Applies one controlled phase gate per local batch state.
+ * @param h_thetas Host pointer to batchSize phase angles in radians.
+ * @param thetaCount Number of host angles; must equal the effective batch size.
+ */
+rocqStatus_t rocsvApplyCPBatch(rocsvHandle_t handle, rocComplex* d_state, unsigned numQubits, unsigned controlQubit, unsigned targetQubit, const double* h_thetas, size_t thetaCount);
 
 /**
  * @brief Applies a multi-controlled X (Toffoli, etc.) gate.
@@ -499,6 +638,178 @@ rocqStatus_t rocsvGetExpectationPauliString(rocsvHandle_t handle,
                                             double* result);
 
 /**
+ * @brief Calculates a generic Pauli-string expectation value for every local batch state.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector batch.
+ * @param[in] numQubits Total number of qubits per state.
+ * @param[in] pauliString A null-terminated string representing the Pauli product (e.g., "IXYZ").
+ * @param[in] targetQubits Array of global qubit indices the Pauli operators act upon.
+ * @param[in] numTargetPaulis Number of operators in the product (must match strlen(pauliString)).
+ * @param[out] results Host pointer to batchSize expectation values.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetExpectationPauliStringBatch(rocsvHandle_t handle,
+                                                 rocComplex* d_state,
+                                                 unsigned numQubits,
+                                                 const char* pauliString,
+                                                 const unsigned* targetQubits,
+                                                 unsigned numTargetPaulis,
+                                                 double* results);
+
+/**
+ * @brief Computes <psi|M|psi> for a dense matrix acting on target qubits.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector.
+ * @param[in] numQubits Total number of qubits.
+ * @param[in] targetQubits Array of target qubit indices.
+ * @param[in] numTargetQubits Number of target qubits.
+ * @param[in] d_matrix Device pointer to the dense matrix in column-major order.
+ * @param[in] matrixDim Matrix dimension. Must equal 2^numTargetQubits.
+ * @param[out] result Host pointer to store the complex expectation value.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetExpectationMatrix(rocsvHandle_t handle,
+                                       rocComplex* d_state,
+                                       unsigned numQubits,
+                                       const unsigned* targetQubits,
+                                       unsigned numTargetQubits,
+                                       const rocComplex* d_matrix,
+                                       size_t matrixDim,
+                                       rocComplex* result);
+
+/**
+ * @brief Computes <psi|M|psi> for a dense matrix acting on target qubits for every local batch state.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector batch.
+ * @param[in] numQubits Total number of qubits per state.
+ * @param[in] targetQubits Array of target qubit indices.
+ * @param[in] numTargetQubits Number of target qubits.
+ * @param[in] d_matrix Device pointer to the dense matrix in column-major order.
+ * @param[in] matrixDim Matrix dimension. Must equal 2^numTargetQubits.
+ * @param[out] results Host pointer to batchSize complex expectation values.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetExpectationMatrixBatch(rocsvHandle_t handle,
+                                            rocComplex* d_state,
+                                            unsigned numQubits,
+                                            const unsigned* targetQubits,
+                                            unsigned numTargetQubits,
+                                            const rocComplex* d_matrix,
+                                            size_t matrixDim,
+                                            rocComplex* results);
+
+/**
+ * @brief Computes <psi|M|psi> and <psi|M^2|psi> for a dense matrix acting on target qubits.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector.
+ * @param[in] numQubits Total number of qubits.
+ * @param[in] targetQubits Array of target qubit indices.
+ * @param[in] numTargetQubits Number of target qubits.
+ * @param[in] d_matrix Device pointer to the dense matrix in column-major order.
+ * @param[in] d_squaredMatrix Device pointer to M^2 in column-major order.
+ * @param[in] matrixDim Matrix dimension. Must equal 2^numTargetQubits.
+ * @param[out] mean Host pointer to store <psi|M|psi>.
+ * @param[out] secondMoment Host pointer to store <psi|M^2|psi>.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetExpectationMatrixMoments(rocsvHandle_t handle,
+                                              rocComplex* d_state,
+                                              unsigned numQubits,
+                                              const unsigned* targetQubits,
+                                              unsigned numTargetQubits,
+                                              const rocComplex* d_matrix,
+                                              const rocComplex* d_squaredMatrix,
+                                              size_t matrixDim,
+                                              rocComplex* mean,
+                                              rocComplex* secondMoment);
+
+/**
+ * @brief Computes dense matrix moments for every local batch state.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector batch.
+ * @param[in] numQubits Total number of qubits per state.
+ * @param[in] targetQubits Array of target qubit indices.
+ * @param[in] numTargetQubits Number of target qubits.
+ * @param[in] d_matrix Device pointer to the dense matrix in column-major order.
+ * @param[in] d_squaredMatrix Device pointer to M^2 in column-major order.
+ * @param[in] matrixDim Matrix dimension. Must equal 2^numTargetQubits.
+ * @param[out] means Host pointer to batchSize <psi|M|psi> values.
+ * @param[out] secondMoments Host pointer to batchSize <psi|M^2|psi> values.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetExpectationMatrixMomentsBatch(rocsvHandle_t handle,
+                                                   rocComplex* d_state,
+                                                   unsigned numQubits,
+                                                   const unsigned* targetQubits,
+                                                   unsigned numTargetQubits,
+                                                   const rocComplex* d_matrix,
+                                                   const rocComplex* d_squaredMatrix,
+                                                   size_t matrixDim,
+                                                   rocComplex* means,
+                                                   rocComplex* secondMoments);
+
+/**
+ * @brief Computes <psi|H|psi> and <psi|H^2|psi> for a CSR sparse matrix over the full state.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector.
+ * @param[in] numQubits Total number of qubits.
+ * @param[in] d_data Device pointer to CSR non-zero matrix values.
+ * @param[in] d_indices Device pointer to CSR column indices.
+ * @param[in] d_indptr Device pointer to CSR row offsets with rows + 1 entries.
+ * @param[in] rows Number of sparse matrix rows. Must equal 2^numQubits.
+ * @param[in] cols Number of sparse matrix columns. Must equal rows.
+ * @param[in] nnz Number of sparse matrix non-zero entries.
+ * @param[out] mean Host pointer to store <psi|H|psi>.
+ * @param[out] secondMoment Host pointer to store <psi|H^2|psi> for Hermitian H.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetSparseMatrixMoments(rocsvHandle_t handle,
+                                         rocComplex* d_state,
+                                         unsigned numQubits,
+                                         const rocComplex* d_data,
+                                         const size_t* d_indices,
+                                         const size_t* d_indptr,
+                                         size_t rows,
+                                         size_t cols,
+                                         size_t nnz,
+                                         rocComplex* mean,
+                                         rocComplex* secondMoment);
+
+/**
+ * @brief Computes <psi|H|psi> and <psi|H^2|psi> for a CSR sparse matrix over every local batch state.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector batch.
+ * @param[in] numQubits Total number of qubits per state.
+ * @param[in] d_data Device pointer to CSR non-zero matrix values.
+ * @param[in] d_indices Device pointer to CSR column indices.
+ * @param[in] d_indptr Device pointer to CSR row offsets with rows + 1 entries.
+ * @param[in] rows Number of sparse matrix rows. Must equal 2^numQubits.
+ * @param[in] cols Number of sparse matrix columns. Must equal rows.
+ * @param[in] nnz Number of sparse matrix non-zero entries.
+ * @param[out] means Host pointer to batchSize <psi|H|psi> values.
+ * @param[out] secondMoments Host pointer to batchSize <psi|H^2|psi> values.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetSparseMatrixMomentsBatch(rocsvHandle_t handle,
+                                              rocComplex* d_state,
+                                              unsigned numQubits,
+                                              const rocComplex* d_data,
+                                              const size_t* d_indices,
+                                              const size_t* d_indptr,
+                                              size_t rows,
+                                              size_t cols,
+                                              size_t nnz,
+                                              rocComplex* means,
+                                              rocComplex* secondMoments);
+
+/**
  * @brief Reports temporary workspace size required by expectation APIs.
  *
  * Current implementation requires no extra workspace and reports 0.
@@ -529,9 +840,50 @@ rocqStatus_t rocsvSample(rocsvHandle_t handle,
                          unsigned numShots,
                          uint64_t* h_results);
 
+/**
+ * @brief Computes computational-basis probabilities for selected qubits.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector.
+ * @param[in] numQubits Total number of qubits.
+ * @param[in] measuredQubits Array of qubit indices whose marginal probabilities are requested.
+ * @param[in] numMeasuredQubits The number of measured qubits.
+ * @param[out] h_probabilities Host pointer to 2^numMeasuredQubits normalized probabilities.
+ *                            Outcome bit b corresponds to measuredQubits[b].
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvProbabilities(rocsvHandle_t handle,
+                                rocComplex* d_state,
+                                unsigned numQubits,
+                                const unsigned* measuredQubits,
+                                unsigned numMeasuredQubits,
+                                double* h_probabilities);
+
+/**
+ * @brief Computes computational-basis probabilities for selected qubits across every local batch state.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector batch.
+ * @param[in] numQubits Total number of qubits per state.
+ * @param[in] measuredQubits Array of qubit indices whose marginal probabilities are requested.
+ * @param[in] numMeasuredQubits The number of measured qubits.
+ * @param[out] h_probabilities Host pointer to batchSize * 2^numMeasuredQubits normalized probabilities.
+ *                            The flattened layout is batch-major.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvProbabilitiesBatch(rocsvHandle_t handle,
+                                     rocComplex* d_state,
+                                     unsigned numQubits,
+                                     const unsigned* measuredQubits,
+                                     unsigned numMeasuredQubits,
+                                     double* h_probabilities);
+
 
 /**
  * @brief Applies a general matrix to target qubits, controlled by multiple control qubits.
+ *
+ * Multi-controlled single-target 2x2 matrices use a native GPU fast path. Broader
+ * controlled dense matrices remain limited to explicit fallback/unsupported paths.
  *
  * @param[in] handle The hipStateVec handle.
  * @param[in] d_state Pointer to the device state vector.

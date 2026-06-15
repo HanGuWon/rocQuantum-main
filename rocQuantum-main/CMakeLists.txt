@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.21)
 project(rocQuantum VERSION 0.1.0 LANGUAGES CXX HIP)
 
 include(GNUInstallDirs)
@@ -19,6 +19,14 @@ endif()
 option(ROCQUANTUM_BUILD_BINDINGS "Build Python bindings." ON)
 option(ROCQUANTUM_BUILD_COMPONENTS_SHARED "Build component libraries as shared libraries." ON)
 option(ROCQUANTUM_ENABLE_SYNC_DEBUG "Enable debug stream synchronization in enqueue APIs." OFF)
+option(ROCQUANTUM_ENABLE_MLIR_COMPILER
+       "Build the experimental rocqCompiler MLIR runtime into rocquantum_bind." OFF)
+
+if(ROCQUANTUM_ENABLE_MLIR_COMPILER)
+    message(FATAL_ERROR
+        "ROCQUANTUM_ENABLE_MLIR_COMPILER is not wired into the release CMake graph yet. "
+        "The default Python binding exposes a fail-fast compiler guard instead.")
+endif()
 
 if(ROCQUANTUM_BUILD_COMPONENTS_SHARED)
     set(ROCQUANTUM_COMPONENT_LIBRARY_TYPE SHARED)
@@ -27,7 +35,7 @@ else()
 endif()
 set(ROCQUANTUM_EXPORT_SET_NAME rocQuantumTargets)
 
-find_package(HIP REQUIRED)
+find_package(hip CONFIG REQUIRED)
 find_package(hiprand REQUIRED)
 find_package(rocblas REQUIRED)
 find_package(rocsolver REQUIRED)
@@ -76,18 +84,7 @@ target_link_libraries(rocquantum
 add_library(rocquantum::core ALIAS rocquantum)
 
 if(ROCQUANTUM_BUILD_BINDINGS)
-    pybind11_add_module(_rocq_hip_backend python/rocq/bindings.cpp)
-    target_include_directories(_rocq_hip_backend PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${ROCQUANTUM_PUBLIC_INCLUDE_DIR}
-        ${ROCQUANTUM_COMPONENT_INCLUDE_DIR}
-    )
-    target_link_libraries(_rocq_hip_backend
-        PRIVATE
-            hipStateVec
-            rocqsim_tensornet
-            pybind11::module
-    )
+    add_subdirectory(python/rocq)
 
     pybind11_add_module(rocq_hip rocquantum/src/python/py_hip_density_mat.cpp)
     target_include_directories(rocq_hip PRIVATE
@@ -137,7 +134,7 @@ install(
 
 if(ROCQUANTUM_BUILD_BINDINGS)
     install(
-        TARGETS _rocq_hip_backend rocq_hip rocquantum_bind
+        TARGETS rocq_hip rocquantum_bind
         EXPORT ${ROCQUANTUM_EXPORT_SET_NAME}
         LIBRARY DESTINATION .
         RUNTIME DESTINATION .

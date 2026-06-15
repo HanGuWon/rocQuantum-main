@@ -29,6 +29,10 @@ class ResultRetrievalError(Exception):
     """Raised when fetching the result of a completed job fails."""
     pass
 
+class UnsupportedBackendError(NotImplementedError):
+    """Raised when a backend module is only an explicit unsupported stub."""
+    pass
+
 # ==============================================================================
 #  Refactored Abstract Base Class
 # ==============================================================================
@@ -129,3 +133,53 @@ class RocqBackend(abc.ABC):
         if histogram is None:
             raise ResultRetrievalError(f"API response for job '{job_id}' did not contain a histogram.")
         return histogram
+
+
+class UnsupportedBackend(RocqBackend):
+    """Explicit placeholder for provider integrations that are not implemented."""
+
+    provider_name = "unsupported"
+    unsupported_reason = "Provider SDK/API integration is not implemented in this repository."
+    missing_capabilities = [
+        "authentication",
+        "authorization_headers",
+        "payload_builder",
+        "job_submission",
+        "status_polling",
+        "result_retrieval",
+    ]
+
+    def __init__(self, backend_name: str = None, api_endpoint: str = ""):
+        super().__init__(backend_name or self.provider_name, api_endpoint)
+
+    def capabilities(self) -> Dict[str, Any]:
+        return {
+            "status": "unsupported_stub",
+            "safe_to_submit_jobs": False,
+            "unsupported_reason": self.unsupported_reason,
+            "missing_capabilities": list(self.missing_capabilities),
+        }
+
+    def _unsupported(self, action: str):
+        raise UnsupportedBackendError(
+            f"The '{self.backend_name}' backend is not implemented. "
+            f"{action} requires a provider SDK/API integration that is not present in this repository."
+        )
+
+    def authenticate(self) -> None:
+        self._unsupported("Authentication")
+
+    def _get_auth_headers(self) -> Dict[str, str]:
+        self._unsupported("Authorization header construction")
+
+    def _build_payload(self, circuit_representation: str, shots: int) -> Dict[str, Any]:
+        self._unsupported("Payload construction")
+
+    def submit_job(self, circuit: Union["QuantumCircuit", str], shots: int) -> str:
+        self._unsupported("Job submission")
+
+    def get_job_status(self, job_id: str) -> str:
+        self._unsupported("Job status retrieval")
+
+    def get_job_result(self, job_id: str) -> Dict[str, int]:
+        self._unsupported("Job result retrieval")

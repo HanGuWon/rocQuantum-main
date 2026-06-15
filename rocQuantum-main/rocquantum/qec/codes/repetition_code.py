@@ -3,65 +3,61 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""
-Concrete implementation of the 3-qubit bit-flip repetition code.
-"""
+"""Concrete helpers for the 3-qubit bit-flip repetition code."""
 
-from typing import List, Dict, Callable
+from typing import Callable, Dict, List
 
-import rocquantum.python.rocq as roc_q
-from rocquantum.python.rocq import PauliOperator, QuantumProgram
-from rocquantum.qec.framework import QuantumErrorCode
+import rocq
+from rocq.operator import PauliOperator
 
-# Type Hinting
+from rocquantum.qec.framework import QuantumErrorCode, _validate_positive_integer
+
+
 AnsatzKernel = Callable[..., None]
+
 
 class ThreeQubitRepetitionCode(QuantumErrorCode):
     """
-    Implements the 3-qubit bit-flip repetition code.
+    Experimental 3-qubit bit-flip repetition code.
 
-    This code uses 3 data qubits and 2 ancilla qubits.
-    - Data Qubits: 0, 1, 2
-    - Ancilla Qubits: 3, 4 (by convention in the example)
+    Data qubits are 0, 1, 2 and ancillas are 3, 4 by convention.
     """
-    def generate_stabilizer_circuits(self,
-                                     initial_state_kernel: AnsatzKernel,
-                                     num_qubits: int,
-                                     simulator: roc_q.Simulator) -> List[QuantumProgram]:
-        """Generates one circuit for the Z0Z1 stabilizer and one for Z1Z2."""
-        programs = []
 
-        # --- Circuit 1: Measure Z0Z1 stabilizer on the first ancilla ---
-        @roc_q.kernel
-        def z0z1_stabilizer_kernel(q):
-            initial_state_kernel(q)
-            # Measurement circuit for Z0Z1 (ancilla at qubit 3)
-            q.h(3)
-            q.cx(0, 3)
-            q.cx(1, 3)
-            q.h(3)
+    def generate_stabilizer_circuits(
+        self,
+        initial_state_kernel: AnsatzKernel,
+        num_qubits: int,
+        backend: str = "state_vector",
+    ) -> List[object]:
+        del backend
+        num_qubits = _validate_positive_integer(num_qubits, "num_qubits")
+        if num_qubits < 5:
+            raise ValueError("ThreeQubitRepetitionCode requires at least 5 qubits.")
+        if initial_state_kernel is not None and not callable(initial_state_kernel):
+            raise ValueError("initial_state_kernel must be callable or None.")
 
-        prog1 = roc_q.build(z0z1_stabilizer_kernel, num_qubits, simulator)
-        programs.append(prog1)
+        def apply_initial_state(q):
+            if initial_state_kernel is not None:
+                initial_state_kernel(q)
 
-        # --- Circuit 2: Measure Z1Z2 stabilizer on the second ancilla ---
-        @roc_q.kernel
-        def z1z2_stabilizer_kernel(q):
-            initial_state_kernel(q)
-            # Measurement circuit for Z1Z2 (ancilla at qubit 4)
-            q.h(4)
-            q.cx(1, 4)
-            q.cx(2, 4)
-            q.h(4)
+        @rocq.kernel
+        def z0z1_stabilizer_kernel():
+            q = rocq.qvec(num_qubits)
+            apply_initial_state(q)
+            rocq.cnot(q[0], q[3])
+            rocq.cnot(q[1], q[3])
 
-        prog2 = roc_q.build(z1z2_stabilizer_kernel, num_qubits, simulator)
-        programs.append(prog2)
+        @rocq.kernel
+        def z1z2_stabilizer_kernel():
+            q = rocq.qvec(num_qubits)
+            apply_initial_state(q)
+            rocq.cnot(q[1], q[4])
+            rocq.cnot(q[2], q[4])
 
-        return programs
+        return [z0z1_stabilizer_kernel, z1z2_stabilizer_kernel]
 
     def define_logical_operators(self) -> Dict[str, PauliOperator]:
-        """Returns the logical Z and logical X operators."""
         return {
-            "logical_Z": PauliOperator({"Z0": 1.0}),
-            "logical_X": PauliOperator({"X0 X1 X2": 1.0})
+            "logical_Z": PauliOperator("Z0"),
+            "logical_X": PauliOperator("X0 X1 X2"),
         }

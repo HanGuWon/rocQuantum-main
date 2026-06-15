@@ -30,10 +30,24 @@ from rocq.operator import (
     QuantumOperator,
     PauliOperator,
     HermitianOperator,
+    SparseHamiltonianOperator,
     SumOperator,
     get_expectation_value,
 )
-from rocq.kernel import QuantumKernel, execute, kernel, observe, sample
+from rocq.kernel import (
+    QuantumKernel,
+    compile_and_execute,
+    compile_and_execute_async,
+    execute,
+    execute_async,
+    get_state,
+    get_state_async,
+    kernel,
+    observe,
+    observe_async,
+    sample,
+    sample_async,
+)
 from rocq.qvec import qvec
 from rocq.noise import NoiseModel
 from rocq.gates import (

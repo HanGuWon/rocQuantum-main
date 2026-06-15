@@ -23,6 +23,18 @@ void matmul_4x4(c128* C, const c128* A, const c128* B) {
     }
 }
 
+// Helper for 2x2 matrix multiplication: C = A * B (row-major)
+void matmul_2x2(c128* C, const c128* A, const c128* B) {
+    for (int i = 0; i < 2; ++i) {
+        for (int j = 0; j < 2; ++j) {
+            C[i * 2 + j] = {0.0, 0.0};
+            for (int k = 0; k < 2; ++k) {
+                C[i * 2 + j] += A[i * 2 + k] * B[k * 2 + j];
+            }
+        }
+    }
+}
+
 // Helper to create a 4x4 tensor product matrix: C = A ⊗ B
 void tensor_product_2x2(c128* C, const c128* A, const c128* B) {
     for (int i = 0; i < 2; ++i) {
@@ -38,6 +50,9 @@ void tensor_product_2x2(c128* C, const c128* A, const c128* B) {
 
 // Helper to get the 2x2 matrix for a single-qubit gate
 bool get_gate_matrix_2x2(const GateOp& op, c128* matrix) {
+    if (!matrix) {
+        return false;
+    }
     if (op.name == "X") {
         matrix[0] = {0,0}; matrix[1] = {1,0};
         matrix[2] = {1,0}; matrix[3] = {0,0};
@@ -59,18 +74,27 @@ bool get_gate_matrix_2x2(const GateOp& op, c128* matrix) {
         matrix[0] = {1,0}; matrix[1] = {0,0};
         matrix[2] = {0,0}; matrix[3] = {val,val};
     } else if (op.name == "RX") {
+        if (op.params.empty()) {
+            return false;
+        }
         double angle = op.params[0];
         double cos_t = cos(angle / 2.0);
         double sin_t = sin(angle / 2.0);
         matrix[0] = {cos_t, 0}; matrix[1] = {0, -sin_t};
         matrix[2] = {0, -sin_t}; matrix[3] = {cos_t, 0};
     } else if (op.name == "RY") {
+        if (op.params.empty()) {
+            return false;
+        }
         double angle = op.params[0];
         double cos_t = cos(angle / 2.0);
         double sin_t = sin(angle / 2.0);
         matrix[0] = {cos_t, 0}; matrix[1] = {-sin_t, 0};
         matrix[2] = {sin_t, 0}; matrix[3] = {cos_t, 0};
     } else if (op.name == "RZ") {
+        if (op.params.empty()) {
+            return false;
+        }
         double angle = op.params[0];
         double cos_t = cos(angle / 2.0);
         double sin_t = sin(angle / 2.0);
@@ -117,11 +141,91 @@ rocqStatus_t GateFusion::ensure_fused_matrix_buffer(size_t required_bytes) {
     return ROCQ_STATUS_SUCCESS;
 }
 
+rocqStatus_t GateFusion::fuseAndApplySingleQubitGates(const std::vector<GateOp>& gate_chunk) {
+    if (gate_chunk.size() < 2) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (gate_chunk[0].targets.size() != 1) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    const unsigned target = gate_chunk[0].targets[0];
+    c128 fused_matrix[4] = {{1,0},{0,0},{0,0},{1,0}};
+
+    for (const auto& op : gate_chunk) {
+        if (!op.controls.empty() || op.targets.size() != 1 || op.targets[0] != target) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+
+        c128 op_matrix[4];
+        if (!get_gate_matrix_2x2(op, op_matrix)) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+
+        c128 updated[4];
+        matmul_2x2(updated, op_matrix, fused_matrix);
+        std::copy(updated, updated + 4, fused_matrix);
+    }
+
+    rocqStatus_t status = ensure_fused_matrix_buffer(4 * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    rocComplex fused_matrix_col_major[4];
+    for (int row = 0; row < 2; ++row) {
+        for (int col = 0; col < 2; ++col) {
+            const c128 v = fused_matrix[row * 2 + col];
+#ifdef ROCQ_PRECISION_DOUBLE
+            fused_matrix_col_major[row + col * 2] = rocComplex{v.real(), v.imag()};
+#else
+            fused_matrix_col_major[row + col * 2] =
+                rocComplex{static_cast<float>(v.real()), static_cast<float>(v.imag())};
+#endif
+        }
+    }
+
+    if (hipMemcpy(d_fused_matrix_buffer_,
+                  fused_matrix_col_major,
+                  sizeof(fused_matrix_col_major),
+                  hipMemcpyHostToDevice) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    return rocsvApplyFusedSingleQubitMatrix(handle_, target, d_fused_matrix_buffer_);
+}
+
 rocqStatus_t GateFusion::processQueue(const std::vector<GateOp>& queue) {
+    if (queue.empty()) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+    if (queue[0].name != "CNOT") {
+        rocqStatus_t single_status = fuseAndApplySingleQubitGates(queue);
+        if (single_status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+            return single_status;
+        }
+    }
+
     std::vector<bool> processed(queue.size(), false);
 
     for (size_t i = 0; i < queue.size(); ++i) {
         if (processed[i]) continue;
+
+        if (queue[i].name != "CNOT") {
+            if (i + 1 < queue.size() && queue[i + 1].name == "CNOT") {
+                const auto& next_cnot = queue[i + 1];
+                if (!next_cnot.controls.empty() && !next_cnot.targets.empty() && queue[i].targets.size() == 1) {
+                    const unsigned ctrl = next_cnot.controls[0];
+                    const unsigned targ = next_cnot.targets[0];
+                    c128 single_matrix[4];
+                    if ((queue[i].targets[0] == ctrl || queue[i].targets[0] == targ) &&
+                        get_gate_matrix_2x2(queue[i], single_matrix)) {
+                        continue;
+                    }
+                }
+            }
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
 
         // --- CNOT Fusion Pattern ---
         if (queue[i].name == "CNOT") {
@@ -143,10 +247,11 @@ rocqStatus_t GateFusion::processQueue(const std::vector<GateOp>& queue) {
                     c128 id_mat[4] = {{1,0},{0,0},{0,0},{1,0}};
                     if (pre_op.targets[0] == ctrl) {
                         tensor_product_2x2(pre_matrix, pre_op_mat, id_mat);
+                        processed[i-1] = true;
                     } else if (pre_op.targets[0] == targ) {
                         tensor_product_2x2(pre_matrix, id_mat, pre_op_mat);
+                        processed[i-1] = true;
                     }
-                    processed[i-1] = true;
                 }
             }
 
@@ -158,10 +263,11 @@ rocqStatus_t GateFusion::processQueue(const std::vector<GateOp>& queue) {
                     c128 id_mat[4] = {{1,0},{0,0},{0,0},{1,0}};
                     if (post_op.targets[0] == ctrl) {
                         tensor_product_2x2(post_matrix, post_op_mat, id_mat);
+                        processed[i+1] = true;
                     } else if (post_op.targets[0] == targ) {
                         tensor_product_2x2(post_matrix, id_mat, post_op_mat);
+                        processed[i+1] = true;
                     }
-                    processed[i+1] = true;
                 }
             }
 
@@ -213,8 +319,7 @@ rocqStatus_t GateFusion::processQueue(const std::vector<GateOp>& queue) {
             continue;
         }
         
-        // Fallback for non-fused gates
-        // ...
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
     }
     return ROCQ_STATUS_SUCCESS;
 }

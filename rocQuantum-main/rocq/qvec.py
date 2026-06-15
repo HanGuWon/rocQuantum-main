@@ -1,5 +1,7 @@
 # Defines the quantum register abstraction.
 
+from numbers import Integral
+
 class qvec:
     """
     A quantum vector representing a register of qubits.
@@ -7,7 +9,10 @@ class qvec:
     _current_kernel_context = None
 
     def __init__(self, size: int):
-        if not isinstance(size, int) or size <= 0:
+        if isinstance(size, bool) or not isinstance(size, Integral):
+            raise ValueError("qvec size must be a positive integer.")
+        size = int(size)
+        if size <= 0:
             raise ValueError("qvec size must be a positive integer.")
         self.size = size
         self.qubits = list(range(size))

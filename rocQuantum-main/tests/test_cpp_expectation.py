@@ -30,6 +30,11 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
             "rocsvGetExpectationValueSinglePauliY",
             "rocsvGetExpectationValuePauliProductZ",
             "rocsvGetExpectationPauliString",
+            "rocsvGetExpectationMatrix",
+            "rocsvGetExpectationMatrixMoments",
+            "rocsvGetExpectationMatrixMomentsBatch",
+            "rocsvGetSparseMatrixMoments",
+            "rocsvApplySparseMatrix",
             "rocsvGetExpectationWorkspaceSize",
         ]
         for symbol in symbols:
@@ -43,6 +48,11 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
             "rocsvGetExpectationValueSinglePauliY",
             "rocsvGetExpectationValuePauliProductZ",
             "rocsvGetExpectationPauliString",
+            "rocsvGetExpectationMatrix",
+            "rocsvGetExpectationMatrixMoments",
+            "rocsvGetExpectationMatrixMomentsBatch",
+            "rocsvGetSparseMatrixMoments",
+            "rocsvApplySparseMatrix",
             "rocsvGetExpectationWorkspaceSize",
         ]
         for symbol in symbols:
@@ -54,6 +64,37 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
             "get_statevector" in src or "GetStateVector" in src,
             "simulator.cpp missing state vector output method",
         )
+
+    def test_state_vector_probability_entrypoint_is_public(self):
+        header = self._read("rocquantum", "include", "rocquantum", "hipStateVec.h")
+        source = self._read("rocquantum", "src", "hipStateVec", "hipStateVec.cpp")
+        simulator_header = self._read("include", "rocquantum", "QuantumSimulator.h")
+        bindings = self._read("bindings.cpp")
+        legacy_bindings = self._read("python", "rocq", "bindings.cpp")
+
+        self.assertIn("rocsvProbabilities", header)
+        self.assertRegex(source, r"rocqStatus_t\s+rocsvProbabilities\s*\(")
+        self.assertIn("accumulate_local_sample_probabilities", source)
+        self.assertIn("accumulate_distributed_sample_probabilities_rccl", source)
+        self.assertIn("compute_distributed_sample_probabilities", source)
+        self.assertIn("reduce_expectation_matrix_kernel", source)
+        self.assertIn("reduce_sparse_matrix_moments_kernel", source)
+        self.assertIn("apply_sparse_matrix_kernel", source)
+        self.assertIn("hipMemcpyDeviceToDevice", source)
+        self.assertIn("std::vector<double> probabilities", simulator_header)
+        self.assertIn("expectation_matrix", simulator_header)
+        self.assertIn("apply_sparse_matrix", simulator_header)
+        self.assertIn(".def(\"probabilities\"", bindings)
+        self.assertIn(".def(\"expectation_matrix\"", bindings)
+        self.assertIn(".def(\"apply_sparse_matrix\"", bindings)
+        self.assertIn("get_expectation_matrix", legacy_bindings)
+        self.assertIn("rocsvGetExpectationMatrix", legacy_bindings)
+        self.assertIn("get_expectation_matrix_moments", legacy_bindings)
+        self.assertIn("rocsvGetExpectationMatrixMoments", legacy_bindings)
+        self.assertIn("get_expectation_matrix_moments_batch", legacy_bindings)
+        self.assertIn("rocsvGetExpectationMatrixMomentsBatch", legacy_bindings)
+        self.assertIn("get_sparse_matrix_moments", legacy_bindings)
+        self.assertIn("rocsvGetSparseMatrixMoments", legacy_bindings)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,17 @@
 #include <pybind11/pybind11.h>
+#include <pybind11/complex.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
 #include "rocquantum/hipStateVec.h"
 #include "rocquantum/hipTensorNet.h" // Include new header
 #include "rocquantum/hipTensorNet_api.h"
+#include <algorithm>
+#include <cctype>
 #include <complex>                 // For std::complex
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace py = pybind11;
 
@@ -15,6 +22,208 @@ rocDataType_t get_rocq_dtype_from_numpy(py::dtype dt) {
     if (dt.is(py::dtype::of<std::complex<float>>())) return ROC_DATATYPE_C64;
     if (dt.is(py::dtype::of<std::complex<double>>())) return ROC_DATATYPE_C128;
     throw std::runtime_error("Unsupported NumPy data type for TensorNetwork");
+}
+
+std::string rocq_status_name(rocqStatus_t status) {
+    switch (status) {
+        case ROCQ_STATUS_SUCCESS:
+            return "ROCQ_STATUS_SUCCESS";
+        case ROCQ_STATUS_FAILURE:
+            return "ROCQ_STATUS_FAILURE";
+        case ROCQ_STATUS_INVALID_VALUE:
+            return "ROCQ_STATUS_INVALID_VALUE";
+        case ROCQ_STATUS_ALLOCATION_FAILED:
+            return "ROCQ_STATUS_ALLOCATION_FAILED";
+        case ROCQ_STATUS_HIP_ERROR:
+            return "ROCQ_STATUS_HIP_ERROR";
+        case ROCQ_STATUS_NOT_IMPLEMENTED:
+            return "ROCQ_STATUS_NOT_IMPLEMENTED";
+        case ROCQ_STATUS_RCCL_ERROR:
+            return "ROCQ_STATUS_RCCL_ERROR";
+        default:
+            return std::string("ROCQ_STATUS_UNKNOWN(") + std::to_string(static_cast<int>(status)) + ")";
+    }
+}
+
+rocComplex make_rocq_complex(double real, double imag) {
+#ifdef ROCQ_PRECISION_DOUBLE
+    return rocComplex{real, imag};
+#else
+    return rocComplex{static_cast<float>(real), static_cast<float>(imag)};
+#endif
+}
+
+std::vector<rocComplex> dense_row_major_to_column_major(const rocComplex* matrix,
+                                                        size_t matrix_dim) {
+    std::vector<rocComplex> out(matrix_dim * matrix_dim);
+    for (size_t row = 0; row < matrix_dim; ++row) {
+        for (size_t col = 0; col < matrix_dim; ++col) {
+            out[row + col * matrix_dim] = matrix[row * matrix_dim + col];
+        }
+    }
+    return out;
+}
+
+std::vector<rocComplex> square_dense_matrix_row_major(const rocComplex* matrix,
+                                                      size_t matrix_dim) {
+    std::vector<rocComplex> out(matrix_dim * matrix_dim);
+    for (size_t row = 0; row < matrix_dim; ++row) {
+        for (size_t col = 0; col < matrix_dim; ++col) {
+            double value_re = 0.0;
+            double value_im = 0.0;
+            for (size_t inner = 0; inner < matrix_dim; ++inner) {
+                const rocComplex lhs = matrix[row * matrix_dim + inner];
+                const rocComplex rhs = matrix[inner * matrix_dim + col];
+                value_re += static_cast<double>(lhs.x) * static_cast<double>(rhs.x) -
+                            static_cast<double>(lhs.y) * static_cast<double>(rhs.y);
+                value_im += static_cast<double>(lhs.x) * static_cast<double>(rhs.y) +
+                            static_cast<double>(lhs.y) * static_cast<double>(rhs.x);
+            }
+            out[row * matrix_dim + col] = make_rocq_complex(value_re, value_im);
+        }
+    }
+    return out;
+}
+
+std::string tensornet_pathfinder_name(rocPathfinderAlgorithm_t algorithm) {
+    switch (algorithm) {
+        case ROCTN_PATHFINDER_ALGO_GREEDY:
+            return "greedy";
+        case ROCTN_PATHFINDER_ALGO_KAHYPAR:
+            return "kahypar";
+        case ROCTN_PATHFINDER_ALGO_METIS:
+            return "metis";
+        default:
+            return std::string("unknown(") + std::to_string(static_cast<int>(algorithm)) + ")";
+    }
+}
+
+class ConceptualMLIRCompiler {
+public:
+    bool initialize_module(const std::string& module_name) {
+        module_name_ = module_name;
+        if (module_string_.empty()) {
+            module_string_ = "module {\n}";
+        }
+        return true;
+    }
+
+    void dump_module() const {}
+
+    std::string get_module_string() const {
+        return module_string_;
+    }
+
+    bool load_module_from_string(const std::string& mlir_string) {
+        module_string_ = mlir_string;
+        return true;
+    }
+
+    bool run_adjoint_generation_pass() const {
+        return false;
+    }
+
+    bool create_function(const std::string& func_name,
+                         const std::vector<std::string>& arg_type_strs,
+                         const std::vector<std::string>& result_type_strs) {
+        (void)arg_type_strs;
+        (void)result_type_strs;
+        if (module_string_.empty()) {
+            initialize_module(module_name_.empty() ? "rocq_module" : module_name_);
+        }
+        module_string_ += "\n// conceptual function declaration: " + func_name;
+        return true;
+    }
+
+private:
+    std::string module_name_;
+    std::string module_string_;
+};
+
+bool tensornet_pathfinder_supported(const hipTensorNetCapabilities_t& caps,
+                                    rocPathfinderAlgorithm_t algorithm) {
+    switch (algorithm) {
+        case ROCTN_PATHFINDER_ALGO_GREEDY:
+            return caps.supports_pathfinder_greedy != 0;
+        case ROCTN_PATHFINDER_ALGO_KAHYPAR:
+            return caps.supports_pathfinder_kahypar != 0;
+        case ROCTN_PATHFINDER_ALGO_METIS:
+            return caps.supports_pathfinder_metis != 0;
+        default:
+            return true;
+    }
+}
+
+std::string tensornet_status_message(const std::string& operation, rocqStatus_t status) {
+    std::string message = operation + " failed with " + rocq_status_name(status);
+    if (status == ROCQ_STATUS_NOT_IMPLEMENTED) {
+        message +=
+            ". This TensorNet path is not available in the current build; "
+            "call get_tensornet_capabilities() to check compiled dtype, "
+            "pathfinder, and runtime slicing support.";
+    } else if (status == ROCQ_STATUS_INVALID_VALUE) {
+        message += ". The TensorNet handle, tensor, dtype, or optimizer configuration is invalid.";
+    } else if (status == ROCQ_STATUS_ALLOCATION_FAILED) {
+        message += ". TensorNet device or host allocation failed.";
+    }
+    return message;
+}
+
+std::string tensornet_contract_status_message(
+    rocqStatus_t status,
+    const hipTensorNetContractionOptimizerConfig_t& config) {
+    std::string message = tensornet_status_message("rocTensorNetworkContract", status);
+    message += std::string(" pathfinder_algorithm=") +
+               tensornet_pathfinder_name(config.pathfinder_algorithm) + ".";
+    if (status == ROCQ_STATUS_NOT_IMPLEMENTED) {
+        message += " The requested TensorNet functionality is unavailable in this build or layout; "
+                   "memory_limit_bytes and num_slices support limited runtime K-sliced GEMM execution "
+                   "but do not provide full cuTensorNet-style open-index slicing.";
+    }
+    if (status == ROCQ_STATUS_INVALID_VALUE && config.num_slices < 0) {
+        message += " num_slices must be non-negative.";
+    }
+    return message;
+}
+
+void warn_tensornet_pathfinder_fallback(const hipTensorNetContractionOptimizerConfig_t& config) {
+    if (config.pathfinder_algorithm == ROCTN_PATHFINDER_ALGO_GREEDY) {
+        return;
+    }
+
+    hipTensorNetCapabilities_t caps{};
+    rocqStatus_t status = rocTensorNetworkGetCapabilities(&caps);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        throw std::runtime_error(tensornet_status_message("rocTensorNetworkGetCapabilities", status));
+    }
+    if (tensornet_pathfinder_supported(caps, config.pathfinder_algorithm)) {
+        return;
+    }
+
+    const std::string message =
+        "TensorNet pathfinder_algorithm=" +
+        tensornet_pathfinder_name(config.pathfinder_algorithm) +
+        " is not available in this build; falling back to greedy. "
+        "Check get_tensornet_capabilities() before relying on METIS/KAHYPAR parity.";
+    if (PyErr_WarnEx(PyExc_RuntimeWarning, message.c_str(), 1) != 0) {
+        throw py::error_already_set();
+    }
+}
+
+void warn_tensornet_limited_runtime_slicing(const hipTensorNetContractionOptimizerConfig_t& config) {
+    if (config.memory_limit_bytes == 0 && config.num_slices <= 0) {
+        return;
+    }
+
+    const std::string message =
+        "TensorNet memory_limit_bytes and num_slices enable limited runtime "
+        "K-sliced GEMM execution for pair contractions; this is not full "
+        "cuTensorNet-style open-index slicing. Check "
+        "get_tensornet_capabilities()['supports_runtime_slicing'] before relying "
+        "on broader sliced-execution parity.";
+    if (PyErr_WarnEx(PyExc_RuntimeWarning, message.c_str(), 1) != 0) {
+        throw py::error_already_set();
+    }
 }
 
 
@@ -97,6 +306,27 @@ public:
     size_t nbytes() const { return size_bytes_; }
 };
 
+size_t infer_batch_size_from_state_buffer(const DeviceBuffer& d_state_buffer,
+                                          unsigned numQubits,
+                                          const std::string& operation_name) {
+    if (numQubits >= sizeof(size_t) * 8) {
+        throw std::runtime_error("num_qubits is too large for " + operation_name + ".");
+    }
+    size_t elements_per_state = size_t{1} << numQubits;
+    if (elements_per_state > std::numeric_limits<size_t>::max() / sizeof(rocComplex)) {
+        throw std::runtime_error("state size is too large for " + operation_name + ".");
+    }
+    size_t bytes_per_state = elements_per_state * sizeof(rocComplex);
+    if (d_state_buffer.nbytes() % bytes_per_state != 0) {
+        throw std::runtime_error("d_state buffer size is incompatible with num_qubits.");
+    }
+    size_t batch_size = d_state_buffer.nbytes() / bytes_per_state;
+    if (batch_size == 0) {
+        throw std::runtime_error("d_state buffer does not contain any batch states.");
+    }
+    return batch_size;
+}
+
 
 // Wrapper for rocsvHandle_t to ensure proper creation and destruction
 class RocsvHandleWrapper {
@@ -152,6 +382,12 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         .value("NOT_IMPLEMENTED", ROCQ_STATUS_NOT_IMPLEMENTED)
         .export_values();
 
+    py::enum_<rocsvDistributedBackend_t>(m, "DistributedBackend")
+        .value("NONE", ROCSV_DISTRIBUTED_BACKEND_NONE)
+        .value("HOST_FALLBACK", ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK)
+        .value("RCCL", ROCSV_DISTRIBUTED_BACKEND_RCCL)
+        .export_values();
+
     // DeviceBuffer class for managing device memory from Python
     py::class_<DeviceBuffer>(m, "DeviceBuffer")
         .def(py::init<>()) // Default constructor
@@ -172,6 +408,14 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                 throw std::runtime_error("rocsvGetNumGpus failed: " + std::to_string(status));
             }
             return count;
+        })
+        .def("get_distributed_backend", [](const RocsvHandleWrapper& self) {
+            rocsvDistributedBackend_t backend = ROCSV_DISTRIBUTED_BACKEND_NONE;
+            rocqStatus_t status = rocsvGetDistributedBackend(self.get(), &backend);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetDistributedBackend failed: " + std::to_string(status));
+            }
+            return std::string(rocsvDistributedBackendName(backend));
         });
         // The handle itself is mostly opaque to Python users of this direct binding layer.
         // Higher-level Python classes (Simulator) will use it.
@@ -193,10 +437,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
 
     m.def("initialize_state", 
         [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits) {
-            // Basic check, Python side should ensure numQubits matches buffer allocation
-            if (d_state_buffer.nbytes() != ( (1ULL << numQubits) * sizeof(rocComplex) ) ) {
-                 throw std::runtime_error("DeviceBuffer size mismatch in initialize_state");
-            }
+            infer_batch_size_from_state_buffer(d_state_buffer, numQubits, "initialize_state");
             return rocsvInitializeState(handle_wrapper.get(), d_state_buffer.get_ptr<rocComplex>(), numQubits);
         }, py::arg("handle"), py::arg("d_state_buffer"), py::arg("num_qubits"));
 
@@ -207,6 +448,20 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                 throw std::runtime_error("rocsvAllocateDistributedState failed: " + std::to_string(status));
             }
         }, py::arg("handle"), py::arg("total_num_qubits"), "Allocates a distributed state vector across multiple GPUs.");
+
+    m.def("allocate_multi_node_distributed_state",
+        [](RocsvHandleWrapper& handle_wrapper, unsigned totalNumQubits, unsigned nodeCount) {
+            rocqStatus_t status =
+                rocsvAllocateMultiNodeDistributedState(handle_wrapper.get(), totalNumQubits, nodeCount);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error(
+                    "rocsvAllocateMultiNodeDistributedState failed: " + std::to_string(status));
+            }
+        },
+        py::arg("handle"),
+        py::arg("total_num_qubits"),
+        py::arg("node_count"),
+        "Explicit unsupported boundary for multi-node distributed state allocation.");
 
     m.def("initialize_distributed_state",
         [](RocsvHandleWrapper& handle_wrapper) {
@@ -229,6 +484,8 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         return rocsvApplyS(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ); }, "Applies S gate");
     m.def("apply_t", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned tQ) {
         return rocsvApplyT(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ); }, "Applies T gate");
+    m.def("apply_tdg", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned tQ) {
+        return rocsvApplyTdg(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ); }, "Applies T dagger gate");
     m.def("apply_sdg", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned tQ) {
         return rocsvApplySdg(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ); }, "Applies S dagger gate");
 
@@ -239,6 +496,8 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         return rocsvApplyRy(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ, angle); }, "Applies Ry gate");
     m.def("apply_rz", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned tQ, double angle) {
         return rocsvApplyRz(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ, angle); }, "Applies Rz gate");
+    m.def("apply_p", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned tQ, double angle) {
+        return rocsvApplyP(h.get(), d_state.get_ptr<rocComplex>(), nQ, tQ, angle); }, "Applies phase gate");
 
     // Specific two-qubit gates
     m.def("apply_cnot", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned ctrlQ, unsigned tgtQ) {
@@ -258,6 +517,9 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
     m.def("apply_crz", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned cQ, unsigned tQ, double angle) {
         return rocsvApplyCRZ(h.get(), d_state.get_ptr<rocComplex>(), nQ, cQ, tQ, angle);
     }, "Applies CRZ gate");
+    m.def("apply_cp", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, unsigned cQ, unsigned tQ, double angle) {
+        return rocsvApplyCP(h.get(), d_state.get_ptr<rocComplex>(), nQ, cQ, tQ, angle);
+    }, "Applies controlled phase gate");
     m.def("apply_mcx", [](const RocsvHandleWrapper& h, DeviceBuffer& d_state, unsigned nQ, const std::vector<unsigned>& cQs, unsigned tQ) {
         return rocsvApplyMultiControlledX(h.get(), d_state.get_ptr<rocComplex>(), nQ, cQs.data(), cQs.size(), tQ);
     }, "Applies multi-controlled X gate");
@@ -410,6 +672,505 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("pauli_string"), py::arg("target_qubits"),
            "Calculates expectation value for a generic Pauli string (e.g., \"IXYZ\"). Non-destructive.");
 
+    m.def("get_expectation_pauli_string_batch",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::string& pauliString, const std::vector<unsigned>& targetQubits_vec) {
+            if (pauliString.length() != targetQubits_vec.size()) {
+                throw std::runtime_error("Pauli string length must match the number of target qubits.");
+            }
+            size_t batch_size = infer_batch_size_from_state_buffer(
+                d_state_buffer,
+                numQubits,
+                "get_expectation_pauli_string_batch");
+
+            py::array_t<double> result(batch_size);
+            auto mutable_result = result.mutable_unchecked<1>();
+            if (targetQubits_vec.empty()) {
+                for (size_t idx = 0; idx < batch_size; ++idx) {
+                    mutable_result(static_cast<py::ssize_t>(idx)) = 1.0;
+                }
+                return result;
+            }
+
+            std::string normalized;
+            normalized.reserve(pauliString.size());
+            for (char pauli : pauliString) {
+                const char upper = static_cast<char>(std::toupper(static_cast<unsigned char>(pauli)));
+                if (upper != 'I' && upper != 'X' && upper != 'Y' && upper != 'Z') {
+                    throw std::runtime_error("Pauli string may only contain I, X, Y, or Z.");
+                }
+                normalized.push_back(upper);
+            }
+
+            std::vector<double> raw_results(batch_size, 0.0);
+            rocqStatus_t status = rocsvGetExpectationPauliStringBatch(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                normalized.c_str(),
+                targetQubits_vec.data(),
+                static_cast<unsigned>(targetQubits_vec.size()),
+                raw_results.data());
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetExpectationPauliStringBatch failed: " + std::to_string(status));
+            }
+            for (size_t idx = 0; idx < batch_size; ++idx) {
+                mutable_result(static_cast<py::ssize_t>(idx)) = raw_results[idx];
+            }
+            return result;
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("pauli_string"), py::arg("target_qubits"),
+           "Calculates Pauli-string expectation values for each local batch state.");
+
+    m.def("get_expectation_matrix",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::vector<unsigned>& targetQubits_vec,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> matrix) {
+            if (targetQubits_vec.empty()) {
+                throw std::runtime_error("target_qubits must not be empty for get_expectation_matrix.");
+            }
+            if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                throw std::runtime_error("matrix must be a square 2D array for get_expectation_matrix.");
+            }
+
+            const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
+            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
+                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+                throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
+            }
+
+            const rocComplex* matrix_row_major = matrix.data();
+            std::vector<rocComplex> matrix_col_major(matrix_dim * matrix_dim);
+            for (size_t row = 0; row < matrix_dim; ++row) {
+                for (size_t col = 0; col < matrix_dim; ++col) {
+                    matrix_col_major[row + col * matrix_dim] =
+                        matrix_row_major[row * matrix_dim + col];
+                }
+            }
+
+            DeviceBuffer matrix_device(matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(matrix_device.get_ptr<rocComplex>(),
+                          matrix_col_major.data(),
+                          matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy expectation matrix to device");
+            }
+
+            rocComplex result{};
+            rocqStatus_t status = rocsvGetExpectationMatrix(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                targetQubits_vec.data(),
+                static_cast<unsigned>(targetQubits_vec.size()),
+                matrix_device.get_ptr<rocComplex>(),
+                matrix_dim,
+                &result);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetExpectationMatrix failed: " + std::to_string(status));
+            }
+            return std::complex<double>(static_cast<double>(result.x), static_cast<double>(result.y));
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
+           "Calculates <psi|M|psi> for a dense matrix acting on target qubits.");
+
+    m.def("get_expectation_matrix_batch",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::vector<unsigned>& targetQubits_vec,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> matrix) {
+            if (targetQubits_vec.empty()) {
+                throw std::runtime_error("target_qubits must not be empty for get_expectation_matrix_batch.");
+            }
+            if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                throw std::runtime_error("matrix must be a square 2D array for get_expectation_matrix_batch.");
+            }
+
+            const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
+            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
+                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+                throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
+            }
+
+            const rocComplex* matrix_row_major = matrix.data();
+            std::vector<rocComplex> matrix_col_major(matrix_dim * matrix_dim);
+            for (size_t row = 0; row < matrix_dim; ++row) {
+                for (size_t col = 0; col < matrix_dim; ++col) {
+                    matrix_col_major[row + col * matrix_dim] =
+                        matrix_row_major[row * matrix_dim + col];
+                }
+            }
+
+            DeviceBuffer matrix_device(matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(matrix_device.get_ptr<rocComplex>(),
+                          matrix_col_major.data(),
+                          matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy batch expectation matrix to device");
+            }
+
+            size_t batch_size = infer_batch_size_from_state_buffer(
+                d_state_buffer,
+                numQubits,
+                "get_expectation_matrix_batch");
+            std::vector<rocComplex> raw_results(batch_size);
+            rocqStatus_t status = rocsvGetExpectationMatrixBatch(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                targetQubits_vec.data(),
+                static_cast<unsigned>(targetQubits_vec.size()),
+                matrix_device.get_ptr<rocComplex>(),
+                matrix_dim,
+                raw_results.data());
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetExpectationMatrixBatch failed: " + std::to_string(status));
+            }
+
+            py::array_t<std::complex<double>> result(batch_size);
+            auto mutable_result = result.mutable_unchecked<1>();
+            for (size_t idx = 0; idx < batch_size; ++idx) {
+                mutable_result(static_cast<py::ssize_t>(idx)) =
+                    std::complex<double>(static_cast<double>(raw_results[idx].x),
+                                         static_cast<double>(raw_results[idx].y));
+            }
+            return result;
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
+           "Calculates <psi|M|psi> for each local batch state.");
+
+    m.def("get_expectation_matrix_moments",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::vector<unsigned>& targetQubits_vec,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> matrix) {
+            if (targetQubits_vec.empty()) {
+                throw std::runtime_error("target_qubits must not be empty for get_expectation_matrix_moments.");
+            }
+            if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                throw std::runtime_error("matrix must be a square 2D array for get_expectation_matrix_moments.");
+            }
+
+            const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
+            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
+                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+                throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
+            }
+
+            const rocComplex* matrix_row_major = matrix.data();
+            const std::vector<rocComplex> squared_matrix_row_major =
+                square_dense_matrix_row_major(matrix_row_major, matrix_dim);
+            const std::vector<rocComplex> matrix_col_major =
+                dense_row_major_to_column_major(matrix_row_major, matrix_dim);
+            const std::vector<rocComplex> squared_matrix_col_major =
+                dense_row_major_to_column_major(squared_matrix_row_major.data(), matrix_dim);
+
+            DeviceBuffer matrix_device(matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(matrix_device.get_ptr<rocComplex>(),
+                          matrix_col_major.data(),
+                          matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy expectation matrix moments matrix to device");
+            }
+
+            DeviceBuffer squared_matrix_device(squared_matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(squared_matrix_device.get_ptr<rocComplex>(),
+                          squared_matrix_col_major.data(),
+                          squared_matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy expectation matrix moments squared matrix to device");
+            }
+
+            rocComplex mean{};
+            rocComplex second_moment{};
+            rocqStatus_t status = rocsvGetExpectationMatrixMoments(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                targetQubits_vec.data(),
+                static_cast<unsigned>(targetQubits_vec.size()),
+                matrix_device.get_ptr<rocComplex>(),
+                squared_matrix_device.get_ptr<rocComplex>(),
+                matrix_dim,
+                &mean,
+                &second_moment);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetExpectationMatrixMoments failed: " + std::to_string(status));
+            }
+            return py::make_tuple(
+                std::complex<double>(static_cast<double>(mean.x), static_cast<double>(mean.y)),
+                std::complex<double>(static_cast<double>(second_moment.x),
+                                     static_cast<double>(second_moment.y)));
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
+           "Calculates dense matrix <psi|M|psi> and <psi|M^2|psi> moments.");
+
+    m.def("get_expectation_matrix_moments_batch",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::vector<unsigned>& targetQubits_vec,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> matrix) {
+            if (targetQubits_vec.empty()) {
+                throw std::runtime_error("target_qubits must not be empty for get_expectation_matrix_moments_batch.");
+            }
+            if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                throw std::runtime_error("matrix must be a square 2D array for get_expectation_matrix_moments_batch.");
+            }
+
+            const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
+            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
+                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+                throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
+            }
+
+            const rocComplex* matrix_row_major = matrix.data();
+            const std::vector<rocComplex> squared_matrix_row_major =
+                square_dense_matrix_row_major(matrix_row_major, matrix_dim);
+            const std::vector<rocComplex> matrix_col_major =
+                dense_row_major_to_column_major(matrix_row_major, matrix_dim);
+            const std::vector<rocComplex> squared_matrix_col_major =
+                dense_row_major_to_column_major(squared_matrix_row_major.data(), matrix_dim);
+
+            DeviceBuffer matrix_device(matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(matrix_device.get_ptr<rocComplex>(),
+                          matrix_col_major.data(),
+                          matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy batch expectation matrix moments matrix to device");
+            }
+
+            DeviceBuffer squared_matrix_device(squared_matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(squared_matrix_device.get_ptr<rocComplex>(),
+                          squared_matrix_col_major.data(),
+                          squared_matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy batch expectation matrix moments squared matrix to device");
+            }
+
+            size_t batch_size = infer_batch_size_from_state_buffer(
+                d_state_buffer,
+                numQubits,
+                "get_expectation_matrix_moments_batch");
+            std::vector<rocComplex> raw_means(batch_size);
+            std::vector<rocComplex> raw_second_moments(batch_size);
+            rocqStatus_t status = rocsvGetExpectationMatrixMomentsBatch(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                targetQubits_vec.data(),
+                static_cast<unsigned>(targetQubits_vec.size()),
+                matrix_device.get_ptr<rocComplex>(),
+                squared_matrix_device.get_ptr<rocComplex>(),
+                matrix_dim,
+                raw_means.data(),
+                raw_second_moments.data());
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetExpectationMatrixMomentsBatch failed: " + std::to_string(status));
+            }
+
+            py::array_t<std::complex<double>> means(batch_size);
+            py::array_t<std::complex<double>> second_moments(batch_size);
+            auto mutable_means = means.mutable_unchecked<1>();
+            auto mutable_second = second_moments.mutable_unchecked<1>();
+            for (size_t idx = 0; idx < batch_size; ++idx) {
+                mutable_means(static_cast<py::ssize_t>(idx)) =
+                    std::complex<double>(static_cast<double>(raw_means[idx].x),
+                                         static_cast<double>(raw_means[idx].y));
+                mutable_second(static_cast<py::ssize_t>(idx)) =
+                    std::complex<double>(static_cast<double>(raw_second_moments[idx].x),
+                                         static_cast<double>(raw_second_moments[idx].y));
+            }
+            return py::make_tuple(means, second_moments);
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
+           "Calculates batch dense matrix <psi|M|psi> and <psi|M^2|psi> moments.");
+
+    m.def("get_sparse_matrix_moments",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> data,
+           const std::vector<size_t>& indices_vec,
+           const std::vector<size_t>& indptr_vec,
+           size_t rows,
+           size_t cols) {
+            if (data.ndim() != 1) {
+                throw std::runtime_error("CSR data must be a 1D array for get_sparse_matrix_moments.");
+            }
+            const size_t nnz = static_cast<size_t>(data.size());
+            if (indices_vec.size() != nnz) {
+                throw std::runtime_error("CSR indices length must match data length.");
+            }
+            if (rows == 0 || cols == 0 || rows != cols) {
+                throw std::runtime_error("CSR shape must be square and non-empty.");
+            }
+            if (numQubits >= sizeof(size_t) * 8 || rows != (size_t{1} << numQubits)) {
+                throw std::runtime_error("CSR shape must match 2^num_qubits.");
+            }
+            if (indptr_vec.size() != rows + 1 || indptr_vec.empty() ||
+                indptr_vec.front() != 0 || indptr_vec.back() != nnz) {
+                throw std::runtime_error("CSR indptr must start at 0, end at nnz, and have rows + 1 entries.");
+            }
+            for (size_t row = 0; row < rows; ++row) {
+                if (indptr_vec[row] > indptr_vec[row + 1]) {
+                    throw std::runtime_error("CSR indptr must be monotonic.");
+                }
+            }
+            for (const size_t col : indices_vec) {
+                if (col >= cols) {
+                    throw std::runtime_error("CSR column index is out of bounds.");
+                }
+            }
+
+            DeviceBuffer data_device;
+            if (nnz > 0) {
+                data_device = DeviceBuffer(nnz, sizeof(rocComplex));
+                if (hipMemcpy(data_device.get_ptr<rocComplex>(),
+                              data.data(),
+                              nnz * sizeof(rocComplex),
+                              hipMemcpyHostToDevice) != hipSuccess) {
+                    throw std::runtime_error("Failed to copy CSR data to device");
+                }
+            }
+
+            DeviceBuffer indices_device;
+            if (!indices_vec.empty()) {
+                indices_device = DeviceBuffer(indices_vec.size(), sizeof(size_t));
+                if (hipMemcpy(indices_device.get_ptr<size_t>(),
+                              indices_vec.data(),
+                              indices_vec.size() * sizeof(size_t),
+                              hipMemcpyHostToDevice) != hipSuccess) {
+                    throw std::runtime_error("Failed to copy CSR indices to device");
+                }
+            }
+
+            DeviceBuffer indptr_device(indptr_vec.size(), sizeof(size_t));
+            if (hipMemcpy(indptr_device.get_ptr<size_t>(),
+                          indptr_vec.data(),
+                          indptr_vec.size() * sizeof(size_t),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy CSR indptr to device");
+            }
+
+            rocComplex mean{};
+            rocComplex second_moment{};
+            rocqStatus_t status = rocsvGetSparseMatrixMoments(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                nnz > 0 ? data_device.get_ptr<rocComplex>() : nullptr,
+                !indices_vec.empty() ? indices_device.get_ptr<size_t>() : nullptr,
+                indptr_device.get_ptr<size_t>(),
+                rows,
+                cols,
+                nnz,
+                &mean,
+                &second_moment);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetSparseMatrixMoments failed: " + std::to_string(status));
+            }
+
+            return py::make_tuple(
+                std::complex<double>(static_cast<double>(mean.x), static_cast<double>(mean.y)),
+                std::complex<double>(static_cast<double>(second_moment.x), static_cast<double>(second_moment.y)));
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("data"),
+           py::arg("indices"), py::arg("indptr"), py::arg("rows"), py::arg("cols"),
+           "Calculates sparse CSR <psi|H|psi> and <psi|H^2|psi> moments.");
+
+    m.def("get_sparse_matrix_moments_batch",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> data,
+           const std::vector<size_t>& indices_vec,
+           const std::vector<size_t>& indptr_vec,
+           size_t rows,
+           size_t cols) {
+            if (data.ndim() != 1) {
+                throw std::runtime_error("CSR data must be a 1D array for get_sparse_matrix_moments_batch.");
+            }
+            const size_t nnz = static_cast<size_t>(data.size());
+            if (indices_vec.size() != nnz) {
+                throw std::runtime_error("CSR indices length must match data length.");
+            }
+            if (rows == 0 || cols == 0 || rows != cols) {
+                throw std::runtime_error("CSR shape must be square and non-empty.");
+            }
+            if (numQubits >= sizeof(size_t) * 8 || rows != (size_t{1} << numQubits)) {
+                throw std::runtime_error("CSR shape must match 2^num_qubits.");
+            }
+            if (indptr_vec.size() != rows + 1 || indptr_vec.empty() ||
+                indptr_vec.front() != 0 || indptr_vec.back() != nnz) {
+                throw std::runtime_error("CSR indptr must start at 0, end at nnz, and have rows + 1 entries.");
+            }
+            for (size_t row = 0; row < rows; ++row) {
+                if (indptr_vec[row] > indptr_vec[row + 1]) {
+                    throw std::runtime_error("CSR indptr must be monotonic.");
+                }
+            }
+            for (const size_t col : indices_vec) {
+                if (col >= cols) {
+                    throw std::runtime_error("CSR column index is out of bounds.");
+                }
+            }
+
+            DeviceBuffer data_device;
+            if (nnz > 0) {
+                data_device = DeviceBuffer(nnz, sizeof(rocComplex));
+                if (hipMemcpy(data_device.get_ptr<rocComplex>(),
+                              data.data(),
+                              nnz * sizeof(rocComplex),
+                              hipMemcpyHostToDevice) != hipSuccess) {
+                    throw std::runtime_error("Failed to copy batch CSR data to device");
+                }
+            }
+
+            DeviceBuffer indices_device;
+            if (!indices_vec.empty()) {
+                indices_device = DeviceBuffer(indices_vec.size(), sizeof(size_t));
+                if (hipMemcpy(indices_device.get_ptr<size_t>(),
+                              indices_vec.data(),
+                              indices_vec.size() * sizeof(size_t),
+                              hipMemcpyHostToDevice) != hipSuccess) {
+                    throw std::runtime_error("Failed to copy batch CSR indices to device");
+                }
+            }
+
+            DeviceBuffer indptr_device(indptr_vec.size(), sizeof(size_t));
+            if (hipMemcpy(indptr_device.get_ptr<size_t>(),
+                          indptr_vec.data(),
+                          indptr_vec.size() * sizeof(size_t),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy batch CSR indptr to device");
+            }
+
+            size_t batch_size = infer_batch_size_from_state_buffer(
+                d_state_buffer,
+                numQubits,
+                "get_sparse_matrix_moments_batch");
+            std::vector<rocComplex> raw_means(batch_size);
+            std::vector<rocComplex> raw_second_moments(batch_size);
+            rocqStatus_t status = rocsvGetSparseMatrixMomentsBatch(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                nnz > 0 ? data_device.get_ptr<rocComplex>() : nullptr,
+                !indices_vec.empty() ? indices_device.get_ptr<size_t>() : nullptr,
+                indptr_device.get_ptr<size_t>(),
+                rows,
+                cols,
+                nnz,
+                raw_means.data(),
+                raw_second_moments.data());
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetSparseMatrixMomentsBatch failed: " + std::to_string(status));
+            }
+
+            py::array_t<std::complex<double>> means(batch_size);
+            py::array_t<std::complex<double>> second_moments(batch_size);
+            auto mutable_means = means.mutable_unchecked<1>();
+            auto mutable_second = second_moments.mutable_unchecked<1>();
+            for (size_t idx = 0; idx < batch_size; ++idx) {
+                mutable_means(static_cast<py::ssize_t>(idx)) =
+                    std::complex<double>(static_cast<double>(raw_means[idx].x),
+                                         static_cast<double>(raw_means[idx].y));
+                mutable_second(static_cast<py::ssize_t>(idx)) =
+                    std::complex<double>(static_cast<double>(raw_second_moments[idx].x),
+                                         static_cast<double>(raw_second_moments[idx].y));
+            }
+            return py::make_tuple(means, second_moments);
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("data"),
+           py::arg("indices"), py::arg("indptr"), py::arg("rows"), py::arg("cols"),
+           "Calculates batch sparse CSR <psi|H|psi> and <psi|H^2|psi> moments.");
+
     m.def("sample",
         [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
            const std::vector<unsigned>& measuredQubits_vec, unsigned numShots) {
@@ -434,6 +1195,33 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             return h_results;
         }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("measured_qubits"), py::arg("num_shots"),
            "Samples from the state vector and returns an array of measurement outcomes (bitstrings).");
+
+    m.def("probabilities",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::vector<unsigned>& measuredQubits_vec) {
+            if (measuredQubits_vec.empty()) {
+                throw std::invalid_argument("probabilities requires at least one measured qubit.");
+            }
+            if (measuredQubits_vec.size() > 20) {
+                throw std::runtime_error("probabilities currently supports at most 20 measured qubits.");
+            }
+            const std::size_t num_outcomes = std::size_t{1} << measuredQubits_vec.size();
+            py::array_t<double> h_probabilities(num_outcomes);
+
+            rocqStatus_t status = rocsvProbabilities(
+                                        handle_wrapper.get(),
+                                        d_state_buffer.get_ptr<rocComplex>(),
+                                        numQubits,
+                                        measuredQubits_vec.data(),
+                                        static_cast<unsigned>(measuredQubits_vec.size()),
+                                        h_probabilities.mutable_data());
+
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvProbabilities failed: " + std::to_string(status));
+            }
+            return h_probabilities;
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("measured_qubits"),
+           "Returns normalized computational-basis probabilities for selected qubits.");
 
     m.def("apply_controlled_matrix",
         [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
@@ -597,7 +1385,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             
             rocqStatus_t status = rocTensorNetworkCreate(&handle_, rocq_dtype);
             if (status != ROCQ_STATUS_SUCCESS) {
-                throw std::runtime_error("Failed to create rocTensorNetworkHandle: " + std::to_string(status));
+                throw std::runtime_error(tensornet_status_message("rocTensorNetworkCreate", status));
             }
         }
 
@@ -632,7 +1420,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         .def("add_tensor", [](RocTensorNetworkHandleWrapper& self, const rocquantum::util::rocTensor& tensor) {
             rocqStatus_t status = rocTensorNetworkAddTensor(self.get(), &tensor);
             if (status != ROCQ_STATUS_SUCCESS) {
-                throw std::runtime_error("rocTensorNetworkAddTensor failed: " + std::to_string(status));
+                throw std::runtime_error(tensornet_status_message("rocTensorNetworkAddTensor", status));
             }
         }, py::arg("tensor"))
 
@@ -647,6 +1435,27 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
 
             if (!config_obj.is_none()) {
                 py::dict config_dict = py::cast<py::dict>(config_obj);
+                if (config_dict.contains("pathfinder_algorithm")) {
+                    py::object value = config_dict["pathfinder_algorithm"];
+                    if (py::isinstance<py::str>(value)) {
+                        std::string name = py::cast<std::string>(value);
+                        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) {
+                            return static_cast<char>(std::tolower(ch));
+                        });
+                        if (name == "greedy") {
+                            config.pathfinder_algorithm = ROCTN_PATHFINDER_ALGO_GREEDY;
+                        } else if (name == "kahypar") {
+                            config.pathfinder_algorithm = ROCTN_PATHFINDER_ALGO_KAHYPAR;
+                        } else if (name == "metis") {
+                            config.pathfinder_algorithm = ROCTN_PATHFINDER_ALGO_METIS;
+                        } else {
+                            throw std::invalid_argument("Unknown TensorNet pathfinder_algorithm: " + name);
+                        }
+                    } else {
+                        config.pathfinder_algorithm =
+                            static_cast<rocPathfinderAlgorithm_t>(py::cast<int>(value));
+                    }
+                }
                 if (config_dict.contains("memory_limit_bytes")) {
                     config.memory_limit_bytes = config_dict["memory_limit_bytes"].cast<size_t>();
                 } else if (config_dict.contains("memory_limit")) {
@@ -657,6 +1466,9 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                 }
             }
 
+            warn_tensornet_pathfinder_fallback(config);
+            warn_tensornet_limited_runtime_slicing(config);
+
             // TODO: The rocblas_handle and hipStream_t should be retrieved from the simulator handle.
             // The current structure of RocsvHandleWrapper makes this difficult without modifying it.
             // Using placeholders for now.
@@ -666,9 +1478,26 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             rocqStatus_t status = rocTensorNetworkContract(self.get(), &config, &result_tensor_py, blas_h, stream);
             
             if (status != ROCQ_STATUS_SUCCESS) {
-                throw std::runtime_error("rocTensorNetworkContract failed: " + std::to_string(status));
+                throw std::runtime_error(tensornet_contract_status_message(status, config));
             }
         }, py::arg("optimizer_config"), py::arg("result_tensor").noconvert(), "Contracts the tensor network. Result tensor must be pre-allocated.");
+
+    m.def("get_tensornet_capabilities", []() {
+        hipTensorNetCapabilities_t caps{};
+        rocqStatus_t status = rocTensorNetworkGetCapabilities(&caps);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            throw std::runtime_error(tensornet_status_message("rocTensorNetworkGetCapabilities", status));
+        }
+        py::dict result;
+        result["supports_c64"] = caps.supports_c64 != 0;
+        result["supports_c128"] = caps.supports_c128 != 0;
+        result["supports_pathfinder_greedy"] = caps.supports_pathfinder_greedy != 0;
+        result["supports_pathfinder_kahypar"] = caps.supports_pathfinder_kahypar != 0;
+        result["supports_pathfinder_metis"] = caps.supports_pathfinder_metis != 0;
+        result["supports_memory_limit_planning"] = caps.supports_memory_limit_planning != 0;
+        result["supports_runtime_slicing"] = caps.supports_runtime_slicing != 0;
+        return result;
+    }, "Reports TensorNet dtype, optimizer, and slicing capabilities for this build.");
 
     // --- NEW SVD BINDING ---
     m.def("tensor_svd",
@@ -686,7 +1515,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
 
             rocqStatus_t status = rocTensorSVD(handle.get(), &U, &S, &V, &A, workspace.ptr_);
             if (status != ROCQ_STATUS_SUCCESS) {
-                throw std::runtime_error("rocTensorSVD failed: " + std::to_string(status));
+                throw std::runtime_error(tensornet_status_message("rocTensorSVD", status));
             }
             return std::make_tuple(U, S, V);
         }, py::arg("handle"), py::arg("A"), "Performs SVD on a 2D tensor A, returning (U, S, V).");
@@ -708,63 +1537,25 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         }, py::arg("queue"));
     // --- End GateFusion Bindings ---
 
-    // --- MLIRCompiler Bindings ---
-    py::class_<rocquantum::compiler::MLIRCompiler>(m, "MLIRCompiler")
-        .def(py::init<>(), "Initializes the MLIR compiler environment.")
-        .def("initialize_module", &rocquantum::compiler::MLIRCompiler::initializeModule,
+    // --- Conceptual MLIR storage for the legacy API ---
+    py::class_<ConceptualMLIRCompiler>(m, "MLIRCompiler")
+        .def(py::init<>(), "Initializes the legacy conceptual MLIR holder.")
+        .def("initialize_module", &ConceptualMLIRCompiler::initialize_module,
              py::arg("module_name") = "rocq_module",
-             "Initializes a new MLIR module. Returns true on success.")
-        .def("dump_module", &rocquantum::compiler::MLIRCompiler::dumpModule,
-             "Dumps the current MLIR module to stderr.")
-        .def("get_module_string", &rocquantum::compiler::MLIRCompiler::getModuleString,
-             "Returns the current MLIR module as a string representation.")
-        .def("load_module_from_string", &rocquantum::compiler::MLIRCompiler::loadModuleFromString,
+             "Initializes a conceptual MLIR module string. Returns true on success.")
+        .def("dump_module", &ConceptualMLIRCompiler::dump_module,
+             "No-op placeholder retained for legacy API compatibility.")
+        .def("get_module_string", &ConceptualMLIRCompiler::get_module_string,
+             "Returns the stored conceptual MLIR string.")
+        .def("load_module_from_string", &ConceptualMLIRCompiler::load_module_from_string,
              py::arg("mlir_string"),
-             "Parses an MLIR string and loads it into the compiler's module. Returns true on success.")
-        .def("run_adjoint_generation_pass", &rocquantum::compiler::MLIRCompiler::runAdjointGenerationPass,
-             "Runs the Adjoint Generation compiler pass on the current module.")
-        .def("create_function",
-             [](rocquantum::compiler::MLIRCompiler &self, const std::string& funcName,
-                const std::vector<std::string>& argTypeStrs,
-                const std::vector<std::string>& resultTypeStrs) {
-
-                mlir::MLIRContext* context = self.getContext();
-                if (!context) throw std::runtime_error("MLIRContext is null in MLIRCompiler.");
-
-                llvm::SmallVector<mlir::Type, 4> argTypes;
-                for (const auto& typeStr : argTypeStrs) {
-                    // For this to work robustly, types need to be registered or be builtin.
-                    // Our QuantumDialect registers "!quantum.qubit".
-                    // Other types like "f64", "i32" are builtin.
-                    mlir::Type type = mlir::parseAttribute(typeStr, context).dyn_cast_or_null<mlir::TypeAttr>().getValue();
-                    if (!type) { // Fallback for simple dialect types like "!quantum.qubit"
-                        if (typeStr == "!quantum.qubit") type = rocquantum::quantum::QubitType::get(context);
-                        // Add more custom type string parsing here if needed
-                    }
-                    if (!type) throw std::runtime_error("Failed to parse argument type string: " + typeStr);
-                    argTypes.push_back(type);
-                }
-
-                llvm::SmallVector<mlir::Type, 4> resultTypes;
-                for (const auto& typeStr : resultTypeStrs) {
-                    mlir::Type type = mlir::parseAttribute(typeStr, context).dyn_cast_or_null<mlir::TypeAttr>().getValue();
-                     if (!type) { // Fallback for simple dialect types
-                        if (typeStr == "!quantum.qubit") type = rocquantum::quantum::QubitType::get(context);
-                    }
-                    if (!type) throw std::runtime_error("Failed to parse result type string: " + typeStr);
-                    resultTypes.push_back(type);
-                }
-
-                // The C++ createFunction returns a FuncOp, but we don't bind FuncOp directly yet.
-                // We'll just call it and rely on it being added to the ModuleOp inside the compiler.
-                // Return true/false for success.
-                mlir::func::FuncOp funcOp = self.createFunction(funcName, argTypes, resultTypes);
-                return static_cast<bool>(funcOp); // True if funcOp is not null
-             },
-             py::arg("func_name"), py::arg("arg_type_strs"), py::arg("result_type_strs") = std::vector<std::string>(),
-             "Creates a new function (FuncOp) in the module. Types are specified as strings.");
-        // Note: getContext and getModule (returning raw pointers) are not exposed directly
-        // to Python for safety, unless a clear need and management strategy arises.
-        // Python will interact via higher-level methods that use these internally.
+             "Stores a conceptual MLIR string. Returns true on success.")
+        .def("run_adjoint_generation_pass", &ConceptualMLIRCompiler::run_adjoint_generation_pass,
+             "Returns false because the default legacy binding does not link an MLIR pass pipeline.")
+        .def("create_function", &ConceptualMLIRCompiler::create_function,
+             py::arg("func_name"),
+             py::arg("arg_type_strs"),
+             py::arg("result_type_strs") = std::vector<std::string>(),
+             "Records a conceptual function declaration for legacy API compatibility.");
 
 }

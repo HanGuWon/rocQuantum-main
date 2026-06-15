@@ -17,15 +17,19 @@
                                     "Self-hosted run: ctest -R \"MultiGPUTests|HipTensorNetContractionRegression\""
                                 ],
                       "evidence":  [
-                                       ".github/workflows/rocm-linux-build.yml:54",
-                                       ".github/workflows/rocm-linux-build.yml:106"
+                                       ".github/workflows/rocm-ci.yml:86",
+                                       ".github/workflows/rocm-ci.yml:91",
+                                       ".github/workflows/rocm-ci.yml:129",
+                                       ".github/workflows/rocm-ci.yml:165",
+                                       ".github/workflows/rocm-ci.yml:185",
+                                       "rocQuantum-main/tests/test_rocm_compatibility_contract.py:115"
                                    ],
-                      "notes":  "Container compile lane exists but runtime is currently skippable without /dev/kfd.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Self-hosted gfx90a runtime workflow is source-defined and contract-tested; real pass/fail artifacts still require an attached ROCm runner.",
+                      "status":  "Implemented",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "1ae04e5",
-                      "evidence_link":  ".github/workflows/rocm-ci.yml:79",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-ci.yml\u0027 job \u0027rocm-runtime-self-hosted\u0027 on a labeled gfx90a runner and attach artifacts."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  ".github/workflows/rocm-ci.yml:86",
+                      "verification_path":  "Run tests/test_rocm_compatibility_contract.py locally; run \u0027.github/workflows/rocm-ci.yml\u0027 job \u0027rocm-runtime-self-hosted\u0027 on a labeled gfx90a runner and attach artifacts."
                   },
                   {
                       "id":  "P0-CI-002",
@@ -43,14 +47,17 @@
                                     "CI artifact contains probe output"
                                 ],
                       "evidence":  [
-                                       ".github/workflows/rocm-linux-build.yml:106"
+                                       "rocQuantum-main/scripts/probe_rocm_runtime.sh:1",
+                                       ".github/workflows/rocm-ci.yml:129",
+                                       ".github/workflows/rocm-nightly.yml:53",
+                                       "rocQuantum-main/tests/test_rocm_compatibility_contract.py:93"
                                    ],
-                      "notes":  "Current workflow can skip runtime silently on generic runners.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Reusable ROCm runtime probe now checks hipcc, rocminfo, rocm-smi, and /dev/kfd before configure/build in self-hosted runtime lanes. Actual artifact capture still requires a ROCm runner.",
+                      "status":  "Implemented",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "1ae04e5",
-                      "evidence_link":  ".github/workflows/rocm-ci.yml:101",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-ci.yml\u0027 and verify probe logs plus /dev/kfd fail-fast behavior."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/scripts/probe_rocm_runtime.sh:1",
+                      "verification_path":  "Run tests/test_rocm_compatibility_contract.py locally; run \u0027.github/workflows/rocm-ci.yml\u0027 and verify rocm-runtime-probe.log plus /dev/kfd fail-fast behavior on a ROCm runner."
                   },
                   {
                       "id":  "P0-CI-003",
@@ -95,17 +102,20 @@
                                     "Gate parity tests for non-local target/control combinations"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:744",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:833",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:2139",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:2213"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:917",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:945",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:976",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:1051",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:1221",
+                                       "rocQuantum-main/tests/test_statevec_fastpath_contract.py:94",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:16"
                                    ],
-                      "notes":  "Correctness-first fallback is acceptable in P0; perf optimization deferred.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Non-local named single-qubit and controlled single-qubit/CNOT/CZ paths now localize touched qubits with rocsvSwapIndexBits, apply the local kernel, and restore the original layout; broader generic matrix cases still rely on the explicit host fallback. Performance optimization remains separate.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:744",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:945",
+                      "verification_path":  "Run rocQuantum-main/tests/test_statevec_fastpath_contract.py locally; run 2-rank non-local H/X/Y/Z/CNOT/CZ parity tests on a ROCm multi-GPU runner for hardware evidence."
                   },
                   {
                       "id":  "P0-STATEVEC-002",
@@ -124,19 +134,21 @@
                                     "Sampling distribution sanity checks"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3128",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3181",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3234",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3292",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3377",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3498"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3213",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3266",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3286",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3589",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3631",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3651",
+                                       "rocQuantum-main/tests/test_rccl_distributed_contract.py:90",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:21"
                                    ],
-                      "notes":  "Leverages existing gather helpers for correctness until collective path matures.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Distributed expectation and shot sampling now route through RCCL first, then an explicit opt-in host fallback that gathers the distributed state and computes host Pauli expectations or host shot samples. This is correctness/debug only; runtime parity still needs ROCm multi-GPU artifacts.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3128",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3266",
+                      "verification_path":  "Run rocQuantum-main/tests/test_rccl_distributed_contract.py locally; run distributed expectation and rocsvSample host-fallback smoke tests on a ROCm multi-GPU runner for hardware evidence."
                   },
                   {
                       "id":  "P0-DOCS-001",
@@ -156,17 +168,19 @@
                                 ],
                       "evidence":  [
                                        "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:7",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:31",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:95",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:12",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:29",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:38",
                                        "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:483",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:1953"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3253",
+                                       "rocQuantum-main/tests/test_statevec_fastpath_contract.py:94"
                                    ],
-                      "notes":  "Current doc is internally contradictory.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Guide now has a single behavior matrix, runtime switch table, and limitations table aligned with source-contract tests. Runtime validation remains tracked by separate ROCm CI items.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:7",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:12",
+                      "verification_path":  "Run tests/test_statevec_fastpath_contract.py, tests/test_rccl_distributed_contract.py, and tests/test_rocm_compatibility_contract.py; runtime behavior still requires ROCm self-hosted CI artifacts."
                   },
                   {
                       "id":  "P0-COMMS-001",
@@ -185,15 +199,20 @@
                                     "Integration test with forced host fallback"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:584",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/CMakeLists.txt:41"
+                                       "rocQuantum-main/rocquantum/include/rocquantum/hipStateVec.h:49",
+                                       "rocQuantum-main/rocquantum/include/rocquantum/hipStateVec.h:123",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:609",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:4383",
+                                       "rocQuantum-main/python/rocq/bindings.cpp:271",
+                                       "rocQuantum-main/tests/test_rccl_distributed_contract.py:51",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:40"
                                    ],
-                      "notes":  "Enables RCCL backend rollout without breaking call sites.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Runtime now exposes distributed backend introspection (`none`, `host_fallback`, `rccl`) while keeping existing explicit host fallback and optional RCCL paths unchanged. Real multi-GPU behavior still needs ROCm runner evidence.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:584",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/include/rocquantum/hipStateVec.h:49",
+                      "verification_path":  "Run rocQuantum-main/tests/test_rccl_distributed_contract.py locally; run distributed backend introspection plus host/RCCL A/B smoke tests on a ROCm multi-GPU runner."
                   },
                   {
                       "id":  "P0-PYAPI-001",
@@ -214,11 +233,11 @@
                                        "rocQuantum-main/rocquantum/backends/iqm.py:5"
                                    ],
                       "notes":  "Prevents user-facing exposure of placeholder backends as stable features.",
-                      "status":  "Blocked",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
                       "commit_link":  "unknown",
                       "evidence_link":  "rocQuantum-main/rocquantum/core.py:21",
-                      "verification_path":  "Land backend-status policy changes in rocquantum/core.py; run python-tests job and provider contract tests with credentials."
+                      "verification_path":  "Run tests/test_provider_backend_contract.py plus the full Python test suite; provider credential lanes remain required for real non-skeleton backends."
                   },
                   {
                       "id":  "P1-STATEVEC-003",
@@ -236,15 +255,20 @@
                                     "Stress tests for control-target locality permutations"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3688",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3725"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:930",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:977",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:5592",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:5665",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:7676",
+                                       "rocQuantum-main/tests/test_statevec_fastpath_contract.py:109",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:16"
                                    ],
-                      "notes":  "Depends on P0 comm abstraction and localization helpers.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Common non-local distributed multi-control paths now use swap-localization: controlled single-qubit/controlled-matrix 1x1, MCX, and CSWAP localize touched qubits, run existing local kernels, and restore layout. Broader high-arity generic controlled matrices remain bounded by explicit host fallback or future device kernels.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3688",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:5592",
+                      "verification_path":  "Run rocQuantum-main/tests/test_statevec_fastpath_contract.py locally; run 2-rank non-local controlled-matrix, MCX, and CSWAP parity tests on a ROCm multi-GPU runner."
                   },
                   {
                       "id":  "P1-COMMS-002",
@@ -263,14 +287,17 @@
                                 ],
                       "evidence":  [
                                        "rocQuantum-main/rocquantum/src/hipStateVec/CMakeLists.txt:41",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:31"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:803",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/swap_kernels.hip:129",
+                                       "rocQuantum-main/tests/test_rccl_distributed_contract.py:94",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:17"
                                    ],
-                      "notes":  "Requires deterministic fallback and comm-mode instrumentation first.",
-                      "status":  "Needs ROCm CI",
-                      "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/CMakeLists.txt:41",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "notes":  "RCCL communicators now cover supported local-domain reductions with ncclAllReduce and non-local distributed swap/remap with ncclSend/ncclRecv for rank/rank plus local/rank swaps. Host gather remap is no longer the default; it requires explicit host-fallback mode when RCCL is unavailable. Real A/B parity and timing artifacts still require a ROCm multi-GPU runner.",
+                      "status":  "Implemented",
+                      "pr_link":  "integration/rocm-validation-handoff",
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:803",
+                      "verification_path":  "Run rocQuantum-main/tests/test_rccl_distributed_contract.py locally; run 2-rank rank/rank and local/rank rocsvSwapIndexBits parity tests plus expectation/sample reduction tests on a ROCm multi-GPU runner and attach artifacts."
                   },
                   {
                       "id":  "P1-TN-001",
@@ -289,15 +316,18 @@
                                 ],
                       "evidence":  [
                                        "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet_api.h:7",
-                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:169",
-                                       "rocQuantum-main/rocquantum/src/hipTensorNet/CMakeLists.txt:10"
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:49",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:107",
+                                       "rocQuantum-main/python/rocq/bindings.cpp:60",
+                                       "rocQuantum-main/python/rocq/bindings.cpp:97",
+                                       "rocQuantum-main/tests/test_tensornet_contract.py:79"
                                    ],
-                      "notes":  "Current config API is richer than runtime behavior.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Runtime contraction planning now uses an effective pathfinder algorithm: unavailable METIS/KAHYPAR requests fall back to GREEDY, and the Python binding emits an explicit warning that points callers to get_tensornet_capabilities(). Real METIS/KAHYPAR library integration remains P1-TN-002.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet_api.h:7",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:49",
+                      "verification_path":  "Run rocQuantum-main/tests/test_tensornet_contract.py locally; run TensorNet contraction fallback smoke tests on a ROCm runner for hardware evidence."
                   },
                   {
                       "id":  "P1-TN-002",
@@ -315,15 +345,17 @@
                                     "Runtime fallback behavior tests"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/Pathfinder.cpp:326",
-                                       "rocQuantum-main/rocquantum/src/Pathfinder.cpp:339"
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/CMakeLists.txt:30",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:14",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:132",
+                                       "rocQuantum-main/tests/test_tensornet_contract.py:95"
                                    ],
-                      "notes":  "Requires integration of Pathfinder sources into tensornet build.",
-                      "status":  "Needs ROCm CI",
-                      "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/Pathfinder.cpp:326",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "notes":  "TensorNet now has an explicit ROCQUANTUM_TENSORNET_ENABLE_METIS build option. When enabled, CMake requires METIS headers/library before defining HAS_METIS; runtime contraction planning calls METIS_PartGraphKway for partition-biased pair selection. When METIS support is absent, requested METIS continues to fall back cleanly to GREEDY with Python warnings and capability metadata.",
+                      "status":  "Implemented",
+                      "pr_link":  "integration/rocm-validation-handoff",
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipTensorNet/CMakeLists.txt:30",
+                      "verification_path":  "Run rocQuantum-main/tests/test_tensornet_contract.py locally; build TensorNet with ROCQUANTUM_TENSORNET_ENABLE_METIS=OFF and ON against a METIS install, then run TensorNet contraction regression on a ROCm runner."
                   },
                   {
                       "id":  "P1-TN-003",
@@ -341,15 +373,19 @@
                                     "Contraction correctness regression for each supported dtype"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:308",
-                                       "rocQuantum-main/python/rocq/bindings.cpp:13"
+                                       "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet.h:22",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:466",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:566",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/rocTensorUtil.cpp:252",
+                                       "rocQuantum-main/python/rocq/bindings.cpp:13",
+                                       "rocQuantum-main/tests/test_tensornet_contract.py:54"
                                    ],
-                      "notes":  "C32/mixed precision remains P2 due kernel/template coverage uncertainty.",
-                      "status":  "Needs ROCm CI",
-                      "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:308",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "notes":  "C64 remains the default build lane; C128 is accepted in ROCQ_PRECISION_DOUBLE builds and now dispatches TensorNet GEMM/SVD through double-complex rocBLAS/rocSOLVER routines. C32 and mixed precision remain P2.",
+                      "status":  "Implemented",
+                      "pr_link":  "integration/rocm-validation-handoff",
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipTensorNet/rocTensorUtil.cpp:252",
+                      "verification_path":  "Run rocQuantum-main/tests/test_tensornet_contract.py locally; run TensorNet contraction/SVD dtype smoke tests for C64 and ROCQ_PRECISION_DOUBLE C128 builds on a ROCm runner."
                   },
                   {
                       "id":  "P1-COMPILER-001",
@@ -369,14 +405,16 @@
                                 ],
                       "evidence":  [
                                        "rocQuantum-main/rocqCompiler/MLIRCompiler.cpp:83",
-                                       "rocQuantum-main/bindings.cpp:22"
+                                       "rocQuantum-main/rocq/kernel.py:228",
+                                       "rocQuantum-main/tests/test_p1_compiler.py:73",
+                                       "rocQuantum-main/tests/test_runtime_api_contract.py:159"
                                    ],
-                      "notes":  "Depends on stable hipStateVec gate backend semantics.",
-                      "status":  "Blocked",
+                      "notes":  "MVP Python and source-contract path is implemented; real ROCm runtime validation is still required for hardware evidence.",
+                      "status":  "Implemented",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "pending-local-commit",
-                      "evidence_link":  "rocQuantum-main/rocqCompiler/MLIRCompiler.cpp:83",
-                      "verification_path":  "Implement compile_and_execute runtime path; run tests.test_e2e_compiler_python_flows in \u0027.github/workflows/rocm-linux-build.yml\u0027 build job on ROCm host (/dev/kfd)."
+                      "commit_link":  "3253fcd",
+                      "evidence_link":  "rocQuantum-main/rocq/kernel.py:228",
+                      "verification_path":  "Run tests/test_p1_compiler.py, tests/test_runtime_api_contract.py, and tests/test_e2e_compiler_python_flows.py locally; run the same compile_and_execute path on a ROCm host (/dev/kfd) for hardware evidence."
                   },
                   {
                       "id":  "P1-PYAPI-002",
@@ -394,15 +432,17 @@
                                     "Docs examples for capability-driven selection"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/core.py:13",
-                                       "rocQuantum-main/tests/test_iqm_backend.py:1"
+                                       "rocQuantum-main/rocquantum/core.py:56",
+                                       "rocQuantum-main/rocq_cli.py:48",
+                                       "rocQuantum-main/tests/test_provider_backend_contract.py:17",
+                                       "rocQuantum-main/tests/test_p0_fixes.py:397"
                                    ],
-                      "notes":  "Improves user expectation management and error clarity.",
-                      "status":  "Blocked",
+                      "notes":  "Backend status metadata is exposed through list_backends() and rocq list-backends; skeleton providers remain opt-in only.",
+                      "status":  "Implemented",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "pending-local-commit",
-                      "evidence_link":  "rocQuantum-main/rocquantum/core.py:13",
-                      "verification_path":  "Land backend-status policy changes in rocquantum/core.py; run python-tests job and provider contract tests with credentials."
+                      "commit_link":  "9a0b664+d7a0859",
+                      "evidence_link":  "rocQuantum-main/rocquantum/core.py:56",
+                      "verification_path":  "Run tests/test_provider_backend_contract.py and tests/test_p0_fixes.py; provider credential lanes remain required for real non-skeleton backends."
                   },
                   {
                       "id":  "P2-STATEVEC-004",
@@ -420,15 +460,18 @@
                                     "Deterministic correctness regression"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:483",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:527"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3443",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3656",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3885",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:8197",
+                                       "rocQuantum-main/tests/test_rccl_distributed_contract.py:82"
                                    ],
-                      "notes":  "Depends on P1 RCCL backend completion.",
+                      "notes":  "P1 RCCL backend is now present. Pauli expectation/sample reductions, local-domain dense matrix expectation, and rank-local distributed CSR sparse moments avoid full host state gather by reducing per-rank device results through ncclAllReduce; sparse moments still host-stage CSR slicing before per-rank uploads. Non-local 1-4 target generic dense matrix apply now uses swap-localization before the explicit host fallback, distributed_reduction_benchmark emits dense_expectation_ms, sparse_moments_ms, and generic_matrix_ms for RCCL-vs-host artifacts, and the release benchmark runner summarizes host-fallback-over-RCCL speedup ratios in JSON and Markdown job-summary artifacts when both cases run. Configured speedup thresholds now fail the benchmark job through --fail-on-error, optional --baseline-summary / --max-speedup-regression gates previous-run trend regressions, optional --history-path updates bounded benchmark-history.json, and self-hosted ROCm workflows restore/save previous benchmark summaries and histories through actions/cache; broad non-local sparse distributed reductions and measured speedups still need ROCm multi-GPU CI artifacts.",
                       "status":  "Needs ROCm CI",
                       "pr_link":  "unknown",
                       "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:483",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3656",
+                      "verification_path":  "Run rocQuantum-main/tests/test_rccl_distributed_contract.py and rocQuantum-main/tests/test_benchmark_release_contract.py locally; run distributed Pauli, sample/probabilities, local-domain dense matrix expectation, rank-local sparse CSR moments, generic dense matrix apply parity, and distributed_reduction_benchmark on a ROCm multi-GPU runner."
                   },
                   {
                       "id":  "P2-TN-004",
@@ -446,15 +489,18 @@
                                     "Numerical stability checks across precisions"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet_api.h:35",
-                                       "rocQuantum-main/rocquantum/src/Pathfinder.cpp:331"
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/rocTensorUtil.cpp:151",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:447",
+                                       "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet_api.h:28",
+                                       "rocQuantum-main/tests/test_tensornet_contract.py:83",
+                                       "rocQuantum-main/README.md:95"
                                    ],
-                      "notes":  "Requires stabilized P1 optimizer dispatch and dtype support.",
-                      "status":  "Needs ROCm CI",
-                      "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet_api.h:35",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "notes":  "TensorNet pair contractions now pass memory_limit_bytes/num_slices into rocTensorContractPair_internal, which deterministically splits the contracted GEMM K dimension and accumulates slices. Capability metadata reports this limited runtime slicing support. The mixed-precision lane remains explicitly documented as build-scoped C64/C128 today with future conversion/accumulation policy required before simultaneous runtime mixed precision.",
+                      "status":  "Implemented",
+                      "pr_link":  "integration/rocm-validation-handoff",
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipTensorNet/rocTensorUtil.cpp:151",
+                      "verification_path":  "Run rocQuantum-main/tests/test_tensornet_contract.py locally; run TensorNet contraction regression plus SlicingLogicTest in C64 and ROCQ_PRECISION_DOUBLE C128 builds on a ROCm runner for numerical stability evidence."
                   }
               ]
 }

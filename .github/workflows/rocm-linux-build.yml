@@ -35,7 +35,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-          pip install numpy scipy
+          pip install numpy scipy pytest
 
       - name: Installability Smoke Test
         run: |
@@ -47,9 +47,14 @@ jobs:
           python -m unittest tests.test_p0_fixes -v
           python -m unittest tests.test_p1_compiler -v
           python -m unittest tests.test_p2_packaging -v
+          python -m unittest tests.test_runtime_api_contract -v
+          python -m unittest tests.test_legacy_python_api -v
+          python -m unittest tests.test_statevec_fastpath_contract -v
           python -m unittest tests.test_cirq_integration -v
           python -m unittest tests.test_pennylane_integration -v
           python -m unittest tests.test_cpp_expectation -v
+          python -m unittest tests.test_benchmark_release_contract -v
+          python -m unittest tests.test_rocm_compatibility_contract -v
 
   build:
     name: Build ROCm ${{ matrix.rocm_label }}
@@ -61,8 +66,8 @@ jobs:
             rocm_label: "6.2.2"
             experimental: false
             hip_architectures: "gfx942;gfx90a"
-          - rocm_image: rocm/dev-ubuntu-22.04:7.2.0
-            rocm_label: "7.2.0"
+          - rocm_image: rocm/dev-ubuntu-22.04:7.2.4
+            rocm_label: "7.2.4"
             experimental: true
             hip_architectures: "gfx950;gfx942;gfx90a"
     continue-on-error: ${{ matrix.experimental }}
@@ -104,6 +109,19 @@ jobs:
       - name: Build
         run: cmake --build build-ci --parallel
 
+      - name: Validate CMake install-tree consumer
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-linux-build-${{ matrix.rocm_label }}
+        run: |
+          set -o pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          export CMAKE_HIP_COMPILER="$(command -v hipcc)"
+          export CMAKE_HIP_ARCHITECTURES="${{ matrix.hip_architectures }}"
+          export ROCQUANTUM_INSTALL_PREFIX="${ARTIFACT_DIR}/install-prefix"
+          export ROCQUANTUM_INSTALL_CONSUMER_BUILD_DIR="${ARTIFACT_DIR}/install-consumer-build"
+          bash scripts/validate_cmake_install_consumer.sh build-ci \
+            2>&1 | tee "${ARTIFACT_DIR}/cmake-install-consumer.log"
+
       - name: Run hipTensorNet Contraction Regression
         run: |
           if [ ! -e /dev/kfd ]; then
@@ -111,3 +129,28 @@ jobs:
             exit 0
           fi
           ctest --test-dir build-ci --output-on-failure -R HipTensorNetContractionRegression
+
+      - name: Run release benchmark registry
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-linux-build-${{ matrix.rocm_label }}
+        run: |
+          set -o pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          python3 benchmarks/run_release_benchmarks.py \
+            --build-dir build-ci \
+            --output-dir "${ARTIFACT_DIR}/benchmark-artifacts" \
+            --fail-on-error \
+            2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" ]; then
+            cat "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload ROCm build benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocm-linux-build-${{ matrix.rocm_label }}-${{ github.run_id }}
+          path: ci-artifacts/rocm-linux-build-${{ matrix.rocm_label }}
+          if-no-files-found: warn
+          retention-days: 14

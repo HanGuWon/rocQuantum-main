@@ -1,24 +1,26 @@
 # Validation Results
 
-- Date/time: 2026-02-21T03:14:19+09:00
+- Date/time: 2026-06-10T12:00:00+09:00
 - Runner details:
-  - Local runner: Windows PowerShell host; no ROCm runtime; `cmake 3.27.7`; `python`/`py` missing.
+  - Local runner: Windows PowerShell host; no ROCm runtime; Python `3.11.15`; `cmake`, `ninja`, and `hipcc` not available.
   - ROCm CI target runners:
     - `.github/workflows/rocm-ci.yml` self-hosted labels `self-hosted,linux,x64,rocm,rocm-gpu,gfx90a`.
     - `.github/workflows/rocm-nightly.yml` self-hosted labels `self-hosted,linux,x64,rocm,rocm-multigpu`.
-    - `.github/workflows/rocm-linux-build.yml` container lanes `6.2.2` and `7.2.0`.
-  - ROCm policy target: minimum `6.2.2`, latest stable lane `7.2.0`, primary arch `gfx90a`.
+    - `.github/workflows/rocm-linux-build.yml` container lanes `6.2.2` and experimental/latest `7.2.4`.
+  - ROCm policy target: minimum `6.2.2`, latest production lane `7.2.4`, Tier 1 archs `gfx950`, `gfx942`, `gfx90a`.
 - Summary: pass/fail/blocked
-  - Local validated (source/doc/workflow inspection): 8
-  - Local execution blocked (missing runtime/toolchain on this host): 7
+  - Local Python unit/adapter tests executed: 53 passing checks across unittest/pytest invocations.
+  - Local native execution blocked: ROCm runtime/toolchain is not installed on this host.
   - ROCm CI jobs executed in this session: 0
-  - Historical external ROCm CI evidence reviewed: 1 failed public run
+  - Historical external ROCm CI evidence retained for context only.
 
 ## Local Validation (This Session)
 - `BACKLOG.json` schema parse: pass.
 - Required handoff files exist: pass.
 - Workflow syntax review and command-path review: pass.
 - Compiler/Python/hipStateVec/hipTensorNet behavior mapping from source: pass.
+- `python -m unittest tests.test_p0_fixes tests.test_p1_compiler tests.test_p2_packaging tests.test_runtime_api_contract tests.test_cpp_expectation -v`: pass, 46 tests.
+- `python -m pytest -q tests/test_cirq_integration.py tests/test_pennylane_integration.py`: pass, 7 tests.
 - Runtime execution on GPU hardware: blocked (no ROCm runtime host in this session).
 
 ## ROCm CI Validation
@@ -36,10 +38,8 @@
   - Outcome: failed configure/build in ROCm matrix lane.
 
 ## Failure/Blocker Excerpts
-- `docs/validation/agent6_local_env.log:6`
-  - Excerpt: `INFO: Could not find files for the given pattern(s).`
-- `docs/validation/agent6_local_env.log:20`
-  - Excerpt: `'python' is not recognized as an internal or external command`
+- Local ROCm toolchain probe:
+  - Excerpt: `cmake`, `ninja`, and `hipcc` were not available in the Windows shell.
 - `rocQuantum-main/rocqCompiler/MLIRCompiler.cpp:87`
   - Excerpt: `compile_and_execute() is not yet implemented.`
 - `.github/workflows/rocm-linux-build.yml:107`

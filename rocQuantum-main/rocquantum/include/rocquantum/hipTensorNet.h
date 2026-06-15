@@ -1,6 +1,7 @@
 #ifndef HIP_TENSOR_NET_H
 #define HIP_TENSOR_NET_H
 
+#include "rocquantum/hipTensorNet_api.h"
 #include "rocquantum/rocTensorUtil.h" // For rocTensor, rocqStatus_t, rocDataType_t, rocComplex, etc.
 #include "rocquantum/rocWorkspaceManager.h"
 #include <vector>
@@ -17,13 +18,22 @@ typedef enum {
 } rocDataType_t;
 #endif
 
+#ifdef __cplusplus
+#ifdef ROCQ_PRECISION_DOUBLE
+static constexpr rocDataType_t ROC_TENSORNET_COMPILED_COMPLEX_DTYPE = ROC_DATATYPE_C128;
+#else
+static constexpr rocDataType_t ROC_TENSORNET_COMPILED_COMPLEX_DTYPE = ROC_DATATYPE_C64;
+#endif
+#else
+#ifdef ROCQ_PRECISION_DOUBLE
+#define ROC_TENSORNET_COMPILED_COMPLEX_DTYPE ROC_DATATYPE_C128
+#else
+#define ROC_TENSORNET_COMPILED_COMPLEX_DTYPE ROC_DATATYPE_C64
+#endif
+#endif
+
 // Opaque handle for the TensorNetwork object from the C API
 typedef struct rocTnStruct* rocTensorNetworkHandle_t;
-
-// Forward declarations from the C-API section might be needed if hipTensorNetContractionOptimizerConfig_t is defined there
-// Assuming hipTensorNetContractionOptimizerConfig_t is defined elsewhere and available
-struct hipTensorNetContractionOptimizerConfig_t;
-
 
 #ifdef __cplusplus
 namespace rocquantum {
@@ -74,7 +84,7 @@ public:
                           rocblas_handle blas_handle,
                           hipStream_t stream) override;
 
-    rocDataType_t data_type() const override { return ROC_DATATYPE_C64; }
+    rocDataType_t data_type() const override { return ROC_TENSORNET_COMPILED_COMPLEX_DTYPE; }
 
     const std::vector<rocquantum::util::rocTensor>& get_initial_tensors() const {
         return initial_tensors_;
@@ -125,6 +135,11 @@ extern "C" {
  * @return rocqStatus_t Status of the operation.
  */
 rocqStatus_t rocTensorNetworkCreate(rocTensorNetworkHandle_t* handle, rocDataType_t dtype);
+
+/**
+ * @brief Reports dtype, optimizer, and slicing capabilities for this build.
+ */
+rocqStatus_t rocTensorNetworkGetCapabilities(hipTensorNetCapabilities_t* capabilities);
 
 /**
  * @brief Destroys a tensor network handle and releases associated resources.

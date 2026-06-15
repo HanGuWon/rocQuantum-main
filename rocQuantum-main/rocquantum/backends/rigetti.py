@@ -11,9 +11,16 @@ retrieval for Rigetti QPUs.
 
 import os
 
-import boto3
-from botocore.exceptions import ClientError
 from typing import Dict, Any
+
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+except ImportError:  # pragma: no cover - exercised in environments without boto3
+    boto3 = None
+
+    class ClientError(Exception):
+        """Fallback type used when botocore is not installed."""
 
 from .base import (
     RocqBackend,
@@ -64,12 +71,29 @@ class RigettiBackend(RocqBackend):
                                         due to missing credentials or other
                                         configuration issues.
         """
+        if boto3 is None:
+            raise BackendAuthenticationError(
+                "AWS Braket support requires the optional 'boto3' and "
+                "'botocore' dependencies. Install rocQuantum with the "
+                "Rigetti backend extras or install boto3 directly."
+            )
+
         try:
-            self.braket_client = boto3.client("braket", region_name=self.aws_region)
+            session = boto3.Session(region_name=self.aws_region)
+            if session.get_credentials() is None:
+                raise BackendAuthenticationError(
+                    "AWS Braket authentication failed: no AWS credentials were "
+                    "found. Configure AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, "
+                    "a shared credentials file, or an IAM role."
+                )
+
+            self.braket_client = session.client("braket")
             # A simple check to confirm client was created
             if self.braket_client is None:
                  raise ClientError({}, "Boto3 client creation failed")
             print("AWS Braket client created successfully.")
+        except BackendAuthenticationError:
+            raise
         except ClientError as e:
             raise BackendAuthenticationError(
                 f"AWS Braket authentication failed: {e}. Ensure your AWS "

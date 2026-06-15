@@ -26,10 +26,18 @@ _DEVICE_PATH = os.path.join(
 
 
 class _FakeOperation:
-    def __init__(self, name, wires, matrix=None):
+    def __init__(self, name, wires, matrix=None, parameters=None):
         self.name = name
         self.wires = list(wires)
         self.matrix = np.asarray(matrix, dtype=np.complex128) if matrix is not None else None
+        self.parameters = list(parameters or [])
+
+
+class _FakeObservable:
+    def __init__(self, name, wires=None, operands=None):
+        self.name = name
+        self.wires = list(wires or [])
+        self.operands = tuple(operands or ())
 
 
 class _FakeQSim:
@@ -39,10 +47,15 @@ class _FakeQSim:
         self.num_qubits = num_qubits
         self.applied_gates = []
         self.executed = False
+        self.measured = []
+        self.expectations = []
         _FakeQSim.instances.append(self)
 
     def ApplyGate(self, gate, *indices):
         self.applied_gates.append((gate, tuple(indices)))
+
+    def apply_matrix(self, matrix, targets):
+        self.applied_gates.append((np.asarray(matrix, dtype=np.complex128), tuple(targets)))
 
     def Execute(self):
         self.executed = True
@@ -53,10 +66,22 @@ class _FakeQSim:
         out[0] = 1.0 + 0.0j
         return out
 
+    def measure(self, qubits, shots):
+        self.measured.append((tuple(qubits), int(shots)))
+        return [0, 1, 3, 0][: int(shots)]
+
+    def expectation_pauli_string(self, pauli_string, targets):
+        self.expectations.append((pauli_string, tuple(targets)))
+        return 0.25
+
 
 def _build_fake_pennylane_modules():
     qml = types.ModuleType("pennylane")
+    measurements_mod = types.ModuleType("pennylane.measurements")
     operation_mod = types.ModuleType("pennylane.operation")
+
+    class MeasurementProcess:
+        pass
 
     class Operation:
         pass
@@ -78,25 +103,33 @@ def _build_fake_pennylane_modules():
                 reduced = reduced.sum(axis=axis)
             return reduced.reshape(-1)
 
+        def expval(self, observable, shot_range=None, bin_size=None):
+            return 1.0
+
+        def var(self, observable, shot_range=None, bin_size=None):
+            return 0.0
+
     def _matrix(op):
         return np.asarray(op.matrix, dtype=np.complex128)
 
+    measurements_mod.MeasurementProcess = MeasurementProcess
     operation_mod.Operation = Operation
     qml.QubitDevice = QubitDevice
     qml.matrix = _matrix
-    return qml, operation_mod
+    return qml, measurements_mod, operation_mod
 
 
 def _load_device_module():
     fake_bind = types.ModuleType("rocquantum_bind")
     fake_bind.QSim = _FakeQSim
-    qml, operation_mod = _build_fake_pennylane_modules()
+    qml, measurements_mod, operation_mod = _build_fake_pennylane_modules()
     module_name = "test_pennylane_adapter_module"
 
     with mock.patch.dict(
         sys.modules,
         {
             "pennylane": qml,
+            "pennylane.measurements": measurements_mod,
             "pennylane.operation": operation_mod,
             "rocquantum_bind": fake_bind,
         },
@@ -117,13 +150,13 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
 
     def test_apply_dispatches_named_and_matrix_ops(self):
         module = _load_device_module()
-        device = module.RocQDevice(wires=[0, 1], shots=5)
+        device = module.RocQDevice(wires=[0, 1], shots=None)
 
         matrix = np.array([[0, 1], [1, 0]], dtype=np.complex128)
         operations = [
             _FakeOperation("Hadamard", [0]),
             _FakeOperation("CNOT", [0, 1]),
-            _FakeOperation("RX", [1], matrix=matrix),
+            _FakeOperation("RX", [1], matrix=matrix, parameters=[0.123]),
         ]
 
         device.apply(operations)
@@ -137,6 +170,29 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
         self.assertTrue(qsim.executed)
         self.assertEqual(len(device.state), 4)
 
+    def test_apply_dispatches_common_matrix_fallback_ops(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0, 1], shots=5)
+
+        matrix = np.eye(4, dtype=np.complex128)
+        operations = [
+            _FakeOperation("ControlledPhaseShift", [0, 1], matrix=matrix),
+            _FakeOperation("IsingXX", [0, 1], matrix=matrix),
+            _FakeOperation("CRot", [0, 1], matrix=matrix),
+            _FakeOperation("CH", [0, 1], matrix=matrix),
+            _FakeOperation("CY", [0, 1], matrix=matrix),
+            _FakeOperation("MultiRZ", [0, 1], matrix=matrix),
+            _FakeOperation("PSWAP", [0, 1], matrix=matrix),
+            _FakeOperation("ECR", [0, 1], matrix=matrix),
+        ]
+
+        device.apply(operations)
+        qsim = _FakeQSim.instances[-1]
+
+        self.assertEqual([indices for _, indices in qsim.applied_gates], [(0, 1)] * len(operations))
+        for applied_matrix, _ in qsim.applied_gates:
+            np.testing.assert_allclose(applied_matrix, matrix)
+
     def test_unsupported_operation_raises(self):
         module = _load_device_module()
         device = module.RocQDevice(wires=[0], shots=2)
@@ -144,10 +200,35 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             device.apply([_FakeOperation("FooGate", [0])])
 
-    def test_generate_samples_returns_binary_rows(self):
+    def test_generate_samples_uses_native_measure_when_available(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0, 1], shots=4)
+
+        samples = device.generate_samples()
+        qsim = _FakeQSim.instances[-1]
+
+        self.assertEqual(samples.shape, (4, 2))
+        self.assertEqual(qsim.measured, [((0, 1), 4)])
+        np.testing.assert_array_equal(samples[1], np.array([1, 0], dtype=int))
+        np.testing.assert_array_equal(samples[2], np.array([1, 1], dtype=int))
+        self.assertTrue(set(np.unique(samples)).issubset({0, 1}))
+
+    def test_generate_samples_accepts_shots_objects(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0, 1], shots=4)
+        device.shots = types.SimpleNamespace(total_shots=4)
+
+        samples = device.generate_samples()
+        qsim = _FakeQSim.instances[-1]
+
+        self.assertEqual(samples.shape, (4, 2))
+        self.assertEqual(qsim.measured, [((0, 1), 4)])
+
+    def test_generate_samples_falls_back_to_statevector_sampling_for_legacy_bindings(self):
         module = _load_device_module()
         device = module.RocQDevice(wires=[0, 1], shots=4)
         device._state = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.complex128)
+        device.sim.measure = None
 
         with mock.patch("numpy.random.multinomial", return_value=np.array([1, 2, 1, 0], dtype=int)):
             samples = device.generate_samples()
@@ -161,9 +242,48 @@ class TestPennyLaneAdapterRuntime(unittest.TestCase):
         amp = 1.0 / np.sqrt(2.0)
         device._state = np.array([0.0, amp, amp, 0.0], dtype=np.complex128)
 
+        full_probs = device.analytic_probability(wires=[0, 1])
+        np.testing.assert_allclose(full_probs, np.array([0.0, 0.5, 0.5, 0.0]))
+
         subset_probs = device.analytic_probability(wires=[0])
         self.assertEqual(len(subset_probs), 2)
         self.assertAlmostEqual(float(np.sum(subset_probs)), 1.0)
+
+    def test_expval_uses_native_pauli_expectation_when_available(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0, 1], shots=None)
+
+        obs = _FakeObservable(
+            "Prod",
+            wires=[0, 1],
+            operands=[
+                _FakeObservable("PauliZ", wires=[0]),
+                _FakeObservable("PauliX", wires=[1]),
+            ],
+        )
+
+        self.assertEqual(device.expval(obs), 0.25)
+        self.assertEqual(_FakeQSim.instances[-1].expectations, [("ZX", (0, 1))])
+
+    def test_expval_falls_back_after_diagonalizing_rotations(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0], shots=None)
+
+        matrix = np.array([[0, 1], [1, 0]], dtype=np.complex128)
+        device.apply([], rotations=[_FakeOperation("QubitUnitary", [0], matrix=matrix)])
+        obs = _FakeObservable("PauliZ", wires=[0])
+
+        self.assertEqual(device.expval(obs), 1.0)
+        self.assertEqual(_FakeQSim.instances[-1].expectations, [])
+
+    def test_var_uses_native_pauli_expectation_when_available(self):
+        module = _load_device_module()
+        device = module.RocQDevice(wires=[0], shots=None)
+
+        obs = _FakeObservable("PauliZ", wires=[0])
+
+        self.assertEqual(device.var(obs), 0.9375)
+        self.assertEqual(_FakeQSim.instances[-1].expectations, [("Z", (0,))])
 
 
 if __name__ == "__main__":

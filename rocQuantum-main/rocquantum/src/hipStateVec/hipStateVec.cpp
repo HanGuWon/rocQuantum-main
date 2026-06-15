@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cmath>
 #include <complex>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -17,6 +18,14 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#ifdef ROCQ_HAVE_RCCL
+#if __has_include(<rccl/rccl.h>)
+#include <rccl/rccl.h>
+#else
+#include <nccl.h>
+#endif
+#endif
 
 // Kernels implemented in the corresponding .hip translation units.
 __global__ void apply_single_qubit_matrix_kernel(rocComplex* state,
@@ -28,6 +37,12 @@ __global__ void apply_single_qubit_matrix_kernel(rocComplex* state,
                                                  rocComplex m11,
                                                  size_t batchSize);
 
+__global__ void apply_single_qubit_matrix_batch_kernel(rocComplex* state,
+                                                       unsigned numQubits,
+                                                       unsigned targetQubit,
+                                                       const rocComplex* matrices,
+                                                       size_t batchSize);
+
 __global__ void apply_controlled_single_qubit_matrix_kernel(rocComplex* state,
                                                             unsigned numQubits,
                                                             unsigned controlQubit,
@@ -37,6 +52,23 @@ __global__ void apply_controlled_single_qubit_matrix_kernel(rocComplex* state,
                                                             rocComplex m10,
                                                             rocComplex m11,
                                                             size_t batchSize);
+
+__global__ void apply_multi_controlled_single_qubit_matrix_kernel(rocComplex* state,
+                                                                  unsigned numQubits,
+                                                                  unsigned long long controlMask,
+                                                                  unsigned targetQubit,
+                                                                  rocComplex m00,
+                                                                  rocComplex m01,
+                                                                  rocComplex m10,
+                                                                  rocComplex m11,
+                                                                  size_t batchSize);
+
+__global__ void apply_controlled_single_qubit_matrix_batch_kernel(rocComplex* state,
+                                                                  unsigned numQubits,
+                                                                  unsigned controlQubit,
+                                                                  unsigned targetQubit,
+                                                                  const rocComplex* matrices,
+                                                                  size_t batchSize);
 
 __global__ void apply_CNOT_kernel(rocComplex* state,
                                   unsigned numQubits,
@@ -121,6 +153,9 @@ __global__ void accumulate_sample_probabilities_kernel(const rocComplex* state,
 __global__ void reduce_double_sum_kernel(const double* input,
                                          size_t numElements,
                                          double* output);
+__global__ void reduce_complex_block_sums_to_double_pair_kernel(const rocComplex* input,
+                                                                size_t numElements,
+                                                                double* outputPair);
 
 __global__ void build_sampling_cdf_kernel(double* outcomeProbs,
                                           size_t numOutcomes);
@@ -151,6 +186,16 @@ __global__ void local_bit_swap_permutation_kernel(rocComplex* d_local_slice,
                                                   size_t local_slice_num_elements,
                                                   unsigned local_qubit_idx1,
                                                   unsigned local_qubit_idx2);
+__global__ void pack_local_global_swap_kernel(const rocComplex* d_local_slice,
+                                              rocComplex* d_packed_buffer,
+                                              size_t packed_elements,
+                                              unsigned local_qubit_idx,
+                                              unsigned rank_bit_value);
+__global__ void unpack_local_global_swap_kernel(rocComplex* d_local_slice,
+                                                const rocComplex* d_packed_buffer,
+                                                size_t packed_elements,
+                                                unsigned local_qubit_idx,
+                                                unsigned rank_bit_value);
 
 struct rocsvInternalHandle {
     hipStream_t streams[1];
@@ -177,6 +222,10 @@ struct rocsvInternalHandle {
     std::vector<rocComplex*> distributedSwapBuffers;
     std::vector<unsigned*> distributedTargetScratch;
     std::vector<rocComplex*> distributedMatrixScratch;
+#ifdef ROCQ_HAVE_RCCL
+    std::vector<ncclComm_t> distributedComms;
+    bool distributedRcclReady = false;
+#endif
 };
 
 namespace {
@@ -238,6 +287,51 @@ inline std::complex<double> to_std_complex(const rocComplex& value) {
 
 inline rocComplex from_std_complex(const std::complex<double>& value) {
     return make_complex(value.real(), value.imag());
+}
+
+inline bool env_flag_enabled(const char* name) {
+    const char* value = std::getenv(name);
+    if (!value) {
+        return false;
+    }
+    std::string normalized(value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on";
+}
+
+inline bool allow_host_matrix_fallback() {
+    return env_flag_enabled("ROCQ_ALLOW_HOST_MATRIX_FALLBACK");
+}
+
+inline bool env_mode_equals(const char* name, const char* expected) {
+    const char* value = std::getenv(name);
+    if (!value) {
+        return false;
+    }
+    std::string normalized(value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return normalized == expected;
+}
+
+inline bool distributed_host_fallback_enabled() {
+    return env_mode_equals("ROCQ_DISTRIBUTED_FALLBACK_MODE", "host") ||
+           env_mode_equals("ROCQ_DISTRIBUTED_FALLBACK_MODE", "host_fallback") ||
+           env_flag_enabled("ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK");
+}
+
+inline bool distributed_rccl_required() {
+    return env_mode_equals("ROCQ_DISTRIBUTED_COMM", "rccl") ||
+           env_flag_enabled("ROCQ_REQUIRE_RCCL");
+}
+
+inline bool distributed_rccl_disabled() {
+    return env_mode_equals("ROCQ_DISTRIBUTED_COMM", "host") ||
+           env_mode_equals("ROCQ_DISTRIBUTED_COMM", "none") ||
+           env_flag_enabled("ROCQ_DISABLE_RCCL");
 }
 
 inline rocqStatus_t default_device_malloc(void** ptr, size_t bytes) {
@@ -373,6 +467,10 @@ inline bool distributed_qubit_local(const rocsvInternalHandle* handle, unsigned 
     return handle && qubit < handle->numLocalQubitsPerGpu;
 }
 
+inline bool distributed_qubit_global(const rocsvInternalHandle* handle, unsigned qubit) {
+    return handle && qubit >= handle->numLocalQubitsPerGpu && qubit < handle->globalNumQubits;
+}
+
 inline bool distributed_all_qubits_local(const rocsvInternalHandle* handle,
                                          const std::vector<unsigned>& qubits) {
     if (!handle) {
@@ -402,6 +500,10 @@ inline void reset_distributed_metadata(rocsvInternalHandle* handle) {
     handle->distributedSwapBuffers.clear();
     handle->distributedTargetScratch.clear();
     handle->distributedMatrixScratch.clear();
+#ifdef ROCQ_HAVE_RCCL
+    handle->distributedComms.clear();
+    handle->distributedRcclReady = false;
+#endif
 }
 
 inline rocqStatus_t sync_distributed_streams(rocsvInternalHandle* handle) {
@@ -424,9 +526,48 @@ inline rocqStatus_t sync_distributed_streams(rocsvInternalHandle* handle) {
     return ROCQ_STATUS_SUCCESS;
 }
 
+inline rocqStatus_t clear_distributed_rccl_comms(rocsvInternalHandle* handle) {
+#ifdef ROCQ_HAVE_RCCL
+    if (!handle) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    int original_device = 0;
+    const bool have_original_device = (hipGetDevice(&original_device) == hipSuccess);
+    for (size_t rank = 0; rank < handle->distributedComms.size(); ++rank) {
+        if (rank < handle->distributedDeviceIds.size() &&
+            hipSetDevice(handle->distributedDeviceIds[rank]) != hipSuccess) {
+            if (have_original_device) {
+                (void)hipSetDevice(original_device);
+            }
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        ncclComm_t comm = handle->distributedComms[rank];
+        if (comm && ncclCommDestroy(comm) != ncclSuccess) {
+            if (have_original_device) {
+                (void)hipSetDevice(original_device);
+            }
+            return ROCQ_STATUS_RCCL_ERROR;
+        }
+    }
+    if (have_original_device) {
+        (void)hipSetDevice(original_device);
+    }
+    handle->distributedComms.clear();
+    handle->distributedRcclReady = false;
+#else
+    (void)handle;
+#endif
+    return ROCQ_STATUS_SUCCESS;
+}
+
 inline rocqStatus_t clear_distributed_state_storage(rocsvInternalHandle* handle) {
     if (!handle) {
         return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocqStatus_t comm_status = clear_distributed_rccl_comms(handle);
+    if (comm_status != ROCQ_STATUS_SUCCESS) {
+        return comm_status;
     }
 
     int original_device = 0;
@@ -477,6 +618,57 @@ inline rocqStatus_t clear_distributed_state_storage(rocsvInternalHandle* handle)
         (void)hipSetDevice(original_device);
     }
     reset_distributed_metadata(handle);
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline bool distributed_rccl_ready(const rocsvInternalHandle* handle) {
+#ifdef ROCQ_HAVE_RCCL
+    return handle &&
+           handle->distributedRcclReady &&
+           handle->distributedComms.size() == static_cast<size_t>(handle->distributedGpuCount);
+#else
+    (void)handle;
+    return false;
+#endif
+}
+
+inline rocsvDistributedBackend_t distributed_active_backend(const rocsvInternalHandle* handle) {
+    if (!handle || !handle->distributedMode) {
+        return ROCSV_DISTRIBUTED_BACKEND_NONE;
+    }
+    if (distributed_rccl_ready(handle)) {
+        return ROCSV_DISTRIBUTED_BACKEND_RCCL;
+    }
+    if (distributed_host_fallback_enabled()) {
+        return ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK;
+    }
+    return ROCSV_DISTRIBUTED_BACKEND_NONE;
+}
+
+inline rocqStatus_t initialize_distributed_rccl_comms(rocsvInternalHandle* handle) {
+#ifdef ROCQ_HAVE_RCCL
+    if (!handle || handle->distributedGpuCount <= 1) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+    if (distributed_rccl_disabled()) {
+        return distributed_rccl_required() ? ROCQ_STATUS_RCCL_ERROR : ROCQ_STATUS_SUCCESS;
+    }
+
+    handle->distributedComms.assign(static_cast<size_t>(handle->distributedGpuCount), nullptr);
+    std::vector<int> devices = handle->distributedDeviceIds;
+    const ncclResult_t init_status =
+        ncclCommInitAll(handle->distributedComms.data(), handle->distributedGpuCount, devices.data());
+    if (init_status != ncclSuccess) {
+        (void)clear_distributed_rccl_comms(handle);
+        return distributed_rccl_required() ? ROCQ_STATUS_RCCL_ERROR : ROCQ_STATUS_SUCCESS;
+    }
+    handle->distributedRcclReady = true;
+#else
+    if (distributed_rccl_required()) {
+        return ROCQ_STATUS_RCCL_ERROR;
+    }
+    (void)handle;
+#endif
     return ROCQ_STATUS_SUCCESS;
 }
 
@@ -617,6 +809,259 @@ inline rocqStatus_t distributed_swap_bits_host_remap(rocsvInternalHandle* handle
     return scatter_host_state_to_distributed(handle, host_output);
 }
 
+inline size_t rccl_complex_scalar_count(size_t complex_elements) {
+    return complex_elements * size_t{2};
+}
+
+inline rocqStatus_t distributed_swap_bits_rccl_rank_remap(rocsvInternalHandle* handle,
+                                                          unsigned qubit_idx1,
+                                                          unsigned qubit_idx2) {
+    if (!handle || !handle->distributedMode) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_rccl_ready(handle)) {
+        return distributed_rccl_required() ? ROCQ_STATUS_RCCL_ERROR : ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!distributed_qubit_global(handle, qubit_idx1) ||
+        !distributed_qubit_global(handle, qubit_idx2)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (handle->localSliceElements == 0) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+#ifdef ROCQ_HAVE_RCCL
+    const unsigned rank_bit1 = qubit_idx1 - handle->numLocalQubitsPerGpu;
+    const unsigned rank_bit2 = qubit_idx2 - handle->numLocalQubitsPerGpu;
+    const size_t scalar_count = rccl_complex_scalar_count(handle->localSliceElements);
+#ifdef ROCQ_PRECISION_DOUBLE
+    constexpr ncclDataType_t scalar_type = ncclDouble;
+#else
+    constexpr ncclDataType_t scalar_type = ncclFloat;
+#endif
+
+    std::vector<int> peer_rank(static_cast<size_t>(handle->distributedGpuCount), 0);
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t remapped_rank = swap_bits_host(static_cast<size_t>(rank), rank_bit1, rank_bit2);
+        if (remapped_rank >= static_cast<size_t>(handle->distributedGpuCount)) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        peer_rank[static_cast<size_t>(rank)] = static_cast<int>(remapped_rank);
+    }
+
+    ncclResult_t status = ncclGroupStart();
+    if (status != ncclSuccess) {
+        return ROCQ_STATUS_RCCL_ERROR;
+    }
+
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        const int peer = peer_rank[idx];
+        if (peer == rank) {
+            continue;
+        }
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        status = ncclRecv(handle->distributedSwapBuffers[idx],
+                          scalar_count,
+                          scalar_type,
+                          peer,
+                          handle->distributedComms[idx],
+                          handle->distributedStreams[idx]);
+        if (status != ncclSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_RCCL_ERROR;
+        }
+        status = ncclSend(handle->distributedSlices[idx],
+                          scalar_count,
+                          scalar_type,
+                          peer,
+                          handle->distributedComms[idx],
+                          handle->distributedStreams[idx]);
+        if (status != ncclSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_RCCL_ERROR;
+        }
+    }
+
+    status = ncclGroupEnd();
+    if (status != ncclSuccess) {
+        return ROCQ_STATUS_RCCL_ERROR;
+    }
+
+    const size_t bytes = handle->localSliceElements * sizeof(rocComplex);
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        if (peer_rank[idx] == rank) {
+            continue;
+        }
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        if (hipMemcpyAsync(handle->distributedSlices[idx],
+                           handle->distributedSwapBuffers[idx],
+                           bytes,
+                           hipMemcpyDeviceToDevice,
+                           handle->distributedStreams[idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+    }
+    return sync_distributed_streams(handle); // ROCQ_ASYNC_ALLOWED_SYNC
+#else
+    (void)handle;
+    (void)qubit_idx1;
+    (void)qubit_idx2;
+    return ROCQ_STATUS_NOT_IMPLEMENTED;
+#endif
+}
+
+inline rocqStatus_t distributed_swap_bits_rccl_local_global(rocsvInternalHandle* handle,
+                                                            unsigned local_qubit_idx,
+                                                            unsigned global_qubit_idx) {
+    if (!handle || !handle->distributedMode) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_rccl_ready(handle)) {
+        return distributed_rccl_required() ? ROCQ_STATUS_RCCL_ERROR : ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!distributed_qubit_local(handle, local_qubit_idx) ||
+        !distributed_qubit_global(handle, global_qubit_idx)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (handle->localSliceElements < 2) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+#ifdef ROCQ_HAVE_RCCL
+    const unsigned rank_bit = global_qubit_idx - handle->numLocalQubitsPerGpu;
+    const size_t rank_mask = size_t{1} << rank_bit;
+    const size_t packed_elements = handle->localSliceElements >> 1;
+    const size_t scalar_count = rccl_complex_scalar_count(packed_elements);
+    constexpr int threads_per_block = 256;
+    const int blocks = static_cast<int>((packed_elements + threads_per_block - 1) / threads_per_block);
+#ifdef ROCQ_PRECISION_DOUBLE
+    constexpr ncclDataType_t scalar_type = ncclDouble;
+#else
+    constexpr ncclDataType_t scalar_type = ncclFloat;
+#endif
+
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        const unsigned rank_bit_value = static_cast<unsigned>((rank >> rank_bit) & 1);
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        hipLaunchKernelGGL(pack_local_global_swap_kernel,
+                           dim3(blocks > 0 ? blocks : 1),
+                           dim3(threads_per_block),
+                           0,
+                           handle->distributedStreams[idx],
+                           handle->distributedSlices[idx],
+                           handle->distributedSwapBuffers[idx],
+                           packed_elements,
+                           local_qubit_idx,
+                           rank_bit_value);
+        rocqStatus_t launch_status = check_last_hip_error();
+        if (launch_status != ROCQ_STATUS_SUCCESS) {
+            return launch_status;
+        }
+    }
+
+    ncclResult_t status = ncclGroupStart();
+    if (status != ncclSuccess) {
+        return ROCQ_STATUS_RCCL_ERROR;
+    }
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        const size_t peer = static_cast<size_t>(rank) ^ rank_mask;
+        if (peer >= static_cast<size_t>(handle->distributedGpuCount)) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        rocComplex* send_buffer = handle->distributedSwapBuffers[idx];
+        rocComplex* recv_buffer = handle->distributedSwapBuffers[idx] + packed_elements;
+        status = ncclRecv(recv_buffer,
+                          scalar_count,
+                          scalar_type,
+                          static_cast<int>(peer),
+                          handle->distributedComms[idx],
+                          handle->distributedStreams[idx]);
+        if (status != ncclSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_RCCL_ERROR;
+        }
+        status = ncclSend(send_buffer,
+                          scalar_count,
+                          scalar_type,
+                          static_cast<int>(peer),
+                          handle->distributedComms[idx],
+                          handle->distributedStreams[idx]);
+        if (status != ncclSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_RCCL_ERROR;
+        }
+    }
+    status = ncclGroupEnd();
+    if (status != ncclSuccess) {
+        return ROCQ_STATUS_RCCL_ERROR;
+    }
+
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        const unsigned rank_bit_value = static_cast<unsigned>((rank >> rank_bit) & 1);
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        hipLaunchKernelGGL(unpack_local_global_swap_kernel,
+                           dim3(blocks > 0 ? blocks : 1),
+                           dim3(threads_per_block),
+                           0,
+                           handle->distributedStreams[idx],
+                           handle->distributedSlices[idx],
+                           handle->distributedSwapBuffers[idx] + packed_elements,
+                           packed_elements,
+                           local_qubit_idx,
+                           rank_bit_value);
+        rocqStatus_t launch_status = check_last_hip_error();
+        if (launch_status != ROCQ_STATUS_SUCCESS) {
+            return launch_status;
+        }
+    }
+
+    return sync_distributed_streams(handle); // ROCQ_ASYNC_ALLOWED_SYNC
+#else
+    (void)handle;
+    (void)local_qubit_idx;
+    (void)global_qubit_idx;
+    return ROCQ_STATUS_NOT_IMPLEMENTED;
+#endif
+}
+
+inline rocqStatus_t distributed_swap_bits_rccl_remap(rocsvInternalHandle* handle,
+                                                     unsigned qubit_idx1,
+                                                     unsigned qubit_idx2) {
+    if (!handle || !handle->distributedMode) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const bool q1_local = distributed_qubit_local(handle, qubit_idx1);
+    const bool q2_local = distributed_qubit_local(handle, qubit_idx2);
+    if (q1_local && q2_local) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!q1_local && !q2_local) {
+        return distributed_swap_bits_rccl_rank_remap(handle, qubit_idx1, qubit_idx2);
+    }
+    return q1_local
+        ? distributed_swap_bits_rccl_local_global(handle, qubit_idx1, qubit_idx2)
+        : distributed_swap_bits_rccl_local_global(handle, qubit_idx2, qubit_idx1);
+}
+
 inline rocqStatus_t reduce_prob0_on_slice(rocsvInternalHandle* handle,
                                           const rocComplex* d_slice,
                                           size_t slice_elements,
@@ -724,6 +1169,198 @@ inline rocqStatus_t reduce_prob0_on_slice(rocsvInternalHandle* handle,
     return ROCQ_STATUS_SUCCESS;
 }
 
+rocqStatus_t apply_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
+                                                    unsigned numQubits,
+                                                    const std::vector<unsigned>& targetQubits,
+                                                    const std::vector<unsigned>& controlQubits,
+                                                    const std::vector<rocComplex>& matrixHost);
+
+rocqStatus_t launch_single_qubit_matrix(rocsvInternalHandle* handle,
+                                        rocComplex* state,
+                                        unsigned numQubits,
+                                        unsigned targetQubit,
+                                        const rocComplex& m00,
+                                        const rocComplex& m01,
+                                        const rocComplex& m10,
+                                        const rocComplex& m11);
+
+rocqStatus_t launch_controlled_single_qubit_matrix(rocsvInternalHandle* handle,
+                                                   rocComplex* state,
+                                                   unsigned numQubits,
+                                                   unsigned controlQubit,
+                                                   unsigned targetQubit,
+                                                   const rocComplex& m00,
+                                                   const rocComplex& m01,
+                                                   const rocComplex& m10,
+                                                   const rocComplex& m11);
+
+inline rocqStatus_t restore_distributed_qubit_swaps(
+    rocsvInternalHandle* handle,
+    const std::vector<std::pair<unsigned, unsigned>>& swaps) {
+    rocqStatus_t first_status = ROCQ_STATUS_SUCCESS;
+    for (auto it = swaps.rbegin(); it != swaps.rend(); ++it) {
+        rocqStatus_t status = rocsvSwapIndexBits(handle, it->first, it->second);
+        if (first_status == ROCQ_STATUS_SUCCESS && status != ROCQ_STATUS_SUCCESS) {
+            first_status = status;
+        }
+    }
+    return first_status;
+}
+
+inline bool choose_distributed_local_slot(const rocsvInternalHandle* handle,
+                                          const std::vector<unsigned>& reserved,
+                                          unsigned* slot) {
+    if (!handle || !slot) {
+        return false;
+    }
+    for (unsigned q = 0; q < handle->numLocalQubitsPerGpu; ++q) {
+        if (std::find(reserved.begin(), reserved.end(), q) == reserved.end()) {
+            *slot = q;
+            return true;
+        }
+    }
+    return false;
+}
+
+inline rocqStatus_t localize_distributed_qubits_for_operation(
+    rocsvInternalHandle* handle,
+    const std::vector<unsigned>& qubits,
+    std::vector<unsigned>* localized_qubits,
+    std::vector<std::pair<unsigned, unsigned>>* applied_swaps) {
+    if (!handle || !localized_qubits || !applied_swaps) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    localized_qubits->clear();
+    applied_swaps->clear();
+    localized_qubits->reserve(qubits.size());
+
+    std::vector<unsigned> reserved;
+    reserved.reserve(qubits.size());
+    for (unsigned q : qubits) {
+        if (distributed_qubit_local(handle, q) &&
+            std::find(reserved.begin(), reserved.end(), q) == reserved.end()) {
+            reserved.push_back(q);
+        }
+    }
+
+    for (unsigned q : qubits) {
+        if (distributed_qubit_local(handle, q)) {
+            localized_qubits->push_back(q);
+            continue;
+        }
+
+        unsigned local_slot = 0;
+        if (!choose_distributed_local_slot(handle, reserved, &local_slot)) {
+            (void)restore_distributed_qubit_swaps(handle, *applied_swaps);
+            localized_qubits->clear();
+            applied_swaps->clear();
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+
+        rocqStatus_t status = rocsvSwapIndexBits(handle, q, local_slot);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            (void)restore_distributed_qubit_swaps(handle, *applied_swaps);
+            localized_qubits->clear();
+            applied_swaps->clear();
+            return status;
+        }
+        applied_swaps->emplace_back(q, local_slot);
+        reserved.push_back(local_slot);
+        localized_qubits->push_back(local_slot);
+    }
+
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t launch_single_qubit_matrix_distributed_localized(
+    rocsvInternalHandle* handle,
+    rocComplex* state,
+    unsigned numQubits,
+    unsigned targetQubit,
+    const rocComplex& m00,
+    const rocComplex& m01,
+    const rocComplex& m10,
+    const rocComplex& m11) {
+    unsigned local_target = targetQubit;
+    std::vector<std::pair<unsigned, unsigned>> swaps;
+
+    if (!distributed_qubit_local(handle, targetQubit)) {
+        if (handle->numLocalQubitsPerGpu == 0) {
+            const std::vector<rocComplex> matrix_host = {m00, m10, m01, m11};
+            return apply_matrix_distributed_host_fallback(handle, numQubits, {targetQubit}, {}, matrix_host);
+        }
+        local_target = 0;
+        rocqStatus_t status = rocsvSwapIndexBits(handle, targetQubit, local_target);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+        swaps.emplace_back(targetQubit, local_target);
+    }
+
+    rocqStatus_t status = launch_single_qubit_matrix(
+        handle, state, numQubits, local_target, m00, m01, m10, m11);
+    rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+    return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
+}
+
+inline rocqStatus_t launch_controlled_single_qubit_matrix_distributed_localized(
+    rocsvInternalHandle* handle,
+    rocComplex* state,
+    unsigned numQubits,
+    unsigned controlQubit,
+    unsigned targetQubit,
+    const rocComplex& m00,
+    const rocComplex& m01,
+    const rocComplex& m10,
+    const rocComplex& m11) {
+    std::vector<unsigned> reserved;
+    unsigned local_control = controlQubit;
+    unsigned local_target = targetQubit;
+
+    if (distributed_qubit_local(handle, controlQubit)) {
+        reserved.push_back(controlQubit);
+    }
+    if (distributed_qubit_local(handle, targetQubit)) {
+        reserved.push_back(targetQubit);
+    }
+
+    std::vector<std::pair<unsigned, unsigned>> swaps_to_apply;
+    if (!distributed_qubit_local(handle, controlQubit)) {
+        if (!choose_distributed_local_slot(handle, reserved, &local_control)) {
+            const std::vector<rocComplex> matrix_host = {m00, m10, m01, m11};
+            return apply_matrix_distributed_host_fallback(
+                handle, numQubits, {targetQubit}, {controlQubit}, matrix_host);
+        }
+        reserved.push_back(local_control);
+        swaps_to_apply.emplace_back(controlQubit, local_control);
+    }
+    if (!distributed_qubit_local(handle, targetQubit)) {
+        if (!choose_distributed_local_slot(handle, reserved, &local_target)) {
+            const std::vector<rocComplex> matrix_host = {m00, m10, m01, m11};
+            return apply_matrix_distributed_host_fallback(
+                handle, numQubits, {targetQubit}, {controlQubit}, matrix_host);
+        }
+        reserved.push_back(local_target);
+        swaps_to_apply.emplace_back(targetQubit, local_target);
+    }
+
+    std::vector<std::pair<unsigned, unsigned>> applied_swaps;
+    for (const auto& swap : swaps_to_apply) {
+        rocqStatus_t status = rocsvSwapIndexBits(handle, swap.first, swap.second);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            (void)restore_distributed_qubit_swaps(handle, applied_swaps);
+            return status;
+        }
+        applied_swaps.push_back(swap);
+    }
+
+    rocqStatus_t status = launch_controlled_single_qubit_matrix(
+        handle, state, numQubits, local_control, local_target, m00, m01, m10, m11);
+    rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, applied_swaps);
+    return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
+}
+
 rocqStatus_t launch_single_qubit_matrix(rocsvInternalHandle* handle,
                                         rocComplex* state,
                                         unsigned numQubits,
@@ -742,7 +1379,8 @@ rocqStatus_t launch_single_qubit_matrix(rocsvInternalHandle* handle,
             return ROCQ_STATUS_INVALID_VALUE;
         }
         if (!distributed_qubit_local(handle, targetQubit)) {
-            return ROCQ_STATUS_NOT_IMPLEMENTED;
+            return launch_single_qubit_matrix_distributed_localized(
+                handle, state, numQubits, targetQubit, m00, m01, m10, m11);
         }
 
         if (handle->localSliceElements < 2) {
@@ -808,6 +1446,87 @@ rocqStatus_t launch_single_qubit_matrix(rocsvInternalHandle* handle,
     return check_last_hip_error();
 }
 
+rocqStatus_t launch_single_qubit_matrix_batch(rocsvInternalHandle* handle,
+                                              rocComplex* state,
+                                              unsigned numQubits,
+                                              unsigned targetQubit,
+                                              const std::vector<rocComplex>& matrices) {
+    if (!handle || !state || !validate_qubit_index(targetQubit, numQubits)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (matrices.size() != batch_size * 4ULL) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    if (handle->distributedMode && state == handle->d_state) {
+        if (batch_size != 1 || matrices.size() != 4ULL) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+        return launch_single_qubit_matrix(handle,
+                                          state,
+                                          numQubits,
+                                          targetQubit,
+                                          matrices[0],
+                                          matrices[1],
+                                          matrices[2],
+                                          matrices[3]);
+    }
+
+    size_t elements_per_state = 0;
+    if (!compute_power_of_two(numQubits, &elements_per_state)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (elements_per_state < 2) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    const size_t pairs_per_state = elements_per_state >> 1;
+    if (batch_size > std::numeric_limits<size_t>::max() / pairs_per_state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t total_pairs = batch_size * pairs_per_state;
+    if (total_pairs == 0) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    void* d_matrices_void = nullptr;
+    rocqStatus_t status = device_malloc(handle, &d_matrices_void, matrices.size() * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    rocComplex* d_matrices = static_cast<rocComplex*>(d_matrices_void);
+    status = copy_host_to_device(d_matrices,
+                                 matrices.data(),
+                                 matrices.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_matrices);
+        return status;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = static_cast<int>((total_pairs + threads_per_block - 1) / threads_per_block);
+
+    hipLaunchKernelGGL(apply_single_qubit_matrix_batch_kernel,
+                       dim3(blocks > 0 ? blocks : 1),
+                       dim3(threads_per_block),
+                       0,
+                       handle->streams[0],
+                       state,
+                       numQubits,
+                       targetQubit,
+                       d_matrices,
+                       batch_size);
+    status = check_last_hip_error();
+    rocqStatus_t free_status = device_free(handle, d_matrices);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    return free_status;
+}
+
 rocqStatus_t launch_controlled_single_qubit_matrix(rocsvInternalHandle* handle,
                                                    rocComplex* state,
                                                    unsigned numQubits,
@@ -830,7 +1549,8 @@ rocqStatus_t launch_controlled_single_qubit_matrix(rocsvInternalHandle* handle,
         }
         if (!distributed_qubit_local(handle, controlQubit) ||
             !distributed_qubit_local(handle, targetQubit)) {
-            return ROCQ_STATUS_NOT_IMPLEMENTED;
+            return launch_controlled_single_qubit_matrix_distributed_localized(
+                handle, state, numQubits, controlQubit, targetQubit, m00, m01, m10, m11);
         }
         if (handle->localSliceElements < 2) {
             return ROCQ_STATUS_SUCCESS;
@@ -897,6 +1617,229 @@ rocqStatus_t launch_controlled_single_qubit_matrix(rocsvInternalHandle* handle,
     return check_last_hip_error();
 }
 
+rocqStatus_t launch_controlled_single_qubit_matrix_batch(rocsvInternalHandle* handle,
+                                                         rocComplex* state,
+                                                         unsigned numQubits,
+                                                         unsigned controlQubit,
+                                                         unsigned targetQubit,
+                                                         const std::vector<rocComplex>& matrices) {
+    if (!handle || !state ||
+        !validate_qubit_index(controlQubit, numQubits) ||
+        !validate_qubit_index(targetQubit, numQubits) ||
+        controlQubit == targetQubit) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (matrices.size() != batch_size * 4ULL) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    if (handle->distributedMode && state == handle->d_state) {
+        if (batch_size != 1 || matrices.size() != 4ULL) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+        return launch_controlled_single_qubit_matrix(handle,
+                                                     state,
+                                                     numQubits,
+                                                     controlQubit,
+                                                     targetQubit,
+                                                     matrices[0],
+                                                     matrices[1],
+                                                     matrices[2],
+                                                     matrices[3]);
+    }
+
+    size_t elements_per_state = 0;
+    if (!compute_power_of_two(numQubits, &elements_per_state)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (elements_per_state < 2) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    const size_t pairs_per_state = elements_per_state >> 1;
+    if (batch_size > std::numeric_limits<size_t>::max() / pairs_per_state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t total_pairs = batch_size * pairs_per_state;
+    if (total_pairs == 0) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    void* d_matrices_void = nullptr;
+    rocqStatus_t status = device_malloc(handle, &d_matrices_void, matrices.size() * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    rocComplex* d_matrices = static_cast<rocComplex*>(d_matrices_void);
+    status = copy_host_to_device(d_matrices,
+                                 matrices.data(),
+                                 matrices.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_matrices);
+        return status;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = static_cast<int>((total_pairs + threads_per_block - 1) / threads_per_block);
+    hipLaunchKernelGGL(apply_controlled_single_qubit_matrix_batch_kernel,
+                       dim3(blocks > 0 ? blocks : 1),
+                       dim3(threads_per_block),
+                       0,
+                       handle->streams[0],
+                       state,
+                       numQubits,
+                       controlQubit,
+                       targetQubit,
+                       d_matrices,
+                       batch_size);
+    status = check_last_hip_error();
+    rocqStatus_t free_status = device_free(handle, d_matrices);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    return free_status;
+}
+
+rocqStatus_t launch_multi_controlled_single_qubit_matrix(rocsvInternalHandle* handle,
+                                                         rocComplex* state,
+                                                         unsigned numQubits,
+                                                         const std::vector<unsigned>& controlQubits,
+                                                         unsigned targetQubit,
+                                                         const rocComplex& m00,
+                                                         const rocComplex& m01,
+                                                         const rocComplex& m10,
+                                                         const rocComplex& m11) {
+    if (!handle || !state || controlQubits.empty() ||
+        !validate_qubit_index(targetQubit, numQubits)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (controlQubits.size() > 63 || targetQubit > 63) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    unsigned long long mask = 0ULL;
+    std::vector<unsigned> seen;
+    seen.reserve(controlQubits.size());
+    for (unsigned control : controlQubits) {
+        if (!validate_qubit_index(control, numQubits) || control == targetQubit) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        if (control > 63) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+        if (std::find(seen.begin(), seen.end(), control) != seen.end()) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        seen.push_back(control);
+        mask |= (1ULL << control);
+    }
+
+    if (mask == 0ULL) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const bool distributed_call = handle->distributedMode && state == handle->d_state;
+    if (distributed_call) {
+        if (numQubits != handle->globalNumQubits) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+
+        std::vector<unsigned> touched = controlQubits;
+        touched.push_back(targetQubit);
+        std::vector<unsigned> localized;
+        std::vector<std::pair<unsigned, unsigned>> swaps;
+        rocqStatus_t status =
+            localize_distributed_qubits_for_operation(handle, touched, &localized, &swaps);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+
+        unsigned long long local_mask = 0ULL;
+        for (std::size_t i = 0; i < controlQubits.size(); ++i) {
+            if (localized[i] > 63) {
+                rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+                return restore_status != ROCQ_STATUS_SUCCESS ? restore_status : ROCQ_STATUS_NOT_IMPLEMENTED;
+            }
+            local_mask |= (1ULL << localized[i]);
+        }
+        const unsigned local_target = localized.back();
+
+        status = ROCQ_STATUS_SUCCESS;
+        if (handle->localSliceElements >= 2) {
+            const size_t local_pairs = handle->localSliceElements >> 1;
+            constexpr int threads_per_block = 256;
+            const int blocks =
+                static_cast<int>((local_pairs + threads_per_block - 1) / threads_per_block);
+            for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+                const size_t idx = static_cast<size_t>(rank);
+                if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+                    status = ROCQ_STATUS_HIP_ERROR;
+                    break;
+                }
+                hipLaunchKernelGGL(apply_multi_controlled_single_qubit_matrix_kernel,
+                                   dim3(blocks > 0 ? blocks : 1),
+                                   dim3(threads_per_block),
+                                   0,
+                                   handle->distributedStreams[idx],
+                                   handle->distributedSlices[idx],
+                                   handle->numLocalQubitsPerGpu,
+                                   local_mask,
+                                   local_target,
+                                   m00,
+                                   m01,
+                                   m10,
+                                   m11,
+                                   1);
+                status = check_last_hip_error();
+                if (status != ROCQ_STATUS_SUCCESS) {
+                    break;
+                }
+            }
+        }
+        rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+        return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
+    }
+
+    size_t elements_per_state = 0;
+    if (!compute_power_of_two(numQubits, &elements_per_state)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (elements_per_state < 2) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    const size_t pairs_per_state = elements_per_state >> 1;
+    if (batch_size > std::numeric_limits<size_t>::max() / pairs_per_state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t total_pairs = batch_size * pairs_per_state;
+    if (total_pairs == 0) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = static_cast<int>((total_pairs + threads_per_block - 1) / threads_per_block);
+    hipLaunchKernelGGL(apply_multi_controlled_single_qubit_matrix_kernel,
+                       dim3(blocks > 0 ? blocks : 1),
+                       dim3(threads_per_block),
+                       0,
+                       handle->streams[0],
+                       state,
+                       numQubits,
+                       mask,
+                       targetQubit,
+                       m00,
+                       m01,
+                       m10,
+                       m11,
+                       batch_size);
+    return check_last_hip_error();
+}
+
 inline rocqStatus_t copy_matrix_from_device(const rocComplex* matrixDevice,
                                             size_t matrixElements,
                                             hipStream_t stream,
@@ -909,6 +1852,78 @@ inline rocqStatus_t copy_matrix_from_device(const rocComplex* matrixDevice,
                                matrixDevice,
                                matrixElements * sizeof(rocComplex),
                                stream);
+}
+
+inline rocqStatus_t copy_sparse_matrix_from_device(const rocComplex* dataDevice,
+                                                   const size_t* indicesDevice,
+                                                   const size_t* indptrDevice,
+                                                   size_t rows,
+                                                   size_t nnz,
+                                                   hipStream_t stream,
+                                                   std::vector<rocComplex>* hostData,
+                                                   std::vector<size_t>* hostIndices,
+                                                   std::vector<size_t>* hostIndptr) {
+    if (!indptrDevice || !hostData || !hostIndices || !hostIndptr ||
+        rows == std::numeric_limits<size_t>::max()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (nnz > 0 && (!dataDevice || !indicesDevice)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    hostData->assign(nnz, make_complex(0.0, 0.0));
+    hostIndices->assign(nnz, 0);
+    hostIndptr->assign(rows + 1, 0);
+
+    rocqStatus_t status = ROCQ_STATUS_SUCCESS;
+    if (nnz > 0) {
+        status = copy_device_to_host(hostData->data(),
+                                     dataDevice,
+                                     nnz * sizeof(rocComplex),
+                                     stream);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+
+        status = copy_device_to_host(hostIndices->data(),
+                                     indicesDevice,
+                                     nnz * sizeof(size_t),
+                                     stream);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+    }
+
+    return copy_device_to_host(hostIndptr->data(),
+                               indptrDevice,
+                               hostIndptr->size() * sizeof(size_t),
+                               stream);
+}
+
+inline rocqStatus_t validate_sparse_matrix_host_csr(const std::vector<rocComplex>& data,
+                                                    const std::vector<size_t>& indices,
+                                                    const std::vector<size_t>& indptr,
+                                                    size_t rows,
+                                                    size_t cols,
+                                                    size_t nnz) {
+    if (rows == 0 || cols == 0 || rows != cols ||
+        data.size() != nnz || indices.size() != nnz || indptr.size() != rows + 1) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (indptr.empty() || indptr.front() != 0 || indptr.back() != nnz) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    for (size_t row = 0; row < rows; ++row) {
+        if (indptr[row] > indptr[row + 1]) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+    for (size_t col : indices) {
+        if (col >= cols) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+    return ROCQ_STATUS_SUCCESS;
 }
 
 inline size_t compose_basis_index(size_t baseIdx,
@@ -1038,6 +2053,626 @@ rocqStatus_t apply_matrix_host_impl(rocComplex* d_state,
     }
 
     return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t apply_matrix_host_state_impl(std::vector<rocComplex>* host_state,
+                                          unsigned numQubits,
+                                          const std::vector<unsigned>& targetQubits,
+                                          const std::vector<unsigned>& controlQubits,
+                                          const std::vector<rocComplex>& matrixHost) {
+    if (!host_state || targetQubits.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t stateElements = 0;
+    if (!compute_power_of_two(numQubits, &stateElements) || host_state->size() != stateElements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t matrixDim = size_t{1} << targetQubits.size();
+    if (matrixHost.size() != matrixDim * matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<char> isTarget(numQubits, 0);
+    for (unsigned q : targetQubits) {
+        if (!validate_qubit_index(q, numQubits)) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        isTarget[q] = 1;
+    }
+    for (unsigned q : controlQubits) {
+        if (!validate_qubit_index(q, numQubits)) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        if (isTarget[q]) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+
+    std::vector<unsigned> nonTargetQubits;
+    nonTargetQubits.reserve(numQubits - static_cast<unsigned>(targetQubits.size()));
+    for (unsigned q = 0; q < numQubits; ++q) {
+        if (!isTarget[q]) {
+            nonTargetQubits.push_back(q);
+        }
+    }
+
+    size_t nonTargetConfigs = 0;
+    if (!compute_power_of_two(static_cast<unsigned>(nonTargetQubits.size()), &nonTargetConfigs)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<std::complex<double>> matrixStd(matrixHost.size());
+    for (size_t i = 0; i < matrixHost.size(); ++i) {
+        matrixStd[i] = to_std_complex(matrixHost[i]);
+    }
+
+    std::vector<std::complex<double>> inputAmps(matrixDim);
+    std::vector<std::complex<double>> outputAmps(matrixDim);
+
+    for (size_t config = 0; config < nonTargetConfigs; ++config) {
+        size_t baseIdx = 0;
+        for (size_t bit = 0; bit < nonTargetQubits.size(); ++bit) {
+            if ((config >> bit) & 1ULL) {
+                baseIdx |= (size_t{1} << nonTargetQubits[bit]);
+            }
+        }
+
+        bool controlsEnabled = true;
+        for (unsigned ctrl : controlQubits) {
+            if (((baseIdx >> ctrl) & 1ULL) == 0ULL) {
+                controlsEnabled = false;
+                break;
+            }
+        }
+        if (!controlsEnabled) {
+            continue;
+        }
+
+        for (size_t col = 0; col < matrixDim; ++col) {
+            const size_t idx = compose_basis_index(baseIdx, col, targetQubits);
+            inputAmps[col] = to_std_complex((*host_state)[idx]);
+        }
+
+        for (size_t row = 0; row < matrixDim; ++row) {
+            std::complex<double> accum{0.0, 0.0};
+            for (size_t col = 0; col < matrixDim; ++col) {
+                accum += matrixStd[row + col * matrixDim] * inputAmps[col];
+            }
+            outputAmps[row] = accum;
+        }
+
+        for (size_t row = 0; row < matrixDim; ++row) {
+            const size_t idx = compose_basis_index(baseIdx, row, targetQubits);
+            (*host_state)[idx] = from_std_complex(outputAmps[row]);
+        }
+    }
+
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t compute_expectation_matrix_host_state(const std::vector<rocComplex>& host_state,
+                                                   unsigned numQubits,
+                                                   const std::vector<unsigned>& targetQubits,
+                                                   const std::vector<rocComplex>& matrixHost,
+                                                   size_t matrixDim,
+                                                   rocComplex* result) {
+    if (!result || targetQubits.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t stateElements = 0;
+    if (!compute_power_of_two(numQubits, &stateElements) || host_state.size() != stateElements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t expectedMatrixDim = 0;
+    if (!compute_power_of_two(static_cast<unsigned>(targetQubits.size()), &expectedMatrixDim) ||
+        matrixDim != expectedMatrixDim ||
+        matrixHost.size() != matrixDim * matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    for (unsigned q : targetQubits) {
+        if (!validate_qubit_index(q, numQubits)) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+
+    double total_re = 0.0;
+    double total_im = 0.0;
+    for (size_t rowIndex = 0; rowIndex < stateElements; ++rowIndex) {
+        size_t row_target = 0;
+        size_t base_index = rowIndex;
+        for (unsigned bit = 0; bit < targetQubits.size(); ++bit) {
+            const unsigned qubit = targetQubits[bit];
+            const size_t mask = size_t{1} << qubit;
+            if ((rowIndex & mask) != 0ULL) {
+                row_target |= (size_t{1} << bit);
+            }
+            base_index &= ~mask;
+        }
+
+        const rocComplex bra = host_state[rowIndex];
+        for (size_t col_target = 0; col_target < matrixDim; ++col_target) {
+            const size_t col_index = compose_basis_index(base_index, col_target, targetQubits);
+            const rocComplex m = matrixHost[row_target + col_target * matrixDim];
+            const rocComplex ket = host_state[col_index];
+            const double mv_re = static_cast<double>(m.x) * static_cast<double>(ket.x) -
+                                 static_cast<double>(m.y) * static_cast<double>(ket.y);
+            const double mv_im = static_cast<double>(m.x) * static_cast<double>(ket.y) +
+                                 static_cast<double>(m.y) * static_cast<double>(ket.x);
+
+            total_re += static_cast<double>(bra.x) * mv_re + static_cast<double>(bra.y) * mv_im;
+            total_im += static_cast<double>(bra.x) * mv_im - static_cast<double>(bra.y) * mv_re;
+        }
+    }
+
+    *result = make_complex(total_re, total_im);
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t apply_sparse_matrix_host_state_impl(std::vector<rocComplex>* host_state,
+                                                 unsigned numQubits,
+                                                 const std::vector<unsigned>& targetQubits,
+                                                 const std::vector<rocComplex>& data,
+                                                 const std::vector<size_t>& indices,
+                                                 const std::vector<size_t>& indptr,
+                                                 size_t rows,
+                                                 size_t cols) {
+    if (!host_state || targetQubits.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t stateElements = 0;
+    if (!compute_power_of_two(numQubits, &stateElements) || host_state->size() != stateElements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t matrixDim = 0;
+    if (!compute_power_of_two(static_cast<unsigned>(targetQubits.size()), &matrixDim) ||
+        rows != matrixDim || cols != matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocqStatus_t status =
+        validate_sparse_matrix_host_csr(data, indices, indptr, rows, cols, data.size());
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    std::vector<char> isTarget(numQubits, 0);
+    for (unsigned q : targetQubits) {
+        if (!validate_qubit_index(q, numQubits)) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        isTarget[q] = 1;
+    }
+
+    std::vector<unsigned> nonTargetQubits;
+    nonTargetQubits.reserve(numQubits - static_cast<unsigned>(targetQubits.size()));
+    for (unsigned q = 0; q < numQubits; ++q) {
+        if (!isTarget[q]) {
+            nonTargetQubits.push_back(q);
+        }
+    }
+
+    size_t nonTargetConfigs = 0;
+    if (!compute_power_of_two(static_cast<unsigned>(nonTargetQubits.size()), &nonTargetConfigs)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> output_state(stateElements, make_complex(0.0, 0.0));
+    for (size_t config = 0; config < nonTargetConfigs; ++config) {
+        size_t baseIdx = 0;
+        for (size_t bit = 0; bit < nonTargetQubits.size(); ++bit) {
+            if ((config >> bit) & 1ULL) {
+                baseIdx |= (size_t{1} << nonTargetQubits[bit]);
+            }
+        }
+
+        for (size_t local_row = 0; local_row < rows; ++local_row) {
+            double accum_re = 0.0;
+            double accum_im = 0.0;
+            for (size_t offset = indptr[local_row]; offset < indptr[local_row + 1]; ++offset) {
+                const size_t col_index = compose_basis_index(baseIdx, indices[offset], targetQubits);
+                const rocComplex ket = (*host_state)[col_index];
+                const rocComplex value = data[offset];
+                accum_re += static_cast<double>(value.x) * static_cast<double>(ket.x) -
+                            static_cast<double>(value.y) * static_cast<double>(ket.y);
+                accum_im += static_cast<double>(value.x) * static_cast<double>(ket.y) +
+                            static_cast<double>(value.y) * static_cast<double>(ket.x);
+            }
+            const size_t row_index = compose_basis_index(baseIdx, local_row, targetQubits);
+            output_state[row_index] = make_complex(accum_re, accum_im);
+        }
+    }
+
+    *host_state = std::move(output_state);
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t compute_sparse_matrix_moments_host_state(const std::vector<rocComplex>& host_state,
+                                                      unsigned numQubits,
+                                                      const std::vector<rocComplex>& data,
+                                                      const std::vector<size_t>& indices,
+                                                      const std::vector<size_t>& indptr,
+                                                      size_t rows,
+                                                      size_t cols,
+                                                      size_t nnz,
+                                                      rocComplex* mean,
+                                                      rocComplex* secondMoment) {
+    if (!mean || !secondMoment) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t stateElements = 0;
+    if (!compute_power_of_two(numQubits, &stateElements) ||
+        host_state.size() != stateElements || rows != stateElements || cols != stateElements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocqStatus_t status = validate_sparse_matrix_host_csr(data, indices, indptr, rows, cols, nnz);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    double mean_re = 0.0;
+    double mean_im = 0.0;
+    double second_re = 0.0;
+    for (size_t row = 0; row < rows; ++row) {
+        double accum_re = 0.0;
+        double accum_im = 0.0;
+        for (size_t offset = indptr[row]; offset < indptr[row + 1]; ++offset) {
+            const rocComplex value = data[offset];
+            const rocComplex ket = host_state[indices[offset]];
+            accum_re += static_cast<double>(value.x) * static_cast<double>(ket.x) -
+                        static_cast<double>(value.y) * static_cast<double>(ket.y);
+            accum_im += static_cast<double>(value.x) * static_cast<double>(ket.y) +
+                        static_cast<double>(value.y) * static_cast<double>(ket.x);
+        }
+
+        const rocComplex bra = host_state[row];
+        mean_re += static_cast<double>(bra.x) * accum_re + static_cast<double>(bra.y) * accum_im;
+        mean_im += static_cast<double>(bra.x) * accum_im - static_cast<double>(bra.y) * accum_re;
+        second_re += accum_re * accum_re + accum_im * accum_im;
+    }
+
+    *mean = make_complex(mean_re, mean_im);
+    *secondMoment = make_complex(second_re, 0.0);
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t apply_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
+                                                    unsigned numQubits,
+                                                    const std::vector<unsigned>& targetQubits,
+                                                    const std::vector<unsigned>& controlQubits,
+                                                    const std::vector<rocComplex>& matrixHost) {
+    if (!distributed_host_fallback_enabled()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !handle->distributedMode || numQubits != handle->globalNumQubits) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> host_full;
+    rocqStatus_t status = gather_distributed_state_to_host(handle, &host_full);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    status = apply_matrix_host_state_impl(&host_full,
+                                          numQubits,
+                                          targetQubits,
+                                          controlQubits,
+                                          matrixHost);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    return scatter_host_state_to_distributed(handle, host_full);
+}
+
+rocqStatus_t expectation_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
+                                                          unsigned numQubits,
+                                                          const std::vector<unsigned>& targetQubits,
+                                                          const rocComplex* d_matrix,
+                                                          size_t matrixDim,
+                                                          rocComplex* result) {
+    if (!distributed_host_fallback_enabled()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !handle->distributedMode || numQubits != handle->globalNumQubits ||
+        handle->distributedDeviceIds.empty() || !d_matrix || !result) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (matrixDim == 0 || matrixDim > std::numeric_limits<size_t>::max() / matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    int original_device = 0;
+    if (hipGetDevice(&original_device) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    auto restore_device = [&]() {
+        (void)hipSetDevice(original_device);
+    };
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        restore_device();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    std::vector<rocComplex> matrix_host;
+    rocqStatus_t status = copy_matrix_from_device(d_matrix,
+                                                  matrixDim * matrixDim,
+                                                  handle->streams[0],
+                                                  &matrix_host);
+    restore_device();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    std::vector<rocComplex> host_full;
+    status = gather_distributed_state_to_host(handle, &host_full);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    return compute_expectation_matrix_host_state(host_full,
+                                                 numQubits,
+                                                 targetQubits,
+                                                 matrix_host,
+                                                 matrixDim,
+                                                 result);
+}
+
+rocqStatus_t expectation_matrix_host_fallback(rocsvInternalHandle* handle,
+                                              rocComplex* state,
+                                              unsigned numQubits,
+                                              const std::vector<unsigned>& targetQubits,
+                                              const rocComplex* d_matrix,
+                                              size_t matrixDim,
+                                              rocComplex* result) {
+    if (!allow_host_matrix_fallback()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !state || !d_matrix || !result) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (effective_batch_size(handle, state) != 1) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (matrixDim == 0 || matrixDim > std::numeric_limits<size_t>::max() / matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> matrix_host;
+    rocqStatus_t status = copy_matrix_from_device(d_matrix,
+                                                  matrixDim * matrixDim,
+                                                  handle->streams[0],
+                                                  &matrix_host);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> host_state(state_elements);
+    status = copy_device_to_host(host_state.data(),
+                                 state,
+                                 state_elements * sizeof(rocComplex),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    return compute_expectation_matrix_host_state(host_state,
+                                                 numQubits,
+                                                 targetQubits,
+                                                 matrix_host,
+                                                 matrixDim,
+                                                 result);
+}
+
+rocqStatus_t expectation_matrix_batch_host_fallback(rocsvInternalHandle* handle,
+                                                    rocComplex* state,
+                                                    unsigned numQubits,
+                                                    const std::vector<unsigned>& targetQubits,
+                                                    const rocComplex* d_matrix,
+                                                    size_t matrixDim,
+                                                    rocComplex* results) {
+    if (!allow_host_matrix_fallback()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !state || !d_matrix || !results) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (matrixDim == 0 || matrixDim > std::numeric_limits<size_t>::max() / matrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    std::vector<rocComplex> matrix_host;
+    rocqStatus_t status = copy_matrix_from_device(d_matrix,
+                                                  matrixDim * matrixDim,
+                                                  handle->streams[0],
+                                                  &matrix_host);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (batch_size > std::numeric_limits<size_t>::max() / state_elements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> host_state(state_elements);
+    for (size_t batch = 0; batch < batch_size; ++batch) {
+        status = copy_device_to_host(host_state.data(),
+                                     state + batch * state_elements,
+                                     state_elements * sizeof(rocComplex),
+                                     handle->streams[0]);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+        status = compute_expectation_matrix_host_state(host_state,
+                                                       numQubits,
+                                                       targetQubits,
+                                                       matrix_host,
+                                                       matrixDim,
+                                                       results + batch);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t sparse_matrix_moments_distributed_host_fallback(rocsvInternalHandle* handle,
+                                                             unsigned numQubits,
+                                                             const rocComplex* d_data,
+                                                             const size_t* d_indices,
+                                                             const size_t* d_indptr,
+                                                             size_t rows,
+                                                             size_t cols,
+                                                             size_t nnz,
+                                                             rocComplex* mean,
+                                                             rocComplex* secondMoment) {
+    if (!distributed_host_fallback_enabled()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !handle->distributedMode || numQubits != handle->globalNumQubits ||
+        handle->distributedDeviceIds.empty() || !mean || !secondMoment) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    int original_device = 0;
+    if (hipGetDevice(&original_device) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    auto restore_device = [&]() {
+        (void)hipSetDevice(original_device);
+    };
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        restore_device();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    std::vector<rocComplex> data;
+    std::vector<size_t> indices;
+    std::vector<size_t> indptr;
+    rocqStatus_t status = copy_sparse_matrix_from_device(d_data,
+                                                         d_indices,
+                                                         d_indptr,
+                                                         rows,
+                                                         nnz,
+                                                         handle->streams[0],
+                                                         &data,
+                                                         &indices,
+                                                         &indptr);
+    restore_device();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    std::vector<rocComplex> host_full;
+    status = gather_distributed_state_to_host(handle, &host_full);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    return compute_sparse_matrix_moments_host_state(host_full,
+                                                    numQubits,
+                                                    data,
+                                                    indices,
+                                                    indptr,
+                                                    rows,
+                                                    cols,
+                                                    nnz,
+                                                    mean,
+                                                    secondMoment);
+}
+
+rocqStatus_t apply_sparse_matrix_distributed_host_fallback(rocsvInternalHandle* handle,
+                                                           unsigned numQubits,
+                                                           const std::vector<unsigned>& targetQubits,
+                                                           const rocComplex* d_data,
+                                                           const size_t* d_indices,
+                                                           const size_t* d_indptr,
+                                                           size_t rows,
+                                                           size_t cols,
+                                                           size_t nnz) {
+    if (!distributed_host_fallback_enabled()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !handle->distributedMode || numQubits != handle->globalNumQubits ||
+        handle->distributedDeviceIds.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    int original_device = 0;
+    if (hipGetDevice(&original_device) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    auto restore_device = [&]() {
+        (void)hipSetDevice(original_device);
+    };
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        restore_device();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    std::vector<rocComplex> data;
+    std::vector<size_t> indices;
+    std::vector<size_t> indptr;
+    rocqStatus_t status = copy_sparse_matrix_from_device(d_data,
+                                                         d_indices,
+                                                         d_indptr,
+                                                         rows,
+                                                         nnz,
+                                                         handle->streams[0],
+                                                         &data,
+                                                         &indices,
+                                                         &indptr);
+    restore_device();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    status = validate_sparse_matrix_host_csr(data, indices, indptr, rows, cols, nnz);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    std::vector<rocComplex> host_full;
+    status = gather_distributed_state_to_host(handle, &host_full);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    status = apply_sparse_matrix_host_state_impl(&host_full,
+                                                 numQubits,
+                                                 targetQubits,
+                                                 data,
+                                                 indices,
+                                                 indptr,
+                                                 rows,
+                                                 cols);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    return scatter_host_state_to_distributed(handle, host_full);
 }
 
 __device__ inline double amp_abs2(const rocComplex& a) {
@@ -1257,6 +2892,409 @@ __global__ void reduce_expectation_pauli_string_kernel(const rocComplex* state,
     }
 }
 
+__global__ void reduce_expectation_pauli_string_batch_kernel(const rocComplex* state,
+                                                             size_t elementsPerState,
+                                                             const char* pauliString,
+                                                             const unsigned* targetQubits,
+                                                             unsigned numTargetQubits,
+                                                             double* blockSums) {
+    extern __shared__ double ssum[];
+    const unsigned tid = threadIdx.x;
+    const size_t block = blockIdx.x;
+    const size_t batch = blockIdx.y;
+    const size_t gid = block * blockDim.x + tid;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+    const rocComplex* batch_state = state + batch * elementsPerState;
+
+    double local = 0.0;
+    for (size_t idx = gid; idx < elementsPerState; idx += stride) {
+        size_t transformed = idx;
+        double phaseRe = 1.0;
+        double phaseIm = 0.0;
+
+        for (unsigned k = 0; k < numTargetQubits; ++k) {
+            const unsigned q = targetQubits[k];
+            const bool bit = ((idx >> q) & 1ULL) != 0ULL;
+            const char p = pauliString[k];
+            const size_t mask = size_t{1} << q;
+            if (p == 'X' || p == 'x') {
+                transformed ^= mask;
+            } else if (p == 'Y' || p == 'y') {
+                transformed ^= mask;
+                const double yRe = 0.0;
+                const double yIm = bit ? -1.0 : 1.0;
+                const double nextRe = phaseRe * yRe - phaseIm * yIm;
+                const double nextIm = phaseRe * yIm + phaseIm * yRe;
+                phaseRe = nextRe;
+                phaseIm = nextIm;
+            } else if (p == 'Z' || p == 'z') {
+                if (bit) {
+                    phaseRe = -phaseRe;
+                    phaseIm = -phaseIm;
+                }
+            } else if (p == 'I' || p == 'i') {
+                // no-op
+            } else {
+                phaseRe = 0.0;
+                phaseIm = 0.0;
+            }
+        }
+
+        const rocComplex a = batch_state[idx];
+        const rocComplex b = batch_state[transformed];
+        const double cbRe = static_cast<double>(a.x) * static_cast<double>(b.x) +
+                            static_cast<double>(a.y) * static_cast<double>(b.y);
+        const double cbIm = static_cast<double>(a.x) * static_cast<double>(b.y) -
+                            static_cast<double>(a.y) * static_cast<double>(b.x);
+        local += cbRe * phaseRe - cbIm * phaseIm;
+    }
+
+    ssum[tid] = local;
+    __syncthreads();
+
+    for (unsigned s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            ssum[tid] += ssum[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        blockSums[batch * static_cast<size_t>(gridDim.x) + block] = ssum[0];
+    }
+}
+
+__global__ void reduce_expectation_matrix_kernel(const rocComplex* state,
+                                                 size_t numElements,
+                                                 const unsigned* targetQubits,
+                                                 unsigned numTargetQubits,
+                                                 const rocComplex* matrix,
+                                                 size_t matrixDim,
+                                                 rocComplex* blockSums) {
+    extern __shared__ double shared[];
+    double* real_sums = shared;
+    double* imag_sums = shared + blockDim.x;
+    const unsigned tid = threadIdx.x;
+    const size_t batch = static_cast<size_t>(blockIdx.y);
+    const rocComplex* batch_state = state + batch * numElements;
+    const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + tid;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+
+    double local_re = 0.0;
+    double local_im = 0.0;
+    for (size_t rowIndex = gid; rowIndex < numElements; rowIndex += stride) {
+        size_t row_target = 0;
+        size_t base_index = rowIndex;
+        for (unsigned bit = 0; bit < numTargetQubits; ++bit) {
+            const unsigned qubit = targetQubits[bit];
+            const size_t mask = size_t{1} << qubit;
+            if ((rowIndex & mask) != 0ULL) {
+                row_target |= (size_t{1} << bit);
+            }
+            base_index &= ~mask;
+        }
+
+        const rocComplex bra = batch_state[rowIndex];
+        for (size_t col_target = 0; col_target < matrixDim; ++col_target) {
+            size_t col_index = base_index;
+            for (unsigned bit = 0; bit < numTargetQubits; ++bit) {
+                if ((col_target >> bit) & 1ULL) {
+                    col_index |= (size_t{1} << targetQubits[bit]);
+                }
+            }
+
+            const rocComplex m = matrix[row_target + col_target * matrixDim];
+            const rocComplex ket = batch_state[col_index];
+            const double mv_re = static_cast<double>(m.x) * static_cast<double>(ket.x) -
+                                 static_cast<double>(m.y) * static_cast<double>(ket.y);
+            const double mv_im = static_cast<double>(m.x) * static_cast<double>(ket.y) +
+                                 static_cast<double>(m.y) * static_cast<double>(ket.x);
+
+            local_re += static_cast<double>(bra.x) * mv_re + static_cast<double>(bra.y) * mv_im;
+            local_im += static_cast<double>(bra.x) * mv_im - static_cast<double>(bra.y) * mv_re;
+        }
+    }
+
+    real_sums[tid] = local_re;
+    imag_sums[tid] = local_im;
+    __syncthreads();
+
+    for (unsigned s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            real_sums[tid] += real_sums[tid + s];
+            imag_sums[tid] += imag_sums[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        blockSums[batch * static_cast<size_t>(gridDim.x) + blockIdx.x] =
+            make_complex(real_sums[0], imag_sums[0]);
+    }
+}
+
+__global__ void reduce_expectation_matrix_moments_kernel(const rocComplex* state,
+                                                         size_t numElements,
+                                                         const unsigned* targetQubits,
+                                                         unsigned numTargetQubits,
+                                                         const rocComplex* matrix,
+                                                         const rocComplex* squaredMatrix,
+                                                         size_t matrixDim,
+                                                         rocComplex* meanBlockSums,
+                                                         rocComplex* secondBlockSums) {
+    extern __shared__ double shared[];
+    double* mean_re_sums = shared;
+    double* mean_im_sums = shared + blockDim.x;
+    double* second_re_sums = shared + 2 * blockDim.x;
+    double* second_im_sums = shared + 3 * blockDim.x;
+    const unsigned tid = threadIdx.x;
+    const size_t batch = static_cast<size_t>(blockIdx.y);
+    const rocComplex* batch_state = state + batch * numElements;
+    const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + tid;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+
+    double mean_re = 0.0;
+    double mean_im = 0.0;
+    double second_re = 0.0;
+    double second_im = 0.0;
+    for (size_t rowIndex = gid; rowIndex < numElements; rowIndex += stride) {
+        size_t row_target = 0;
+        size_t base_index = rowIndex;
+        for (unsigned bit = 0; bit < numTargetQubits; ++bit) {
+            const unsigned qubit = targetQubits[bit];
+            const size_t mask = size_t{1} << qubit;
+            if ((rowIndex & mask) != 0ULL) {
+                row_target |= (size_t{1} << bit);
+            }
+            base_index &= ~mask;
+        }
+
+        const rocComplex bra = batch_state[rowIndex];
+        for (size_t col_target = 0; col_target < matrixDim; ++col_target) {
+            size_t col_index = base_index;
+            for (unsigned bit = 0; bit < numTargetQubits; ++bit) {
+                if ((col_target >> bit) & 1ULL) {
+                    col_index |= (size_t{1} << targetQubits[bit]);
+                }
+            }
+
+            const size_t matrix_offset = row_target + col_target * matrixDim;
+            const rocComplex ket = batch_state[col_index];
+
+            const rocComplex m = matrix[matrix_offset];
+            const double mv_re = static_cast<double>(m.x) * static_cast<double>(ket.x) -
+                                 static_cast<double>(m.y) * static_cast<double>(ket.y);
+            const double mv_im = static_cast<double>(m.x) * static_cast<double>(ket.y) +
+                                 static_cast<double>(m.y) * static_cast<double>(ket.x);
+            mean_re += static_cast<double>(bra.x) * mv_re + static_cast<double>(bra.y) * mv_im;
+            mean_im += static_cast<double>(bra.x) * mv_im - static_cast<double>(bra.y) * mv_re;
+
+            const rocComplex squared = squaredMatrix[matrix_offset];
+            const double second_mv_re = static_cast<double>(squared.x) * static_cast<double>(ket.x) -
+                                        static_cast<double>(squared.y) * static_cast<double>(ket.y);
+            const double second_mv_im = static_cast<double>(squared.x) * static_cast<double>(ket.y) +
+                                        static_cast<double>(squared.y) * static_cast<double>(ket.x);
+            second_re += static_cast<double>(bra.x) * second_mv_re +
+                         static_cast<double>(bra.y) * second_mv_im;
+            second_im += static_cast<double>(bra.x) * second_mv_im -
+                         static_cast<double>(bra.y) * second_mv_re;
+        }
+    }
+
+    mean_re_sums[tid] = mean_re;
+    mean_im_sums[tid] = mean_im;
+    second_re_sums[tid] = second_re;
+    second_im_sums[tid] = second_im;
+    __syncthreads();
+
+    for (unsigned s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            mean_re_sums[tid] += mean_re_sums[tid + s];
+            mean_im_sums[tid] += mean_im_sums[tid + s];
+            second_re_sums[tid] += second_re_sums[tid + s];
+            second_im_sums[tid] += second_im_sums[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        const size_t block_offset = batch * static_cast<size_t>(gridDim.x) + blockIdx.x;
+        meanBlockSums[block_offset] = make_complex(mean_re_sums[0], mean_im_sums[0]);
+        secondBlockSums[block_offset] = make_complex(second_re_sums[0], second_im_sums[0]);
+    }
+}
+
+__global__ void reduce_sparse_matrix_moments_kernel(const rocComplex* state,
+                                                    const rocComplex* data,
+                                                    const size_t* indices,
+                                                    const size_t* indptr,
+                                                    size_t rows,
+                                                    rocComplex* meanBlockSums,
+                                                    rocComplex* secondBlockSums) {
+    extern __shared__ double shared[];
+    double* mean_re_sums = shared;
+    double* mean_im_sums = shared + blockDim.x;
+    double* second_re_sums = shared + 2 * blockDim.x;
+    double* second_im_sums = shared + 3 * blockDim.x;
+    const unsigned tid = threadIdx.x;
+    const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + tid;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+
+    double mean_re = 0.0;
+    double mean_im = 0.0;
+    double second_re = 0.0;
+    double second_im = 0.0;
+    for (size_t row = gid; row < rows; row += stride) {
+        double accum_re = 0.0;
+        double accum_im = 0.0;
+        for (size_t offset = indptr[row]; offset < indptr[row + 1]; ++offset) {
+            const rocComplex value = data[offset];
+            const rocComplex ket = state[indices[offset]];
+            accum_re += static_cast<double>(value.x) * static_cast<double>(ket.x) -
+                        static_cast<double>(value.y) * static_cast<double>(ket.y);
+            accum_im += static_cast<double>(value.x) * static_cast<double>(ket.y) +
+                        static_cast<double>(value.y) * static_cast<double>(ket.x);
+        }
+
+        const rocComplex bra = state[row];
+        mean_re += static_cast<double>(bra.x) * accum_re + static_cast<double>(bra.y) * accum_im;
+        mean_im += static_cast<double>(bra.x) * accum_im - static_cast<double>(bra.y) * accum_re;
+        second_re += accum_re * accum_re + accum_im * accum_im;
+    }
+
+    mean_re_sums[tid] = mean_re;
+    mean_im_sums[tid] = mean_im;
+    second_re_sums[tid] = second_re;
+    second_im_sums[tid] = second_im;
+    __syncthreads();
+
+    for (unsigned s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            mean_re_sums[tid] += mean_re_sums[tid + s];
+            mean_im_sums[tid] += mean_im_sums[tid + s];
+            second_re_sums[tid] += second_re_sums[tid + s];
+            second_im_sums[tid] += second_im_sums[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        meanBlockSums[blockIdx.x] = make_complex(mean_re_sums[0], mean_im_sums[0]);
+        secondBlockSums[blockIdx.x] = make_complex(second_re_sums[0], second_im_sums[0]);
+    }
+}
+
+__global__ void reduce_sparse_matrix_moments_batch_kernel(const rocComplex* state,
+                                                          const rocComplex* data,
+                                                          const size_t* indices,
+                                                          const size_t* indptr,
+                                                          size_t rows,
+                                                          rocComplex* meanBlockSums,
+                                                          rocComplex* secondBlockSums) {
+    extern __shared__ double shared[];
+    double* mean_re_sums = shared;
+    double* mean_im_sums = shared + blockDim.x;
+    double* second_re_sums = shared + 2 * blockDim.x;
+    double* second_im_sums = shared + 3 * blockDim.x;
+    const unsigned tid = threadIdx.x;
+    const size_t batch = static_cast<size_t>(blockIdx.y);
+    const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + tid;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+    const rocComplex* batch_state = state + batch * rows;
+
+    double mean_re = 0.0;
+    double mean_im = 0.0;
+    double second_re = 0.0;
+    double second_im = 0.0;
+    for (size_t row = gid; row < rows; row += stride) {
+        double accum_re = 0.0;
+        double accum_im = 0.0;
+        for (size_t offset = indptr[row]; offset < indptr[row + 1]; ++offset) {
+            const rocComplex value = data[offset];
+            const rocComplex ket = batch_state[indices[offset]];
+            accum_re += static_cast<double>(value.x) * static_cast<double>(ket.x) -
+                        static_cast<double>(value.y) * static_cast<double>(ket.y);
+            accum_im += static_cast<double>(value.x) * static_cast<double>(ket.y) +
+                        static_cast<double>(value.y) * static_cast<double>(ket.x);
+        }
+
+        const rocComplex bra = batch_state[row];
+        mean_re += static_cast<double>(bra.x) * accum_re + static_cast<double>(bra.y) * accum_im;
+        mean_im += static_cast<double>(bra.x) * accum_im - static_cast<double>(bra.y) * accum_re;
+        second_re += accum_re * accum_re + accum_im * accum_im;
+    }
+
+    mean_re_sums[tid] = mean_re;
+    mean_im_sums[tid] = mean_im;
+    second_re_sums[tid] = second_re;
+    second_im_sums[tid] = second_im;
+    __syncthreads();
+
+    for (unsigned s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            mean_re_sums[tid] += mean_re_sums[tid + s];
+            mean_im_sums[tid] += mean_im_sums[tid + s];
+            second_re_sums[tid] += second_re_sums[tid + s];
+            second_im_sums[tid] += second_im_sums[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        const size_t offset = batch * static_cast<size_t>(gridDim.x) + blockIdx.x;
+        meanBlockSums[offset] = make_complex(mean_re_sums[0], mean_im_sums[0]);
+        secondBlockSums[offset] = make_complex(second_re_sums[0], second_im_sums[0]);
+    }
+}
+
+__global__ void apply_sparse_matrix_kernel(const rocComplex* inputState,
+                                           rocComplex* outputState,
+                                           size_t numElements,
+                                           const unsigned* targetQubits,
+                                           unsigned numTargetQubits,
+                                           const rocComplex* data,
+                                           const size_t* indices,
+                                           const size_t* indptr) {
+    const size_t batch = static_cast<size_t>(blockIdx.y);
+    const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+    const rocComplex* batch_input = inputState + batch * numElements;
+    rocComplex* batch_output = outputState + batch * numElements;
+
+    for (size_t row_index = gid; row_index < numElements; row_index += stride) {
+        size_t local_row = 0;
+        size_t base_index = row_index;
+        for (unsigned bit = 0; bit < numTargetQubits; ++bit) {
+            const unsigned qubit = targetQubits[bit];
+            const size_t mask = size_t{1} << qubit;
+            if ((row_index & mask) != 0ULL) {
+                local_row |= size_t{1} << bit;
+            }
+            base_index &= ~mask;
+        }
+
+        double accum_re = 0.0;
+        double accum_im = 0.0;
+        for (size_t offset = indptr[local_row]; offset < indptr[local_row + 1]; ++offset) {
+            size_t col_index = base_index;
+            const size_t local_col = indices[offset];
+            for (unsigned bit = 0; bit < numTargetQubits; ++bit) {
+                if (((local_col >> bit) & size_t{1}) != 0ULL) {
+                    col_index |= size_t{1} << targetQubits[bit];
+                }
+            }
+
+            const rocComplex value = data[offset];
+            const rocComplex ket = batch_input[col_index];
+            accum_re += static_cast<double>(value.x) * static_cast<double>(ket.x) -
+                        static_cast<double>(value.y) * static_cast<double>(ket.y);
+            accum_im += static_cast<double>(value.x) * static_cast<double>(ket.y) +
+                        static_cast<double>(value.y) * static_cast<double>(ket.x);
+        }
+        batch_output[row_index] = make_complex(accum_re, accum_im);
+    }
+}
+
 __global__ void accumulate_sample_probabilities_kernel(const rocComplex* state,
                                                        size_t numElements,
                                                        const unsigned* measuredQubits,
@@ -1278,6 +3316,35 @@ __global__ void accumulate_sample_probabilities_kernel(const rocComplex* state,
             }
         }
         atomicAdd(&outcomeProbs[outcome], prob);
+    }
+}
+
+__global__ void accumulate_sample_probabilities_batch_kernel(const rocComplex* state,
+                                                             size_t elementsPerState,
+                                                             size_t batchSize,
+                                                             const unsigned* measuredQubits,
+                                                             unsigned numMeasuredQubits,
+                                                             size_t numOutcomes,
+                                                             double* outcomeProbs) {
+    const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+    const size_t total_elements = elementsPerState * batchSize;
+
+    for (size_t idx = gid; idx < total_elements; idx += stride) {
+        const size_t batch = idx / elementsPerState;
+        const size_t basis = idx - batch * elementsPerState;
+        const double prob = amp_abs2(state[idx]);
+        if (prob <= 0.0) {
+            continue;
+        }
+
+        unsigned outcome = 0;
+        for (unsigned b = 0; b < numMeasuredQubits; ++b) {
+            if ((basis >> measuredQubits[b]) & 1ULL) {
+                outcome |= (1U << b);
+            }
+        }
+        atomicAdd(&outcomeProbs[batch * numOutcomes + outcome], prob);
     }
 }
 
@@ -1306,6 +3373,40 @@ __global__ void reduce_double_sum_kernel(const double* input,
 
     if (tid == 0) {
         output[blockIdx.x] = ssum[0];
+    }
+}
+
+__global__ void reduce_complex_block_sums_to_double_pair_kernel(const rocComplex* input,
+                                                                size_t numElements,
+                                                                double* outputPair) {
+    extern __shared__ double shared[];
+    double* s_re = shared;
+    double* s_im = shared + blockDim.x;
+    const unsigned tid = threadIdx.x;
+    const size_t stride = blockDim.x;
+
+    double local_re = 0.0;
+    double local_im = 0.0;
+    for (size_t idx = tid; idx < numElements; idx += stride) {
+        local_re += static_cast<double>(input[idx].x);
+        local_im += static_cast<double>(input[idx].y);
+    }
+
+    s_re[tid] = local_re;
+    s_im[tid] = local_im;
+    __syncthreads();
+
+    for (unsigned s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            s_re[tid] += s_re[tid + s];
+            s_im[tid] += s_im[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        outputPair[0] = s_re[0];
+        outputPair[1] = s_im[0];
     }
 }
 
@@ -1484,6 +3585,2009 @@ inline rocqStatus_t reduce_blocks_to_scalar(rocsvInternalHandle* handle,
     return copy_status;
 }
 
+inline rocqStatus_t reduce_blocks_to_device_scalar(rocsvInternalHandle* handle,
+                                                   hipStream_t stream,
+                                                   double* d_blockSums,
+                                                   int numBlocks,
+                                                   double** d_scalar_out) {
+    if (!handle || !d_blockSums || !d_scalar_out || numBlocks <= 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    void* scalar_void = nullptr;
+    rocqStatus_t status = device_malloc(handle, &scalar_void, sizeof(double));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    double* d_scalar = static_cast<double*>(scalar_void);
+
+    constexpr int threads_per_block = 256;
+    double* current_in = d_blockSums;
+    size_t current_count = static_cast<size_t>(numBlocks);
+    bool owns_current_in = false;
+
+    while (current_count > 1) {
+        const int next_blocks = compute_reduction_blocks(current_count, threads_per_block);
+        void* next_out_void = nullptr;
+        status = device_malloc(handle,
+                               &next_out_void,
+                               static_cast<size_t>(next_blocks) * sizeof(double));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            if (owns_current_in) {
+                device_free(handle, current_in);
+            }
+            device_free(handle, d_scalar);
+            return status;
+        }
+
+        double* next_out = static_cast<double*>(next_out_void);
+        hipLaunchKernelGGL(reduce_double_sum_kernel,
+                           dim3(next_blocks),
+                           dim3(threads_per_block),
+                           threads_per_block * sizeof(double),
+                           stream,
+                           current_in,
+                           current_count,
+                           next_out);
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            device_free(handle, next_out);
+            if (owns_current_in) {
+                device_free(handle, current_in);
+            }
+            device_free(handle, d_scalar);
+            return status;
+        }
+
+        if (owns_current_in) {
+            device_free(handle, current_in);
+        }
+        current_in = next_out;
+        current_count = static_cast<size_t>(next_blocks);
+        owns_current_in = true;
+    }
+
+    if (hipMemcpyAsync(d_scalar,
+                       current_in,
+                       sizeof(double),
+                       hipMemcpyDeviceToDevice,
+                       stream) != hipSuccess) {
+        if (owns_current_in) {
+            device_free(handle, current_in);
+        }
+        device_free(handle, d_scalar);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    if (owns_current_in) {
+        device_free(handle, current_in);
+    }
+
+    *d_scalar_out = d_scalar;
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t rccl_allreduce_double_sum_inplace(rocsvInternalHandle* handle,
+                                                      const std::vector<double*>& rankBuffers,
+                                                      size_t count) {
+    if (!handle || rankBuffers.size() != static_cast<size_t>(handle->distributedGpuCount) || count == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_rccl_ready(handle)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+#ifdef ROCQ_HAVE_RCCL
+    ncclResult_t status = ncclGroupStart();
+    if (status != ncclSuccess) {
+        return ROCQ_STATUS_RCCL_ERROR;
+    }
+
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t rank_idx = static_cast<size_t>(rank);
+        if (hipSetDevice(handle->distributedDeviceIds[rank_idx]) != hipSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        status = ncclAllReduce(rankBuffers[rank_idx],
+                               rankBuffers[rank_idx],
+                               count,
+                               ncclDouble,
+                               ncclSum,
+                               handle->distributedComms[rank_idx],
+                               handle->distributedStreams[rank_idx]);
+        if (status != ncclSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_RCCL_ERROR;
+        }
+    }
+
+    status = ncclGroupEnd();
+    return (status == ncclSuccess) ? ROCQ_STATUS_SUCCESS : ROCQ_STATUS_RCCL_ERROR;
+#else
+    (void)handle;
+    (void)rankBuffers;
+    (void)count;
+    return ROCQ_STATUS_NOT_IMPLEMENTED;
+#endif
+}
+
+enum class DistributedExpectationKind {
+    SingleZ,
+    SingleX,
+    SingleY,
+    ZProduct,
+    PauliString,
+};
+
+inline rocqStatus_t distributed_expectation_rccl(rocsvInternalHandle* handle,
+                                                unsigned numQubits,
+                                                const std::vector<unsigned>& targets,
+                                                DistributedExpectationKind kind,
+                                                const std::string& pauli,
+                                                double* result) {
+    if (!handle || !result || targets.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_rccl_ready(handle)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numQubits != handle->globalNumQubits) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_all_qubits_local(handle, targets)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (kind == DistributedExpectationKind::PauliString && pauli.size() != targets.size()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const int ranks = handle->distributedGpuCount;
+    const size_t rank_count = static_cast<size_t>(ranks);
+    const size_t local_elements = handle->localSliceElements;
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(local_elements, threads_per_block);
+
+    std::vector<double*> rank_block_sums(rank_count, nullptr);
+    std::vector<double*> rank_scalars(rank_count, nullptr);
+    std::vector<unsigned*> rank_targets(rank_count, nullptr);
+    std::vector<char*> rank_pauli(rank_count, nullptr);
+
+    auto cleanup = [&]() {
+        for (int rank = 0; rank < ranks; ++rank) {
+            const size_t idx = static_cast<size_t>(rank);
+            if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+                continue;
+            }
+            if (rank_pauli[idx]) {
+                (void)device_free(handle, rank_pauli[idx]);
+            }
+            if (rank_targets[idx]) {
+                (void)device_free(handle, rank_targets[idx]);
+            }
+            if (rank_scalars[idx]) {
+                (void)device_free(handle, rank_scalars[idx]);
+            }
+            if (rank_block_sums[idx]) {
+                (void)device_free(handle, rank_block_sums[idx]);
+            }
+        }
+    };
+
+    for (int rank = 0; rank < ranks; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            cleanup();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        hipStream_t stream = handle->distributedStreams[idx];
+
+        void* block_sums_void = nullptr;
+        rocqStatus_t status = device_malloc(handle,
+                                            &block_sums_void,
+                                            static_cast<size_t>(blocks) * sizeof(double));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_block_sums[idx] = static_cast<double*>(block_sums_void);
+
+        if (kind == DistributedExpectationKind::ZProduct ||
+            kind == DistributedExpectationKind::PauliString) {
+            void* targets_void = nullptr;
+            status = device_malloc(handle, &targets_void, targets.size() * sizeof(unsigned));
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+            rank_targets[idx] = static_cast<unsigned*>(targets_void);
+            status = copy_host_to_device(rank_targets[idx],
+                                         targets.data(),
+                                         targets.size() * sizeof(unsigned),
+                                         stream);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+        }
+
+        if (kind == DistributedExpectationKind::PauliString) {
+            void* pauli_void = nullptr;
+            status = device_malloc(handle, &pauli_void, pauli.size() * sizeof(char));
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+            rank_pauli[idx] = static_cast<char*>(pauli_void);
+            status = copy_host_to_device(rank_pauli[idx],
+                                         pauli.data(),
+                                         pauli.size() * sizeof(char),
+                                         stream);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+        }
+
+        switch (kind) {
+            case DistributedExpectationKind::SingleZ:
+                hipLaunchKernelGGL(reduce_expectation_z_kernel,
+                                   dim3(blocks),
+                                   dim3(threads_per_block),
+                                   threads_per_block * sizeof(double),
+                                   stream,
+                                   handle->distributedSlices[idx],
+                                   local_elements,
+                                   targets[0],
+                                   rank_block_sums[idx]);
+                break;
+            case DistributedExpectationKind::SingleX:
+                hipLaunchKernelGGL(reduce_expectation_x_kernel,
+                                   dim3(blocks),
+                                   dim3(threads_per_block),
+                                   threads_per_block * sizeof(double),
+                                   stream,
+                                   handle->distributedSlices[idx],
+                                   local_elements,
+                                   targets[0],
+                                   rank_block_sums[idx]);
+                break;
+            case DistributedExpectationKind::SingleY:
+                hipLaunchKernelGGL(reduce_expectation_y_kernel,
+                                   dim3(blocks),
+                                   dim3(threads_per_block),
+                                   threads_per_block * sizeof(double),
+                                   stream,
+                                   handle->distributedSlices[idx],
+                                   local_elements,
+                                   targets[0],
+                                   rank_block_sums[idx]);
+                break;
+            case DistributedExpectationKind::ZProduct:
+                hipLaunchKernelGGL(reduce_expectation_z_product_kernel,
+                                   dim3(blocks),
+                                   dim3(threads_per_block),
+                                   threads_per_block * sizeof(double),
+                                   stream,
+                                   handle->distributedSlices[idx],
+                                   local_elements,
+                                   rank_targets[idx],
+                                   static_cast<unsigned>(targets.size()),
+                                   rank_block_sums[idx]);
+                break;
+            case DistributedExpectationKind::PauliString:
+                hipLaunchKernelGGL(reduce_expectation_pauli_string_kernel,
+                                   dim3(blocks),
+                                   dim3(threads_per_block),
+                                   threads_per_block * sizeof(double),
+                                   stream,
+                                   handle->distributedSlices[idx],
+                                   local_elements,
+                                   rank_pauli[idx],
+                                   rank_targets[idx],
+                                   static_cast<unsigned>(targets.size()),
+                                   rank_block_sums[idx]);
+                break;
+        }
+
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+
+        status = reduce_blocks_to_device_scalar(handle,
+                                                stream,
+                                                rank_block_sums[idx],
+                                                blocks,
+                                                &rank_scalars[idx]);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+    }
+
+    rocqStatus_t status = rccl_allreduce_double_sum_inplace(handle, rank_scalars, 1);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+
+    status = sync_distributed_streams(handle);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        cleanup();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    status = copy_device_to_host(result,
+                                 rank_scalars[0],
+                                 sizeof(double),
+                                 handle->distributedStreams[0]);
+    cleanup();
+    return status;
+}
+
+inline rocqStatus_t distributed_expectation_matrix_rccl(rocsvInternalHandle* handle,
+                                                        unsigned numQubits,
+                                                        const std::vector<unsigned>& targets,
+                                                        const rocComplex* d_matrix,
+                                                        size_t matrixDim,
+                                                        rocComplex* result) {
+    if (!handle || !result || !d_matrix || targets.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_rccl_ready(handle)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numQubits != handle->globalNumQubits || matrixDim > kMaxDistributedMatrixDim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (targets.size() > kMaxDistributedMatrixTargetQubits ||
+        !distributed_all_qubits_local(handle, targets)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (handle->localSliceElements == 0) {
+        *result = make_complex(0.0, 0.0);
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    const int ranks = handle->distributedGpuCount;
+    const size_t rank_count = static_cast<size_t>(ranks);
+    if (handle->distributedSwapBuffers.size() < rank_count ||
+        handle->distributedTargetScratch.size() < rank_count ||
+        handle->distributedMatrixScratch.size() < rank_count) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    std::vector<rocComplex> matrix_host;
+    rocqStatus_t status = copy_matrix_from_device(d_matrix,
+                                                  matrixDim * matrixDim,
+                                                  handle->distributedStreams[0],
+                                                  &matrix_host);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    std::vector<double*> rank_pairs(rank_count, nullptr);
+    auto cleanup = [&]() {
+        for (int rank = 0; rank < ranks; ++rank) {
+            const size_t idx = static_cast<size_t>(rank);
+            if (rank_pairs[idx] && hipSetDevice(handle->distributedDeviceIds[idx]) == hipSuccess) {
+                (void)device_free(handle, rank_pairs[idx]);
+            }
+        }
+    };
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(handle->localSliceElements, threads_per_block);
+
+    for (int rank = 0; rank < ranks; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        if (!handle->distributedSwapBuffers[idx] ||
+            !handle->distributedTargetScratch[idx] ||
+            !handle->distributedMatrixScratch[idx]) {
+            cleanup();
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            cleanup();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        hipStream_t stream = handle->distributedStreams[idx];
+
+        status = copy_host_to_device(handle->distributedTargetScratch[idx],
+                                     targets.data(),
+                                     targets.size() * sizeof(unsigned),
+                                     stream);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        status = copy_host_to_device(handle->distributedMatrixScratch[idx],
+                                     matrix_host.data(),
+                                     matrix_host.size() * sizeof(rocComplex),
+                                     stream);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+
+        rocComplex* d_block_sums = handle->distributedSwapBuffers[idx];
+        hipLaunchKernelGGL(reduce_expectation_matrix_kernel,
+                           dim3(blocks),
+                           dim3(threads_per_block),
+                           2 * threads_per_block * sizeof(double),
+                           stream,
+                           handle->distributedSlices[idx],
+                           handle->localSliceElements,
+                           handle->distributedTargetScratch[idx],
+                           static_cast<unsigned>(targets.size()),
+                           handle->distributedMatrixScratch[idx],
+                           matrixDim,
+                           d_block_sums);
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+
+        void* pair_void = nullptr;
+        status = device_malloc(handle, &pair_void, 2 * sizeof(double));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_pairs[idx] = static_cast<double*>(pair_void);
+
+        hipLaunchKernelGGL(reduce_complex_block_sums_to_double_pair_kernel,
+                           dim3(1),
+                           dim3(threads_per_block),
+                           2 * threads_per_block * sizeof(double),
+                           stream,
+                           d_block_sums,
+                           static_cast<size_t>(blocks),
+                           rank_pairs[idx]);
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+    }
+
+    status = rccl_allreduce_double_sum_inplace(handle, rank_pairs, 2);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+    status = sync_distributed_streams(handle);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        cleanup();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    double host_pair[2] = {0.0, 0.0};
+    status = copy_device_to_host(host_pair,
+                                 rank_pairs[0],
+                                 2 * sizeof(double),
+                                 handle->distributedStreams[0]);
+    if (status == ROCQ_STATUS_SUCCESS) {
+        *result = make_complex(host_pair[0], host_pair[1]);
+    }
+    cleanup();
+    return status;
+}
+
+inline bool build_local_csr_slice(const std::vector<rocComplex>& data,
+                                  const std::vector<size_t>& indices,
+                                  const std::vector<size_t>& indptr,
+                                  size_t row_start,
+                                  size_t local_rows,
+                                  std::vector<rocComplex>* local_data,
+                                  std::vector<size_t>* local_indices,
+                                  std::vector<size_t>* local_indptr) {
+    if (!local_data || !local_indices || !local_indptr || indptr.size() < row_start + local_rows + 1) {
+        return false;
+    }
+
+    local_data->clear();
+    local_indices->clear();
+    local_indptr->assign(local_rows + 1, 0);
+    const size_t row_end = row_start + local_rows;
+
+    for (size_t local_row = 0; local_row < local_rows; ++local_row) {
+        const size_t global_row = row_start + local_row;
+        const size_t row_begin = indptr[global_row];
+        const size_t row_limit = indptr[global_row + 1];
+        if (row_begin > row_limit || row_limit > data.size() || row_limit > indices.size()) {
+            return false;
+        }
+        for (size_t offset = row_begin; offset < row_limit; ++offset) {
+            const size_t global_col = indices[offset];
+            if (global_col < row_start || global_col >= row_end) {
+                return false;
+            }
+            local_data->push_back(data[offset]);
+            local_indices->push_back(global_col - row_start);
+        }
+        (*local_indptr)[local_row + 1] = local_data->size();
+    }
+    return true;
+}
+
+inline rocqStatus_t distributed_sparse_matrix_moments_rccl(rocsvInternalHandle* handle,
+                                                           unsigned numQubits,
+                                                           const rocComplex* d_data,
+                                                           const size_t* d_indices,
+                                                           const size_t* d_indptr,
+                                                           size_t rows,
+                                                           size_t cols,
+                                                           size_t nnz,
+                                                           rocComplex* mean,
+                                                           rocComplex* secondMoment) {
+    if (!handle || !mean || !secondMoment || !d_indptr) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_rccl_ready(handle)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numQubits != handle->globalNumQubits || rows != cols) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t local_rows = handle->localSliceElements;
+    if (local_rows == 0 || rows != local_rows * static_cast<size_t>(handle->distributedGpuCount)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    int original_device = 0;
+    if (hipGetDevice(&original_device) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    auto restore_device = [&]() {
+        (void)hipSetDevice(original_device);
+    };
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        restore_device();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    std::vector<rocComplex> data;
+    std::vector<size_t> indices;
+    std::vector<size_t> indptr;
+    rocqStatus_t status = copy_sparse_matrix_from_device(d_data,
+                                                         d_indices,
+                                                         d_indptr,
+                                                         rows,
+                                                         nnz,
+                                                         handle->distributedStreams[0],
+                                                         &data,
+                                                         &indices,
+                                                         &indptr);
+    restore_device();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    const int ranks = handle->distributedGpuCount;
+    const size_t rank_count = static_cast<size_t>(ranks);
+    std::vector<rocComplex*> rank_data(rank_count, nullptr);
+    std::vector<size_t*> rank_indices(rank_count, nullptr);
+    std::vector<size_t*> rank_indptr(rank_count, nullptr);
+    std::vector<rocComplex*> rank_mean_blocks(rank_count, nullptr);
+    std::vector<rocComplex*> rank_second_blocks(rank_count, nullptr);
+    std::vector<double*> rank_mean_pairs(rank_count, nullptr);
+    std::vector<double*> rank_second_pairs(rank_count, nullptr);
+
+    auto cleanup = [&]() {
+        for (int rank = 0; rank < ranks; ++rank) {
+            const size_t idx = static_cast<size_t>(rank);
+            if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+                continue;
+            }
+            if (rank_second_pairs[idx]) {
+                (void)device_free(handle, rank_second_pairs[idx]);
+            }
+            if (rank_mean_pairs[idx]) {
+                (void)device_free(handle, rank_mean_pairs[idx]);
+            }
+            if (rank_second_blocks[idx]) {
+                (void)device_free(handle, rank_second_blocks[idx]);
+            }
+            if (rank_mean_blocks[idx]) {
+                (void)device_free(handle, rank_mean_blocks[idx]);
+            }
+            if (rank_indptr[idx]) {
+                (void)device_free(handle, rank_indptr[idx]);
+            }
+            if (rank_indices[idx]) {
+                (void)device_free(handle, rank_indices[idx]);
+            }
+            if (rank_data[idx]) {
+                (void)device_free(handle, rank_data[idx]);
+            }
+        }
+        restore_device();
+    };
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(local_rows, threads_per_block);
+    for (int rank = 0; rank < ranks; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        const size_t row_start = idx * local_rows;
+        std::vector<rocComplex> local_data;
+        std::vector<size_t> local_indices;
+        std::vector<size_t> local_indptr;
+        if (!build_local_csr_slice(data,
+                                   indices,
+                                   indptr,
+                                   row_start,
+                                   local_rows,
+                                   &local_data,
+                                   &local_indices,
+                                   &local_indptr)) {
+            cleanup();
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            cleanup();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        hipStream_t stream = handle->distributedStreams[idx];
+
+        void* ptr = nullptr;
+        if (!local_data.empty()) {
+            status = device_malloc(handle, &ptr, local_data.size() * sizeof(rocComplex));
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+            rank_data[idx] = static_cast<rocComplex*>(ptr);
+            status = copy_host_to_device(rank_data[idx],
+                                         local_data.data(),
+                                         local_data.size() * sizeof(rocComplex),
+                                         stream);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+
+            ptr = nullptr;
+            status = device_malloc(handle, &ptr, local_indices.size() * sizeof(size_t));
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+            rank_indices[idx] = static_cast<size_t*>(ptr);
+            status = copy_host_to_device(rank_indices[idx],
+                                         local_indices.data(),
+                                         local_indices.size() * sizeof(size_t),
+                                         stream);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+        }
+
+        ptr = nullptr;
+        status = device_malloc(handle, &ptr, local_indptr.size() * sizeof(size_t));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_indptr[idx] = static_cast<size_t*>(ptr);
+        status = copy_host_to_device(rank_indptr[idx],
+                                     local_indptr.data(),
+                                     local_indptr.size() * sizeof(size_t),
+                                     stream);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+
+        ptr = nullptr;
+        status = device_malloc(handle, &ptr, static_cast<size_t>(blocks) * sizeof(rocComplex));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_mean_blocks[idx] = static_cast<rocComplex*>(ptr);
+
+        ptr = nullptr;
+        status = device_malloc(handle, &ptr, static_cast<size_t>(blocks) * sizeof(rocComplex));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_second_blocks[idx] = static_cast<rocComplex*>(ptr);
+
+        hipLaunchKernelGGL(reduce_sparse_matrix_moments_kernel,
+                           dim3(blocks),
+                           dim3(threads_per_block),
+                           4 * threads_per_block * sizeof(double),
+                           stream,
+                           handle->distributedSlices[idx],
+                           rank_data[idx],
+                           rank_indices[idx],
+                           rank_indptr[idx],
+                           local_rows,
+                           rank_mean_blocks[idx],
+                           rank_second_blocks[idx]);
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+
+        ptr = nullptr;
+        status = device_malloc(handle, &ptr, 2 * sizeof(double));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_mean_pairs[idx] = static_cast<double*>(ptr);
+        hipLaunchKernelGGL(reduce_complex_block_sums_to_double_pair_kernel,
+                           dim3(1),
+                           dim3(threads_per_block),
+                           2 * threads_per_block * sizeof(double),
+                           stream,
+                           rank_mean_blocks[idx],
+                           static_cast<size_t>(blocks),
+                           rank_mean_pairs[idx]);
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+
+        ptr = nullptr;
+        status = device_malloc(handle, &ptr, 2 * sizeof(double));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_second_pairs[idx] = static_cast<double*>(ptr);
+        hipLaunchKernelGGL(reduce_complex_block_sums_to_double_pair_kernel,
+                           dim3(1),
+                           dim3(threads_per_block),
+                           2 * threads_per_block * sizeof(double),
+                           stream,
+                           rank_second_blocks[idx],
+                           static_cast<size_t>(blocks),
+                           rank_second_pairs[idx]);
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+    }
+
+    status = rccl_allreduce_double_sum_inplace(handle, rank_mean_pairs, 2);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+    status = rccl_allreduce_double_sum_inplace(handle, rank_second_pairs, 2);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+    status = sync_distributed_streams(handle);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        cleanup();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    double mean_pair[2] = {0.0, 0.0};
+    double second_pair[2] = {0.0, 0.0};
+    status = copy_device_to_host(mean_pair,
+                                 rank_mean_pairs[0],
+                                 2 * sizeof(double),
+                                 handle->distributedStreams[0]);
+    if (status == ROCQ_STATUS_SUCCESS) {
+        status = copy_device_to_host(second_pair,
+                                     rank_second_pairs[0],
+                                     2 * sizeof(double),
+                                     handle->distributedStreams[0]);
+    }
+    if (status == ROCQ_STATUS_SUCCESS) {
+        *mean = make_complex(mean_pair[0], mean_pair[1]);
+        *secondMoment = make_complex(second_pair[0], second_pair[1]);
+    }
+    cleanup();
+    return status;
+}
+
+inline rocqStatus_t host_pauli_expectation(const std::vector<rocComplex>& host_state,
+                                           unsigned numQubits,
+                                           const std::vector<unsigned>& targets,
+                                           const std::string& pauli,
+                                           double* result) {
+    if (!result || targets.empty() || targets.size() != pauli.size()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements) || host_state.size() != state_elements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::complex<double> total{0.0, 0.0};
+    for (size_t idx = 0; idx < state_elements; ++idx) {
+        size_t out_idx = idx;
+        std::complex<double> phase{1.0, 0.0};
+
+        for (size_t p = 0; p < pauli.size(); ++p) {
+            const unsigned qubit = targets[p];
+            if (!validate_qubit_index(qubit, numQubits)) {
+                return ROCQ_STATUS_INVALID_VALUE;
+            }
+            const bool bit = ((idx >> qubit) & 1ULL) != 0ULL;
+            const char op = static_cast<char>(std::toupper(static_cast<unsigned char>(pauli[p])));
+            switch (op) {
+                case 'I':
+                    break;
+                case 'X':
+                    out_idx ^= (size_t{1} << qubit);
+                    break;
+                case 'Y':
+                    out_idx ^= (size_t{1} << qubit);
+                    phase *= bit ? std::complex<double>{0.0, -1.0} : std::complex<double>{0.0, 1.0};
+                    break;
+                case 'Z':
+                    if (bit) {
+                        phase = -phase;
+                    }
+                    break;
+                default:
+                    return ROCQ_STATUS_INVALID_VALUE;
+            }
+        }
+
+        total += std::conj(to_std_complex(host_state[out_idx])) * phase * to_std_complex(host_state[idx]);
+    }
+
+    *result = total.real();
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t distributed_expectation_host_fallback(rocsvInternalHandle* handle,
+                                                          unsigned numQubits,
+                                                          const std::vector<unsigned>& targets,
+                                                          const std::string& pauli,
+                                                          double* result) {
+    if (!distributed_host_fallback_enabled()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !handle->distributedMode || numQubits != handle->globalNumQubits) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> host_full;
+    rocqStatus_t status = gather_distributed_state_to_host(handle, &host_full);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    return host_pauli_expectation(host_full, numQubits, targets, pauli, result);
+}
+
+inline rocqStatus_t distributed_expectation_with_fallback(rocsvInternalHandle* handle,
+                                                          unsigned numQubits,
+                                                          const std::vector<unsigned>& targets,
+                                                          DistributedExpectationKind kind,
+                                                          const std::string& pauli,
+                                                          double* result) {
+    rocqStatus_t status = distributed_expectation_rccl(handle, numQubits, targets, kind, pauli, result);
+    if (status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+        return status;
+    }
+
+    std::string fallback_pauli = pauli;
+    if (fallback_pauli.empty()) {
+        switch (kind) {
+            case DistributedExpectationKind::SingleZ:
+                fallback_pauli = "Z";
+                break;
+            case DistributedExpectationKind::SingleX:
+                fallback_pauli = "X";
+                break;
+            case DistributedExpectationKind::SingleY:
+                fallback_pauli = "Y";
+                break;
+            case DistributedExpectationKind::ZProduct:
+                fallback_pauli.assign(targets.size(), 'Z');
+                break;
+            case DistributedExpectationKind::PauliString:
+                break;
+        }
+    }
+
+    return distributed_expectation_host_fallback(handle, numQubits, targets, fallback_pauli, result);
+}
+
+inline rocqStatus_t free_distributed_probability_buffers(rocsvInternalHandle* handle,
+                                                         const std::vector<double*>& rank_probs) {
+    if (!handle) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocqStatus_t first_status = ROCQ_STATUS_SUCCESS;
+    const int ranks = handle->distributedGpuCount;
+    for (int rank = 0; rank < ranks && static_cast<size_t>(rank) < rank_probs.size(); ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        if (!rank_probs[idx]) {
+            continue;
+        }
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            if (first_status == ROCQ_STATUS_SUCCESS) {
+                first_status = ROCQ_STATUS_HIP_ERROR;
+            }
+            continue;
+        }
+        rocqStatus_t status = device_free(handle, rank_probs[idx]);
+        if (first_status == ROCQ_STATUS_SUCCESS && status != ROCQ_STATUS_SUCCESS) {
+            first_status = status;
+        }
+    }
+    return first_status;
+}
+
+inline rocqStatus_t accumulate_distributed_sample_probabilities_rccl(
+    rocsvInternalHandle* handle,
+    unsigned numQubits,
+    const std::vector<unsigned>& measured,
+    std::vector<double*>* rank_probs_out) {
+    if (!handle || measured.empty() || !rank_probs_out) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    rank_probs_out->clear();
+    if (!distributed_rccl_ready(handle)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numQubits != handle->globalNumQubits) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_all_qubits_local(handle, measured)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (measured.size() >= static_cast<size_t>(sizeof(size_t) * 8)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    const size_t num_outcomes = size_t{1} << measured.size();
+    const int ranks = handle->distributedGpuCount;
+    const size_t rank_count = static_cast<size_t>(ranks);
+    const size_t local_elements = handle->localSliceElements;
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(local_elements, threads_per_block);
+
+    std::vector<unsigned*> rank_measured(rank_count, nullptr);
+    rank_probs_out->assign(rank_count, nullptr);
+
+    auto cleanup = [&]() {
+        for (int rank = 0; rank < ranks; ++rank) {
+            const size_t idx = static_cast<size_t>(rank);
+            if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+                continue;
+            }
+            if ((*rank_probs_out)[idx]) {
+                (void)device_free(handle, (*rank_probs_out)[idx]);
+                (*rank_probs_out)[idx] = nullptr;
+            }
+            if (rank_measured[idx]) {
+                (void)device_free(handle, rank_measured[idx]);
+                rank_measured[idx] = nullptr;
+            }
+        }
+    };
+
+    for (int rank = 0; rank < ranks; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            cleanup();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        hipStream_t stream = handle->distributedStreams[idx];
+
+        void* measured_void = nullptr;
+        rocqStatus_t status = device_malloc(handle, &measured_void, measured.size() * sizeof(unsigned));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_measured[idx] = static_cast<unsigned*>(measured_void);
+        status = copy_host_to_device(rank_measured[idx],
+                                     measured.data(),
+                                     measured.size() * sizeof(unsigned),
+                                     stream);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+
+        void* probs_void = nullptr;
+        status = device_malloc(handle, &probs_void, num_outcomes * sizeof(double));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        (*rank_probs_out)[idx] = static_cast<double*>(probs_void);
+        if (hipMemsetAsync((*rank_probs_out)[idx], 0, num_outcomes * sizeof(double), stream) != hipSuccess) {
+            cleanup();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+
+        hipLaunchKernelGGL(accumulate_sample_probabilities_kernel,
+                           dim3(blocks),
+                           dim3(threads_per_block),
+                           0,
+                           stream,
+                           handle->distributedSlices[idx],
+                           local_elements,
+                           rank_measured[idx],
+                           static_cast<unsigned>(measured.size()),
+                           (*rank_probs_out)[idx]);
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+    }
+
+    rocqStatus_t status = rccl_allreduce_double_sum_inplace(handle, *rank_probs_out, num_outcomes);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+
+    status = sync_distributed_streams(handle);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+
+    rocqStatus_t first_free_status = ROCQ_STATUS_SUCCESS;
+    for (int rank = 0; rank < ranks; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            if (first_free_status == ROCQ_STATUS_SUCCESS) {
+                first_free_status = ROCQ_STATUS_HIP_ERROR;
+            }
+            continue;
+        }
+        if (rank_measured[idx]) {
+            rocqStatus_t free_status = device_free(handle, rank_measured[idx]);
+            rank_measured[idx] = nullptr;
+            if (first_free_status == ROCQ_STATUS_SUCCESS && free_status != ROCQ_STATUS_SUCCESS) {
+                first_free_status = free_status;
+            }
+        }
+    }
+    if (first_free_status != ROCQ_STATUS_SUCCESS) {
+        (void)free_distributed_probability_buffers(handle, *rank_probs_out);
+        rank_probs_out->assign(rank_count, nullptr);
+        return first_free_status;
+    }
+
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t accumulate_distributed_sample_probabilities_rccl_localized(
+    rocsvInternalHandle* handle,
+    unsigned numQubits,
+    const std::vector<unsigned>& measured,
+    std::vector<double*>* rank_probs_out) {
+    if (!handle || measured.empty() || !rank_probs_out) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (distributed_all_qubits_local(handle, measured)) {
+        return accumulate_distributed_sample_probabilities_rccl(
+            handle, numQubits, measured, rank_probs_out);
+    }
+
+    std::vector<unsigned> localized_measured;
+    std::vector<std::pair<unsigned, unsigned>> swaps;
+    rocqStatus_t status =
+        localize_distributed_qubits_for_operation(handle, measured, &localized_measured, &swaps);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    status = accumulate_distributed_sample_probabilities_rccl(
+        handle, numQubits, localized_measured, rank_probs_out);
+    rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        if (rank_probs_out && !rank_probs_out->empty()) {
+            (void)free_distributed_probability_buffers(handle, *rank_probs_out);
+            rank_probs_out->clear();
+        }
+        return status;
+    }
+    if (restore_status != ROCQ_STATUS_SUCCESS) {
+        if (rank_probs_out && !rank_probs_out->empty()) {
+            (void)free_distributed_probability_buffers(handle, *rank_probs_out);
+            rank_probs_out->clear();
+        }
+        return restore_status;
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
+                                            unsigned numQubits,
+                                            const std::vector<unsigned>& measured,
+                                            unsigned numShots,
+                                            uint64_t* h_results) {
+    if (!handle || measured.empty() || !h_results) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (numShots == 0) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    std::vector<double*> rank_probs;
+    rocqStatus_t status = accumulate_distributed_sample_probabilities_rccl_localized(
+        handle, numQubits, measured, &rank_probs);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    const size_t num_outcomes = size_t{1} << measured.size();
+    uint64_t* d_results = nullptr;
+
+    auto cleanup = [&]() {
+        (void)free_distributed_probability_buffers(handle, rank_probs);
+        if (d_results) {
+            if (hipSetDevice(handle->distributedDeviceIds[0]) == hipSuccess) {
+                (void)device_free(handle, d_results);
+            }
+        }
+    };
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        cleanup();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    hipStream_t stream0 = handle->distributedStreams[0];
+    hipLaunchKernelGGL(build_sampling_cdf_kernel,
+                       dim3(1),
+                       dim3(1),
+                       0,
+                       stream0,
+                       rank_probs[0],
+                       num_outcomes);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+
+    double cdf_last = 0.0;
+    if (hipMemcpyAsync(&cdf_last,
+                       rank_probs[0] + (num_outcomes - 1),
+                       sizeof(double),
+                       hipMemcpyDeviceToHost,
+                       stream0) != hipSuccess) {
+        cleanup();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    if (hipStreamSynchronize(stream0) != hipSuccess) { // ROCQ_ASYNC_ALLOWED_SYNC
+        cleanup();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    if (cdf_last <= 0.0) {
+        cleanup();
+        return ROCQ_STATUS_FAILURE;
+    }
+
+    void* d_results_void = nullptr;
+    status = device_malloc(handle, &d_results_void, static_cast<size_t>(numShots) * sizeof(uint64_t));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+    d_results = static_cast<uint64_t*>(d_results_void);
+
+    const unsigned long long seed = handle->rng();
+    constexpr int threads_per_block = 256;
+    const int sample_blocks = compute_reduction_blocks(static_cast<size_t>(numShots), threads_per_block);
+    hipLaunchKernelGGL(sample_from_cdf_kernel,
+                       dim3(sample_blocks),
+                       dim3(threads_per_block),
+                       0,
+                       stream0,
+                       rank_probs[0],
+                       num_outcomes,
+                       d_results,
+                       numShots,
+                       seed);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+
+    status = copy_device_to_host(h_results,
+                                 d_results,
+                                 static_cast<size_t>(numShots) * sizeof(uint64_t),
+                                 stream0);
+    cleanup();
+    return status;
+}
+
+inline rocqStatus_t host_sample_state(rocsvInternalHandle* handle,
+                                      const std::vector<rocComplex>& host_state,
+                                      unsigned numQubits,
+                                      const std::vector<unsigned>& measured,
+                                      unsigned numShots,
+                                      uint64_t* h_results) {
+    if (!handle || measured.empty() || !h_results) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements) || host_state.size() != state_elements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (measured.size() >= static_cast<size_t>(sizeof(size_t) * 8)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    const size_t num_outcomes = size_t{1} << measured.size();
+    std::vector<double> outcome_probs(num_outcomes, 0.0);
+    for (size_t idx = 0; idx < state_elements; ++idx) {
+        size_t outcome = 0;
+        for (size_t m = 0; m < measured.size(); ++m) {
+            const unsigned qubit = measured[m];
+            if (!validate_qubit_index(qubit, numQubits)) {
+                return ROCQ_STATUS_INVALID_VALUE;
+            }
+            if ((idx >> qubit) & 1ULL) {
+                outcome |= (size_t{1} << m);
+            }
+        }
+        const std::complex<double> amp = to_std_complex(host_state[idx]);
+        outcome_probs[outcome] += std::norm(amp);
+    }
+
+    std::discrete_distribution<uint64_t> dist(outcome_probs.begin(), outcome_probs.end());
+    for (unsigned shot = 0; shot < numShots; ++shot) {
+        h_results[shot] = dist(handle->rng);
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t distributed_sample_host_fallback(rocsvInternalHandle* handle,
+                                                     unsigned numQubits,
+                                                     const std::vector<unsigned>& measured,
+                                                     unsigned numShots,
+                                                     uint64_t* h_results) {
+    if (!distributed_host_fallback_enabled()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!handle || !handle->distributedMode || numQubits != handle->globalNumQubits) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> host_full;
+    rocqStatus_t status = gather_distributed_state_to_host(handle, &host_full);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    return host_sample_state(handle, host_full, numQubits, measured, numShots, h_results);
+}
+
+inline rocqStatus_t distributed_sample_with_fallback(rocsvInternalHandle* handle,
+                                                     unsigned numQubits,
+                                                     const std::vector<unsigned>& measured,
+                                                     unsigned numShots,
+                                                     uint64_t* h_results) {
+    rocqStatus_t status = distributed_sample_rccl(handle, numQubits, measured, numShots, h_results);
+    if (status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+        return status;
+    }
+    return distributed_sample_host_fallback(handle, numQubits, measured, numShots, h_results);
+}
+
+inline rocqStatus_t accumulate_local_sample_probabilities(rocsvInternalHandle* handle,
+                                                          rocComplex* state,
+                                                          unsigned numQubits,
+                                                          const std::vector<unsigned>& measured,
+                                                          double** d_outcome_probs,
+                                                          unsigned** d_measured_qubits) {
+    if (!handle || !state || measured.empty() || !d_outcome_probs || !d_measured_qubits) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    *d_outcome_probs = nullptr;
+    *d_measured_qubits = nullptr;
+    if (measured.size() >= static_cast<size_t>(sizeof(size_t) * 8)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (effective_batch_size(handle, state) != 1) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    void* d_measured_void = nullptr;
+    rocqStatus_t status = device_malloc(handle, &d_measured_void, measured.size() * sizeof(unsigned));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    unsigned* d_measured = static_cast<unsigned*>(d_measured_void);
+    status = copy_host_to_device(d_measured,
+                                 measured.data(),
+                                 measured.size() * sizeof(unsigned),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_measured);
+        return status;
+    }
+
+    const size_t num_outcomes = size_t{1} << measured.size();
+    void* d_outcome_probs_void = nullptr;
+    status = device_malloc(handle, &d_outcome_probs_void, num_outcomes * sizeof(double));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_measured);
+        return status;
+    }
+    double* local_outcome_probs = static_cast<double*>(d_outcome_probs_void);
+    if (hipMemsetAsync(local_outcome_probs, 0, num_outcomes * sizeof(double), handle->streams[0]) != hipSuccess) {
+        device_free(handle, local_outcome_probs);
+        device_free(handle, d_measured);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(state_elements, threads_per_block);
+    hipLaunchKernelGGL(accumulate_sample_probabilities_kernel,
+                       dim3(blocks),
+                       dim3(threads_per_block),
+                       0,
+                       handle->streams[0],
+                       state,
+                       state_elements,
+                       d_measured,
+                       static_cast<unsigned>(measured.size()),
+                       local_outcome_probs);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, local_outcome_probs);
+        device_free(handle, d_measured);
+        return status;
+    }
+
+    *d_outcome_probs = local_outcome_probs;
+    *d_measured_qubits = d_measured;
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t normalize_host_probabilities(double* probabilities, size_t num_outcomes) {
+    if (!probabilities || num_outcomes == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    double total = 0.0;
+    for (size_t i = 0; i < num_outcomes; ++i) {
+        total += probabilities[i];
+    }
+    if (total <= 0.0 || !std::isfinite(total)) {
+        return ROCQ_STATUS_FAILURE;
+    }
+
+    const double inv_total = 1.0 / total;
+    for (size_t i = 0; i < num_outcomes; ++i) {
+        probabilities[i] *= inv_total;
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t compute_local_sample_probabilities(rocsvInternalHandle* handle,
+                                                       rocComplex* state,
+                                                       unsigned numQubits,
+                                                       const std::vector<unsigned>& measured,
+                                                       double* h_probabilities) {
+    if (!h_probabilities) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    double* d_outcome_probs = nullptr;
+    unsigned* d_measured = nullptr;
+    rocqStatus_t status = accumulate_local_sample_probabilities(
+        handle, state, numQubits, measured, &d_outcome_probs, &d_measured);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    const size_t num_outcomes = size_t{1} << measured.size();
+    status = copy_device_to_host(h_probabilities,
+                                 d_outcome_probs,
+                                 num_outcomes * sizeof(double),
+                                 handle->streams[0]);
+    rocqStatus_t free_status = device_free(handle, d_outcome_probs);
+    rocqStatus_t measured_free_status = device_free(handle, d_measured);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    if (free_status != ROCQ_STATUS_SUCCESS) {
+        return free_status;
+    }
+    if (measured_free_status != ROCQ_STATUS_SUCCESS) {
+        return measured_free_status;
+    }
+    return normalize_host_probabilities(h_probabilities, num_outcomes);
+}
+
+inline rocqStatus_t compute_local_sample_probabilities_batch(rocsvInternalHandle* handle,
+                                                             rocComplex* state,
+                                                             unsigned numQubits,
+                                                             const std::vector<unsigned>& measured,
+                                                             double* h_probabilities) {
+    if (!handle || !state || !h_probabilities || measured.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (measured.size() >= static_cast<size_t>(sizeof(size_t) * 8)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    size_t elements_per_state = 0;
+    if (!compute_power_of_two(numQubits, &elements_per_state)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (batch_size > std::numeric_limits<size_t>::max() / elements_per_state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t num_outcomes = size_t{1} << measured.size();
+    if (batch_size > std::numeric_limits<size_t>::max() / num_outcomes) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t total_outcomes = batch_size * num_outcomes;
+    const size_t total_elements = batch_size * elements_per_state;
+
+    void* d_measured_void = nullptr;
+    rocqStatus_t status = device_malloc(handle, &d_measured_void, measured.size() * sizeof(unsigned));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    unsigned* d_measured = static_cast<unsigned*>(d_measured_void);
+    status = copy_host_to_device(d_measured,
+                                 measured.data(),
+                                 measured.size() * sizeof(unsigned),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_measured);
+        return status;
+    }
+
+    void* d_outcome_probs_void = nullptr;
+    status = device_malloc(handle, &d_outcome_probs_void, total_outcomes * sizeof(double));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_measured);
+        return status;
+    }
+    double* d_outcome_probs = static_cast<double*>(d_outcome_probs_void);
+    if (hipMemsetAsync(d_outcome_probs, 0, total_outcomes * sizeof(double), handle->streams[0]) != hipSuccess) {
+        device_free(handle, d_outcome_probs);
+        device_free(handle, d_measured);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(total_elements, threads_per_block);
+    hipLaunchKernelGGL(accumulate_sample_probabilities_batch_kernel,
+                       dim3(blocks),
+                       dim3(threads_per_block),
+                       0,
+                       handle->streams[0],
+                       state,
+                       elements_per_state,
+                       batch_size,
+                       d_measured,
+                       static_cast<unsigned>(measured.size()),
+                       num_outcomes,
+                       d_outcome_probs);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_outcome_probs);
+        device_free(handle, d_measured);
+        return status;
+    }
+
+    status = copy_device_to_host(h_probabilities,
+                                 d_outcome_probs,
+                                 total_outcomes * sizeof(double),
+                                 handle->streams[0]);
+    rocqStatus_t free_status = device_free(handle, d_outcome_probs);
+    rocqStatus_t measured_free_status = device_free(handle, d_measured);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    if (free_status != ROCQ_STATUS_SUCCESS) {
+        return free_status;
+    }
+    if (measured_free_status != ROCQ_STATUS_SUCCESS) {
+        return measured_free_status;
+    }
+
+    for (size_t batch = 0; batch < batch_size; ++batch) {
+        status = normalize_host_probabilities(h_probabilities + batch * num_outcomes, num_outcomes);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t compute_local_expectation_pauli_string_batch(rocsvInternalHandle* handle,
+                                                                 rocComplex* state,
+                                                                 unsigned numQubits,
+                                                                 const std::vector<unsigned>& targets,
+                                                                 const std::string& pauli,
+                                                                 double* h_results) {
+    if (!handle || !state || !h_results || targets.empty() || pauli.size() != targets.size()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t elements_per_state = 0;
+    if (!compute_power_of_two(numQubits, &elements_per_state)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (batch_size > 65535) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(elements_per_state, threads_per_block);
+    if (batch_size > std::numeric_limits<size_t>::max() / static_cast<size_t>(blocks)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    void* d_targets_void = nullptr;
+    rocqStatus_t status = device_malloc(handle, &d_targets_void, targets.size() * sizeof(unsigned));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    unsigned* d_targets = static_cast<unsigned*>(d_targets_void);
+    status = copy_host_to_device(d_targets,
+                                 targets.data(),
+                                 targets.size() * sizeof(unsigned),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    void* d_pauli_void = nullptr;
+    status = device_malloc(handle, &d_pauli_void, pauli.size() * sizeof(char));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+    char* d_pauli = static_cast<char*>(d_pauli_void);
+    status = copy_host_to_device(d_pauli,
+                                 pauli.data(),
+                                 pauli.size() * sizeof(char),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_pauli);
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    void* d_block_sums_void = nullptr;
+    const size_t total_blocks = batch_size * static_cast<size_t>(blocks);
+    status = device_malloc(handle, &d_block_sums_void, total_blocks * sizeof(double));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_pauli);
+        device_free(handle, d_targets);
+        return status;
+    }
+    double* d_block_sums = static_cast<double*>(d_block_sums_void);
+
+    hipLaunchKernelGGL(reduce_expectation_pauli_string_batch_kernel,
+                       dim3(blocks, static_cast<unsigned>(batch_size)),
+                       dim3(threads_per_block),
+                       threads_per_block * sizeof(double),
+                       handle->streams[0],
+                       state,
+                       elements_per_state,
+                       d_pauli,
+                       d_targets,
+                       static_cast<unsigned>(targets.size()),
+                       d_block_sums);
+    status = check_last_hip_error();
+    if (status == ROCQ_STATUS_SUCCESS) {
+        for (size_t batch = 0; batch < batch_size; ++batch) {
+            status = reduce_blocks_to_scalar(handle,
+                                             d_block_sums + batch * static_cast<size_t>(blocks),
+                                             blocks,
+                                             h_results + batch);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                break;
+            }
+        }
+    }
+
+    rocqStatus_t block_free_status = device_free(handle, d_block_sums);
+    rocqStatus_t pauli_free_status = device_free(handle, d_pauli);
+    rocqStatus_t targets_free_status = device_free(handle, d_targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    if (block_free_status != ROCQ_STATUS_SUCCESS) {
+        return block_free_status;
+    }
+    if (pauli_free_status != ROCQ_STATUS_SUCCESS) {
+        return pauli_free_status;
+    }
+    return targets_free_status;
+}
+
+inline rocqStatus_t compute_distributed_sample_probabilities(rocsvInternalHandle* handle,
+                                                             unsigned numQubits,
+                                                             const std::vector<unsigned>& measured,
+                                                             double* h_probabilities) {
+    if (!h_probabilities) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<double*> rank_probs;
+    rocqStatus_t status = accumulate_distributed_sample_probabilities_rccl_localized(
+        handle, numQubits, measured, &rank_probs);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        (void)free_distributed_probability_buffers(handle, rank_probs);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    const size_t num_outcomes = size_t{1} << measured.size();
+    status = copy_device_to_host(h_probabilities,
+                                 rank_probs[0],
+                                 num_outcomes * sizeof(double),
+                                 handle->distributedStreams[0]);
+    rocqStatus_t free_status = free_distributed_probability_buffers(handle, rank_probs);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    if (free_status != ROCQ_STATUS_SUCCESS) {
+        return free_status;
+    }
+    return normalize_host_probabilities(h_probabilities, num_outcomes);
+}
+
+inline rocqStatus_t apply_matrix_distributed_local_targets(rocsvInternalHandle* handle,
+                                                           unsigned numQubits,
+                                                           const std::vector<unsigned>& targets,
+                                                           const std::vector<rocComplex>& matrix_host) {
+    if (!handle || !handle->distributedMode || targets.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (numQubits != handle->globalNumQubits ||
+        !distributed_all_qubits_local(handle, targets)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const unsigned numTargetQubits = static_cast<unsigned>(targets.size());
+    size_t matrix_dim = 0;
+    if (!compute_power_of_two(numTargetQubits, &matrix_dim) ||
+        matrix_host.size() != matrix_dim * matrix_dim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    if (numTargetQubits == 1) {
+        return launch_single_qubit_matrix(handle,
+                                          handle->d_state,
+                                          numQubits,
+                                          targets[0],
+                                          matrix_host[0],
+                                          matrix_host[1],
+                                          matrix_host[2],
+                                          matrix_host[3]);
+    }
+
+    if (numTargetQubits < 2 || numTargetQubits > kMaxDistributedMatrixTargetQubits) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    constexpr int threads_per_block = 256;
+    const size_t groups_per_slice = handle->localSliceElements >> numTargetQubits;
+    const int blocks = compute_reduction_blocks(groups_per_slice, threads_per_block);
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t rank_idx = static_cast<size_t>(rank);
+        if (hipSetDevice(handle->distributedDeviceIds[rank_idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+
+        unsigned* d_targets_local = handle->distributedTargetScratch[rank_idx];
+        rocComplex* d_matrix_local = handle->distributedMatrixScratch[rank_idx];
+        if (!d_targets_local || !d_matrix_local) {
+            return ROCQ_STATUS_ALLOCATION_FAILED;
+        }
+
+        if (hipMemcpyAsync(d_targets_local,
+                           targets.data(),
+                           numTargetQubits * sizeof(unsigned),
+                           hipMemcpyHostToDevice,
+                           handle->distributedStreams[rank_idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+
+        if (hipMemcpyAsync(d_matrix_local,
+                           matrix_host.data(),
+                           matrix_host.size() * sizeof(rocComplex),
+                           hipMemcpyHostToDevice,
+                           handle->distributedStreams[rank_idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+
+        if (numTargetQubits == 2) {
+            hipLaunchKernelGGL(apply_two_qubit_generic_matrix_kernel,
+                               dim3(blocks),
+                               dim3(threads_per_block),
+                               0,
+                               handle->distributedStreams[rank_idx],
+                               handle->distributedSlices[rank_idx],
+                               handle->numLocalQubitsPerGpu,
+                               d_targets_local,
+                               d_matrix_local);
+        } else if (numTargetQubits == 3) {
+            hipLaunchKernelGGL(apply_three_qubit_generic_matrix_kernel,
+                               dim3(blocks),
+                               dim3(threads_per_block),
+                               0,
+                               handle->distributedStreams[rank_idx],
+                               handle->distributedSlices[rank_idx],
+                               handle->numLocalQubitsPerGpu,
+                               d_targets_local,
+                               d_matrix_local);
+        } else {
+            hipLaunchKernelGGL(apply_four_qubit_generic_matrix_kernel,
+                               dim3(blocks),
+                               dim3(threads_per_block),
+                               0,
+                               handle->distributedStreams[rank_idx],
+                               handle->distributedSlices[rank_idx],
+                               handle->numLocalQubitsPerGpu,
+                               d_targets_local,
+                               d_matrix_local);
+        }
+
+        rocqStatus_t launch_status = check_last_hip_error();
+        if (launch_status != ROCQ_STATUS_SUCCESS) {
+            return launch_status;
+        }
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
+inline rocqStatus_t apply_sparse_matrix_distributed_local(rocsvInternalHandle* handle,
+                                                          unsigned numQubits,
+                                                          const std::vector<unsigned>& targets,
+                                                          const rocComplex* d_data,
+                                                          const size_t* d_indices,
+                                                          const size_t* d_indptr,
+                                                          size_t rows,
+                                                          size_t cols,
+                                                          size_t nnz) {
+    if (!handle || handle->distributedGpuCount <= 0 || handle->localSliceElements == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t gpu_count = static_cast<size_t>(handle->distributedGpuCount);
+    if (handle->distributedDeviceIds.size() < gpu_count ||
+        handle->distributedStreams.size() < gpu_count ||
+        handle->distributedSlices.size() < gpu_count ||
+        handle->distributedSwapBuffers.size() < gpu_count) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (numQubits != handle->globalNumQubits) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_all_qubits_local(handle, targets)) {
+        return apply_sparse_matrix_distributed_host_fallback(handle,
+                                                             numQubits,
+                                                             targets,
+                                                             d_data,
+                                                             d_indices,
+                                                             d_indptr,
+                                                             rows,
+                                                             cols,
+                                                             nnz);
+    }
+
+    int original_device = 0;
+    if (hipGetDevice(&original_device) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    auto restore_device = [&]() {
+        (void)hipSetDevice(original_device);
+    };
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        restore_device();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    std::vector<rocComplex> h_data;
+    std::vector<size_t> h_indices;
+    std::vector<size_t> h_indptr;
+    rocqStatus_t status = copy_sparse_matrix_from_device(d_data,
+                                                         d_indices,
+                                                         d_indptr,
+                                                         rows,
+                                                         nnz,
+                                                         handle->streams[0],
+                                                         &h_data,
+                                                         &h_indices,
+                                                         &h_indptr);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        restore_device();
+        return status;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(handle->localSliceElements, threads_per_block);
+    const size_t bytes_per_slice = handle->localSliceElements * sizeof(rocComplex);
+
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t rank_idx = static_cast<size_t>(rank);
+        if (hipSetDevice(handle->distributedDeviceIds[rank_idx]) != hipSuccess) {
+            restore_device();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        if (!handle->distributedSlices[rank_idx] || !handle->distributedSwapBuffers[rank_idx]) {
+            restore_device();
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+
+        void* d_targets_void = nullptr;
+        void* d_data_void = nullptr;
+        void* d_indices_void = nullptr;
+        void* d_indptr_void = nullptr;
+        auto cleanup_rank = [&]() {
+            if (d_targets_void) {
+                (void)device_free(handle, d_targets_void);
+            }
+            if (d_data_void) {
+                (void)device_free(handle, d_data_void);
+            }
+            if (d_indices_void) {
+                (void)device_free(handle, d_indices_void);
+            }
+            if (d_indptr_void) {
+                (void)device_free(handle, d_indptr_void);
+            }
+        };
+
+        status = device_malloc(handle, &d_targets_void, targets.size() * sizeof(unsigned));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            restore_device();
+            return status;
+        }
+        status = copy_host_to_device(d_targets_void,
+                                     targets.data(),
+                                     targets.size() * sizeof(unsigned),
+                                     handle->distributedStreams[rank_idx]);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup_rank();
+            restore_device();
+            return status;
+        }
+
+        if (nnz > 0) {
+            status = device_malloc(handle, &d_data_void, h_data.size() * sizeof(rocComplex));
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup_rank();
+                restore_device();
+                return status;
+            }
+            status = copy_host_to_device(d_data_void,
+                                         h_data.data(),
+                                         h_data.size() * sizeof(rocComplex),
+                                         handle->distributedStreams[rank_idx]);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup_rank();
+                restore_device();
+                return status;
+            }
+
+            status = device_malloc(handle, &d_indices_void, h_indices.size() * sizeof(size_t));
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup_rank();
+                restore_device();
+                return status;
+            }
+            status = copy_host_to_device(d_indices_void,
+                                         h_indices.data(),
+                                         h_indices.size() * sizeof(size_t),
+                                         handle->distributedStreams[rank_idx]);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup_rank();
+                restore_device();
+                return status;
+            }
+        }
+
+        status = device_malloc(handle, &d_indptr_void, h_indptr.size() * sizeof(size_t));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup_rank();
+            restore_device();
+            return status;
+        }
+        status = copy_host_to_device(d_indptr_void,
+                                     h_indptr.data(),
+                                     h_indptr.size() * sizeof(size_t),
+                                     handle->distributedStreams[rank_idx]);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup_rank();
+            restore_device();
+            return status;
+        }
+
+        hipLaunchKernelGGL(apply_sparse_matrix_kernel,
+                           dim3(blocks),
+                           dim3(threads_per_block),
+                           0,
+                           handle->distributedStreams[rank_idx],
+                           handle->distributedSlices[rank_idx],
+                           handle->distributedSwapBuffers[rank_idx],
+                           handle->localSliceElements,
+                           static_cast<unsigned*>(d_targets_void),
+                           static_cast<unsigned>(targets.size()),
+                           static_cast<rocComplex*>(d_data_void),
+                           static_cast<size_t*>(d_indices_void),
+                           static_cast<size_t*>(d_indptr_void));
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup_rank();
+            restore_device();
+            return status;
+        }
+
+        if (hipMemcpyAsync(handle->distributedSlices[rank_idx],
+                           handle->distributedSwapBuffers[rank_idx],
+                           bytes_per_slice,
+                           hipMemcpyDeviceToDevice,
+                           handle->distributedStreams[rank_idx]) != hipSuccess) {
+            cleanup_rank();
+            restore_device();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        if (hipStreamSynchronize(handle->distributedStreams[rank_idx]) != hipSuccess) { // ROCQ_ASYNC_ALLOWED_SYNC
+            cleanup_rank();
+            restore_device();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        cleanup_rank();
+    }
+
+    restore_device();
+    return ROCQ_STATUS_SUCCESS;
+}
+
 } // namespace
 
 rocqStatus_t rocsvCreate(rocsvHandle_t* handle) {
@@ -1617,6 +5721,27 @@ rocqStatus_t rocsvGetDistributedInfo(rocsvHandle_t handle, rocsvDistributedInfo_
     return ROCQ_STATUS_SUCCESS;
 }
 
+rocqStatus_t rocsvGetDistributedBackend(rocsvHandle_t handle, rocsvDistributedBackend_t* backend) {
+    if (!handle || !backend) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    *backend = distributed_active_backend(handle);
+    return ROCQ_STATUS_SUCCESS;
+}
+
+const char* rocsvDistributedBackendName(rocsvDistributedBackend_t backend) {
+    switch (backend) {
+        case ROCSV_DISTRIBUTED_BACKEND_NONE:
+            return "none";
+        case ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK:
+            return "host_fallback";
+        case ROCSV_DISTRIBUTED_BACKEND_RCCL:
+            return "rccl";
+        default:
+            return "unknown";
+    }
+}
+
 rocqStatus_t rocsvSynchronize(rocsvHandle_t handle) {
     if (!handle) {
         return ROCQ_STATUS_INVALID_VALUE;
@@ -1736,6 +5861,16 @@ rocqStatus_t rocsvInitializeState(rocsvHandle_t handle,
 }
 
 // --- Single-GPU compatibility helpers for distributed APIs ------------------
+
+rocqStatus_t rocsvAllocateMultiNodeDistributedState(rocsvHandle_t handle,
+                                                    unsigned totalNumQubits,
+                                                    unsigned nodeCount) {
+    (void)totalNumQubits;
+    if (!handle || nodeCount < 2) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    return ROCQ_STATUS_NOT_IMPLEMENTED;
+}
 
 rocqStatus_t rocsvAllocateDistributedState(rocsvHandle_t handle,
                                            unsigned totalNumQubits) {
@@ -1866,6 +6001,12 @@ rocqStatus_t rocsvAllocateDistributedState(rocsvHandle_t handle,
         return ROCQ_STATUS_HIP_ERROR;
     }
 
+    rocqStatus_t rccl_status = initialize_distributed_rccl_comms(handle);
+    if (rccl_status != ROCQ_STATUS_SUCCESS) {
+        clear_distributed_state_storage(handle);
+        return rccl_status;
+    }
+
     handle->d_state = handle->distributedSlices[0];
     handle->ownsState = false;
     return ROCQ_STATUS_SUCCESS;
@@ -1949,6 +6090,16 @@ rocqStatus_t rocsvSwapIndexBits(rocsvHandle_t handle,
                 }
             }
             return ROCQ_STATUS_SUCCESS;
+        }
+        rocqStatus_t rccl_status = distributed_swap_bits_rccl_remap(handle, qubit_idx1, qubit_idx2);
+        if (rccl_status == ROCQ_STATUS_SUCCESS) {
+            return ROCQ_STATUS_SUCCESS;
+        }
+        if (rccl_status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+            return rccl_status;
+        }
+        if (!distributed_host_fallback_enabled()) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
         }
         return distributed_swap_bits_host_remap(handle, qubit_idx1, qubit_idx2);
     }
@@ -2062,7 +6213,101 @@ rocqStatus_t rocsvApplyT(rocsvHandle_t handle,
     return launch_single_qubit_matrix(handle, state, numQubits, targetQubit, one, zero, zero, t_phase);
 }
 
+rocqStatus_t rocsvApplyTdg(rocsvHandle_t handle,
+                           rocComplex* d_state,
+                           unsigned numQubits,
+                           unsigned targetQubit) {
+    if (!handle) return ROCQ_STATUS_INVALID_VALUE;
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) return ROCQ_STATUS_INVALID_VALUE;
+
+    constexpr double pi = 3.14159265358979323846;
+    const double phase = -pi / 4.0;
+    const rocComplex one = make_complex(1.0, 0.0);
+    const rocComplex zero = make_complex(0.0, 0.0);
+    const rocComplex tdg_phase = make_complex(std::cos(phase), std::sin(phase));
+    return launch_single_qubit_matrix(handle, state, numQubits, targetQubit, one, zero, zero, tdg_phase);
+}
+
 // --- Parametrised single-qubit rotations ------------------------------------
+
+enum class RotationAxis {
+    X,
+    Y,
+    Z,
+};
+
+inline std::vector<rocComplex> make_rotation_matrices(const double* h_thetas,
+                                                      size_t thetaCount,
+                                                      RotationAxis axis) {
+    std::vector<rocComplex> matrices;
+    matrices.reserve(thetaCount * 4ULL);
+    for (size_t batch = 0; batch < thetaCount; ++batch) {
+        const double half = h_thetas[batch] / 2.0;
+        const double c = std::cos(half);
+        const double s = std::sin(half);
+        if (axis == RotationAxis::X) {
+            const rocComplex cval = make_complex(c, 0.0);
+            const rocComplex minus_i_s = make_complex(0.0, -s);
+            matrices.push_back(cval);
+            matrices.push_back(minus_i_s);
+            matrices.push_back(minus_i_s);
+            matrices.push_back(cval);
+        } else if (axis == RotationAxis::Y) {
+            matrices.push_back(make_complex(c, 0.0));
+            matrices.push_back(make_complex(-s, 0.0));
+            matrices.push_back(make_complex(s, 0.0));
+            matrices.push_back(make_complex(c, 0.0));
+        } else {
+            matrices.push_back(make_complex(c, -s));
+            matrices.push_back(make_complex(0.0, 0.0));
+            matrices.push_back(make_complex(0.0, 0.0));
+            matrices.push_back(make_complex(c, s));
+        }
+    }
+    return matrices;
+}
+
+inline std::vector<rocComplex> make_phase_matrices(const double* h_thetas,
+                                                   size_t thetaCount) {
+    std::vector<rocComplex> matrices;
+    matrices.reserve(thetaCount * 4ULL);
+    const rocComplex one = make_complex(1.0, 0.0);
+    const rocComplex zero = make_complex(0.0, 0.0);
+    for (size_t batch = 0; batch < thetaCount; ++batch) {
+        const double theta = h_thetas[batch];
+        matrices.push_back(one);
+        matrices.push_back(zero);
+        matrices.push_back(zero);
+        matrices.push_back(make_complex(std::cos(theta), std::sin(theta)));
+    }
+    return matrices;
+}
+
+inline rocqStatus_t rocsvApplyRotationBatch(rocsvHandle_t handle,
+                                            rocComplex* d_state,
+                                            unsigned numQubits,
+                                            unsigned targetQubit,
+                                            const double* h_thetas,
+                                            size_t thetaCount,
+                                            RotationAxis axis) {
+    if (!handle || !h_thetas || thetaCount == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (thetaCount != batch_size) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> matrices = make_rotation_matrices(h_thetas, thetaCount, axis);
+    return launch_single_qubit_matrix_batch(handle, state, numQubits, targetQubit, matrices);
+}
 
 rocqStatus_t rocsvApplyRx(rocsvHandle_t handle,
                           rocComplex* d_state,
@@ -2114,6 +6359,73 @@ rocqStatus_t rocsvApplyRz(rocsvHandle_t handle,
                                       phase_neg, zero, zero, phase_pos);
 }
 
+rocqStatus_t rocsvApplyP(rocsvHandle_t handle,
+                         rocComplex* d_state,
+                         unsigned numQubits,
+                         unsigned targetQubit,
+                         double theta) {
+    if (!handle) return ROCQ_STATUS_INVALID_VALUE;
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) return ROCQ_STATUS_INVALID_VALUE;
+
+    const rocComplex one = make_complex(1.0, 0.0);
+    const rocComplex zero = make_complex(0.0, 0.0);
+    const rocComplex phase = make_complex(std::cos(theta), std::sin(theta));
+    return launch_single_qubit_matrix(handle, state, numQubits, targetQubit,
+                                      one, zero, zero, phase);
+}
+
+rocqStatus_t rocsvApplyRxBatch(rocsvHandle_t handle,
+                               rocComplex* d_state,
+                               unsigned numQubits,
+                               unsigned targetQubit,
+                               const double* h_thetas,
+                               size_t thetaCount) {
+    return rocsvApplyRotationBatch(handle, d_state, numQubits, targetQubit, h_thetas, thetaCount, RotationAxis::X);
+}
+
+rocqStatus_t rocsvApplyRyBatch(rocsvHandle_t handle,
+                               rocComplex* d_state,
+                               unsigned numQubits,
+                               unsigned targetQubit,
+                               const double* h_thetas,
+                               size_t thetaCount) {
+    return rocsvApplyRotationBatch(handle, d_state, numQubits, targetQubit, h_thetas, thetaCount, RotationAxis::Y);
+}
+
+rocqStatus_t rocsvApplyRzBatch(rocsvHandle_t handle,
+                               rocComplex* d_state,
+                               unsigned numQubits,
+                               unsigned targetQubit,
+                               const double* h_thetas,
+                               size_t thetaCount) {
+    return rocsvApplyRotationBatch(handle, d_state, numQubits, targetQubit, h_thetas, thetaCount, RotationAxis::Z);
+}
+
+rocqStatus_t rocsvApplyPBatch(rocsvHandle_t handle,
+                              rocComplex* d_state,
+                              unsigned numQubits,
+                              unsigned targetQubit,
+                              const double* h_thetas,
+                              size_t thetaCount) {
+    if (!handle || !h_thetas || thetaCount == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (thetaCount != batch_size) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> matrices = make_phase_matrices(h_thetas, thetaCount);
+    return launch_single_qubit_matrix_batch(handle, state, numQubits, targetQubit, matrices);
+}
+
 // --- Two-qubit named gates ---------------------------------------------------
 
 rocqStatus_t rocsvApplyCNOT(rocsvHandle_t handle,
@@ -2136,7 +6448,17 @@ rocqStatus_t rocsvApplyCNOT(rocsvHandle_t handle,
         }
         if (!distributed_qubit_local(handle, controlQubit) ||
             !distributed_qubit_local(handle, targetQubit)) {
-            return ROCQ_STATUS_NOT_IMPLEMENTED;
+            const rocComplex zero = make_complex(0.0, 0.0);
+            const rocComplex one = make_complex(1.0, 0.0);
+            return launch_controlled_single_qubit_matrix(handle,
+                                                         state,
+                                                         numQubits,
+                                                         controlQubit,
+                                                         targetQubit,
+                                                         zero,
+                                                         one,
+                                                         one,
+                                                         zero);
         }
         if (handle->localSliceElements < 4) {
             return ROCQ_STATUS_SUCCESS;
@@ -2210,7 +6532,18 @@ rocqStatus_t rocsvApplyCZ(rocsvHandle_t handle,
         }
         if (!distributed_qubit_local(handle, controlQubit) ||
             !distributed_qubit_local(handle, targetQubit)) {
-            return ROCQ_STATUS_NOT_IMPLEMENTED;
+            const rocComplex one = make_complex(1.0, 0.0);
+            const rocComplex zero = make_complex(0.0, 0.0);
+            const rocComplex minus_one = make_complex(-1.0, 0.0);
+            return launch_controlled_single_qubit_matrix(handle,
+                                                         state,
+                                                         numQubits,
+                                                         controlQubit,
+                                                         targetQubit,
+                                                         one,
+                                                         zero,
+                                                         zero,
+                                                         minus_one);
         }
         if (handle->localSliceElements < 4) {
             return ROCQ_STATUS_SUCCESS;
@@ -2365,6 +6698,119 @@ rocqStatus_t rocsvApplyCRZ(rocsvHandle_t handle,
                                                  phase_neg, zero, zero, phase_pos);
 }
 
+rocqStatus_t rocsvApplyCP(rocsvHandle_t handle,
+                          rocComplex* d_state,
+                          unsigned numQubits,
+                          unsigned controlQubit,
+                          unsigned targetQubit,
+                          double theta) {
+    if (!handle) return ROCQ_STATUS_INVALID_VALUE;
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) return ROCQ_STATUS_INVALID_VALUE;
+
+    const rocComplex one = make_complex(1.0, 0.0);
+    const rocComplex zero = make_complex(0.0, 0.0);
+    const rocComplex phase = make_complex(std::cos(theta), std::sin(theta));
+    return launch_controlled_single_qubit_matrix(handle, state, numQubits, controlQubit, targetQubit,
+                                                 one, zero, zero, phase);
+}
+
+inline rocqStatus_t rocsvApplyControlledRotationBatch(rocsvHandle_t handle,
+                                                      rocComplex* d_state,
+                                                      unsigned numQubits,
+                                                      unsigned controlQubit,
+                                                      unsigned targetQubit,
+                                                      const double* h_thetas,
+                                                      size_t thetaCount,
+                                                      RotationAxis axis) {
+    if (!handle || !h_thetas || thetaCount == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (thetaCount != batch_size) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> matrices = make_rotation_matrices(h_thetas, thetaCount, axis);
+    return launch_controlled_single_qubit_matrix_batch(
+        handle,
+        state,
+        numQubits,
+        controlQubit,
+        targetQubit,
+        matrices);
+}
+
+rocqStatus_t rocsvApplyCRXBatch(rocsvHandle_t handle,
+                                rocComplex* d_state,
+                                unsigned numQubits,
+                                unsigned controlQubit,
+                                unsigned targetQubit,
+                                const double* h_thetas,
+                                size_t thetaCount) {
+    return rocsvApplyControlledRotationBatch(
+        handle, d_state, numQubits, controlQubit, targetQubit, h_thetas, thetaCount, RotationAxis::X);
+}
+
+rocqStatus_t rocsvApplyCRYBatch(rocsvHandle_t handle,
+                                rocComplex* d_state,
+                                unsigned numQubits,
+                                unsigned controlQubit,
+                                unsigned targetQubit,
+                                const double* h_thetas,
+                                size_t thetaCount) {
+    return rocsvApplyControlledRotationBatch(
+        handle, d_state, numQubits, controlQubit, targetQubit, h_thetas, thetaCount, RotationAxis::Y);
+}
+
+rocqStatus_t rocsvApplyCRZBatch(rocsvHandle_t handle,
+                                rocComplex* d_state,
+                                unsigned numQubits,
+                                unsigned controlQubit,
+                                unsigned targetQubit,
+                                const double* h_thetas,
+                                size_t thetaCount) {
+    return rocsvApplyControlledRotationBatch(
+        handle, d_state, numQubits, controlQubit, targetQubit, h_thetas, thetaCount, RotationAxis::Z);
+}
+
+rocqStatus_t rocsvApplyCPBatch(rocsvHandle_t handle,
+                               rocComplex* d_state,
+                               unsigned numQubits,
+                               unsigned controlQubit,
+                               unsigned targetQubit,
+                               const double* h_thetas,
+                               size_t thetaCount) {
+    if (!handle || !h_thetas || thetaCount == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (thetaCount != batch_size) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<rocComplex> matrices = make_phase_matrices(h_thetas, thetaCount);
+    return launch_controlled_single_qubit_matrix_batch(
+        handle,
+        state,
+        numQubits,
+        controlQubit,
+        targetQubit,
+        matrices);
+}
+
 // --- Multi-controlled gates --------------------------------------------------
 
 rocqStatus_t rocsvApplyMultiControlledX(rocsvHandle_t handle,
@@ -2381,20 +6827,82 @@ rocqStatus_t rocsvApplyMultiControlledX(rocsvHandle_t handle,
     if (!validate_qubit_index(targetQubit, numQubits)) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
     if (numControlQubits > 63) {
         return ROCQ_STATUS_NOT_IMPLEMENTED; // Needs 64-bit mask extension.
     }
 
+    std::vector<unsigned> controls;
+    controls.reserve(numControlQubits);
     unsigned long long mask = 0ULL;
     for (unsigned i = 0; i < numControlQubits; ++i) {
         unsigned ctrl = controlQubits[i];
         if (!validate_qubit_index(ctrl, numQubits) || ctrl == targetQubit) {
             return ROCQ_STATUS_INVALID_VALUE;
         }
+        if (ctrl > 63) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED; // Needs wider control-mask support.
+        }
+        if (std::find(controls.begin(), controls.end(), ctrl) != controls.end()) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        controls.push_back(ctrl);
         mask |= (1ULL << ctrl);
+    }
+
+    if (uses_distributed_state(handle, d_state)) {
+        if (numQubits != handle->globalNumQubits) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+
+        std::vector<unsigned> touched = controls;
+        touched.push_back(targetQubit);
+        std::vector<unsigned> localized;
+        std::vector<std::pair<unsigned, unsigned>> swaps;
+        rocqStatus_t status =
+            localize_distributed_qubits_for_operation(handle, touched, &localized, &swaps);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+
+        unsigned long long local_mask = 0ULL;
+        for (unsigned i = 0; i < numControlQubits; ++i) {
+            if (localized[i] > 63) {
+                rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+                return restore_status != ROCQ_STATUS_SUCCESS ? restore_status : ROCQ_STATUS_NOT_IMPLEMENTED;
+            }
+            local_mask |= (1ULL << localized[i]);
+        }
+        const unsigned local_target = localized[numControlQubits];
+
+        status = ROCQ_STATUS_SUCCESS;
+        if (handle->localSliceElements >= 2) {
+            constexpr int threads_per_block = 256;
+            const int blocks = static_cast<int>(
+                (handle->localSliceElements + threads_per_block - 1) / threads_per_block);
+            for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+                const size_t idx = static_cast<size_t>(rank);
+                if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+                    status = ROCQ_STATUS_HIP_ERROR;
+                    break;
+                }
+                hipLaunchKernelGGL(apply_multi_controlled_x_kernel,
+                                   dim3(blocks > 0 ? blocks : 1),
+                                   dim3(threads_per_block),
+                                   0,
+                                   handle->distributedStreams[idx],
+                                   handle->distributedSlices[idx],
+                                   handle->numLocalQubitsPerGpu,
+                                   local_mask,
+                                   local_target,
+                                   1);
+                status = check_last_hip_error();
+                if (status != ROCQ_STATUS_SUCCESS) {
+                    break;
+                }
+            }
+        }
+        rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+        return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
     }
 
     const size_t elements_per_state = 1ULL << numQubits;
@@ -2437,7 +6945,48 @@ rocqStatus_t rocsvApplyCSWAP(rocsvHandle_t handle,
         return ROCQ_STATUS_INVALID_VALUE;
     }
     if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        if (numQubits != handle->globalNumQubits) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        std::vector<unsigned> touched = {controlQubit, targetQubit1, targetQubit2};
+        std::vector<unsigned> localized;
+        std::vector<std::pair<unsigned, unsigned>> swaps;
+        rocqStatus_t status =
+            localize_distributed_qubits_for_operation(handle, touched, &localized, &swaps);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+
+        status = ROCQ_STATUS_SUCCESS;
+        if (handle->localSliceElements >= 8) {
+            constexpr int threads_per_block = 256;
+            const int blocks = static_cast<int>(
+                (handle->localSliceElements + threads_per_block - 1) / threads_per_block);
+            for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+                const size_t idx = static_cast<size_t>(rank);
+                if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+                    status = ROCQ_STATUS_HIP_ERROR;
+                    break;
+                }
+                hipLaunchKernelGGL(apply_CSWAP_kernel,
+                                   dim3(blocks > 0 ? blocks : 1),
+                                   dim3(threads_per_block),
+                                   0,
+                                   handle->distributedStreams[idx],
+                                   handle->distributedSlices[idx],
+                                   handle->numLocalQubitsPerGpu,
+                                   localized[0],
+                                   localized[1],
+                                   localized[2],
+                                   1);
+                status = check_last_hip_error();
+                if (status != ROCQ_STATUS_SUCCESS) {
+                    break;
+                }
+            }
+        }
+        rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+        return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
     }
 
     const size_t elements_per_state = 1ULL << numQubits;
@@ -2609,29 +7158,43 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
             return ROCQ_STATUS_INVALID_VALUE;
         }
         if (!distributed_all_qubits_local(handle, targets)) {
-            return ROCQ_STATUS_NOT_IMPLEMENTED;
-        }
-        if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
-            return ROCQ_STATUS_HIP_ERROR;
-        }
-
-        if (numTargetQubits == 1) {
-            std::vector<rocComplex> matrix_host;
-            status = copy_matrix_from_device(matrixDevice, 4, handle->streams[0], &matrix_host);
-            if (status != ROCQ_STATUS_SUCCESS) {
-                return status;
+            if (numTargetQubits <= kMaxDistributedMatrixTargetQubits) {
+                std::vector<unsigned> localized_targets;
+                std::vector<std::pair<unsigned, unsigned>> swaps;
+                status = localize_distributed_qubits_for_operation(
+                    handle, targets, &localized_targets, &swaps);
+                if (status == ROCQ_STATUS_SUCCESS) {
+                    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+                        (void)restore_distributed_qubit_swaps(handle, swaps);
+                        return ROCQ_STATUS_HIP_ERROR;
+                    }
+                    std::vector<rocComplex> matrix_host;
+                    status = copy_matrix_from_device(matrixDevice,
+                                                     matrix_elements,
+                                                     handle->streams[0],
+                                                     &matrix_host);
+                    if (status == ROCQ_STATUS_SUCCESS) {
+                        status = apply_matrix_distributed_local_targets(handle,
+                                                                        numQubits,
+                                                                        localized_targets,
+                                                                        matrix_host);
+                    }
+                    rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+                    if (status != ROCQ_STATUS_SUCCESS) {
+                        return status;
+                    }
+                    return restore_status;
+                }
+                if (status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+                    return status;
+                }
             }
-            return launch_single_qubit_matrix(handle,
-                                              handle->d_state,
-                                              numQubits,
-                                              targets[0],
-                                              matrix_host[0],
-                                              matrix_host[1],
-                                              matrix_host[2],
-                                              matrix_host[3]);
-        }
-
-        if (numTargetQubits >= 2 && numTargetQubits <= 4) {
+            if (!distributed_host_fallback_enabled()) {
+                return ROCQ_STATUS_NOT_IMPLEMENTED;
+            }
+            if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+                return ROCQ_STATUS_HIP_ERROR;
+            }
             std::vector<rocComplex> matrix_host;
             status = copy_matrix_from_device(matrixDevice,
                                              matrix_elements,
@@ -2640,76 +7203,26 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
             if (status != ROCQ_STATUS_SUCCESS) {
                 return status;
             }
+            return apply_matrix_distributed_host_fallback(handle,
+                                                          numQubits,
+                                                          targets,
+                                                          {},
+                                                          matrix_host);
+        }
+        if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
 
-            constexpr int threads_per_block = 256;
-            const size_t groups_per_slice = handle->localSliceElements >> numTargetQubits;
-            const int blocks = compute_reduction_blocks(groups_per_slice, threads_per_block);
-            for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
-                const size_t rank_idx = static_cast<size_t>(rank);
-                if (hipSetDevice(handle->distributedDeviceIds[rank_idx]) != hipSuccess) {
-                    return ROCQ_STATUS_HIP_ERROR;
-                }
-
-                unsigned* d_targets_local = handle->distributedTargetScratch[rank_idx];
-                rocComplex* d_matrix_local = handle->distributedMatrixScratch[rank_idx];
-                if (!d_targets_local || !d_matrix_local) {
-                    return ROCQ_STATUS_ALLOCATION_FAILED;
-                }
-
-                if (hipMemcpyAsync(d_targets_local,
-                                   targets.data(),
-                                   numTargetQubits * sizeof(unsigned),
-                                   hipMemcpyHostToDevice,
-                                   handle->distributedStreams[rank_idx]) != hipSuccess) {
-                    return ROCQ_STATUS_HIP_ERROR;
-                }
-
-                if (hipMemcpyAsync(d_matrix_local,
-                                   matrix_host.data(),
-                                   matrix_elements * sizeof(rocComplex),
-                                   hipMemcpyHostToDevice,
-                                   handle->distributedStreams[rank_idx]) != hipSuccess) {
-                    return ROCQ_STATUS_HIP_ERROR;
-                }
-
-                if (numTargetQubits == 2) {
-                    hipLaunchKernelGGL(apply_two_qubit_generic_matrix_kernel,
-                                       dim3(blocks),
-                                       dim3(threads_per_block),
-                                       0,
-                                       handle->distributedStreams[rank_idx],
-                                       handle->distributedSlices[rank_idx],
-                                       handle->numLocalQubitsPerGpu,
-                                       d_targets_local,
-                                       d_matrix_local);
-                } else if (numTargetQubits == 3) {
-                    hipLaunchKernelGGL(apply_three_qubit_generic_matrix_kernel,
-                                       dim3(blocks),
-                                       dim3(threads_per_block),
-                                       0,
-                                       handle->distributedStreams[rank_idx],
-                                       handle->distributedSlices[rank_idx],
-                                       handle->numLocalQubitsPerGpu,
-                                       d_targets_local,
-                                       d_matrix_local);
-                } else {
-                    hipLaunchKernelGGL(apply_four_qubit_generic_matrix_kernel,
-                                       dim3(blocks),
-                                       dim3(threads_per_block),
-                                       0,
-                                       handle->distributedStreams[rank_idx],
-                                       handle->distributedSlices[rank_idx],
-                                       handle->numLocalQubitsPerGpu,
-                                       d_targets_local,
-                                       d_matrix_local);
-                }
-
-                rocqStatus_t launch_status = check_last_hip_error();
-                if (launch_status != ROCQ_STATUS_SUCCESS) {
-                    return launch_status;
-                }
+        if (numTargetQubits <= kMaxDistributedMatrixTargetQubits) {
+            std::vector<rocComplex> matrix_host;
+            status = copy_matrix_from_device(matrixDevice,
+                                             matrix_elements,
+                                             handle->streams[0],
+                                             &matrix_host);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                return status;
             }
-            return ROCQ_STATUS_SUCCESS;
+            return apply_matrix_distributed_local_targets(handle, numQubits, targets, matrix_host);
         }
 
         return ROCQ_STATUS_NOT_IMPLEMENTED;
@@ -2806,6 +7319,10 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
         return status;
     }
 
+    if (!allow_host_matrix_fallback()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
     std::vector<rocComplex> matrix_host;
     status = copy_matrix_from_device(matrixDevice, matrix_elements, handle->streams[0], &matrix_host);
     if (status != ROCQ_STATUS_SUCCESS) {
@@ -2820,6 +7337,136 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
                                   batch_size,
                                   state_elements,
                                   handle->streams[0]);
+}
+
+rocqStatus_t rocsvApplySparseMatrix(rocsvHandle_t handle,
+                                    rocComplex* d_state,
+                                    unsigned numQubits,
+                                    const unsigned* targetQubits,
+                                    unsigned numTargetQubits,
+                                    const rocComplex* d_data,
+                                    const size_t* d_indices,
+                                    const size_t* d_indptr,
+                                    size_t rows,
+                                    size_t cols,
+                                    size_t nnz) {
+    if (!handle || !targetQubits || !d_indptr || numQubits == 0 ||
+        numTargetQubits == 0 || numTargetQubits > numQubits ||
+        rows == 0 || cols == 0 || rows != cols) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (nnz > 0 && (!d_data || !d_indices)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<unsigned> targets;
+    rocqStatus_t status = validate_unique_qubits(targetQubits, numTargetQubits, numQubits, &targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    size_t local_dimension = 0;
+    if (!compute_power_of_two(numTargetQubits, &local_dimension) ||
+        rows != local_dimension || cols != local_dimension) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    if (uses_distributed_state(handle, d_state)) {
+        return apply_sparse_matrix_distributed_local(handle,
+                                                     numQubits,
+                                                     targets,
+                                                     d_data,
+                                                     d_indices,
+                                                     d_indptr,
+                                                     rows,
+                                                     cols,
+                                                     nnz);
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (batch_size > 65535) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (batch_size > std::numeric_limits<size_t>::max() / state_elements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t total_elements = batch_size * state_elements;
+
+    void* d_targets_void = nullptr;
+    status = device_malloc(handle, &d_targets_void, targets.size() * sizeof(unsigned));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    unsigned* d_targets = static_cast<unsigned*>(d_targets_void);
+    status = copy_host_to_device(d_targets,
+                                 targets.data(),
+                                 targets.size() * sizeof(unsigned),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    void* d_output_void = nullptr;
+    status = device_malloc(handle, &d_output_void, total_elements * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+    rocComplex* d_output = static_cast<rocComplex*>(d_output_void);
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(state_elements, threads_per_block);
+    hipLaunchKernelGGL(apply_sparse_matrix_kernel,
+                       dim3(blocks, static_cast<unsigned>(batch_size)),
+                       dim3(threads_per_block),
+                       0,
+                       handle->streams[0],
+                       state,
+                       d_output,
+                       state_elements,
+                       d_targets,
+                       static_cast<unsigned>(targets.size()),
+                       d_data,
+                       d_indices,
+                       d_indptr);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_output);
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    if (hipMemcpyAsync(state,
+                       d_output,
+                       total_elements * sizeof(rocComplex),
+                       hipMemcpyDeviceToDevice,
+                       handle->streams[0]) != hipSuccess) {
+        device_free(handle, d_output);
+        device_free(handle, d_targets);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    if (hipStreamSynchronize(handle->streams[0]) != hipSuccess) { // ROCQ_ASYNC_ALLOWED_SYNC
+        device_free(handle, d_output);
+        device_free(handle, d_targets);
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    rocqStatus_t free_status = device_free(handle, d_output);
+    rocqStatus_t targets_free_status = device_free(handle, d_targets);
+    if (free_status != ROCQ_STATUS_SUCCESS) {
+        return free_status;
+    }
+    return targets_free_status;
 }
 
 rocqStatus_t rocsvMeasure(rocsvHandle_t handle,
@@ -3125,7 +7772,12 @@ rocqStatus_t rocsvGetExpectationValueSinglePauliZ(rocsvHandle_t handle,
         return ROCQ_STATUS_INVALID_VALUE;
     }
     if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        return distributed_expectation_with_fallback(handle,
+                                                     numQubits,
+                                                     std::vector<unsigned>{targetQubit},
+                                                     DistributedExpectationKind::SingleZ,
+                                                     "",
+                                                     result);
     }
     rocComplex* state = resolve_state_pointer(handle, d_state);
     if (!state) {
@@ -3178,7 +7830,12 @@ rocqStatus_t rocsvGetExpectationValueSinglePauliX(rocsvHandle_t handle,
         return ROCQ_STATUS_INVALID_VALUE;
     }
     if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        return distributed_expectation_with_fallback(handle,
+                                                     numQubits,
+                                                     std::vector<unsigned>{targetQubit},
+                                                     DistributedExpectationKind::SingleX,
+                                                     "",
+                                                     result);
     }
     rocComplex* state = resolve_state_pointer(handle, d_state);
     if (!state) {
@@ -3231,7 +7888,12 @@ rocqStatus_t rocsvGetExpectationValueSinglePauliY(rocsvHandle_t handle,
         return ROCQ_STATUS_INVALID_VALUE;
     }
     if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        return distributed_expectation_with_fallback(handle,
+                                                     numQubits,
+                                                     std::vector<unsigned>{targetQubit},
+                                                     DistributedExpectationKind::SingleY,
+                                                     "",
+                                                     result);
     }
     rocComplex* state = resolve_state_pointer(handle, d_state);
     if (!state) {
@@ -3288,14 +7950,19 @@ rocqStatus_t rocsvGetExpectationValuePauliProductZ(rocsvHandle_t handle,
         *result = 1.0;
         return ROCQ_STATUS_SUCCESS;
     }
-    if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
 
     std::vector<unsigned> targets;
     rocqStatus_t status = validate_unique_qubits(targetQubits, numTargetPaulis, numQubits, &targets);
     if (status != ROCQ_STATUS_SUCCESS) {
         return status;
+    }
+    if (uses_distributed_state(handle, d_state)) {
+        return distributed_expectation_with_fallback(handle,
+                                                     numQubits,
+                                                     targets,
+                                                     DistributedExpectationKind::ZProduct,
+                                                     "",
+                                                     result);
     }
 
     rocComplex* state = resolve_state_pointer(handle, d_state);
@@ -3373,9 +8040,6 @@ rocqStatus_t rocsvGetExpectationPauliString(rocsvHandle_t handle,
         *result = 1.0;
         return ROCQ_STATUS_SUCCESS;
     }
-    if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
 
     std::vector<unsigned> targets;
     rocqStatus_t status = validate_unique_qubits(targetQubits, numTargetPaulis, numQubits, &targets);
@@ -3392,6 +8056,14 @@ rocqStatus_t rocsvGetExpectationPauliString(rocsvHandle_t handle,
         if (u != 'I' && u != 'X' && u != 'Y' && u != 'Z') {
             return ROCQ_STATUS_INVALID_VALUE;
         }
+    }
+    if (uses_distributed_state(handle, d_state)) {
+        return distributed_expectation_with_fallback(handle,
+                                                     numQubits,
+                                                     targets,
+                                                     DistributedExpectationKind::PauliString,
+                                                     pauli,
+                                                     result);
     }
 
     rocComplex* state = resolve_state_pointer(handle, d_state);
@@ -3478,6 +8150,974 @@ rocqStatus_t rocsvGetExpectationPauliString(rocsvHandle_t handle,
     return status;
 }
 
+rocqStatus_t rocsvGetExpectationPauliStringBatch(rocsvHandle_t handle,
+                                                 rocComplex* d_state,
+                                                 unsigned numQubits,
+                                                 const char* pauliString,
+                                                 const unsigned* targetQubits,
+                                                 unsigned numTargetPaulis,
+                                                 double* results) {
+    if (!handle || !pauliString || !results) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (numTargetPaulis == 0) {
+        const size_t batch_size = effective_batch_size(handle, state);
+        std::fill_n(results, batch_size, 1.0);
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+    std::vector<unsigned> targets;
+    rocqStatus_t status = validate_unique_qubits(targetQubits, numTargetPaulis, numQubits, &targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    const std::string pauli(pauliString);
+    if (pauli.size() != numTargetPaulis) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    for (char c : pauli) {
+        const char u = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        if (u != 'I' && u != 'X' && u != 'Y' && u != 'Z') {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+
+    if (uses_distributed_state(handle, d_state)) {
+        return distributed_expectation_with_fallback(handle,
+                                                     numQubits,
+                                                     targets,
+                                                     DistributedExpectationKind::PauliString,
+                                                     pauli,
+                                                     results);
+    }
+
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    return compute_local_expectation_pauli_string_batch(handle, state, numQubits, targets, pauli, results);
+}
+
+rocqStatus_t rocsvGetExpectationMatrix(rocsvHandle_t handle,
+                                       rocComplex* d_state,
+                                       unsigned numQubits,
+                                       const unsigned* targetQubits,
+                                       unsigned numTargetQubits,
+                                       const rocComplex* d_matrix,
+                                       size_t matrixDim,
+                                       rocComplex* result) {
+    if (!handle || !targetQubits || numTargetQubits == 0 || !d_matrix || !result) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t expected_matrix_dim = 0;
+    if (!compute_power_of_two(numTargetQubits, &expected_matrix_dim) ||
+        matrixDim != expected_matrix_dim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<unsigned> targets;
+    rocqStatus_t status = validate_unique_qubits(targetQubits, numTargetQubits, numQubits, &targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    if (uses_distributed_state(handle, d_state)) {
+        status = distributed_expectation_matrix_rccl(handle,
+                                                     numQubits,
+                                                     targets,
+                                                     d_matrix,
+                                                     matrixDim,
+                                                     result);
+        if (status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+            return status;
+        }
+        return expectation_matrix_distributed_host_fallback(handle,
+                                                            numQubits,
+                                                            targets,
+                                                            d_matrix,
+                                                            matrixDim,
+                                                            result);
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (effective_batch_size(handle, state) != 1) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numTargetQubits > 4) {
+        return expectation_matrix_host_fallback(handle,
+                                                state,
+                                                numQubits,
+                                                targets,
+                                                d_matrix,
+                                                matrixDim,
+                                                result);
+    }
+
+    void* d_targets_void = nullptr;
+    status = device_malloc(handle, &d_targets_void, targets.size() * sizeof(unsigned));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    unsigned* d_targets = static_cast<unsigned*>(d_targets_void);
+    status = copy_host_to_device(d_targets,
+                                 targets.data(),
+                                 targets.size() * sizeof(unsigned),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(state_elements, threads_per_block);
+    void* d_block_sums_void = nullptr;
+    status = device_malloc(handle,
+                           &d_block_sums_void,
+                           static_cast<size_t>(blocks) * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+    rocComplex* d_block_sums = static_cast<rocComplex*>(d_block_sums_void);
+
+    hipLaunchKernelGGL(reduce_expectation_matrix_kernel,
+                       dim3(blocks),
+                       dim3(threads_per_block),
+                       2 * threads_per_block * sizeof(double),
+                       handle->streams[0],
+                       state,
+                       state_elements,
+                       d_targets,
+                       static_cast<unsigned>(targets.size()),
+                       d_matrix,
+                       matrixDim,
+                       d_block_sums);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_block_sums);
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    std::vector<rocComplex> block_sums(static_cast<size_t>(blocks));
+    status = copy_device_to_host(block_sums.data(),
+                                 d_block_sums,
+                                 block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    device_free(handle, d_block_sums);
+    device_free(handle, d_targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    double total_re = 0.0;
+    double total_im = 0.0;
+    for (const rocComplex& block_sum : block_sums) {
+        total_re += static_cast<double>(block_sum.x);
+        total_im += static_cast<double>(block_sum.y);
+    }
+    *result = make_complex(total_re, total_im);
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t rocsvGetExpectationMatrixBatch(rocsvHandle_t handle,
+                                            rocComplex* d_state,
+                                            unsigned numQubits,
+                                            const unsigned* targetQubits,
+                                            unsigned numTargetQubits,
+                                            const rocComplex* d_matrix,
+                                            size_t matrixDim,
+                                            rocComplex* results) {
+    if (!handle || !targetQubits || numTargetQubits == 0 || !d_matrix || !results) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t expected_matrix_dim = 0;
+    if (!compute_power_of_two(numTargetQubits, &expected_matrix_dim) ||
+        matrixDim != expected_matrix_dim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<unsigned> targets;
+    rocqStatus_t status = validate_unique_qubits(targetQubits, numTargetQubits, numQubits, &targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    if (uses_distributed_state(handle, d_state)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (batch_size > 65535) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numTargetQubits > 4) {
+        return expectation_matrix_batch_host_fallback(handle,
+                                                      state,
+                                                      numQubits,
+                                                      targets,
+                                                      d_matrix,
+                                                      matrixDim,
+                                                      results);
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    void* d_targets_void = nullptr;
+    status = device_malloc(handle, &d_targets_void, targets.size() * sizeof(unsigned));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    unsigned* d_targets = static_cast<unsigned*>(d_targets_void);
+    status = copy_host_to_device(d_targets,
+                                 targets.data(),
+                                 targets.size() * sizeof(unsigned),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(state_elements, threads_per_block);
+    if (batch_size > std::numeric_limits<size_t>::max() / static_cast<size_t>(blocks)) {
+        device_free(handle, d_targets);
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t total_blocks = batch_size * static_cast<size_t>(blocks);
+
+    void* d_block_sums_void = nullptr;
+    status = device_malloc(handle, &d_block_sums_void, total_blocks * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+    rocComplex* d_block_sums = static_cast<rocComplex*>(d_block_sums_void);
+
+    hipLaunchKernelGGL(reduce_expectation_matrix_kernel,
+                       dim3(blocks, static_cast<unsigned>(batch_size)),
+                       dim3(threads_per_block),
+                       2 * threads_per_block * sizeof(double),
+                       handle->streams[0],
+                       state,
+                       state_elements,
+                       d_targets,
+                       static_cast<unsigned>(targets.size()),
+                       d_matrix,
+                       matrixDim,
+                       d_block_sums);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_block_sums);
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    std::vector<rocComplex> block_sums(total_blocks);
+    status = copy_device_to_host(block_sums.data(),
+                                 d_block_sums,
+                                 block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    device_free(handle, d_block_sums);
+    device_free(handle, d_targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    for (size_t batch = 0; batch < batch_size; ++batch) {
+        double total_re = 0.0;
+        double total_im = 0.0;
+        const size_t offset = batch * static_cast<size_t>(blocks);
+        for (int block = 0; block < blocks; ++block) {
+            const rocComplex& block_sum = block_sums[offset + static_cast<size_t>(block)];
+            total_re += static_cast<double>(block_sum.x);
+            total_im += static_cast<double>(block_sum.y);
+        }
+        results[batch] = make_complex(total_re, total_im);
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t rocsvGetExpectationMatrixMoments(rocsvHandle_t handle,
+                                              rocComplex* d_state,
+                                              unsigned numQubits,
+                                              const unsigned* targetQubits,
+                                              unsigned numTargetQubits,
+                                              const rocComplex* d_matrix,
+                                              const rocComplex* d_squaredMatrix,
+                                              size_t matrixDim,
+                                              rocComplex* mean,
+                                              rocComplex* secondMoment) {
+    if (!handle || !targetQubits || numTargetQubits == 0 || !d_matrix || !d_squaredMatrix ||
+        !mean || !secondMoment) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t expected_matrix_dim = 0;
+    if (!compute_power_of_two(numTargetQubits, &expected_matrix_dim) ||
+        matrixDim != expected_matrix_dim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<unsigned> targets;
+    rocqStatus_t status = validate_unique_qubits(targetQubits, numTargetQubits, numQubits, &targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    if (uses_distributed_state(handle, d_state)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (effective_batch_size(handle, state) != 1) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numTargetQubits > 4) {
+        status = expectation_matrix_host_fallback(handle,
+                                                  state,
+                                                  numQubits,
+                                                  targets,
+                                                  d_matrix,
+                                                  matrixDim,
+                                                  mean);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+        return expectation_matrix_host_fallback(handle,
+                                                state,
+                                                numQubits,
+                                                targets,
+                                                d_squaredMatrix,
+                                                matrixDim,
+                                                secondMoment);
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    void* d_targets_void = nullptr;
+    status = device_malloc(handle, &d_targets_void, targets.size() * sizeof(unsigned));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    unsigned* d_targets = static_cast<unsigned*>(d_targets_void);
+    status = copy_host_to_device(d_targets,
+                                 targets.data(),
+                                 targets.size() * sizeof(unsigned),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(state_elements, threads_per_block);
+    void* d_mean_block_sums_void = nullptr;
+    status = device_malloc(handle,
+                           &d_mean_block_sums_void,
+                           static_cast<size_t>(blocks) * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+    rocComplex* d_mean_block_sums = static_cast<rocComplex*>(d_mean_block_sums_void);
+
+    void* d_second_block_sums_void = nullptr;
+    status = device_malloc(handle,
+                           &d_second_block_sums_void,
+                           static_cast<size_t>(blocks) * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_mean_block_sums);
+        device_free(handle, d_targets);
+        return status;
+    }
+    rocComplex* d_second_block_sums = static_cast<rocComplex*>(d_second_block_sums_void);
+
+    hipLaunchKernelGGL(reduce_expectation_matrix_moments_kernel,
+                       dim3(blocks),
+                       dim3(threads_per_block),
+                       4 * threads_per_block * sizeof(double),
+                       handle->streams[0],
+                       state,
+                       state_elements,
+                       d_targets,
+                       static_cast<unsigned>(targets.size()),
+                       d_matrix,
+                       d_squaredMatrix,
+                       matrixDim,
+                       d_mean_block_sums,
+                       d_second_block_sums);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_second_block_sums);
+        device_free(handle, d_mean_block_sums);
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    std::vector<rocComplex> mean_block_sums(static_cast<size_t>(blocks));
+    status = copy_device_to_host(mean_block_sums.data(),
+                                 d_mean_block_sums,
+                                 mean_block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_second_block_sums);
+        device_free(handle, d_mean_block_sums);
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    std::vector<rocComplex> second_block_sums(static_cast<size_t>(blocks));
+    status = copy_device_to_host(second_block_sums.data(),
+                                 d_second_block_sums,
+                                 second_block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    device_free(handle, d_second_block_sums);
+    device_free(handle, d_mean_block_sums);
+    device_free(handle, d_targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    double mean_re = 0.0;
+    double mean_im = 0.0;
+    double second_re = 0.0;
+    double second_im = 0.0;
+    for (size_t block = 0; block < mean_block_sums.size(); ++block) {
+        mean_re += static_cast<double>(mean_block_sums[block].x);
+        mean_im += static_cast<double>(mean_block_sums[block].y);
+        second_re += static_cast<double>(second_block_sums[block].x);
+        second_im += static_cast<double>(second_block_sums[block].y);
+    }
+
+    *mean = make_complex(mean_re, mean_im);
+    *secondMoment = make_complex(second_re, second_im);
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t rocsvGetExpectationMatrixMomentsBatch(rocsvHandle_t handle,
+                                                   rocComplex* d_state,
+                                                   unsigned numQubits,
+                                                   const unsigned* targetQubits,
+                                                   unsigned numTargetQubits,
+                                                   const rocComplex* d_matrix,
+                                                   const rocComplex* d_squaredMatrix,
+                                                   size_t matrixDim,
+                                                   rocComplex* means,
+                                                   rocComplex* secondMoments) {
+    if (!handle || !targetQubits || numTargetQubits == 0 || !d_matrix || !d_squaredMatrix ||
+        !means || !secondMoments) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t expected_matrix_dim = 0;
+    if (!compute_power_of_two(numTargetQubits, &expected_matrix_dim) ||
+        matrixDim != expected_matrix_dim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    std::vector<unsigned> targets;
+    rocqStatus_t status = validate_unique_qubits(targetQubits, numTargetQubits, numQubits, &targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    if (uses_distributed_state(handle, d_state)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (batch_size > 65535) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numTargetQubits > 4) {
+        status = expectation_matrix_batch_host_fallback(handle,
+                                                        state,
+                                                        numQubits,
+                                                        targets,
+                                                        d_matrix,
+                                                        matrixDim,
+                                                        means);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+        return expectation_matrix_batch_host_fallback(handle,
+                                                      state,
+                                                      numQubits,
+                                                      targets,
+                                                      d_squaredMatrix,
+                                                      matrixDim,
+                                                      secondMoments);
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    void* d_targets_void = nullptr;
+    status = device_malloc(handle, &d_targets_void, targets.size() * sizeof(unsigned));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    unsigned* d_targets = static_cast<unsigned*>(d_targets_void);
+    status = copy_host_to_device(d_targets,
+                                 targets.data(),
+                                 targets.size() * sizeof(unsigned),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(state_elements, threads_per_block);
+    if (batch_size > std::numeric_limits<size_t>::max() / static_cast<size_t>(blocks)) {
+        device_free(handle, d_targets);
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t total_blocks = batch_size * static_cast<size_t>(blocks);
+
+    void* d_mean_block_sums_void = nullptr;
+    status = device_malloc(handle, &d_mean_block_sums_void, total_blocks * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_targets);
+        return status;
+    }
+    rocComplex* d_mean_block_sums = static_cast<rocComplex*>(d_mean_block_sums_void);
+
+    void* d_second_block_sums_void = nullptr;
+    status = device_malloc(handle, &d_second_block_sums_void, total_blocks * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_mean_block_sums);
+        device_free(handle, d_targets);
+        return status;
+    }
+    rocComplex* d_second_block_sums = static_cast<rocComplex*>(d_second_block_sums_void);
+
+    hipLaunchKernelGGL(reduce_expectation_matrix_moments_kernel,
+                       dim3(blocks, static_cast<unsigned>(batch_size)),
+                       dim3(threads_per_block),
+                       4 * threads_per_block * sizeof(double),
+                       handle->streams[0],
+                       state,
+                       state_elements,
+                       d_targets,
+                       static_cast<unsigned>(targets.size()),
+                       d_matrix,
+                       d_squaredMatrix,
+                       matrixDim,
+                       d_mean_block_sums,
+                       d_second_block_sums);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_second_block_sums);
+        device_free(handle, d_mean_block_sums);
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    std::vector<rocComplex> mean_block_sums(total_blocks);
+    status = copy_device_to_host(mean_block_sums.data(),
+                                 d_mean_block_sums,
+                                 mean_block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_second_block_sums);
+        device_free(handle, d_mean_block_sums);
+        device_free(handle, d_targets);
+        return status;
+    }
+
+    std::vector<rocComplex> second_block_sums(total_blocks);
+    status = copy_device_to_host(second_block_sums.data(),
+                                 d_second_block_sums,
+                                 second_block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    device_free(handle, d_second_block_sums);
+    device_free(handle, d_mean_block_sums);
+    device_free(handle, d_targets);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    for (size_t batch = 0; batch < batch_size; ++batch) {
+        double mean_re = 0.0;
+        double mean_im = 0.0;
+        double second_re = 0.0;
+        double second_im = 0.0;
+        const size_t offset = batch * static_cast<size_t>(blocks);
+        for (int block = 0; block < blocks; ++block) {
+            const rocComplex& mean_block = mean_block_sums[offset + static_cast<size_t>(block)];
+            const rocComplex& second_block = second_block_sums[offset + static_cast<size_t>(block)];
+            mean_re += static_cast<double>(mean_block.x);
+            mean_im += static_cast<double>(mean_block.y);
+            second_re += static_cast<double>(second_block.x);
+            second_im += static_cast<double>(second_block.y);
+        }
+        means[batch] = make_complex(mean_re, mean_im);
+        secondMoments[batch] = make_complex(second_re, second_im);
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t rocsvGetSparseMatrixMoments(rocsvHandle_t handle,
+                                         rocComplex* d_state,
+                                         unsigned numQubits,
+                                         const rocComplex* d_data,
+                                         const size_t* d_indices,
+                                         const size_t* d_indptr,
+                                         size_t rows,
+                                         size_t cols,
+                                         size_t nnz,
+                                         rocComplex* mean,
+                                         rocComplex* secondMoment) {
+    if (!handle || !d_indptr || !mean || !secondMoment || rows == 0 || cols == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (rows != cols) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (nnz > 0 && (!d_data || !d_indices)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (rows != state_elements || cols != state_elements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    if (uses_distributed_state(handle, d_state)) {
+        rocqStatus_t rccl_status = distributed_sparse_matrix_moments_rccl(handle,
+                                                                          numQubits,
+                                                                          d_data,
+                                                                          d_indices,
+                                                                          d_indptr,
+                                                                          rows,
+                                                                          cols,
+                                                                          nnz,
+                                                                          mean,
+                                                                          secondMoment);
+        if (rccl_status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+            return rccl_status;
+        }
+        return sparse_matrix_moments_distributed_host_fallback(handle,
+                                                               numQubits,
+                                                               d_data,
+                                                               d_indices,
+                                                               d_indptr,
+                                                               rows,
+                                                               cols,
+                                                               nnz,
+                                                               mean,
+                                                               secondMoment);
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (effective_batch_size(handle, state) != 1) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(rows, threads_per_block);
+
+    void* d_mean_block_sums_void = nullptr;
+    rocqStatus_t status = device_malloc(handle,
+                                        &d_mean_block_sums_void,
+                                        static_cast<size_t>(blocks) * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    rocComplex* d_mean_block_sums = static_cast<rocComplex*>(d_mean_block_sums_void);
+
+    void* d_second_block_sums_void = nullptr;
+    status = device_malloc(handle,
+                           &d_second_block_sums_void,
+                           static_cast<size_t>(blocks) * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_mean_block_sums);
+        return status;
+    }
+    rocComplex* d_second_block_sums = static_cast<rocComplex*>(d_second_block_sums_void);
+
+    hipLaunchKernelGGL(reduce_sparse_matrix_moments_kernel,
+                       dim3(blocks),
+                       dim3(threads_per_block),
+                       4 * threads_per_block * sizeof(double),
+                       handle->streams[0],
+                       state,
+                       d_data,
+                       d_indices,
+                       d_indptr,
+                       rows,
+                       d_mean_block_sums,
+                       d_second_block_sums);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_second_block_sums);
+        device_free(handle, d_mean_block_sums);
+        return status;
+    }
+
+    std::vector<rocComplex> mean_block_sums(static_cast<size_t>(blocks));
+    status = copy_device_to_host(mean_block_sums.data(),
+                                 d_mean_block_sums,
+                                 mean_block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_second_block_sums);
+        device_free(handle, d_mean_block_sums);
+        return status;
+    }
+
+    std::vector<rocComplex> second_block_sums(static_cast<size_t>(blocks));
+    status = copy_device_to_host(second_block_sums.data(),
+                                 d_second_block_sums,
+                                 second_block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    device_free(handle, d_second_block_sums);
+    device_free(handle, d_mean_block_sums);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    double mean_re = 0.0;
+    double mean_im = 0.0;
+    double second_re = 0.0;
+    double second_im = 0.0;
+    for (size_t block = 0; block < mean_block_sums.size(); ++block) {
+        mean_re += static_cast<double>(mean_block_sums[block].x);
+        mean_im += static_cast<double>(mean_block_sums[block].y);
+        second_re += static_cast<double>(second_block_sums[block].x);
+        second_im += static_cast<double>(second_block_sums[block].y);
+    }
+
+    *mean = make_complex(mean_re, mean_im);
+    *secondMoment = make_complex(second_re, second_im);
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t rocsvGetSparseMatrixMomentsBatch(rocsvHandle_t handle,
+                                              rocComplex* d_state,
+                                              unsigned numQubits,
+                                              const rocComplex* d_data,
+                                              const size_t* d_indices,
+                                              const size_t* d_indptr,
+                                              size_t rows,
+                                              size_t cols,
+                                              size_t nnz,
+                                              rocComplex* means,
+                                              rocComplex* secondMoments) {
+    if (!handle || !d_indptr || !means || !secondMoments || rows == 0 || cols == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (rows != cols) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (nnz > 0 && (!d_data || !d_indices)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (uses_distributed_state(handle, d_state)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t batch_size = effective_batch_size(handle, state);
+    if (batch_size > 65535) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    size_t state_elements = 0;
+    if (!compute_power_of_two(numQubits, &state_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (rows != state_elements || cols != state_elements) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(rows, threads_per_block);
+    if (batch_size > std::numeric_limits<size_t>::max() / static_cast<size_t>(blocks)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t total_blocks = batch_size * static_cast<size_t>(blocks);
+
+    void* d_mean_block_sums_void = nullptr;
+    rocqStatus_t status = device_malloc(handle,
+                                        &d_mean_block_sums_void,
+                                        total_blocks * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    rocComplex* d_mean_block_sums = static_cast<rocComplex*>(d_mean_block_sums_void);
+
+    void* d_second_block_sums_void = nullptr;
+    status = device_malloc(handle,
+                           &d_second_block_sums_void,
+                           total_blocks * sizeof(rocComplex));
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_mean_block_sums);
+        return status;
+    }
+    rocComplex* d_second_block_sums = static_cast<rocComplex*>(d_second_block_sums_void);
+
+    hipLaunchKernelGGL(reduce_sparse_matrix_moments_batch_kernel,
+                       dim3(blocks, static_cast<unsigned>(batch_size)),
+                       dim3(threads_per_block),
+                       4 * threads_per_block * sizeof(double),
+                       handle->streams[0],
+                       state,
+                       d_data,
+                       d_indices,
+                       d_indptr,
+                       rows,
+                       d_mean_block_sums,
+                       d_second_block_sums);
+    status = check_last_hip_error();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_second_block_sums);
+        device_free(handle, d_mean_block_sums);
+        return status;
+    }
+
+    std::vector<rocComplex> mean_block_sums(total_blocks);
+    status = copy_device_to_host(mean_block_sums.data(),
+                                 d_mean_block_sums,
+                                 mean_block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        device_free(handle, d_second_block_sums);
+        device_free(handle, d_mean_block_sums);
+        return status;
+    }
+
+    std::vector<rocComplex> second_block_sums(total_blocks);
+    status = copy_device_to_host(second_block_sums.data(),
+                                 d_second_block_sums,
+                                 second_block_sums.size() * sizeof(rocComplex),
+                                 handle->streams[0]);
+    device_free(handle, d_second_block_sums);
+    device_free(handle, d_mean_block_sums);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    for (size_t batch = 0; batch < batch_size; ++batch) {
+        double mean_re = 0.0;
+        double mean_im = 0.0;
+        double second_re = 0.0;
+        double second_im = 0.0;
+        const size_t offset = batch * static_cast<size_t>(blocks);
+        for (int block = 0; block < blocks; ++block) {
+            const rocComplex& mean_block = mean_block_sums[offset + static_cast<size_t>(block)];
+            const rocComplex& second_block = second_block_sums[offset + static_cast<size_t>(block)];
+            mean_re += static_cast<double>(mean_block.x);
+            mean_im += static_cast<double>(mean_block.y);
+            second_re += static_cast<double>(second_block.x);
+            second_im += static_cast<double>(second_block.y);
+        }
+        means[batch] = make_complex(mean_re, mean_im);
+        secondMoments[batch] = make_complex(second_re, second_im);
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t rocsvProbabilities(rocsvHandle_t handle,
+                                rocComplex* d_state,
+                                unsigned numQubits,
+                                const unsigned* measuredQubits,
+                                unsigned numMeasuredQubits,
+                                double* h_probabilities) {
+    if (!handle || !h_probabilities || !measuredQubits || numMeasuredQubits == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (numMeasuredQubits > 20) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    std::vector<unsigned> measured;
+    rocqStatus_t status = validate_unique_qubits(measuredQubits, numMeasuredQubits, numQubits, &measured);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    if (uses_distributed_state(handle, d_state)) {
+        return compute_distributed_sample_probabilities(handle, numQubits, measured, h_probabilities);
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    return compute_local_sample_probabilities(handle, state, numQubits, measured, h_probabilities);
+}
+
+rocqStatus_t rocsvProbabilitiesBatch(rocsvHandle_t handle,
+                                     rocComplex* d_state,
+                                     unsigned numQubits,
+                                     const unsigned* measuredQubits,
+                                     unsigned numMeasuredQubits,
+                                     double* h_probabilities) {
+    if (!handle || !h_probabilities || !measuredQubits || numMeasuredQubits == 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (numMeasuredQubits > 20) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    std::vector<unsigned> measured;
+    rocqStatus_t status = validate_unique_qubits(measuredQubits, numMeasuredQubits, numQubits, &measured);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+    if (uses_distributed_state(handle, d_state)) {
+        return compute_distributed_sample_probabilities(handle, numQubits, measured, h_probabilities);
+    }
+
+    rocComplex* state = resolve_state_pointer(handle, d_state);
+    if (!state) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    return compute_local_sample_probabilities_batch(handle, state, numQubits, measured, h_probabilities);
+}
+
 rocqStatus_t rocsvSample(rocsvHandle_t handle,
                          rocComplex* d_state,
                          unsigned numQubits,
@@ -3494,74 +9134,27 @@ rocqStatus_t rocsvSample(rocsvHandle_t handle,
     if (numShots == 0) {
         return ROCQ_STATUS_SUCCESS;
     }
-    if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
 
     std::vector<unsigned> measured;
     rocqStatus_t status = validate_unique_qubits(measuredQubits, numMeasuredQubits, numQubits, &measured);
     if (status != ROCQ_STATUS_SUCCESS) {
         return status;
     }
+    if (uses_distributed_state(handle, d_state)) {
+        return distributed_sample_with_fallback(handle, numQubits, measured, numShots, h_results);
+    }
 
     rocComplex* state = resolve_state_pointer(handle, d_state);
     if (!state) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    if (effective_batch_size(handle, state) != 1) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
-
-    size_t state_elements = 0;
-    if (!compute_power_of_two(numQubits, &state_elements)) {
-        return ROCQ_STATUS_INVALID_VALUE;
-    }
-
-    void* d_measured_void = nullptr;
-    status = device_malloc(handle, &d_measured_void, measured.size() * sizeof(unsigned));
-    if (status != ROCQ_STATUS_SUCCESS) {
-        return status;
-    }
-    unsigned* d_measured = static_cast<unsigned*>(d_measured_void);
-    status = copy_host_to_device(d_measured,
-                                 measured.data(),
-                                 measured.size() * sizeof(unsigned),
-                                 handle->streams[0]);
-    if (status != ROCQ_STATUS_SUCCESS) {
-        device_free(handle, d_measured);
-        return status;
-    }
 
     const size_t num_outcomes = size_t{1} << numMeasuredQubits;
-    void* d_outcome_probs_void = nullptr;
-    status = device_malloc(handle, &d_outcome_probs_void, num_outcomes * sizeof(double));
+    double* d_outcome_probs = nullptr;
+    unsigned* d_measured = nullptr;
+    status = accumulate_local_sample_probabilities(
+        handle, state, numQubits, measured, &d_outcome_probs, &d_measured);
     if (status != ROCQ_STATUS_SUCCESS) {
-        device_free(handle, d_measured);
-        return status;
-    }
-    double* d_outcome_probs = static_cast<double*>(d_outcome_probs_void);
-    if (hipMemsetAsync(d_outcome_probs, 0, num_outcomes * sizeof(double), handle->streams[0]) != hipSuccess) {
-        device_free(handle, d_outcome_probs);
-        device_free(handle, d_measured);
-        return ROCQ_STATUS_HIP_ERROR;
-    }
-
-    constexpr int threads_per_block = 256;
-    const int blocks = compute_reduction_blocks(state_elements, threads_per_block);
-    hipLaunchKernelGGL(accumulate_sample_probabilities_kernel,
-                       dim3(blocks),
-                       dim3(threads_per_block),
-                       0,
-                       handle->streams[0],
-                       state,
-                       state_elements,
-                       d_measured,
-                       static_cast<unsigned>(measured.size()),
-                       d_outcome_probs);
-    status = check_last_hip_error();
-    if (status != ROCQ_STATUS_SUCCESS) {
-        device_free(handle, d_outcome_probs);
-        device_free(handle, d_measured);
         return status;
     }
 
@@ -3609,6 +9202,7 @@ rocqStatus_t rocsvSample(rocsvHandle_t handle,
     }
     uint64_t* d_results = static_cast<uint64_t*>(d_results_void);
 
+    constexpr int threads_per_block = 256;
     const unsigned long long seed = handle->rng();
     const int sample_blocks = compute_reduction_blocks(static_cast<size_t>(numShots), threads_per_block);
     hipLaunchKernelGGL(sample_from_cdf_kernel,
@@ -3683,9 +9277,62 @@ rocqStatus_t rocsvApplyControlledMatrix(rocsvHandle_t handle,
         if (numQubits != handle->globalNumQubits) {
             return ROCQ_STATUS_INVALID_VALUE;
         }
+        if (numControls > 0 && numTargets == 1) {
+            if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+                return ROCQ_STATUS_HIP_ERROR;
+            }
+            std::vector<rocComplex> matrix_host;
+            status = copy_matrix_from_device(d_matrix, 4, handle->streams[0], &matrix_host);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                return status;
+            }
+            if (numControls == 1) {
+                return launch_controlled_single_qubit_matrix(handle,
+                                                             handle->d_state,
+                                                             numQubits,
+                                                             controls[0],
+                                                             targets[0],
+                                                             matrix_host[0],
+                                                             matrix_host[1],
+                                                             matrix_host[2],
+                                                             matrix_host[3]);
+            }
+            return launch_multi_controlled_single_qubit_matrix(handle,
+                                                               handle->d_state,
+                                                               numQubits,
+                                                               controls,
+                                                               targets[0],
+                                                               matrix_host[0],
+                                                               matrix_host[1],
+                                                               matrix_host[2],
+                                                               matrix_host[3]);
+        }
         if (!distributed_all_qubits_local(handle, targets) ||
             !distributed_all_qubits_local(handle, controls)) {
-            return ROCQ_STATUS_NOT_IMPLEMENTED;
+            if (!distributed_host_fallback_enabled()) {
+                return ROCQ_STATUS_NOT_IMPLEMENTED;
+            }
+            if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+                return ROCQ_STATUS_HIP_ERROR;
+            }
+            size_t matrix_dim = 0;
+            if (!compute_power_of_two(numTargets, &matrix_dim) ||
+                matrix_dim > (std::numeric_limits<size_t>::max() / matrix_dim)) {
+                return ROCQ_STATUS_INVALID_VALUE;
+            }
+            std::vector<rocComplex> matrix_host;
+            status = copy_matrix_from_device(d_matrix,
+                                             matrix_dim * matrix_dim,
+                                             handle->streams[0],
+                                             &matrix_host);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                return status;
+            }
+            return apply_matrix_distributed_host_fallback(handle,
+                                                          numQubits,
+                                                          targets,
+                                                          controls,
+                                                          matrix_host);
         }
         if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
             return ROCQ_STATUS_HIP_ERROR;
@@ -3722,7 +9369,27 @@ rocqStatus_t rocsvApplyControlledMatrix(rocsvHandle_t handle,
                                                          matrix_host[2],
                                                          matrix_host[3]);
         }
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        if (!distributed_host_fallback_enabled()) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+        size_t matrix_dim = 0;
+        if (!compute_power_of_two(numTargets, &matrix_dim) ||
+            matrix_dim > (std::numeric_limits<size_t>::max() / matrix_dim)) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        std::vector<rocComplex> matrix_host;
+        status = copy_matrix_from_device(d_matrix,
+                                         matrix_dim * matrix_dim,
+                                         handle->streams[0],
+                                         &matrix_host);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+        return apply_matrix_distributed_host_fallback(handle,
+                                                      numQubits,
+                                                      targets,
+                                                      controls,
+                                                      matrix_host);
     }
 
     if (numControls == 0) {
@@ -3766,6 +9433,26 @@ rocqStatus_t rocsvApplyControlledMatrix(rocsvHandle_t handle,
                                                      matrix_host[1],
                                                      matrix_host[2],
                                                      matrix_host[3]);
+    }
+    if (numControls > 1 && numTargets == 1 && kernel_fast_path_ok) {
+        std::vector<rocComplex> matrix_host;
+        status = copy_matrix_from_device(d_matrix, 4, handle->streams[0], &matrix_host);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+        return launch_multi_controlled_single_qubit_matrix(handle,
+                                                           state,
+                                                           numQubits,
+                                                           controls,
+                                                           targets[0],
+                                                           matrix_host[0],
+                                                           matrix_host[1],
+                                                           matrix_host[2],
+                                                           matrix_host[3]);
+    }
+
+    if (!allow_host_matrix_fallback()) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
     }
 
     std::vector<rocComplex> matrix_host;

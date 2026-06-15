@@ -16,6 +16,8 @@ import math
 import os
 import sys
 import unittest
+import warnings
+from unittest import mock
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
@@ -37,6 +39,15 @@ def _compiler_skip_reason() -> str:
         "rocquantum_bind is unavailable. Build bindings in 'rocQuantum-main/build-ci' "
         "and run '.github/workflows/rocm-linux-build.yml' job 'build' on a ROCm host "
         "with '/dev/kfd' present."
+    )
+
+
+def _compiler_disabled_reason(exc: RuntimeError) -> str | None:
+    if "MLIR compiler support is disabled" not in str(exc):
+        return None
+    return (
+        "rocquantum_bind was built without the experimental rocqCompiler MLIR runtime; "
+        f"default binding diagnostic was: {exc}"
     )
 
 
@@ -81,7 +92,13 @@ class TestCompilerE2EFlow(unittest.TestCase):
             self.skipTest(_compiler_skip_reason())
 
         compiler = rocquantum_bind.MLIRCompiler(kernel_obj.num_qubits, "hip_statevec")
-        qir = compiler.emit_qir(mlir)
+        try:
+            qir = compiler.emit_qir(mlir)
+        except RuntimeError as exc:
+            disabled_reason = _compiler_disabled_reason(exc)
+            if disabled_reason:
+                self.skipTest(disabled_reason)
+            raise
         self.assertFalse(qir.startswith("Error:"), msg=qir)
         return mlir, qir, compiler
 
@@ -111,12 +128,14 @@ class TestCompilerE2EFlow(unittest.TestCase):
         if rocquantum_bind is None:
             self.skipTest(_compiler_skip_reason())
 
-        compiler = rocquantum_bind.MLIRCompiler(kernel_obj.num_qubits, "hip_statevec")
         try:
+            compiler = rocquantum_bind.MLIRCompiler(kernel_obj.num_qubits, "hip_statevec")
             state = compiler.compile_and_execute(mlir, {"strict": True})
         except RuntimeError as exc:
             msg = str(exc).lower()
             actionable_tokens = [
+                "disabled",
+                "mlir compiler support",
                 "not yet implemented",
                 "compile_and_execute",
                 "hipstatevec",
@@ -137,13 +156,18 @@ class TestCompilerE2EFlow(unittest.TestCase):
 
 class TestPythonPublicAPIFlow(unittest.TestCase):
     def test_rocq_execute_bell_flow(self):
+        from rocq.backends import MockBackendWarning
+
         @rocq.kernel
         def bell_program():
             q = rocq.qvec(2)
             rocq.h(q[0])
             rocq.cnot(q[0], q[1])
 
-        state = rocq.execute(bell_program, backend="state_vector")
+        with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", MockBackendWarning)
+                state = rocq.execute(bell_program, backend="state_vector")
         if isinstance(state, str):
             self.assertIn("mock_cpp_state_vector_data", state)
         else:

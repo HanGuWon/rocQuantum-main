@@ -1,5 +1,72 @@
+import math
+import os
+import warnings
+from numbers import Integral, Real
+
 import numpy as np
 from . import _rocq_hip_backend as backend # Assuming the compiled module is named this
+
+_DISABLE_FUSION_ENV_VAR = "ROCQ_DISABLE_GATE_FUSION"
+_FUSABLE_SINGLE_QUBIT_GATES = {"X", "Y", "Z", "H", "S", "T", "RX", "RY", "RZ"}
+_LEGACY_CONCEPTUAL_MLIR_MODE = "conceptual-mlir"
+_LEGACY_PYTHON_REPLAY_MODE = "python-replay"
+_LEGACY_BUILD_EXECUTION_NOTE = (
+    "legacy python/rocq build() emits conceptual MLIR for inspection, but "
+    "runtime execution is Python circuit replay through Circuit methods. It "
+    "does not call MLIRCompiler.compile_and_execute()."
+)
+_MULTI_GPU_PARTIAL_NOTE = (
+    "multi_gpu=True uses experimental partial distributed state-vector support. "
+    "Only local-domain gates and limited measurement/readback paths are native; "
+    "non-local correctness fallbacks must be enabled explicitly and are slow/debug "
+    "paths, not CUDA-Q/cuStateVec-style full distributed execution."
+)
+_MULTI_NODE_UNSUPPORTED_NOTE = (
+    "multi-node distributed execution is not implemented. rocQuantum currently "
+    "supports only experimental single-node multi-GPU scaffolding; use "
+    "multi_gpu=True on one ROCm host or run separate jobs explicitly."
+)
+
+
+def _validate_nonnegative_integer(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a non-negative integer.")
+    normalized = int(value)
+    if normalized < 0:
+        raise ValueError(f"{name} must be a non-negative integer.")
+    return normalized
+
+
+def _validate_positive_integer(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a positive integer.")
+    normalized = int(value)
+    if normalized <= 0:
+        raise ValueError(f"{name} must be a positive integer.")
+    return normalized
+
+
+def _validate_boolean(value, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean.")
+    return value
+
+
+def _validate_finite_real(value, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError(f"{name} must be a finite real number.")
+    normalized = float(value)
+    if not math.isfinite(normalized):
+        raise ValueError(f"{name} must be finite.")
+    return normalized
+
+
+class LegacyCompilerReplayWarning(RuntimeWarning):
+    """Raised when legacy build() execution uses Python replay rather than MLIR execution."""
+
+
+class ExperimentalMultiGpuWarning(RuntimeWarning):
+    """Raised when the legacy API enters the partial multi-GPU backend path."""
 
 class Simulator:
     """
@@ -35,23 +102,41 @@ class Simulator:
 
 
 class Circuit:
-    def __init__(self, num_qubits: int, simulator: Simulator, multi_gpu: bool = False):
+    def __init__(
+        self,
+        num_qubits: int,
+        simulator: Simulator,
+        multi_gpu: bool = False,
+        batch_size: int = 1,
+        multi_node: bool = False,
+        node_count: int = 1,
+    ):
         if not isinstance(simulator, Simulator):
             raise TypeError("A valid Simulator instance is required.")
-        if num_qubits < 0:
-            raise ValueError("Number of qubits must be non-negative.")
+        num_qubits = _validate_nonnegative_integer(num_qubits, "Number of qubits")
+        batch_size = _validate_positive_integer(batch_size, "batch_size")
+        multi_gpu = _validate_boolean(multi_gpu, "multi_gpu")
+        multi_node = _validate_boolean(multi_node, "multi_node")
+        node_count = _validate_positive_integer(node_count, "node_count")
+        if multi_node or node_count > 1:
+            raise NotImplementedError(_MULTI_NODE_UNSUPPORTED_NOTE)
+        if multi_gpu and batch_size != 1:
+            raise NotImplementedError("batch_size > 1 is not supported with multi_gpu=True.")
 
         self.num_qubits = num_qubits
         self.simulator = simulator
         self._sim_handle = simulator._handle_wrapper
         self.is_multi_gpu = multi_gpu
-        self.batch_size = 1
+        self.execution_notes = [_MULTI_GPU_PARTIAL_NOTE] if self.is_multi_gpu else []
+        self.batch_size = batch_size
         self._d_state_buffer = None
         self._gate_queue = []
         self._is_dirty = False
+        self._fusion_engine = None
 
         try:
             if self.is_multi_gpu:
+                warnings.warn(_MULTI_GPU_PARTIAL_NOTE, ExperimentalMultiGpuWarning, stacklevel=2)
                 if num_qubits == 0 and self.simulator.handle.get_num_gpus() > 1:
                      raise ValueError("Cannot create a 0-qubit distributed state across multiple GPUs. Use single GPU mode or at least log2(num_gpus) qubits.")
                 try:
@@ -60,7 +145,11 @@ class Circuit:
                 except RuntimeError as e:
                     self._reraise_runtime_error("Distributed circuit initialization", e)
             else:
-                self._d_state_buffer = backend.allocate_state_internal(self._sim_handle, self.num_qubits)
+                self._d_state_buffer = backend.allocate_state_internal(
+                    self._sim_handle,
+                    self.num_qubits,
+                    self.batch_size,
+                )
                 status = backend.initialize_state(self._sim_handle, self._d_state_buffer, self.num_qubits)
                 self._raise_for_status("State initialization", status)
 
@@ -102,20 +191,129 @@ class Circuit:
 
         raise RuntimeError(f"{operation} failed: {message}") from error
 
-    def flush(self):
-        """Processes queued gates without fusion integration.
+    def _gate_fusion_disabled(self) -> bool:
+        return os.environ.get(_DISABLE_FUSION_ENV_VAR, "").strip().lower() in {"1", "true", "yes", "on"}
 
-        The native GateFusion engine exists in C++, but this Python execution path
-        still replays queued gates one by one.
-        """
+    def _get_fusion_engine(self):
+        if self.is_multi_gpu or self._gate_fusion_disabled() or not hasattr(backend, "GateFusion"):
+            return None
+        if getattr(self, "_fusion_engine", None) is None:
+            self._fusion_engine = backend.GateFusion(
+                self._sim_handle,
+                self._get_d_state_for_backend(),
+                self.num_qubits,
+            )
+        return self._fusion_engine
+
+    def _is_cnot_gate(self, op) -> bool:
+        return op.name.upper() == "CNOT" and len(op.controls) == 1 and len(op.targets) == 1
+
+    def _is_fusable_single_qubit_gate(self, op) -> bool:
+        return (
+            op.name.upper() in _FUSABLE_SINGLE_QUBIT_GATES
+            and len(op.controls) == 0
+            and len(op.targets) == 1
+        )
+
+    def _is_fusable_cnot_neighbor(self, op, cnot_op) -> bool:
+        if not self._is_fusable_single_qubit_gate(op) or not self._is_cnot_gate(cnot_op):
+            return False
+        return op.targets[0] in {cnot_op.controls[0], cnot_op.targets[0]}
+
+    def _single_qubit_fusion_span_from(self, index: int):
+        current = self._gate_queue[index]
+        if not self._is_fusable_single_qubit_gate(current):
+            return []
+
+        target = current.targets[0]
+        end = index + 1
+        while end < len(self._gate_queue):
+            candidate = self._gate_queue[end]
+            if not self._is_fusable_single_qubit_gate(candidate) or candidate.targets[0] != target:
+                break
+            end += 1
+
+        if end - index < 2:
+            return []
+        return self._gate_queue[index:end]
+
+    def _fusion_span_from(self, index: int):
+        current = self._gate_queue[index]
+
+        single_span = self._single_qubit_fusion_span_from(index)
+        if single_span:
+            return single_span
+
+        if self._is_cnot_gate(current):
+            if (
+                index + 1 < len(self._gate_queue)
+                and self._is_fusable_cnot_neighbor(self._gate_queue[index + 1], current)
+            ):
+                return self._gate_queue[index:index + 2]
+            return []
+
+        if (
+            index + 1 < len(self._gate_queue)
+            and self._is_cnot_gate(self._gate_queue[index + 1])
+            and self._is_fusable_cnot_neighbor(current, self._gate_queue[index + 1])
+        ):
+            end = index + 2
+            if (
+                index + 2 < len(self._gate_queue)
+                and self._is_fusable_cnot_neighbor(self._gate_queue[index + 2], self._gate_queue[index + 1])
+            ):
+                end += 1
+            return self._gate_queue[index:end]
+
+        return []
+
+    def _to_fusion_gate(self, op):
+        gate = backend.GateOp()
+        gate.name = op.name.upper()
+        gate.targets = [int(target) for target in op.targets]
+        gate.controls = [int(control) for control in op.controls]
+        gate.params = [float(param) for param in op.params]
+        return gate
+
+    def _try_fuse_from(self, index: int) -> int:
+        fusion_engine = self._get_fusion_engine()
+        if fusion_engine is None:
+            return 0
+
+        span = self._fusion_span_from(index)
+        if not span:
+            return 0
+
+        status = fusion_engine.process_queue([self._to_fusion_gate(op) for op in span])
+        self._raise_for_status("GateFusion.process_queue", status)
+        return len(span)
+
+    def _apply_queued_gate(self, op):
+        d_state_arg = self._get_d_state_for_backend()
+        status = getattr(backend, f"apply_{op.name.lower()}")(
+            self._sim_handle,
+            d_state_arg,
+            self.num_qubits,
+            *op.controls,
+            *op.targets,
+            *op.params,
+        )
+        self._raise_for_status(f"Gate {op.name}", status)
+
+    def flush(self):
+        """Processes queued gates, fusing CNOT-adjacent spans when the native backend supports it."""
         if not self._is_dirty or not self._gate_queue:
             return
 
         print(f"Flushing {len(self._gate_queue)} gates...")
-        for op in self._gate_queue:
-            d_state_arg = self._get_d_state_for_backend()
-            status = getattr(backend, f"apply_{op.name.lower()}")(self._sim_handle, d_state_arg, self.num_qubits, *op.controls, *op.targets, *op.params)
-            self._raise_for_status(f"Gate {op.name}", status)
+        index = 0
+        while index < len(self._gate_queue):
+            fused_count = self._try_fuse_from(index)
+            if fused_count:
+                index += fused_count
+                continue
+            self._apply_queued_gate(self._gate_queue[index])
+            index += 1
 
         self._gate_queue.clear()
         self._is_dirty = False
@@ -135,96 +333,124 @@ class Circuit:
         return self._d_state_buffer
 
     def _validate_qubit_index(self, qubit_index, name="target qubit"):
-        if not isinstance(qubit_index, int) or not (0 <= qubit_index < self.num_qubits):
-            if not (self.num_qubits == 0 and qubit_index == 0):
-                 raise ValueError(
-                    f"{name} index {qubit_index} is out of range for {self.num_qubits} qubits."
-                )
+        if isinstance(qubit_index, bool) or not isinstance(qubit_index, Integral):
+            raise ValueError(f"{name} must be an integer qubit index.")
+        index = int(qubit_index)
+        if index < 0 or index >= self.num_qubits:
+            raise ValueError(f"{name} index {index} is out of range for {self.num_qubits} qubits.")
+        return index
 
     def _validate_control_target(self, control_qubit, target_qubit):
-        self._validate_qubit_index(control_qubit, "control qubit")
-        self._validate_qubit_index(target_qubit, "target qubit")
-        if control_qubit == target_qubit and self.num_qubits > 0 :
+        control = self._validate_qubit_index(control_qubit, "control qubit")
+        target = self._validate_qubit_index(target_qubit, "target qubit")
+        if control == target:
             raise ValueError("Control and target qubits cannot be the same.")
+        return control, target
 
     def x(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("X", targets=[target_qubit])
 
     def y(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("Y", targets=[target_qubit])
 
     def z(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("Z", targets=[target_qubit])
 
     def h(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("H", targets=[target_qubit])
 
     def s(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("S", targets=[target_qubit])
 
     def t(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("T", targets=[target_qubit])
 
+    def tdg(self, target_qubit: int):
+        target_qubit = self._validate_qubit_index(target_qubit)
+        self._enqueue_gate("TDG", targets=[target_qubit])
+
     def rx(self, angle: float, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        angle = _validate_finite_real(angle, "RX angle")
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("RX", targets=[target_qubit], params=[angle])
 
     def ry(self, angle: float, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        angle = _validate_finite_real(angle, "RY angle")
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("RY", targets=[target_qubit], params=[angle])
 
     def rz(self, angle: float, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        angle = _validate_finite_real(angle, "RZ angle")
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("RZ", targets=[target_qubit], params=[angle])
 
+    def p(self, angle: float, target_qubit: int):
+        angle = _validate_finite_real(angle, "P angle")
+        target_qubit = self._validate_qubit_index(target_qubit)
+        self._enqueue_gate("P", targets=[target_qubit], params=[angle])
+
     def cx(self, control_qubit: int, target_qubit: int): # CNOT
-        self._validate_control_target(control_qubit, target_qubit)
+        control_qubit, target_qubit = self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CNOT", targets=[target_qubit], controls=[control_qubit])
 
     def cz(self, qubit1: int, qubit2: int):
-        self._validate_control_target(qubit1, qubit2)
+        qubit1, qubit2 = self._validate_control_target(qubit1, qubit2)
         self._enqueue_gate("CZ", targets=[qubit2], controls=[qubit1])
 
     def swap(self, qubit1: int, qubit2: int):
-        self._validate_control_target(qubit1, qubit2)
+        qubit1, qubit2 = self._validate_control_target(qubit1, qubit2)
         self._enqueue_gate("SWAP", targets=[qubit1, qubit2])
 
     def crx(self, angle: float, control_qubit: int, target_qubit: int):
-        self._validate_control_target(control_qubit, target_qubit)
+        angle = _validate_finite_real(angle, "CRX angle")
+        control_qubit, target_qubit = self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CRX", targets=[target_qubit], controls=[control_qubit], params=[angle])
 
     def cry(self, angle: float, control_qubit: int, target_qubit: int):
-        self._validate_control_target(control_qubit, target_qubit)
+        angle = _validate_finite_real(angle, "CRY angle")
+        control_qubit, target_qubit = self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CRY", targets=[target_qubit], controls=[control_qubit], params=[angle])
 
     def crz(self, angle: float, control_qubit: int, target_qubit: int):
-        self._validate_control_target(control_qubit, target_qubit)
+        angle = _validate_finite_real(angle, "CRZ angle")
+        control_qubit, target_qubit = self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CRZ", targets=[target_qubit], controls=[control_qubit], params=[angle])
 
+    def cp(self, angle: float, control_qubit: int, target_qubit: int):
+        angle = _validate_finite_real(angle, "CP angle")
+        control_qubit, target_qubit = self._validate_control_target(control_qubit, target_qubit)
+        self._enqueue_gate("CP", targets=[target_qubit], controls=[control_qubit], params=[angle])
+
     def ccx(self, control_qubit1: int, control_qubit2: int, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
-        self._validate_qubit_index(control_qubit1)
-        self._validate_qubit_index(control_qubit2)
+        target_qubit = self._validate_qubit_index(target_qubit)
+        control_qubit1 = self._validate_qubit_index(control_qubit1)
+        control_qubit2 = self._validate_qubit_index(control_qubit2)
+        if len({control_qubit1, control_qubit2, target_qubit}) != 3:
+            raise ValueError("control and target qubits must be distinct.")
         self._enqueue_gate("MCX", targets=[target_qubit], controls=[control_qubit1, control_qubit2])
 
     def cswap(self, control_qubit: int, target_qubit1: int, target_qubit2: int):
-        self._validate_qubit_index(control_qubit)
-        self._validate_qubit_index(target_qubit1)
-        self._validate_qubit_index(target_qubit2)
+        control_qubit = self._validate_qubit_index(control_qubit)
+        target_qubit1 = self._validate_qubit_index(target_qubit1)
+        target_qubit2 = self._validate_qubit_index(target_qubit2)
+        if len({control_qubit, target_qubit1, target_qubit2}) != 3:
+            raise ValueError("control and target qubits must be distinct.")
         self._enqueue_gate("CSWAP", targets=[target_qubit1, target_qubit2], controls=[control_qubit])
 
     def apply_unitary(self, qubit_indices: list[int], matrix: np.ndarray):
         self.flush()
         if not qubit_indices:
             raise ValueError("qubit_indices cannot be empty.")
-        for idx in qubit_indices:
+        qubit_indices = [
             self._validate_qubit_index(idx, "qubit_indices element")
+            for idx in qubit_indices
+        ]
         if len(set(qubit_indices)) != len(qubit_indices):
             raise ValueError("qubit_indices must be unique.")
 
@@ -255,10 +481,14 @@ class Circuit:
         if set(control_qubits).intersection(target_qubits):
             raise ValueError("control_qubits and target_qubits must be disjoint.")
 
-        for idx in control_qubits:
+        control_qubits = [
             self._validate_qubit_index(idx, "control_qubits element")
-        for idx in target_qubits:
+            for idx in control_qubits
+        ]
+        target_qubits = [
             self._validate_qubit_index(idx, "target_qubits element")
+            for idx in target_qubits
+        ]
 
         matrix = np.asarray(matrix, dtype=np.complex64, order='C')
         dim = 1 << len(target_qubits)
@@ -278,7 +508,7 @@ class Circuit:
 
     def measure(self, qubit_to_measure: int) -> tuple[int, float]:
         self.flush()
-        self._validate_qubit_index(qubit_to_measure)
+        qubit_to_measure = self._validate_qubit_index(qubit_to_measure)
         d_state_arg = self._get_d_state_for_backend()
         try:
             outcome, probability = backend.measure(
@@ -292,10 +522,13 @@ class Circuit:
         self.flush()
         if not measured_qubits:
             raise ValueError("List of measured_qubits cannot be empty.")
-        for idx in measured_qubits:
+        measured_qubits = [
             self._validate_qubit_index(idx, f"measured_qubits element {idx}")
-        if num_shots <= 0:
-            raise ValueError("Number of shots must be positive.")
+            for idx in measured_qubits
+        ]
+        if len(set(measured_qubits)) != len(measured_qubits):
+            raise ValueError("measured_qubits must be unique.")
+        num_shots = _validate_positive_integer(num_shots, "Number of shots")
 
         d_state_arg = self._get_d_state_for_backend()
         try:
@@ -306,73 +539,51 @@ class Circuit:
         except RuntimeError as e:
             self._reraise_runtime_error("sample", e)
 
-    def get_statevector(self) -> np.ndarray:
+    def _validate_batch_index(self, batch_index: int):
+        if isinstance(batch_index, bool) or not isinstance(batch_index, int):
+            raise TypeError("batch_index must be an integer.")
+        if batch_index < 0 or batch_index >= self.batch_size:
+            raise ValueError(f"batch_index must be in [0, {self.batch_size}).")
+
+    def get_statevector(self, batch_index: int = 0) -> np.ndarray:
         """
-        Flushes the execution queue and returns the final state vector from the GPU.
+        Flushes the execution queue and returns one final state vector from the GPU.
         Note: This involves a device-to-host memory transfer and can be slow.
         """
         self.flush()
-        if self.batch_size > 1:
-            raise NotImplementedError("get_statevector is not yet supported for batch_size > 1.")
+        self._validate_batch_index(batch_index)
 
         return backend.get_state_vector_slice(
             self._sim_handle,
             self._get_d_state_for_backend(),
             self.num_qubits,
             self.batch_size,
-            0,
+            batch_index,
         )
+
+    def get_statevectors(self) -> np.ndarray:
+        """
+        Flushes the execution queue and returns all batched state vectors as
+        ``(batch_size, 2**num_qubits)``.
+        """
+        self.flush()
+        states = backend.get_state_vector_full(
+            self._sim_handle,
+            self._get_d_state_for_backend(),
+            self.num_qubits,
+            self.batch_size,
+        )
+        return np.asarray(states, dtype=np.complex64).reshape(self.batch_size, 1 << self.num_qubits)
 
     def expval(self, pauli_operator: 'PauliOperator') -> float:
         """
-        Calculates a Pauli expectation value by reading the statevector back to the
-        host and evaluating the observable in NumPy.
+        Calculates a Pauli expectation value through native backend helpers.
         """
         if not isinstance(pauli_operator, PauliOperator):
             raise TypeError("Input must be a PauliOperator object.")
 
-        psi = self.get_statevector()
-        total_exp_val = 0.0
-
-        for pauli_term, coeff in pauli_operator.terms:
-            if not pauli_term: # Identity term
-                total_exp_val += coeff
-                continue
-
-            p_psi = psi.copy()
-            for pauli_char, qubit_idx in pauli_term:
-                p_psi = self._apply_pauli_to_state_np(p_psi, pauli_char, qubit_idx)
-            
-            term_exp_val = np.vdot(psi, p_psi).real
-            total_exp_val += coeff * term_exp_val
-            
-        return total_exp_val
-
-    def _apply_pauli_to_state_np(self, psi: np.ndarray, pauli: str, target: int) -> np.ndarray:
-        """Helper to apply a single Pauli operator to a statevector in NumPy."""
-        num_qubits = self.num_qubits
-        psi_tensor = psi.reshape([2] * num_qubits)
-        
-        axes = list(range(num_qubits))
-        axes[0], axes[target] = axes[target], axes[0]
-        psi_tensor = np.transpose(psi_tensor, axes)
-
-        if pauli == 'X':
-            op_matrix = np.array([[0, 1], [1, 0]])
-        elif pauli == 'Y':
-            op_matrix = np.array([[0, -1j], [1j, 0]])
-        elif pauli == 'Z':
-            op_matrix = np.array([[1, 0], [0, -1]])
-        else:
-            op_matrix = np.identity(2)
-
-        psi_tensor = psi_tensor.reshape(2, -1)
-        psi_tensor = op_matrix @ psi_tensor
-        psi_tensor = psi_tensor.reshape([2] * num_qubits)
-
-        psi_tensor = np.transpose(psi_tensor, axes)
-        return psi_tensor.flatten()
-
+        self.flush()
+        return _evaluate_native_pauli_expectation(self, pauli_operator)
 
 class PauliOperator:
     def __init__(self, terms: dict[str, float] | str = None):
@@ -391,13 +602,12 @@ class PauliOperator:
     def _add_pauli_string(self, pauli_str: str, coeff: float):
         if not isinstance(pauli_str, str):
             raise TypeError("Pauli string must be a string.")
-        if not isinstance(coeff, (float, int)):
-            raise TypeError("Coefficient must be a float or int.")
+        coeff = _validate_finite_real(coeff, "Coefficient")
 
         components = pauli_str.strip().upper().split()
         if not components and pauli_str:
              if pauli_str.strip().upper() == "I":
-                self.terms.append(([], float(coeff)))
+                self.terms.append(([], coeff))
                 return
              else:
                 raise ValueError(f"Invalid Pauli string component: {pauli_str}")
@@ -409,6 +619,8 @@ class PauliOperator:
             pauli_char = comp[0]
             if pauli_char not in "IXYZ":
                 raise ValueError(f"Invalid Pauli type '{pauli_char}' in '{comp}'. Must be I, X, Y, or Z.")
+            if pauli_char == 'I':
+                continue
 
             try:
                 qubit_idx = int(comp[1:])
@@ -420,7 +632,7 @@ class PauliOperator:
             if pauli_char != 'I':
                 parsed_ops.append((pauli_char, qubit_idx))
 
-        self.terms.append((parsed_ops, float(coeff)))
+        self.terms.append((parsed_ops, coeff))
 
     def __repr__(self):
         if not self.terms:
@@ -442,14 +654,78 @@ class PauliOperator:
         return new_op
 
     def __mul__(self, scalar: float):
-        if not isinstance(scalar, (float, int)):
+        if not isinstance(scalar, Real):
             return NotImplemented
+        scalar = _validate_finite_real(scalar, "scalar")
         new_op = PauliOperator()
-        new_op.terms = [(ops, coeff * float(scalar)) for ops, coeff in self.terms]
+        new_op.terms = [(ops, coeff * scalar) for ops, coeff in self.terms]
         return new_op
 
     def __rmul__(self, scalar: float):
         return self.__mul__(scalar)
+
+
+def _call_expectation_helper(circuit: Circuit, helper_name: str, *args):
+    try:
+        helper = getattr(backend, helper_name)
+    except AttributeError as exc:
+        raise NotImplementedError(
+            f"Backend function '{helper_name}' is not bound or implemented. "
+            "Native expectation evaluation requires the current _rocq_hip_backend bindings."
+        ) from exc
+
+    try:
+        return helper(
+            circuit._sim_handle,
+            circuit._get_d_state_for_backend(),
+            circuit.num_qubits,
+            *args,
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(f"Native expectation helper '{helper_name}' failed: {exc}") from exc
+
+
+def _evaluate_native_pauli_expectation(circuit: Circuit, hamiltonian: PauliOperator) -> float:
+    total_expval = 0.0
+
+    for pauli_ops_list, coeff in hamiltonian.terms:
+        if not pauli_ops_list:
+            total_expval += coeff
+            continue
+
+        if len(pauli_ops_list) == 1:
+            pauli_char, qubit_idx = pauli_ops_list[0]
+            helper_by_pauli = {
+                'X': 'get_expectation_value_x',
+                'Y': 'get_expectation_value_y',
+                'Z': 'get_expectation_value_z',
+            }
+            helper_name = helper_by_pauli.get(pauli_char)
+            if helper_name is None:
+                raise NotImplementedError(f"Expectation value for Pauli '{pauli_char}' is not supported.")
+            total_expval += coeff * _call_expectation_helper(circuit, helper_name, qubit_idx)
+            continue
+
+        if all(pauli_char == 'Z' for pauli_char, _ in pauli_ops_list):
+            targets = [qubit_idx for _, qubit_idx in pauli_ops_list]
+            total_expval += coeff * _call_expectation_helper(
+                circuit,
+                'get_expectation_value_pauli_product_z',
+                targets,
+            )
+            continue
+
+        qubits = sorted({qubit_idx for _, qubit_idx in pauli_ops_list})
+        pauli_by_qubit = {qubit_idx: pauli_char for pauli_char, qubit_idx in pauli_ops_list}
+        pauli_string = ''.join(pauli_by_qubit[qubit_idx] for qubit_idx in qubits)
+        total_expval += coeff * _call_expectation_helper(
+            circuit,
+            'get_expectation_pauli_string',
+            pauli_string,
+            qubits,
+        )
+
+    return total_expval
 
 
 import ast
@@ -457,7 +733,10 @@ import inspect
 
 class QuantumProgram:
     def __init__(self, name: str, num_qubits: int, mlir_compiler: backend.MLIRCompiler,
-                 kernel_func=None, static_args=None, simulator_ref=None):
+                 kernel_func=None, static_args=None, simulator_ref=None,
+                 execution_mode: str = _LEGACY_CONCEPTUAL_MLIR_MODE,
+                 compiler_execution_supported: bool = False,
+                 execution_notes: list[str] | None = None):
         self.name = name
         self.num_qubits = num_qubits
         self.mlir_compiler = mlir_compiler
@@ -466,10 +745,16 @@ class QuantumProgram:
         self._kernel_func = kernel_func
         self._static_args = static_args
         self._simulator_ref = simulator_ref
+        self.execution_mode = execution_mode
+        self.compiler_execution_supported = compiler_execution_supported
+        self.execution_notes = list(execution_notes or [])
 
     def __repr__(self):
         self.mlir_string = self.mlir_compiler.get_module_string()
-        return f"<QuantumProgram name='{self.name}' num_qubits={self.num_qubits}>\nMLIR:\n{self.mlir_string}"
+        return (
+            f"<QuantumProgram name='{self.name}' num_qubits={self.num_qubits} "
+            f"execution_mode='{self.execution_mode}'>\nMLIR:\n{self.mlir_string}"
+        )
 
     def dump(self):
         self.mlir_compiler.dump_module()
@@ -590,12 +875,20 @@ def build(kernel_func, num_qubits: int, simulator: Simulator, *args) -> QuantumP
                              compiler_instance,
                              kernel_func=kernel_func,
                              static_args=None,
-                             simulator_ref=simulator)
+                             simulator_ref=simulator,
+                             execution_mode=(
+                                 _LEGACY_PYTHON_REPLAY_MODE
+                                 if simulator
+                                 else _LEGACY_CONCEPTUAL_MLIR_MODE
+                             ),
+                             compiler_execution_supported=False,
+                             execution_notes=[_LEGACY_BUILD_EXECUTION_NOTE])
 
     if simulator:
         if not isinstance(simulator, Simulator):
              raise TypeError("A valid rocQ Simulator object is required if execution is expected.")
 
+        warnings.warn(_LEGACY_BUILD_EXECUTION_NOTE, LegacyCompilerReplayWarning, stacklevel=2)
         program.circuit_ref = Circuit(num_qubits, program._simulator_ref)
 
         kernel_args_for_py_call = [program.circuit_ref] + list(args)
@@ -613,122 +906,8 @@ def get_expval(program: QuantumProgram, hamiltonian: PauliOperator) -> float:
     if not isinstance(hamiltonian, PauliOperator):
         raise TypeError("Input hamiltonian must be a rocQ PauliOperator object.")
 
-    total_expval = 0.0
-
-    for pauli_ops_list, coeff in hamiltonian.terms:
-        if not pauli_ops_list:
-            total_expval += coeff
-            continue
-
-        term_expval = 1.0
-
-        if len(pauli_ops_list) == 1:
-            pauli_char, qubit_idx = pauli_ops_list[0]
-            if pauli_char == 'Z':
-                try:
-                    exp_val_z_contrib = backend.get_expectation_value_z(
-                        circuit._sim_handle,
-                        circuit._get_d_state_for_backend(),
-                        circuit.num_qubits,
-                        qubit_idx
-                    )
-                    term_expval = exp_val_z_contrib
-                except AttributeError:
-                     raise NotImplementedError(
-                        "Backend function 'get_expectation_value_z' is not yet bound or implemented. "
-                        "VQE get_expval requires this for 'Z' terms."
-                    )
-                except RuntimeError as e:
-                    raise RuntimeError(f"Error calculating <Z{qubit_idx}>: {e}")
-            elif pauli_char == 'X':
-                try:
-                    exp_val_x_contrib = backend.get_expectation_value_x(
-                        circuit._sim_handle,
-                        circuit._get_d_state_for_backend(),
-                        circuit.num_qubits,
-                        qubit_idx
-                    )
-                    term_expval = exp_val_x_contrib
-                except AttributeError:
-                    raise NotImplementedError(
-                        "Backend function 'get_expectation_value_x' is not yet bound or implemented. "
-                        "VQE get_expval requires this for 'X' terms."
-                    )
-                except RuntimeError as e:
-                    raise RuntimeError(f"Error calculating <X{qubit_idx}>: {e}")
-            elif pauli_char == 'Y':
-                try:
-                    exp_val_y_contrib = backend.get_expectation_value_y(
-                        circuit._sim_handle,
-                        circuit._get_d_state_for_backend(),
-                        circuit.num_qubits,
-                        qubit_idx
-                    )
-                    term_expval = exp_val_y_contrib
-                except AttributeError:
-                    raise NotImplementedError(
-                        "Backend function 'get_expectation_value_y' is not yet bound or implemented. "
-                        "VQE get_expval requires this for 'Y' terms."
-                    )
-                except RuntimeError as e:
-                    raise RuntimeError(f"Error calculating <Y{qubit_idx}>: {e}")
-            else:
-                raise NotImplementedError(f"Expectation value for Pauli '{pauli_char}' not supported in get_expval.")
-        elif not pauli_ops_list:
-             term_expval = 1.0
-        else:
-            is_all_z = True
-            target_z_qubits = []
-            for p_char, q_idx in pauli_ops_list:
-                if p_char != 'Z':
-                    is_all_z = False
-                    break
-                target_z_qubits.append(q_idx)
-
-            if is_all_z:
-                if not target_z_qubits:
-                    term_expval = 1.0
-                else:
-                    try:
-                        term_expval = backend.get_expectation_value_pauli_product_z(
-                            circuit._sim_handle,
-                            circuit._get_d_state_for_backend(),
-                            circuit.num_qubits,
-                            target_z_qubits
-                        )
-                    except AttributeError:
-                        raise NotImplementedError(
-                            "Backend function 'get_expectation_value_pauli_product_z' is not yet bound or implemented."
-                        )
-                    except RuntimeError as e:
-                        op_str = " ".join([f"Z{q}" for q in target_z_qubits])
-                        raise RuntimeError(f"Error calculating <{op_str}>: {e}")
-            else:
-                all_qubits = sorted(list(set([q_idx for _, q_idx in pauli_ops_list])))
-                pauli_map = {q_idx: p_char for p_char, q_idx in pauli_ops_list}
-                final_pauli_string = "".join([pauli_map.get(q, 'I') for q in all_qubits])
-                final_qubit_indices = all_qubits
-
-                try:
-                    term_expval = backend.get_expectation_pauli_string(
-                        circuit._sim_handle,
-                        circuit._get_d_state_for_backend(),
-                        circuit.num_qubits,
-                        final_pauli_string,
-                        final_qubit_indices
-                    )
-                except AttributeError:
-                     raise NotImplementedError(
-                        "Backend function 'get_expectation_pauli_string' is not yet bound or implemented. "
-                        "This is required for products of Paulis containing X or Y."
-                    )
-                except RuntimeError as e:
-                    op_str = " ".join([f"{p_char}{q_idx}" for p_char, q_idx in pauli_ops_list])
-                    raise RuntimeError(f"Error calculating <{op_str}> using generic backend: {e}")
-
-        total_expval += coeff * term_expval
-
-    return total_expval
+    circuit.flush()
+    return _evaluate_native_pauli_expectation(circuit, hamiltonian)
 
 # Represents a quantum kernel, holding its MLIR representation.
 class Kernel:

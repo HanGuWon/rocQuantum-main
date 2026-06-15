@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: rocm-nightly-${{ github.ref }}
@@ -51,6 +52,13 @@ jobs:
             ls -l /dev/kfd || true
           } | tee "${ARTIFACT_DIR}/runner-env.log"
 
+      - name: Probe ROCm runtime prerequisites
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          set -o pipefail
+          bash scripts/probe_rocm_runtime.sh 2>&1 | tee "${ARTIFACT_DIR}/rocm-runtime-probe.log"
+
       - name: Configure
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
@@ -76,10 +84,6 @@ jobs:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
           TEST_REGEX: MultiGPUTests|HipTensorNetContractionRegression
         run: |
-          if [ ! -e /dev/kfd ]; then
-            echo "ROCm runtime device /dev/kfd is missing on nightly runner." | tee "${ARTIFACT_DIR}/ctest-nightly.log"
-            exit 1
-          fi
           set -o pipefail
           if ctest --help | grep -q -- "--output-junit"; then
             ctest --test-dir build-rocm-nightly --output-on-failure \
@@ -116,6 +120,66 @@ jobs:
             echo "rocprof not available on runner" | tee "${ARTIFACT_DIR}/rocprof-run.log"
           fi
 
+      - name: Restore benchmark baseline
+        if: always()
+        uses: actions/cache/restore@v4
+        with:
+          path: ci-artifacts/benchmark-baseline/rocm-nightly
+          key: benchmark-baseline-rocm-nightly-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            benchmark-baseline-rocm-nightly-${{ github.ref_name }}-
+            benchmark-baseline-rocm-nightly-
+
+      - name: Run release benchmark registry
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+          BASELINE_SUMMARY: ${{ github.workspace }}/ci-artifacts/benchmark-baseline/rocm-nightly/benchmark-summary.json
+          HISTORY_PATH: ${{ github.workspace }}/ci-artifacts/benchmark-baseline/rocm-nightly/benchmark-history.json
+        run: |
+          set -o pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          BASELINE_ARGS=()
+          if [ -f "${BASELINE_SUMMARY}" ]; then
+            BASELINE_ARGS=(--baseline-summary "${BASELINE_SUMMARY}")
+          fi
+          python3 benchmarks/run_release_benchmarks.py \
+            --build-dir build-rocm-nightly \
+            --output-dir "${ARTIFACT_DIR}/benchmark-artifacts" \
+            "${BASELINE_ARGS[@]}" \
+            --history-path "${HISTORY_PATH}" \
+            --fail-on-error \
+            --require-native-performance-evidence \
+            2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" ]; then
+            cat "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Prepare benchmark baseline cache
+        id: benchmark-baseline
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+          BASELINE_DIR: ${{ github.workspace }}/ci-artifacts/benchmark-baseline/rocm-nightly
+        run: |
+          mkdir -p "${BASELINE_DIR}"
+          if [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.json" ]; then
+            cp "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.json" "${BASELINE_DIR}/benchmark-summary.json"
+            if [ -f "${BASELINE_DIR}/benchmark-history.json" ]; then
+              cp "${BASELINE_DIR}/benchmark-history.json" "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-history.json"
+            fi
+            echo "cacheable=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "cacheable=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Save benchmark baseline
+        if: always() && steps.benchmark-baseline.outputs.cacheable == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ci-artifacts/benchmark-baseline/rocm-nightly
+          key: benchmark-baseline-rocm-nightly-${{ github.ref_name }}-${{ github.run_id }}
+
       - name: Capture GPU telemetry snapshot (amdsmi/rocm-smi)
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
@@ -142,6 +206,7 @@ jobs:
             echo
             echo "- Result: ${{ job.status }}"
             echo "- Runner labels: self-hosted,linux,x64,rocm,rocm-multigpu"
+            echo "- Benchmark artifacts: ${ARTIFACT_DIR}/benchmark-artifacts"
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } | tee "${ARTIFACT_DIR}/summary-rocm-nightly.md" >> "${GITHUB_STEP_SUMMARY}"
 

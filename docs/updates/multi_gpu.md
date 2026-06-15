@@ -12,7 +12,11 @@
 ## Current Limitations (must be explicit)
 - Non-local distributed gate operations are incomplete and can return `ROCQ_STATUS_NOT_IMPLEMENTED`.
 - Sampling/expectation in distributed mode are incomplete for several APIs.
-- Host remap fallback is correctness-oriented and slow.
+- Host remap/fallback paths are correctness-oriented and slow.
+- Non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix correctness fallback requires explicit opt-in with `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
+- RCCL-backed expectation and sampling reductions are limited to local-domain qubits; slice-domain observables and measured bits still need remap/rank-aware kernels.
 
 ## Performance Note
 Host remap (`D2H gather -> CPU remap -> H2D scatter`) is expected to scale poorly with large state vectors and should be tagged as `slow/debug fallback`.
+When RCCL is available, local-domain distributed expectation and sampling probability reductions use device-side `AllReduce(sum)` instead of full-state host readback.
+Use `benchmark_hipStateVec_distributed_reductions --output distributed-reductions.json` on a ROCm multi-GPU runner to compare RCCL reduction mode with explicit host fallback mode.

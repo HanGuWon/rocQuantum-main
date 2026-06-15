@@ -1,182 +1,389 @@
-import sys
-import os
-import time
-import numpy as np
-import matplotlib.pyplot as plt
+"""Framework QFT benchmarks for rocQuantum's PennyLane and Qiskit adapters."""
 
-# --- Setup Python Path ---
-def setup_paths():
-    """Adds the necessary project directories to the Python path."""
-    try:
-        project_root = os.path.dirname(os.path.abspath(__file__))
-        integrations_path = os.path.join(project_root, '..', 'integrations')
-        build_path = os.path.join(project_root, '..', 'build')
-        sys.path.insert(0, os.path.abspath(integrations_path))
-        sys.path.insert(0, os.path.abspath(build_path))
-        print("Project paths successfully added.")
-    except Exception as e:
-        print(f"Error setting up paths: {e}")
-        sys.exit(1)
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+from typing import Any, Iterable
+
+import numpy as np
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_QUBITS = tuple(range(10, 22, 2))
+DEFAULT_TRIALS = 5
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmarks"
+DEFAULT_PENNYLANE_DEVICE = "lightning.rocq"
+
+
+def setup_paths() -> list[str]:
+    """Make the in-tree integration packages importable before installation."""
+
+    paths = [
+        PROJECT_ROOT,
+        PROJECT_ROOT / "integrations" / "pennylane-rocq",
+        PROJECT_ROOT / "integrations" / "qiskit-rocquantum-provider",
+        PROJECT_ROOT / "build",
+    ]
+    inserted: list[str] = []
+    for path in reversed(paths):
+        resolved = str(path.resolve())
+        if resolved not in sys.path:
+            sys.path.insert(0, resolved)
+            inserted.append(resolved)
+    return list(reversed(inserted))
+
 
 setup_paths()
 
-# --- Import Frameworks ---
-try:
-    import pennylane as qml
-    from qiskit import QuantumCircuit, transpile
-    from qiskit_aer import AerSimulator
-    from qiskit_rocquantum_provider.provider import RocQuantumProvider
-    print("Successfully imported all frameworks and providers.")
-except ImportError as e:
-    print(f"Import Error: {e}")
-    print("Please ensure all dependencies are installed (`pip install pennylane qiskit qiskit-aer matplotlib`).")
-    sys.exit(1)
 
-# --- Benchmark Configuration ---
-QUBIT_RANGE = range(10, 22, 2)
-NUM_TRIALS = 5
+def _import_pennylane():
+    try:
+        import pennylane as qml
+    except ImportError as exc:  # pragma: no cover - depends on local environment
+        raise ImportError("PennyLane is required for the PennyLane benchmark.") from exc
+    return qml
 
-# --- Circuit Generation ---
-def generate_pennylane_qft(num_qubits):
-    """Creates a PennyLane QNode for the QFT circuit."""
+
+def _import_qiskit():
+    try:
+        from qiskit import QuantumCircuit, transpile
+    except ImportError as exc:  # pragma: no cover - depends on local environment
+        raise ImportError("Qiskit is required for the Qiskit benchmark.") from exc
+    return QuantumCircuit, transpile
+
+
+def make_pennylane_device(device_name: str, num_qubits: int):
+    qml = _import_pennylane()
+    try:
+        return qml.device(device_name, wires=num_qubits)
+    except Exception as exc:
+        if device_name not in {
+            "rocquantum.qpu",
+            "rocq.pennylane",
+            "lightning.rocq",
+            "lightning.rocm",
+        }:
+            raise
+        try:
+            from pennylane_rocq import (
+                LightningRocmDevice,
+                LightningRocqDevice,
+                RocQDevice,
+                RocqDevice,
+            )
+        except ImportError:
+            raise exc
+        classes = {
+            "rocquantum.qpu": RocQDevice,
+            "rocq.pennylane": RocqDevice,
+            "lightning.rocq": LightningRocqDevice,
+            "lightning.rocm": LightningRocmDevice,
+        }
+        return classes[device_name](wires=num_qubits)
+
+
+def make_qiskit_cpu_backend():
+    try:
+        from qiskit_aer import AerSimulator
+
+        return AerSimulator(), "AerSimulator"
+    except ImportError:
+        from qiskit.providers.basic_provider import BasicSimulator
+
+        return BasicSimulator(), "BasicSimulator"
+
+
+def parse_qubits(raw: str) -> tuple[int, ...]:
+    value = raw.strip()
+    if not value:
+        raise argparse.ArgumentTypeError("qubit list cannot be empty")
+    if ":" in value:
+        parts = [int(part) for part in value.split(":")]
+        if len(parts) not in {2, 3}:
+            raise argparse.ArgumentTypeError("range syntax must be start:stop[:step]")
+        start, stop = parts[0], parts[1]
+        step = parts[2] if len(parts) == 3 else 1
+        qubits = tuple(range(start, stop, step))
+    else:
+        qubits = tuple(int(part.strip()) for part in value.split(",") if part.strip())
+    if not qubits or any(qubit <= 0 for qubit in qubits):
+        raise argparse.ArgumentTypeError("qubits must be positive integers")
+    return qubits
+
+
+def generate_pennylane_qft(num_qubits: int, *, device: Any | None = None, device_name: str = DEFAULT_PENNYLANE_DEVICE):
+    """Create a PennyLane QNode for QFT on the requested device."""
+
+    qml = _import_pennylane()
+    qnode_device = device if device is not None else make_pennylane_device(device_name, num_qubits)
+
     def qft_rotations(wires):
         for i in range(len(wires)):
             for j in range(i):
-                qml.CRZ(np.pi / 2**(i - j), wires=[wires[j], wires[i]])
-    
+                qml.CRZ(np.pi / 2 ** (i - j), wires=[wires[j], wires[i]])
+
     def swap_qubits(wires):
         for i in range(len(wires) // 2):
             qml.SWAP(wires=[wires[i], wires[len(wires) - 1 - i]])
 
-    @qml.qnode(qml.device('default.qubit', wires=num_qubits))
+    @qml.qnode(qnode_device)
     def circuit():
-        for i in range(num_qubits):
+        wires = range(num_qubits)
+        for i in wires:
             qml.Hadamard(wires=i)
         qft_rotations(wires=range(num_qubits))
         swap_qubits(wires=range(num_qubits))
         return qml.state()
+
     return circuit
 
-def generate_qiskit_qft(num_qubits):
-    """Creates a Qiskit QuantumCircuit for the QFT."""
-    qc = QuantumCircuit(num_qubits)
+
+def generate_qiskit_qft(num_qubits: int):
+    """Create a Qiskit QuantumCircuit for QFT."""
+
+    QuantumCircuit, _ = _import_qiskit()
+    circuit = QuantumCircuit(num_qubits)
     for i in range(num_qubits):
-        qc.h(i)
+        circuit.h(i)
         for j in range(i + 1, num_qubits):
-            qc.cp(np.pi / 2**(j - i), j, i)
+            circuit.cp(np.pi / 2 ** (j - i), j, i)
     for i in range(num_qubits // 2):
-        qc.swap(i, num_qubits - 1 - i)
-    return qc
+        circuit.swap(i, num_qubits - 1 - i)
+    return circuit
 
-# --- Benchmarking Functions ---
-def run_pennylane_benchmark():
-    print("\n" + "="*40)
+
+def _average_runtime(callback, trials: int) -> float:
+    if trials <= 0:
+        raise ValueError("trials must be a positive integer")
+    times = []
+    for _ in range(trials):
+        start_time = time.perf_counter()
+        callback()
+        times.append(time.perf_counter() - start_time)
+    return float(np.mean(times))
+
+
+def _speedup(cpu_time: float, rocq_time: float) -> float | None:
+    if rocq_time <= 0.0:
+        return None
+    return float(cpu_time / rocq_time)
+
+
+def run_pennylane_benchmark(
+    *,
+    qubits: Iterable[int] = DEFAULT_QUBITS,
+    trials: int = DEFAULT_TRIALS,
+    rocq_device_name: str = DEFAULT_PENNYLANE_DEVICE,
+) -> dict[str, Any]:
+    print("\n" + "=" * 40)
     print(" PennyLane Performance Benchmark: QFT ")
-    print("="*40)
-    
-    results = {"qubits": [], "rocq_time": [], "cpu_time": []}
-    
-    for n_qubits in QUBIT_RANGE:
-        print(f"\nRunning benchmark for {n_qubits} qubits...")
-        
-        # 1. rocQuantum Device
-        rocq_device = qml.device('rocq.pennylane', wires=n_qubits)
-        rocq_circuit = generate_pennylane_qft(n_qubits)
-        rocq_circuit.device = rocq_device
-        
-        times = []
-        for _ in range(NUM_TRIALS):
-            start_time = time.perf_counter()
-            rocq_circuit()
-            end_time = time.perf_counter()
-            times.append(end_time - start_time)
-        rocq_avg_time = np.mean(times)
-        
-        # 2. Default CPU Device
-        cpu_device = qml.device('default.qubit', wires=n_qubits)
-        cpu_circuit = generate_pennylane_qft(n_qubits)
-        cpu_circuit.device = cpu_device
-        
-        times = []
-        for _ in range(NUM_TRIALS):
-            start_time = time.perf_counter()
-            cpu_circuit()
-            end_time = time.perf_counter()
-            times.append(end_time - start_time)
-        cpu_avg_time = np.mean(times)
-        
-        print(f"  Qubits: {n_qubits:2} | rocQuantum: {rocq_avg_time:7.3f}s | CPU (default.qubit): {cpu_avg_time:7.3f}s")
-        results["qubits"].append(n_qubits)
+    print("=" * 40)
+
+    results: dict[str, Any] = {
+        "qubits": [],
+        "rocq_time": [],
+        "cpu_time": [],
+        "speedup": [],
+        "rocq_device": rocq_device_name,
+        "cpu_device": "default.qubit",
+    }
+
+    for num_qubits in qubits:
+        print(f"\nRunning benchmark for {num_qubits} qubits...")
+
+        rocq_circuit = generate_pennylane_qft(num_qubits, device_name=rocq_device_name)
+        rocq_avg_time = _average_runtime(rocq_circuit, trials)
+
+        cpu_circuit = generate_pennylane_qft(num_qubits, device_name="default.qubit")
+        cpu_avg_time = _average_runtime(cpu_circuit, trials)
+        speedup = _speedup(cpu_avg_time, rocq_avg_time)
+
+        speedup_label = f"{speedup:7.3f}x" if speedup is not None else "n/a"
+        print(
+            f"  Qubits: {num_qubits:2} | rocQuantum: {rocq_avg_time:7.3f}s | "
+            f"CPU (default.qubit): {cpu_avg_time:7.3f}s | Speedup: {speedup_label}"
+        )
+        results["qubits"].append(int(num_qubits))
         results["rocq_time"].append(rocq_avg_time)
         results["cpu_time"].append(cpu_avg_time)
-        
+        results["speedup"].append(speedup)
+
     return results
 
-def run_qiskit_benchmark():
-    print("\n" + "="*40)
+
+def run_qiskit_benchmark(*, qubits: Iterable[int] = DEFAULT_QUBITS, trials: int = DEFAULT_TRIALS) -> dict[str, Any]:
+    print("\n" + "=" * 40)
     print(" Qiskit Performance Benchmark: QFT ")
-    print("="*40)
-    
-    results = {"qubits": [], "rocq_time": [], "cpu_time": []}
-    
+    print("=" * 40)
+
+    _, transpile = _import_qiskit()
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    results: dict[str, Any] = {
+        "qubits": [],
+        "rocq_time": [],
+        "cpu_time": [],
+        "speedup": [],
+        "rocq_backend": "rocq_simulator",
+    }
+
     rocq_backend = RocQuantumProvider().get_backend("rocq_simulator")
-    cpu_backend = AerSimulator()
-    
-    for n_qubits in QUBIT_RANGE:
-        print(f"\nRunning benchmark for {n_qubits} qubits...")
-        circuit = generate_qiskit_qft(n_qubits)
-        
-        # 1. rocQuantum Backend
-        t_qc_rocq = transpile(circuit, rocq_backend)
-        times = []
-        for _ in range(NUM_TRIALS):
-            start_time = time.perf_counter()
-            rocq_backend.run(t_qc_rocq, shots=1).result() # Using shots=1 for statevector-like simulation
-            end_time = time.perf_counter()
-            times.append(end_time - start_time)
-        rocq_avg_time = np.mean(times)
-        
-        # 2. Aer CPU Backend
-        t_qc_cpu = transpile(circuit, cpu_backend)
-        times = []
-        for _ in range(NUM_TRIALS):
-            start_time = time.perf_counter()
-            cpu_backend.run(t_qc_cpu, shots=1).result()
-            end_time = time.perf_counter()
-            times.append(end_time - start_time)
-        cpu_avg_time = np.mean(times)
-        
-        print(f"  Qubits: {n_qubits:2} | rocQuantum: {rocq_avg_time:7.3f}s | CPU (AerSimulator): {cpu_avg_time:7.3f}s")
-        results["qubits"].append(n_qubits)
+    cpu_backend, cpu_backend_name = make_qiskit_cpu_backend()
+    results["cpu_backend"] = cpu_backend_name
+
+    for num_qubits in qubits:
+        print(f"\nRunning benchmark for {num_qubits} qubits...")
+        circuit = generate_qiskit_qft(num_qubits)
+
+        transpiled_rocq = transpile(circuit, rocq_backend)
+        rocq_avg_time = _average_runtime(lambda: rocq_backend.run(transpiled_rocq, shots=1).result(), trials)
+
+        transpiled_cpu = transpile(circuit, cpu_backend)
+        cpu_avg_time = _average_runtime(lambda: cpu_backend.run(transpiled_cpu, shots=1).result(), trials)
+        speedup = _speedup(cpu_avg_time, rocq_avg_time)
+
+        speedup_label = f"{speedup:7.3f}x" if speedup is not None else "n/a"
+        print(
+            f"  Qubits: {num_qubits:2} | rocQuantum: {rocq_avg_time:7.3f}s | "
+            f"CPU ({cpu_backend_name}): {cpu_avg_time:7.3f}s | Speedup: {speedup_label}"
+        )
+        results["qubits"].append(int(num_qubits))
         results["rocq_time"].append(rocq_avg_time)
         results["cpu_time"].append(cpu_avg_time)
-        
+        results["speedup"].append(speedup)
+
     return results
 
-# --- Plotting Function ---
-def plot_results(results, framework_name):
-    """Generates and saves a plot of the benchmark results."""
+
+def write_results_json(results: dict[str, Any], output_dir: Path, *, trials: int, qubits: Iterable[int]) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "benchmark": "framework_qft",
+        "trials": int(trials),
+        "qubits": [int(qubit) for qubit in qubits],
+        "frameworks": results,
+    }
+    output_path = output_dir / "framework-benchmark-results.json"
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(f"\nBenchmark JSON saved to '{output_path}'")
+    return output_path
+
+
+def run_or_skip_native_binding(framework_name: str, callback) -> dict[str, Any]:
+    try:
+        return callback()
+    except ImportError as exc:
+        reason = str(exc)
+        if "rocquantum_bind" not in reason:
+            raise
+        print(f"Skipping {framework_name} benchmark: {reason}")
+        return {
+            "status": "skipped",
+            "reason": reason,
+        }
+
+
+def plot_results(results: dict[str, Any], framework_name: str, output_dir: Path) -> Path:
+    import matplotlib.pyplot as plt
+
+    output_dir.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(10, 6))
-    plt.plot(results["qubits"], results["rocq_time"], 'o-', label='rocQuantum-1 Simulator (GPU)')
-    plt.plot(results["qubits"], results["cpu_time"], 's-', label=f'Default {framework_name} CPU Simulator')
-    
-    plt.xlabel('Number of Qubits')
-    plt.ylabel('Execution Time (seconds)')
-    plt.yscale('log')
-    plt.title(f'{framework_name} QFT Benchmark: rocQuantum-1 vs. CPU')
+    plt.plot(results["qubits"], results["rocq_time"], "o-", label="rocQuantum Simulator")
+    plt.plot(results["qubits"], results["cpu_time"], "s-", label=f"Default {framework_name} CPU Simulator")
+
+    plt.xlabel("Number of Qubits")
+    plt.ylabel("Execution Time (seconds)")
+    plt.yscale("log")
+    plt.title(f"{framework_name} QFT Benchmark: rocQuantum vs. CPU")
     plt.grid(True, which="both", ls="--")
     plt.legend()
-    
-    filename = f'benchmarks/benchmark_results_{framework_name.lower()}.png'
-    plt.savefig(filename)
-    print(f"\nBenchmark plot saved to '{filename}'")
 
-# --- Main Execution ---
-if __name__ == "__main__":
-    pennylane_results = run_pennylane_benchmark()
-    plot_results(pennylane_results, "PennyLane")
-    
-    qiskit_results = run_qiskit_benchmark()
-    plot_results(qiskit_results, "Qiskit")
-    
+    filename = output_dir / f"benchmark_results_{framework_name.lower()}.png"
+    plt.savefig(filename)
+    plt.close()
+    print(f"Benchmark plot saved to '{filename}'")
+    return filename
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--framework",
+        choices=("all", "pennylane", "qiskit"),
+        default="all",
+        help="Framework benchmark to run.",
+    )
+    parser.add_argument(
+        "--qubits",
+        type=parse_qubits,
+        default=DEFAULT_QUBITS,
+        help="Comma list or start:stop[:step] range of qubit counts.",
+    )
+    parser.add_argument("--trials", type=int, default=DEFAULT_TRIALS, help="Trials per qubit count.")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="Directory for JSON and optional PNG outputs.",
+    )
+    parser.add_argument(
+        "--pennylane-device",
+        default=DEFAULT_PENNYLANE_DEVICE,
+        help="rocQuantum PennyLane device entry point to benchmark.",
+    )
+    parser.add_argument("--no-plots", action="store_true", help="Skip matplotlib PNG generation.")
+    parser.add_argument(
+        "--require-plots",
+        action="store_true",
+        help="Fail instead of continuing when matplotlib plot generation is unavailable.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    if args.trials <= 0:
+        raise ValueError("trials must be a positive integer")
+
+    qubits = tuple(args.qubits)
+    results: dict[str, Any] = {}
+    if args.framework in {"all", "pennylane"}:
+        results["PennyLane"] = run_or_skip_native_binding(
+            "PennyLane",
+            lambda: run_pennylane_benchmark(
+                qubits=qubits,
+                trials=args.trials,
+                rocq_device_name=args.pennylane_device,
+            ),
+        )
+    if args.framework in {"all", "qiskit"}:
+        results["Qiskit"] = run_or_skip_native_binding(
+            "Qiskit",
+            lambda: run_qiskit_benchmark(qubits=qubits, trials=args.trials),
+        )
+
+    write_results_json(results, args.output_dir, trials=args.trials, qubits=qubits)
+
+    if not args.no_plots:
+        for framework_name, framework_results in results.items():
+            if framework_results.get("status") == "skipped":
+                print(f"Skipping {framework_name} plot generation: benchmark was skipped.")
+                continue
+            try:
+                plot_results(framework_results, framework_name, args.output_dir)
+            except (ImportError, OSError) as exc:
+                if args.require_plots:
+                    raise
+                print(f"Skipping {framework_name} plot generation: {exc}")
+
     print("\nBenchmark run complete.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
