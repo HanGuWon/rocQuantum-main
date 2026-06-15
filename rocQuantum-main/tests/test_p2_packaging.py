@@ -114,6 +114,30 @@ class TestPyprojectExists(unittest.TestCase):
             data = tomllib.load(f)
         self.assertEqual(data["build-system"]["build-backend"], "scikit_build_core.build")
 
+    def test_pyproject_includes_framework_adapter_packages(self):
+        import tomllib
+        path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        packages = data["tool"]["scikit-build"]["wheel"]["packages"]
+        self.assertEqual(
+            packages["qiskit_rocquantum_provider"],
+            "integrations/qiskit-rocquantum-provider/qiskit_rocquantum_provider",
+        )
+        self.assertEqual(packages["pennylane_rocq"], "integrations/pennylane-rocq/pennylane_rocq")
+        self.assertEqual(packages["cirq_rocm"], "integrations/cirq-rocm/cirq_rocm")
+
+    def test_pyproject_all_extra_includes_cirq_adapter_dependency(self):
+        import tomllib
+        path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        optional = data["project"]["optional-dependencies"]
+        self.assertIn("cirq-core>=1.0", optional["cirq"])
+        self.assertIn("rocquantum[backends,pennylane,qiskit,cirq,dev]", optional["all"])
+
 
 if __name__ == "__main__":
     unittest.main()

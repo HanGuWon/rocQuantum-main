@@ -27,8 +27,9 @@ classifiers = [
 backends = ["requests>=2.28", "boto3>=1.26"]
 pennylane = ["pennylane>=0.30"]
 qiskit = ["qiskit>=0.45"]
+cirq = ["cirq-core>=1.0"]
 dev = ["pytest>=7.0", "numpy>=1.21"]
-all = ["rocquantum[backends,pennylane,qiskit,dev]"]
+all = ["rocquantum[backends,pennylane,qiskit,cirq,dev]"]
 
 [project.scripts]
 rocq = "rocq_cli:main"
@@ -50,3 +51,4 @@ rocq = "rocq"
 rocquantum = "rocquantum"
 qiskit_rocquantum_provider = "integrations/qiskit-rocquantum-provider/qiskit_rocquantum_provider"
 pennylane_rocq = "integrations/pennylane-rocq/pennylane_rocq"
+cirq_rocm = "integrations/cirq-rocm/cirq_rocm"
