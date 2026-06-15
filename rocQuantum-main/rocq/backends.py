@@ -144,6 +144,12 @@ def _validate_positive_integer(value, name: str) -> int:
     return normalized
 
 
+def _validate_optional_boolean_option(value, name: str) -> Optional[bool]:
+    if value is not None and not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean when provided.")
+    return value
+
+
 def _validate_probability(value, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, Real):
         raise ValueError(f"{name} must be between 0 and 1.")
@@ -1475,6 +1481,7 @@ class StateVectorBackend(_BaseBackend):
 
     def __init__(self, num_qubits: int, enable_fusion: Optional[bool] = None):
         super().__init__(num_qubits)
+        enable_fusion = _validate_optional_boolean_option(enable_fusion, "enable_fusion")
         if enable_fusion is None:
             enable_fusion = os.environ.get(_DISABLE_FUSION_ENV_VAR, "").strip().lower() not in {"1", "true", "yes", "on"}
 
@@ -1886,8 +1893,7 @@ def get_backend(backend_name: str, num_qubits: int, *, enable_fusion: Optional[b
     }
     if backend_name not in supported:
         raise ValueError(f"Unsupported backend '{backend_name}'. Supported backends are: {list(supported.keys())}")
-    if enable_fusion is not None and not isinstance(enable_fusion, bool):
-        raise ValueError("enable_fusion must be a boolean when provided.")
+    enable_fusion = _validate_optional_boolean_option(enable_fusion, "enable_fusion")
     if backend_name == "state_vector":
         return StateVectorBackend(num_qubits, enable_fusion=enable_fusion)
     if enable_fusion is not None:

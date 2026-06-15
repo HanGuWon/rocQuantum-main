@@ -62,7 +62,7 @@ _RUNTIME_SUPPORTED_FEATURES = (
     "selected-qubit sampling through sample()",
     "observable evaluation through observe()",
     "host-side Future wrappers for execute/get_state/sample/observe",
-    "state-vector-only enable_fusion execution option",
+    "bool-safe state-vector-only enable_fusion execution option",
     "density-matrix noise model execution",
     "experimental Clifford stabilizer Pauli propagation backend",
 )

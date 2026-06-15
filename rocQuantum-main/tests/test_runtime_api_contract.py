@@ -96,7 +96,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertIn("observe_async", capabilities["execution_entry_points"])
         self.assertIn("state_vector", capabilities["supported_backends"])
         self.assertIn(
-            "state-vector-only enable_fusion execution option",
+            "bool-safe state-vector-only enable_fusion execution option",
             capabilities["supported_features"],
         )
         self.assertIn(
@@ -484,10 +484,15 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         patched_get_backend.assert_called_once_with("state_vector", 1, enable_fusion=False)
 
     def test_backend_factory_validates_fusion_option_scope(self):
-        from rocq.backends import get_backend
+        from rocq.backends import StateVectorBackend, get_backend
 
         with self.assertRaisesRegex(ValueError, "enable_fusion must be a boolean"):
             get_backend("state_vector", 1, enable_fusion="false")
+
+        with mock.patch("rocq.backends.hip_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                with self.assertRaisesRegex(ValueError, "enable_fusion must be a boolean"):
+                    StateVectorBackend(1, enable_fusion="false")
 
         with self.assertRaisesRegex(ValueError, "enable_fusion only applies"):
             get_backend("density_matrix", 1, enable_fusion=False)
