@@ -76,6 +76,12 @@ def _normalize_gate_params(params: Optional[Dict[str, float]]) -> Dict[str, floa
     return normalized
 
 
+def _validate_boolean(value, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean.")
+    return value
+
+
 class QuantumKernel:
     def __init__(self, func):
         self._func = func
@@ -263,12 +269,13 @@ class QuantumKernel:
         **kwargs,
     ):
         """Compile the supported MLIR subset and execute it through the native compiler binding."""
+        strict = _validate_boolean(strict, "strict")
         if rocquantum_bind is None:
             raise RuntimeError(_COMPILER_BINDING_MISSING_MESSAGE)
         mlir_code = self.mlir(*args, **kwargs)
         compiler = rocquantum_bind.MLIRCompiler(self.num_qubits, compiler_backend)
         try:
-            return compiler.compile_and_execute(mlir_code, {"strict": bool(strict)})
+            return compiler.compile_and_execute(mlir_code, {"strict": strict})
         except RuntimeError as exc:
             raise RuntimeError(
                 "compile_and_execute() failed through rocquantum_bind.MLIRCompiler. "

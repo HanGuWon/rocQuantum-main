@@ -578,6 +578,17 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(calls[1][2], {"strict": False})
         self.assertIn('"quantum.cnot"', calls[1][1])
 
+    def test_compile_and_execute_rejects_non_boolean_strict_option(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        for strict in (0, 1, "false", None, np.bool_(False)):
+            with self.subTest(strict=strict):
+                with self.assertRaisesRegex(ValueError, "strict must be a boolean"):
+                    rocq.compile_and_execute(prep_state, strict=strict)
+
     def test_compile_and_execute_augments_compiler_failures(self):
         @kernel
         def prep_state():
