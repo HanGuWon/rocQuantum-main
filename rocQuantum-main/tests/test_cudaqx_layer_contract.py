@@ -105,6 +105,34 @@ class TestVqeSolverContract(unittest.TestCase):
 
         np.testing.assert_allclose(gradient, np.array([0.5]))
 
+    def test_gradient_estimation_does_not_pollute_optimizer_trace(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        def ansatz(theta):
+            return None
+
+        solver = VQE_Solver()
+        solver._intermediate_results.append(
+            {"parameters": np.array([0.1]), "energy": -0.25}
+        )
+        hamiltonian = PauliOperator("Z0")
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe", side_effect=[1.0, 0.0]) as patched_observe:
+            gradient = solver.estimate_gradient(
+                np.array([0.25]),
+                hamiltonian,
+                ansatz,
+                1,
+                method="parameter_shift",
+            )
+
+        np.testing.assert_allclose(gradient, np.array([0.5]))
+        self.assertEqual(len(solver._intermediate_results), 1)
+        np.testing.assert_allclose(solver._intermediate_results[0]["parameters"], np.array([0.1]))
+        self.assertEqual(solver._intermediate_results[0]["energy"], -0.25)
+        self.assertEqual(patched_observe.call_count, 2)
+
     def test_solve_normalizes_scalar_initial_parameter(self):
         from rocq.operator import PauliOperator
         from rocquantum.solvers.vqe_solver import Optimizer, VQE_Solver

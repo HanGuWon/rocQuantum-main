@@ -8,7 +8,10 @@ Current supported subset:
 - `VQE_Solver` evaluates canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, scaled/divided composite sums, and full-state CSR sparse observables on the state-vector backend or density-matrix correctness fallback.
 - `VQE_Solver.solve()` is quiet by default for library and batch use; pass
   `verbose=True` to print start/finish progress messages.
-- `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`; scalar single-parameter inputs are normalized to one-element vectors for gradient and optimizer entry points.
+- `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`;
+  scalar single-parameter inputs are normalized to one-element vectors for
+  gradient and optimizer entry points, and gradient probes do not mutate the
+  optimizer `intermediate_results` trace.
 - `make_maxcut_qaoa_kernel()` builds a MaxCut-style QAOA ansatz using H, CNOT,
   RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.

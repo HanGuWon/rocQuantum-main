@@ -190,7 +190,8 @@ class VQE_Solver:
         params: np.ndarray,
         hamiltonian: QuantumOperator,
         ansatz_kernel: AnsatzKernel,
-        num_qubits: int
+        num_qubits: int,
+        record_intermediate: bool = True,
     ) -> float:
         """
         Internal objective function evaluated by the classical optimizer.
@@ -207,10 +208,11 @@ class VQE_Solver:
             backend=self.backend,
         )
         energy = float(np.real(energy))
-        self._intermediate_results.append({
-            "parameters": np.asarray(params, dtype=float).copy(),
-            "energy": energy,
-        })
+        if record_intermediate:
+            self._intermediate_results.append({
+                "parameters": np.asarray(params, dtype=float).copy(),
+                "energy": energy,
+            })
         return energy
 
     def estimate_gradient(
@@ -241,8 +243,20 @@ class VQE_Solver:
             minus = params.copy()
             plus[idx] += shift
             minus[idx] -= shift
-            f_plus = self._objective_function(plus, hamiltonian, ansatz_kernel, num_qubits)
-            f_minus = self._objective_function(minus, hamiltonian, ansatz_kernel, num_qubits)
+            f_plus = self._objective_function(
+                plus,
+                hamiltonian,
+                ansatz_kernel,
+                num_qubits,
+                record_intermediate=False,
+            )
+            f_minus = self._objective_function(
+                minus,
+                hamiltonian,
+                ansatz_kernel,
+                num_qubits,
+                record_intermediate=False,
+            )
             gradient[idx] = scale * (f_plus - f_minus)
         return gradient
 
