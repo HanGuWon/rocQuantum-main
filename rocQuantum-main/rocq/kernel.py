@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from numbers import Integral, Real
 from typing import Dict, List, Optional
 
 from .backends import get_backend, _normalize_sample_qubits, _validate_positive_integer
@@ -48,8 +50,30 @@ class _KernelBuildContext:
             raise RuntimeError("No active kernel context. Gate called outside @rocq.kernel.")
         if not isinstance(targets, list):
             raise TypeError("targets must be a list of qubit indices.")
-        resolved = [int(t) for t in targets]
-        cls._active.ops.append(GateOp(name=name, targets=resolved, params=params or {}))
+        resolved = [cls._active._validate_gate_target(t) for t in targets]
+        cls._active.ops.append(GateOp(name=name, targets=resolved, params=_normalize_gate_params(params)))
+
+    def _validate_gate_target(self, target) -> int:
+        if isinstance(target, bool) or not isinstance(target, Integral):
+            raise ValueError("Gate targets must be integer qubit indices.")
+        resolved = int(target)
+        if resolved < 0 or resolved >= self._next_qubit_index:
+            raise ValueError(
+                f"Gate target index {resolved} is out of bounds for {self._next_qubit_index} qubits."
+            )
+        return resolved
+
+
+def _normalize_gate_params(params: Optional[Dict[str, float]]) -> Dict[str, float]:
+    normalized: Dict[str, float] = {}
+    for key, value in (params or {}).items():
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise ValueError(f"Gate parameter '{key}' must be a finite real number.")
+        parameter = float(value)
+        if not math.isfinite(parameter):
+            raise ValueError(f"Gate parameter '{key}' must be finite.")
+        normalized[key] = parameter
+    return normalized
 
 
 class QuantumKernel:

@@ -137,6 +137,36 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                         rocq.sample(prep_state, 8, backend="state_vector", qubits=qubits)
                 patched_get_backend.assert_not_called()
 
+    def test_kernel_rejects_invalid_gate_targets_before_backend_dispatch(self):
+        invalid_targets = (2, -1, 0.5, True, "0")
+
+        for target in invalid_targets:
+            with self.subTest(target=target):
+                @kernel
+                def bad_target():
+                    rocq.qvec(1)
+                    rocq.h(target)
+
+                with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+                    with self.assertRaisesRegex(ValueError, "Gate target"):
+                        rocq.execute(bad_target, backend="state_vector")
+                patched_get_backend.assert_not_called()
+
+    def test_kernel_rejects_invalid_gate_parameters_before_backend_dispatch(self):
+        invalid_angles = (np.inf, np.nan, True, "0.5")
+
+        for angle in invalid_angles:
+            with self.subTest(angle=angle):
+                @kernel
+                def bad_parameter():
+                    q = rocq.qvec(1)
+                    rocq.rx(angle, q[0])
+
+                with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+                    with self.assertRaisesRegex(ValueError, "Gate parameter"):
+                        rocq.execute(bad_parameter, backend="state_vector")
+                patched_get_backend.assert_not_called()
+
     def test_observe_uses_backend_expectation(self):
         @kernel
         def prep_state():
