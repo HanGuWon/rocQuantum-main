@@ -460,15 +460,16 @@
                                     "Deterministic correctness regression"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:483",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:527"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3443",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3656",
+                                       "rocQuantum-main/tests/test_rccl_distributed_contract.py:82"
                                    ],
-                      "notes":  "Depends on P1 RCCL backend completion.",
+                      "notes":  "P1 RCCL backend is now present. Pauli expectation/sample reductions and local-domain dense matrix expectation avoid full host state gather by reducing per-rank device results through ncclAllReduce. Broad non-local dense/sparse distributed reductions and measured speedups still need ROCm multi-GPU CI and benchmark artifacts.",
                       "status":  "Needs ROCm CI",
                       "pr_link":  "unknown",
                       "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:483",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3656",
+                      "verification_path":  "Run rocQuantum-main/tests/test_rccl_distributed_contract.py locally; run distributed Pauli, sample/probabilities, and local-domain dense matrix expectation parity plus distributed_reduction_benchmark on a ROCm multi-GPU runner."
                   },
                   {
                       "id":  "P2-TN-004",
