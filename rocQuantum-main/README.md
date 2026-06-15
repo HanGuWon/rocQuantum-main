@@ -129,6 +129,13 @@ cmake -S . -B build-ci -G Ninja \
 cmake --build build-ci --parallel
 ```
 
+To validate the installed CMake package shape on a ROCm build host, install the build tree and
+configure a downstream consumer smoke project:
+
+```bash
+bash scripts/validate_cmake_install_consumer.sh build-ci
+```
+
 The release benchmark registry is defined in `benchmarks/benchmark_manifest.json`. It covers
 state-vector fast path/fallback and fusion timing, distributed RCCL vs host fallback reductions
 including dense expectation, sparse moments, and generic matrix paths, TensorNet contraction planning, and

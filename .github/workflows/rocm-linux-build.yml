@@ -109,6 +109,19 @@ jobs:
       - name: Build
         run: cmake --build build-ci --parallel
 
+      - name: Validate CMake install-tree consumer
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-linux-build-${{ matrix.rocm_label }}
+        run: |
+          set -o pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          export CMAKE_HIP_COMPILER="$(command -v hipcc)"
+          export CMAKE_HIP_ARCHITECTURES="${{ matrix.hip_architectures }}"
+          export ROCQUANTUM_INSTALL_PREFIX="${ARTIFACT_DIR}/install-prefix"
+          export ROCQUANTUM_INSTALL_CONSUMER_BUILD_DIR="${ARTIFACT_DIR}/install-consumer-build"
+          bash scripts/validate_cmake_install_consumer.sh build-ci \
+            2>&1 | tee "${ARTIFACT_DIR}/cmake-install-consumer.log"
+
       - name: Run hipTensorNet Contraction Regression
         run: |
           if [ ! -e /dev/kfd ]; then

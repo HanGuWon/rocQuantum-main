@@ -12,8 +12,15 @@ import unittest
 import warnings
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(_PROJECT_ROOT)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+
+_INSTALL_CONSUMER_CMAKE = os.path.join(_PROJECT_ROOT, "cmake", "install_consumer_smoke", "CMakeLists.txt")
+_INSTALL_CONSUMER_MAIN = os.path.join(_PROJECT_ROOT, "cmake", "install_consumer_smoke", "main.cpp")
+_INSTALL_CONSUMER_SCRIPT = os.path.join(_PROJECT_ROOT, "scripts", "validate_cmake_install_consumer.sh")
+_ROCM_LINUX_WORKFLOW = os.path.join(_REPO_ROOT, ".github", "workflows", "rocm-linux-build.yml")
+_README = os.path.join(_PROJECT_ROOT, "README.md")
 
 
 class TestCanonicalImports(unittest.TestCase):
@@ -147,6 +154,52 @@ class TestPyprojectExists(unittest.TestCase):
         self.assertIn("cirq-core>=1.0", optional["cirq"])
         self.assertIn("scipy>=1.10", optional["solvers"])
         self.assertIn("rocquantum[backends,pennylane,qiskit,cirq,solvers,dev]", optional["all"])
+
+
+class TestCMakeInstallConsumerSmoke(unittest.TestCase):
+    def test_consumer_smoke_project_checks_installed_targets_and_headers(self):
+        with open(_INSTALL_CONSUMER_CMAKE, "r", encoding="utf-8") as f:
+            cmake = f.read()
+        with open(_INSTALL_CONSUMER_MAIN, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("find_package(rocQuantum CONFIG REQUIRED)", cmake)
+        for target in [
+            "rocquantum::rocquantum",
+            "rocquantum::hipStateVec",
+            "rocquantum::rocqsim_tensornet",
+            "rocquantum::rocq_hip_density_mat",
+        ]:
+            self.assertIn(target, cmake)
+        self.assertIn("target_link_libraries(rocquantum_install_consumer_smoke PRIVATE rocquantum::rocquantum)", cmake)
+        self.assertIn("#include <rocquantum/QuantumSimulator.h>", source)
+        self.assertIn("#include <rocquantum/hipStateVec.h>", source)
+        self.assertIn("#include <rocquantum/hipTensorNet_api.h>", source)
+        self.assertIn("#include <rocquantum/hipDensityMat.h>", source)
+
+    def test_install_consumer_script_installs_and_configures_downstream_project(self):
+        with open(_INSTALL_CONSUMER_SCRIPT, "r", encoding="utf-8") as f:
+            script = f.read()
+
+        self.assertIn("set -euo pipefail", script)
+        self.assertIn("cmake --install", script)
+        self.assertIn("ROCQUANTUM_INSTALL_PREFIX", script)
+        self.assertIn("ROCQUANTUM_INSTALL_CONSUMER_BUILD_DIR", script)
+        self.assertIn("cmake/install_consumer_smoke", script)
+        self.assertIn("-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX}", script)
+        self.assertIn("cmake --build", script)
+
+    def test_rocm_workflow_and_readme_expose_install_consumer_validation(self):
+        with open(_ROCM_LINUX_WORKFLOW, "r", encoding="utf-8") as f:
+            workflow = f.read()
+        with open(_README, "r", encoding="utf-8") as f:
+            readme = f.read()
+
+        self.assertIn("Validate CMake install-tree consumer", workflow)
+        self.assertIn("scripts/validate_cmake_install_consumer.sh", workflow)
+        self.assertIn("cmake-install-consumer.log", workflow)
+        self.assertIn("CMAKE_HIP_ARCHITECTURES", workflow)
+        self.assertIn("scripts/validate_cmake_install_consumer.sh", readme)
 
 
 if __name__ == "__main__":
