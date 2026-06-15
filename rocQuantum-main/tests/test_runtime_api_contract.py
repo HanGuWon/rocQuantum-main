@@ -563,6 +563,27 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                         rocq.execute(bad_target, backend="state_vector")
                 patched_get_backend.assert_not_called()
 
+    def test_kernel_rejects_duplicate_gate_targets_before_backend_dispatch(self):
+        duplicate_cases = (
+            ("cnot", lambda q: rocq.cnot(q[0], q[0])),
+            ("cp", lambda q: rocq.cp(0.125, q[0], q[0])),
+            ("swap", lambda q: rocq.swap(q[1], q[1])),
+            ("mcx", lambda q: rocq.mcx([q[0], q[1]], q[1])),
+            ("cswap", lambda q: rocq.cswap(q[0], q[1], q[1])),
+        )
+
+        for name, apply_gate in duplicate_cases:
+            with self.subTest(gate=name):
+                @kernel
+                def bad_gate():
+                    q = rocq.qvec(3)
+                    apply_gate(q)
+
+                with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+                    with self.assertRaisesRegex(ValueError, "target qubits must be distinct"):
+                        rocq.execute(bad_gate, backend="state_vector")
+                patched_get_backend.assert_not_called()
+
     def test_kernel_rejects_invalid_gate_parameters_before_backend_dispatch(self):
         invalid_angles = (np.inf, np.nan, True, "0.5")
 

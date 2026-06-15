@@ -175,6 +175,7 @@ class _KernelBuildContext:
         if not isinstance(targets, list):
             raise TypeError("targets must be a list of qubit indices.")
         resolved = [cls._active._validate_gate_target(t) for t in targets]
+        cls._active._validate_distinct_gate_targets(name, resolved)
         cls._active.ops.append(GateOp(name=name, targets=resolved, params=_normalize_gate_params(params)))
 
     def _validate_gate_target(self, target) -> int:
@@ -186,6 +187,11 @@ class _KernelBuildContext:
                 f"Gate target index {resolved} is out of bounds for {self._next_qubit_index} qubits."
             )
         return resolved
+
+    @staticmethod
+    def _validate_distinct_gate_targets(name: str, targets: List[int]) -> None:
+        if len(set(targets)) != len(targets):
+            raise ValueError(f"Gate '{name}' target qubits must be distinct.")
 
 
 def _normalize_gate_params(params: Optional[Dict[str, float]]) -> Dict[str, float]:
