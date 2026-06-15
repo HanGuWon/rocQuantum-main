@@ -33,8 +33,9 @@ Current supported subset:
   `0.5 * w * (I - Zi Zj)` for each edge, aggregating duplicate or reversed
   undirected edges before emitting ansatz cost phases or cost terms. MaxCut
   helpers reject non-integer endpoints, non-positive `num_qubits` / `layers`,
-  self-loops, out-of-range endpoints, and non-finite or non-real weights
-  instead of silently truncating or propagating invalid problem data. QAOA
+  non-iterable edge containers or malformed edge entries, self-loops,
+  out-of-range endpoints, and non-finite or non-real weights instead of
+  silently truncating or propagating invalid problem data. QAOA
   ansatz runtime parameters and `solve_maxcut_qaoa()` initial parameters must
   also be finite real values.
 - `solve_maxcut_qaoa()` wires that ansatz into `VQE_Solver` by minimizing the

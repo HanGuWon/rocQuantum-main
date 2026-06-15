@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable as IterableABC
 from numbers import Real
 from typing import Iterable, Sequence, Tuple
 
@@ -70,8 +71,12 @@ def _validate_parameter_vector(
 
 
 def _normalize_edges(edges: Iterable[Sequence[float]]) -> list[WeightedEdge]:
+    if isinstance(edges, (str, bytes)) or not isinstance(edges, IterableABC):
+        raise ValueError("QAOA edges must be an iterable of (u, v) or (u, v, weight).")
     normalized: list[WeightedEdge] = []
     for edge in edges:
+        if isinstance(edge, (str, bytes)) or not isinstance(edge, IterableABC):
+            raise ValueError("QAOA edges must be (u, v) or (u, v, weight).")
         edge_tuple = tuple(edge)
         if len(edge_tuple) == 2:
             u, v = edge_tuple
@@ -172,8 +177,7 @@ def solve_maxcut_qaoa(
     num_qubits = _validate_positive_integer(num_qubits, "num_qubits")
     layers = _validate_positive_integer(layers, "layers")
 
-    edge_list = list(edges)
-    normalized_edges = _canonical_maxcut_edges(num_qubits, edge_list)
+    normalized_edges = _canonical_maxcut_edges(num_qubits, edges)
     expected_params = 2 * layers
     if initial_params is None:
         params = np.zeros(expected_params, dtype=float)

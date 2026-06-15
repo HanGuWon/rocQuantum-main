@@ -658,6 +658,14 @@ class TestQaoaHelpers(unittest.TestCase):
             make_maxcut_qaoa_kernel(2.5, [(0, 1)])
         with self.assertRaisesRegex(ValueError, "layers must be a positive integer"):
             make_maxcut_qaoa_kernel(2, [(0, 1)], layers=1.5)
+        with self.assertRaisesRegex(ValueError, "QAOA edges must be an iterable"):
+            maxcut_cost_operator(2, None)
+        with self.assertRaisesRegex(ValueError, "QAOA edges must be an iterable"):
+            solve_maxcut_qaoa(2, "01")
+        with self.assertRaisesRegex(ValueError, "QAOA edges must be"):
+            maxcut_cost_operator(2, [None])
+        with self.assertRaisesRegex(ValueError, "QAOA edges must be"):
+            maxcut_cost_operator(2, [(0, 1, 2.0, 3.0)])
         with self.assertRaisesRegex(ValueError, "integer qubit index"):
             maxcut_cost_operator(2, [(0.5, 1)])
         with self.assertRaisesRegex(ValueError, "integer qubit index"):
