@@ -145,6 +145,17 @@ python3 benchmarks/run_release_benchmarks.py \
   --output-dir benchmark-artifacts
 ```
 
+To gate against a previous run, pass its summary artifact:
+
+```bash
+python3 benchmarks/run_release_benchmarks.py \
+  --build-dir build-ci \
+  --output-dir benchmark-artifacts \
+  --baseline-summary previous-benchmark-artifacts/benchmark-summary.json \
+  --max-speedup-regression 0.20 \
+  --fail-on-error
+```
+
 On a ROCm multi-GPU runner, the distributed reduction benchmark can also be run directly:
 
 ```bash

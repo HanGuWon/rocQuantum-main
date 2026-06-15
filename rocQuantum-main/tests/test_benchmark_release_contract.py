@@ -242,6 +242,85 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertEqual(result["threshold_failures"][0]["metric"], "expectation_ms")
         self.assertFalse(result["threshold_failures"][0]["passes_threshold"])
 
+    def test_release_runner_fails_speedup_trend_regressions(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "payload = {'cases': [\n"
+                "    {'name': 'rccl', 'status': 0, 'expectation_ms': 4.0},\n"
+                "    {'name': 'host_fallback', 'status': 0, 'expectation_ms': 8.0},\n"
+                "]}\n"
+                "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                "    json.dump(payload, f)\n",
+                encoding="utf-8",
+            )
+            baseline_path = tmp_path / "baseline-summary.json"
+            baseline_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "results": [
+                            {
+                                "id": "fake_distributed",
+                                "status": "passed",
+                                "speedups": [
+                                    {
+                                        "metric": "expectation_ms",
+                                        "optimized_case": "rccl",
+                                        "baseline_case": "host_fallback",
+                                        "speedup": 4.0,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_distributed",
+                                "category": "distributed",
+                                "executable": sys.executable,
+                                "output": "fake-distributed.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = runner.run(
+                manifest_path=manifest_path,
+                build_dir=tmp_path / "build",
+                output_dir=tmp_path / "artifacts",
+                baseline_summary_path=baseline_path,
+                max_speedup_regression=0.25,
+            )
+            markdown = (tmp_path / "artifacts" / "benchmark-summary.md").read_text(encoding="utf-8")
+
+        result = summary["results"][0]
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["failure_reason"],
+            "one or more speedup trend gates regressed versus baseline",
+        )
+        self.assertEqual(result["trend_regressions"][0]["metric"], "expectation_ms")
+        self.assertAlmostEqual(result["trend_regressions"][0]["baseline_speedup"], 4.0)
+        self.assertAlmostEqual(result["trend_regressions"][0]["minimum_trend_speedup"], 3.0)
+        self.assertFalse(result["trend_regressions"][0]["passes_trend_gate"])
+        self.assertIn("trend baseline 4.000x min 3.000x=fail", markdown)
+
     def test_cmake_exposes_release_benchmark_targets(self):
         statevec_cmake = os.path.join(PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "CMakeLists.txt")
         tensornet_cmake = os.path.join(PROJECT_ROOT, "rocquantum", "src", "hipTensorNet", "CMakeLists.txt")
@@ -300,6 +379,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmark-summary.json", readme)
         self.assertIn("benchmark-summary.md", readme)
         self.assertIn("speedup ratios", readme)
+        self.assertIn("--baseline-summary", readme)
         self.assertIn("dense expectation, sparse moments, and generic matrix", readme)
 
 

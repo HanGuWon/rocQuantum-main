@@ -63,6 +63,17 @@ def _speedup_thresholds(entry: dict[str, Any]) -> dict[str, float]:
     return thresholds
 
 
+def _speedups_by_metric(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    speedups = result.get("speedups")
+    if not isinstance(speedups, list):
+        return {}
+    return {
+        speedup["metric"]: speedup
+        for speedup in speedups
+        if isinstance(speedup, dict) and isinstance(speedup.get("metric"), str)
+    }
+
+
 def extract_case_speedups(
     payload: dict[str, Any],
     thresholds: dict[str, float] | None = None,
@@ -120,7 +131,64 @@ def _format_speedup_entry(entry: dict[str, Any]) -> str:
     if "minimum_speedup" in entry:
         status = "pass" if entry.get("passes_threshold") else "fail"
         text += f" threshold {entry['minimum_speedup']:.3f}x={status}"
+    if "baseline_speedup" in entry:
+        status = "pass" if entry.get("passes_trend_gate") else "fail"
+        text += (
+            f" trend baseline {entry['baseline_speedup']:.3f}x"
+            f" min {entry['minimum_trend_speedup']:.3f}x={status}"
+        )
     return text
+
+
+def apply_speedup_trend_gate(
+    summary: dict[str, Any],
+    baseline_summary: dict[str, Any],
+    max_speedup_regression: float,
+) -> None:
+    if max_speedup_regression < 0.0 or max_speedup_regression >= 1.0:
+        raise ValueError("max_speedup_regression must be >= 0 and < 1")
+
+    baseline_results = {
+        result.get("id"): result
+        for result in baseline_summary.get("results", [])
+        if isinstance(result, dict) and isinstance(result.get("id"), str)
+    }
+    for result in summary.get("results", []):
+        if not isinstance(result, dict) or not isinstance(result.get("id"), str):
+            continue
+        baseline_result = baseline_results.get(result["id"])
+        if not isinstance(baseline_result, dict):
+            continue
+
+        baseline_speedups = _speedups_by_metric(baseline_result)
+        trend_regressions: list[dict[str, Any]] = []
+        for metric, speedup in _speedups_by_metric(result).items():
+            baseline_speedup = baseline_speedups.get(metric)
+            if not isinstance(baseline_speedup, dict):
+                continue
+            current_value = speedup.get("speedup")
+            baseline_value = baseline_speedup.get("speedup")
+            if not isinstance(current_value, (int, float)) or not isinstance(baseline_value, (int, float)):
+                continue
+            if current_value <= 0.0 or baseline_value <= 0.0:
+                continue
+
+            minimum = float(baseline_value) * (1.0 - max_speedup_regression)
+            speedup["baseline_speedup"] = float(baseline_value)
+            speedup["max_speedup_regression"] = max_speedup_regression
+            speedup["minimum_trend_speedup"] = minimum
+            speedup["passes_trend_gate"] = float(current_value) >= minimum
+            if not speedup["passes_trend_gate"]:
+                trend_regressions.append(speedup)
+
+        if trend_regressions:
+            result["status"] = "failed"
+            result["trend_regressions"] = trend_regressions
+            reason = "one or more speedup trend gates regressed versus baseline"
+            if result.get("failure_reason"):
+                result["failure_reason"] = f"{result['failure_reason']}; {reason}"
+            else:
+                result["failure_reason"] = reason
 
 
 def format_benchmark_summary_markdown(summary: dict[str, Any]) -> str:
@@ -238,7 +306,13 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
     return result
 
 
-def run(manifest_path: Path, build_dir: Path, output_dir: Path) -> dict[str, Any]:
+def run(
+    manifest_path: Path,
+    build_dir: Path,
+    output_dir: Path,
+    baseline_summary_path: Path | None = None,
+    max_speedup_regression: float = 0.20,
+) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     output_dir.mkdir(parents=True, exist_ok=True)
     has_device = _has_rocm_device()
@@ -261,6 +335,11 @@ def run(manifest_path: Path, build_dir: Path, output_dir: Path) -> dict[str, Any
         "has_rocm_device": has_device,
         "results": results,
     }
+    if baseline_summary_path is not None:
+        baseline_summary = json.loads(baseline_summary_path.read_text(encoding="utf-8"))
+        summary["baseline_summary"] = str(baseline_summary_path)
+        summary["max_speedup_regression"] = max_speedup_regression
+        apply_speedup_trend_gate(summary, baseline_summary, max_speedup_regression)
     markdown_path = output_dir / "benchmark-summary.md"
     summary["markdown_summary"] = str(markdown_path)
     _write_json(output_dir / "benchmark-summary.json", summary)
@@ -269,6 +348,8 @@ def run(manifest_path: Path, build_dir: Path, output_dir: Path) -> dict[str, Any
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    baseline_default = os.environ.get("ROCQ_BENCHMARK_BASELINE_SUMMARY", "").strip()
+    regression_default = float(os.environ.get("ROCQ_BENCHMARK_MAX_SPEEDUP_REGRESSION", "0.20"))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--build-dir", type=Path, default=PROJECT_ROOT / "build-ci")
@@ -277,6 +358,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--fail-on-error",
         action="store_true",
         help="Return non-zero when any discovered benchmark executable fails.",
+    )
+    parser.add_argument(
+        "--baseline-summary",
+        type=Path,
+        default=Path(baseline_default) if baseline_default else None,
+        help="Optional previous benchmark-summary.json used to fail speedup trend regressions.",
+    )
+    parser.add_argument(
+        "--max-speedup-regression",
+        type=float,
+        default=regression_default,
+        help="Allowed fractional speedup drop versus --baseline-summary before failing, default 0.20.",
     )
     return parser.parse_args(argv)
 
@@ -287,6 +380,8 @@ def main(argv: list[str] | None = None) -> int:
         manifest_path=args.manifest.resolve(),
         build_dir=args.build_dir.resolve(),
         output_dir=args.output_dir.resolve(),
+        baseline_summary_path=args.baseline_summary.resolve() if args.baseline_summary else None,
+        max_speedup_regression=args.max_speedup_regression,
     )
     failed = [result for result in summary["results"] if result["status"] == "failed"]
     print(json.dumps(summary, indent=2, sort_keys=True))
