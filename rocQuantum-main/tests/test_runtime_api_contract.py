@@ -144,6 +144,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "density-matrix noise-model channel revalidation before backend dispatch",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "native HIP-stream futures",
             capabilities["unsupported_features"],
         )
@@ -1758,6 +1762,49 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             np.array([0.75, 0.0, 0.0, 0.25], dtype=np.float32),
             atol=1e-7,
         )
+
+    def test_density_backend_revalidates_mutable_noise_model_channels_before_dispatch(self):
+        from rocq.backends import DensityMatrixBackend
+        from rocq.kernel import GateOp
+
+        class _FakeDensityState:
+            def __init__(self):
+                self.noise_calls = []
+
+            def apply_gate_matrix(self, matrix, target, adjoint=False):
+                return None
+
+            def apply_bit_flip_channel(self, target, prob):
+                self.noise_calls.append((target, prob))
+
+        backend = DensityMatrixBackend.__new__(DensityMatrixBackend)
+        backend.num_qubits = 1
+        backend._uses_mock = False
+        backend._state = _FakeDensityState()
+        op = GateOp("x", [0], {})
+
+        def mutated_noise(**updates):
+            noise = rocq.NoiseModel()
+            noise.add_channel("bit_flip", 0.25, on_qubits=[0])
+            noise.get_channels()[0].update(updates)
+            return noise
+
+        invalid_channel_updates = (
+            {"prob": True},
+            {"prob": "0.25"},
+            {"qubits": []},
+            {"qubits": ["0"]},
+            {"op": True},
+            {"op": ""},
+            {"type": True},
+        )
+
+        for updates in invalid_channel_updates:
+            with self.subTest(updates=updates):
+                backend._state.noise_calls.clear()
+                with self.assertRaises((TypeError, ValueError)):
+                    backend.run_ops([op], noise_model=mutated_noise(**updates))
+                self.assertEqual(backend._state.noise_calls, [])
 
     def test_mock_density_backend_rejects_invalid_direct_noise_targets(self):
         backend = self._make_mock_density_backend(1)

@@ -2056,19 +2056,26 @@ class DensityMatrixBackend(_BaseBackend):
         if noise_model is None:
             return
         for channel in noise_model.get_channels():
-            if channel["op"] and channel["op"] != op.name.lower():
-                continue
+            if not isinstance(channel, dict):
+                raise ValueError("NoiseModel channels must be channel dictionaries.")
+            channel_op = channel.get("op")
+            if channel_op is not None:
+                if not isinstance(channel_op, str) or not channel_op:
+                    raise ValueError("NoiseModel channel op must be a non-empty string or None.")
+                if channel_op != op.name.lower():
+                    continue
             yield channel
 
     def run_ops(self, ops, noise_model=None):
         for op in ops:
             self._apply_op(op)
             for channel in self._iter_noise_channels(noise_model, op):
-                targets = channel["qubits"] if channel["qubits"] else op.targets
+                channel_targets = channel.get("qubits")
+                targets = op.targets if channel_targets is None else channel_targets
                 self.apply_noise(
-                    channel["type"],
-                    list(targets),
-                    float(channel["prob"]),
+                    channel.get("type"),
+                    targets,
+                    channel.get("prob"),
                     channel.get("kraus_matrices"),
                 )
 
