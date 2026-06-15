@@ -132,6 +132,37 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         operator = HermitianOperator(matrix, targets=[np.int64(0)])
         self.assertEqual(operator.targets, [0])
 
+    def test_hermitian_operator_validates_matrix_payload_inputs(self):
+        invalid_shapes = (
+            1.0,
+            [1.0, 0.0],
+            [[1.0, 0.0]],
+            np.eye(3),
+        )
+        for matrix in invalid_shapes:
+            with self.subTest(matrix=matrix):
+                with self.assertRaisesRegex(ValueError, "HermitianOperator matrix"):
+                    HermitianOperator(matrix, targets=[0])
+
+        invalid_values = (
+            [[1.0, 0.0], [0.0, True]],
+            [[1.0, 0.0], [0.0, "1.0"]],
+            [[1.0, 0.0], [0.0, np.nan]],
+            [[1.0, 0.0], [0.0, np.inf]],
+        )
+        for matrix in invalid_values:
+            with self.subTest(matrix=matrix):
+                with self.assertRaisesRegex(ValueError, "HermitianOperator matrix"):
+                    HermitianOperator(matrix, targets=[0])
+
+        operator = HermitianOperator([[1, 0], [0, -1j]], targets=np.int64(0))
+        np.testing.assert_array_equal(
+            operator.matrix,
+            np.array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, -1.0j]], dtype=np.complex128),
+        )
+        self.assertEqual(operator.targets, [0])
+
+    def test_sparse_operator_validates_shape_inputs(self):
         data = np.array([1.0 + 0.0j])
         indices = np.array([0])
         indptr = np.array([0, 1, 1])

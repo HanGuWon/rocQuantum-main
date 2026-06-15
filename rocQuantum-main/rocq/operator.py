@@ -54,6 +54,32 @@ def _normalize_observable_targets(targets, name: str):
     return normalized
 
 
+def _normalize_hermitian_matrix(matrix):
+    try:
+        raw_matrix = np.asarray(matrix, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "HermitianOperator matrix must be a finite numeric square matrix."
+        ) from exc
+
+    if raw_matrix.ndim != 2 or raw_matrix.shape[0] != raw_matrix.shape[1]:
+        raise ValueError("HermitianOperator matrix must be square.")
+
+    matrix_dim = int(raw_matrix.shape[0])
+    if matrix_dim <= 0 or matrix_dim & (matrix_dim - 1):
+        raise ValueError("HermitianOperator matrix dimension must be a power of two.")
+
+    normalized = []
+    for value in raw_matrix.reshape(-1):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError("HermitianOperator matrix must contain finite numeric values.")
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError("HermitianOperator matrix must be finite.")
+        normalized.append(scalar)
+    return np.asarray(normalized, dtype=np.complex128).reshape(raw_matrix.shape)
+
+
 def _normalize_sparse_shape(shape) -> tuple[int, int]:
     if isinstance(shape, (str, bytes)):
         raise ValueError("SparseHamiltonianOperator shape must have two dimensions.")
@@ -252,7 +278,7 @@ class HermitianOperator(QuantumOperator):
 
     def __init__(self, matrix, coefficient: Number = 1.0, targets=None):
         super().__init__(coefficient)
-        self.matrix = matrix
+        self.matrix = _normalize_hermitian_matrix(matrix)
         self.targets = _normalize_observable_targets(targets, "HermitianOperator target")
 
     def to_string(self) -> str:
