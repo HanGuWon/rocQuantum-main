@@ -902,6 +902,141 @@ rocqStatus_t launch_single_qubit_matrix(rocsvInternalHandle* handle,
                                         const rocComplex& m00,
                                         const rocComplex& m01,
                                         const rocComplex& m10,
+                                        const rocComplex& m11);
+
+rocqStatus_t launch_controlled_single_qubit_matrix(rocsvInternalHandle* handle,
+                                                   rocComplex* state,
+                                                   unsigned numQubits,
+                                                   unsigned controlQubit,
+                                                   unsigned targetQubit,
+                                                   const rocComplex& m00,
+                                                   const rocComplex& m01,
+                                                   const rocComplex& m10,
+                                                   const rocComplex& m11);
+
+inline rocqStatus_t restore_distributed_qubit_swaps(
+    rocsvInternalHandle* handle,
+    const std::vector<std::pair<unsigned, unsigned>>& swaps) {
+    rocqStatus_t first_status = ROCQ_STATUS_SUCCESS;
+    for (auto it = swaps.rbegin(); it != swaps.rend(); ++it) {
+        rocqStatus_t status = rocsvSwapIndexBits(handle, it->first, it->second);
+        if (first_status == ROCQ_STATUS_SUCCESS && status != ROCQ_STATUS_SUCCESS) {
+            first_status = status;
+        }
+    }
+    return first_status;
+}
+
+inline bool choose_distributed_local_slot(const rocsvInternalHandle* handle,
+                                          const std::vector<unsigned>& reserved,
+                                          unsigned* slot) {
+    if (!handle || !slot) {
+        return false;
+    }
+    for (unsigned q = 0; q < handle->numLocalQubitsPerGpu; ++q) {
+        if (std::find(reserved.begin(), reserved.end(), q) == reserved.end()) {
+            *slot = q;
+            return true;
+        }
+    }
+    return false;
+}
+
+inline rocqStatus_t launch_single_qubit_matrix_distributed_localized(
+    rocsvInternalHandle* handle,
+    rocComplex* state,
+    unsigned numQubits,
+    unsigned targetQubit,
+    const rocComplex& m00,
+    const rocComplex& m01,
+    const rocComplex& m10,
+    const rocComplex& m11) {
+    unsigned local_target = targetQubit;
+    std::vector<std::pair<unsigned, unsigned>> swaps;
+
+    if (!distributed_qubit_local(handle, targetQubit)) {
+        if (handle->numLocalQubitsPerGpu == 0) {
+            const std::vector<rocComplex> matrix_host = {m00, m10, m01, m11};
+            return apply_matrix_distributed_host_fallback(handle, numQubits, {targetQubit}, {}, matrix_host);
+        }
+        local_target = 0;
+        rocqStatus_t status = rocsvSwapIndexBits(handle, targetQubit, local_target);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+        swaps.emplace_back(targetQubit, local_target);
+    }
+
+    rocqStatus_t status = launch_single_qubit_matrix(
+        handle, state, numQubits, local_target, m00, m01, m10, m11);
+    rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+    return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
+}
+
+inline rocqStatus_t launch_controlled_single_qubit_matrix_distributed_localized(
+    rocsvInternalHandle* handle,
+    rocComplex* state,
+    unsigned numQubits,
+    unsigned controlQubit,
+    unsigned targetQubit,
+    const rocComplex& m00,
+    const rocComplex& m01,
+    const rocComplex& m10,
+    const rocComplex& m11) {
+    std::vector<unsigned> reserved;
+    unsigned local_control = controlQubit;
+    unsigned local_target = targetQubit;
+
+    if (distributed_qubit_local(handle, controlQubit)) {
+        reserved.push_back(controlQubit);
+    }
+    if (distributed_qubit_local(handle, targetQubit)) {
+        reserved.push_back(targetQubit);
+    }
+
+    std::vector<std::pair<unsigned, unsigned>> swaps_to_apply;
+    if (!distributed_qubit_local(handle, controlQubit)) {
+        if (!choose_distributed_local_slot(handle, reserved, &local_control)) {
+            const std::vector<rocComplex> matrix_host = {m00, m10, m01, m11};
+            return apply_matrix_distributed_host_fallback(
+                handle, numQubits, {targetQubit}, {controlQubit}, matrix_host);
+        }
+        reserved.push_back(local_control);
+        swaps_to_apply.emplace_back(controlQubit, local_control);
+    }
+    if (!distributed_qubit_local(handle, targetQubit)) {
+        if (!choose_distributed_local_slot(handle, reserved, &local_target)) {
+            const std::vector<rocComplex> matrix_host = {m00, m10, m01, m11};
+            return apply_matrix_distributed_host_fallback(
+                handle, numQubits, {targetQubit}, {controlQubit}, matrix_host);
+        }
+        reserved.push_back(local_target);
+        swaps_to_apply.emplace_back(targetQubit, local_target);
+    }
+
+    std::vector<std::pair<unsigned, unsigned>> applied_swaps;
+    for (const auto& swap : swaps_to_apply) {
+        rocqStatus_t status = rocsvSwapIndexBits(handle, swap.first, swap.second);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            (void)restore_distributed_qubit_swaps(handle, applied_swaps);
+            return status;
+        }
+        applied_swaps.push_back(swap);
+    }
+
+    rocqStatus_t status = launch_controlled_single_qubit_matrix(
+        handle, state, numQubits, local_control, local_target, m00, m01, m10, m11);
+    rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, applied_swaps);
+    return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
+}
+
+rocqStatus_t launch_single_qubit_matrix(rocsvInternalHandle* handle,
+                                        rocComplex* state,
+                                        unsigned numQubits,
+                                        unsigned targetQubit,
+                                        const rocComplex& m00,
+                                        const rocComplex& m01,
+                                        const rocComplex& m10,
                                         const rocComplex& m11) {
     if (!validate_qubit_index(targetQubit, numQubits)) {
         return ROCQ_STATUS_INVALID_VALUE;
@@ -913,12 +1048,8 @@ rocqStatus_t launch_single_qubit_matrix(rocsvInternalHandle* handle,
             return ROCQ_STATUS_INVALID_VALUE;
         }
         if (!distributed_qubit_local(handle, targetQubit)) {
-            const std::vector<rocComplex> matrix_host = {m00, m10, m01, m11};
-            return apply_matrix_distributed_host_fallback(handle,
-                                                          numQubits,
-                                                          {targetQubit},
-                                                          {},
-                                                          matrix_host);
+            return launch_single_qubit_matrix_distributed_localized(
+                handle, state, numQubits, targetQubit, m00, m01, m10, m11);
         }
 
         if (handle->localSliceElements < 2) {
@@ -1087,12 +1218,8 @@ rocqStatus_t launch_controlled_single_qubit_matrix(rocsvInternalHandle* handle,
         }
         if (!distributed_qubit_local(handle, controlQubit) ||
             !distributed_qubit_local(handle, targetQubit)) {
-            const std::vector<rocComplex> matrix_host = {m00, m10, m01, m11};
-            return apply_matrix_distributed_host_fallback(handle,
-                                                          numQubits,
-                                                          {targetQubit},
-                                                          {controlQubit},
-                                                          matrix_host);
+            return launch_controlled_single_qubit_matrix_distributed_localized(
+                handle, state, numQubits, controlQubit, targetQubit, m00, m01, m10, m11);
         }
         if (handle->localSliceElements < 2) {
             return ROCQ_STATUS_SUCCESS;
@@ -5080,15 +5207,17 @@ rocqStatus_t rocsvApplyCNOT(rocsvHandle_t handle,
         }
         if (!distributed_qubit_local(handle, controlQubit) ||
             !distributed_qubit_local(handle, targetQubit)) {
-            const std::vector<rocComplex> x_matrix = {
-                make_complex(0.0, 0.0), make_complex(1.0, 0.0),
-                make_complex(1.0, 0.0), make_complex(0.0, 0.0),
-            };
-            return apply_matrix_distributed_host_fallback(handle,
-                                                          numQubits,
-                                                          {targetQubit},
-                                                          {controlQubit},
-                                                          x_matrix);
+            const rocComplex zero = make_complex(0.0, 0.0);
+            const rocComplex one = make_complex(1.0, 0.0);
+            return launch_controlled_single_qubit_matrix(handle,
+                                                         state,
+                                                         numQubits,
+                                                         controlQubit,
+                                                         targetQubit,
+                                                         zero,
+                                                         one,
+                                                         one,
+                                                         zero);
         }
         if (handle->localSliceElements < 4) {
             return ROCQ_STATUS_SUCCESS;
@@ -5162,15 +5291,18 @@ rocqStatus_t rocsvApplyCZ(rocsvHandle_t handle,
         }
         if (!distributed_qubit_local(handle, controlQubit) ||
             !distributed_qubit_local(handle, targetQubit)) {
-            const std::vector<rocComplex> z_matrix = {
-                make_complex(1.0, 0.0), make_complex(0.0, 0.0),
-                make_complex(0.0, 0.0), make_complex(-1.0, 0.0),
-            };
-            return apply_matrix_distributed_host_fallback(handle,
-                                                          numQubits,
-                                                          {targetQubit},
-                                                          {controlQubit},
-                                                          z_matrix);
+            const rocComplex one = make_complex(1.0, 0.0);
+            const rocComplex zero = make_complex(0.0, 0.0);
+            const rocComplex minus_one = make_complex(-1.0, 0.0);
+            return launch_controlled_single_qubit_matrix(handle,
+                                                         state,
+                                                         numQubits,
+                                                         controlQubit,
+                                                         targetQubit,
+                                                         one,
+                                                         zero,
+                                                         zero,
+                                                         minus_one);
         }
         if (handle->localSliceElements < 4) {
             return ROCQ_STATUS_SUCCESS;

@@ -84,13 +84,28 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("sparse_matrix_moments_distributed_host_fallback", source)
         self.assertGreaterEqual(
             source.count("return apply_matrix_distributed_host_fallback"),
-            7,
-            "Distributed single/control/matrix fallbacks should share the same explicit host path.",
+            3,
+            "Distributed matrix fallbacks should keep an explicit host path for unsupported layouts.",
         )
         self.assertIn("return expectation_matrix_distributed_host_fallback", source)
         self.assertIn("return apply_sparse_matrix_distributed_host_fallback", source)
         self.assertIn("return sparse_matrix_moments_distributed_host_fallback", source)
         self.assertGreaterEqual(source.count("distributed_host_fallback_enabled()"), 3)
+
+    def test_nonlocal_distributed_named_gates_localize_with_swaps(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("launch_single_qubit_matrix_distributed_localized", source)
+        self.assertIn("launch_controlled_single_qubit_matrix_distributed_localized", source)
+        self.assertIn("restore_distributed_qubit_swaps", source)
+        self.assertIn("choose_distributed_local_slot", source)
+        self.assertIn("rocsvSwapIndexBits(handle, targetQubit, local_target)", source)
+        self.assertIn("rocsvSwapIndexBits(handle, swap.first, swap.second)", source)
+        self.assertIn("restore_distributed_qubit_swaps(handle, applied_swaps)", source)
+        self.assertIn("return launch_single_qubit_matrix_distributed_localized", source)
+        self.assertIn("return launch_controlled_single_qubit_matrix_distributed_localized", source)
+        self.assertIn("return launch_controlled_single_qubit_matrix(handle", source)
 
     def test_multi_gpu_guide_matches_distributed_contract(self):
         with open(_MULTI_GPU_GUIDE, "r", encoding="utf-8") as f:

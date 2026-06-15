@@ -102,17 +102,20 @@
                                     "Gate parity tests for non-local target/control combinations"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:744",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:833",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:2139",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:2213"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:917",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:945",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:976",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:1051",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:1221",
+                                       "rocQuantum-main/tests/test_statevec_fastpath_contract.py:94",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:16"
                                    ],
-                      "notes":  "Correctness-first fallback is acceptable in P0; perf optimization deferred.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Non-local named single-qubit and controlled single-qubit/CNOT/CZ paths now localize touched qubits with rocsvSwapIndexBits, apply the local kernel, and restore the original layout; broader generic matrix cases still rely on the explicit host fallback. Performance optimization remains separate.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:744",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:945",
+                      "verification_path":  "Run rocQuantum-main/tests/test_statevec_fastpath_contract.py locally; run 2-rank non-local H/X/Y/Z/CNOT/CZ parity tests on a ROCm multi-GPU runner for hardware evidence."
                   },
                   {
                       "id":  "P0-STATEVEC-002",
