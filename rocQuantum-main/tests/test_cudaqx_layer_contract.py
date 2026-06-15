@@ -39,7 +39,7 @@ class TestVqeSolverContract(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "VQE optimizer result parameter-count validation",
+            "VQE ansatz and optimizer result parameter-count validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -534,6 +534,110 @@ class TestVqeSolverContract(unittest.TestCase):
 
         self.assertEqual(energy, -0.25)
         patched_observe.assert_called_once_with(ansatz, hamiltonian, 0.125, backend="state_vector")
+
+    def test_vqe_validates_ansatz_parameter_count_before_backend_use(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        def two_parameter_ansatz(theta, phi):
+            return None
+
+        def no_parameter_ansatz():
+            return None
+
+        def keyword_only_ansatz(*, theta):
+            return None
+
+        solver = VQE_Solver(backend="state_vector")
+        hamiltonian = PauliOperator("Z0")
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+            with self.assertRaisesRegex(ValueError, "expects at least 2"):
+                solver.evaluate_energy(
+                    hamiltonian,
+                    two_parameter_ansatz,
+                    2,
+                    parameters=[0.125],
+                )
+        patched_observe.assert_not_called()
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+            with self.assertRaisesRegex(ValueError, "expects at most 2"):
+                solver.evaluate_energy(
+                    hamiltonian,
+                    two_parameter_ansatz,
+                    2,
+                    parameters=[0.125, 0.25, 0.375],
+                )
+        patched_observe.assert_not_called()
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+            with self.assertRaisesRegex(ValueError, "expects at most 0"):
+                solver.evaluate_energy(
+                    hamiltonian,
+                    no_parameter_ansatz,
+                    1,
+                    parameters=[0.125],
+                )
+        patched_observe.assert_not_called()
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+            with self.assertRaisesRegex(ValueError, "keyword-only"):
+                solver.evaluate_energy(
+                    hamiltonian,
+                    keyword_only_ansatz,
+                    1,
+                    parameters=[0.125],
+                )
+        patched_observe.assert_not_called()
+
+    def test_vqe_allows_optional_and_vararg_ansatz_parameters(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        def optional_ansatz(theta, phi=0.0):
+            return None
+
+        def vararg_ansatz(theta, *extra):
+            return None
+
+        solver = VQE_Solver(backend="state_vector")
+        hamiltonian = PauliOperator("Z0")
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe", return_value=-0.5) as patched_observe:
+            energy = solver.evaluate_energy(
+                hamiltonian,
+                optional_ansatz,
+                2,
+                parameters=[0.125, 0.25],
+            )
+
+        self.assertEqual(energy, -0.5)
+        patched_observe.assert_called_once_with(
+            optional_ansatz,
+            hamiltonian,
+            0.125,
+            0.25,
+            backend="state_vector",
+        )
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe", return_value=-0.75) as patched_observe:
+            energy = solver.evaluate_energy(
+                hamiltonian,
+                vararg_ansatz,
+                3,
+                parameters=[0.125, 0.25, 0.375],
+            )
+
+        self.assertEqual(energy, -0.75)
+        patched_observe.assert_called_once_with(
+            vararg_ansatz,
+            hamiltonian,
+            0.125,
+            0.25,
+            0.375,
+            backend="state_vector",
+        )
 
 
 class TestQaoaHelpers(unittest.TestCase):

@@ -20,7 +20,8 @@ Current supported subset:
   string parameters are rejected instead of being coerced to numeric values.
   Gradient methods must be supported method-name strings.
   Solver backends must match the canonical runtime supported backend names.
-  Observed energies and optimizer results must provide finite real `fun` energy
+  Ansatz positional parameter counts are validated before backend use. Observed
+  energies and optimizer results must provide finite real `fun` energy
   and finite real `x` parameter values matching the initial parameter count;
   finite-difference steps must be positive finite real values.
   Custom optimizer objects must expose a callable `minimize()` method.

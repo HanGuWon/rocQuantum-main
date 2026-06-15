@@ -156,6 +156,15 @@ def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
     except (TypeError, ValueError):
         return tuple(float(value) for value in params)
 
+    required_keyword_only = [
+        parameter.name
+        for parameter in signature.parameters.values()
+        if parameter.kind == inspect.Parameter.KEYWORD_ONLY
+        and parameter.default is inspect.Parameter.empty
+    ]
+    if required_keyword_only:
+        raise ValueError("ansatz_kernel must not require keyword-only parameters.")
+
     positional = [
         parameter
         for parameter in signature.parameters.values()
@@ -166,8 +175,36 @@ def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
         }
         and parameter.default is inspect.Parameter.empty
     ]
-    if len(positional) == 1 and (params.size != 1 or _parameter_prefers_vector(positional[0])):
-        return (params.copy(),)
+    optional_positional = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+        and parameter.default is not inspect.Parameter.empty
+    ]
+    has_varargs = any(
+        parameter.kind == inspect.Parameter.VAR_POSITIONAL
+        for parameter in signature.parameters.values()
+    )
+    if len(positional) == 1 and not optional_positional and not has_varargs:
+        if _parameter_prefers_vector(positional[0]):
+            return (params.copy(),)
+
+    minimum_parameters = len(positional)
+    maximum_parameters = None if has_varargs else minimum_parameters + len(optional_positional)
+    if params.size < minimum_parameters:
+        raise ValueError(
+            f"ansatz_kernel expects at least {minimum_parameters} parameter value(s); "
+            f"got {params.size}."
+        )
+    if maximum_parameters is not None and params.size > maximum_parameters:
+        raise ValueError(
+            f"ansatz_kernel expects at most {maximum_parameters} parameter value(s); "
+            f"got {params.size}."
+        )
     return tuple(float(value) for value in params)
 
 # --- Optimizer Strategy Pattern Definition ---
