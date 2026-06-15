@@ -1052,6 +1052,29 @@ def test_framework_runtime_rejects_ambiguous_shots_before_native_dispatch(monkey
     assert batch_sim.probability_requests == []
 
 
+def test_framework_runtime_rejects_ambiguous_binding_dimensions(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    invalid_dimensions = (0, -1, True, np.bool_(False), 1.5, "2", b"2", 1.0 + 0.0j)
+    initial_instance_count = len(_FakeQuantumSimulator.instances)
+
+    for num_qubits in invalid_dimensions:
+        with pytest.raises(ValueError, match="num_qubits"):
+            RocQuantumRuntime.from_bindings(num_qubits)
+
+    for batch_size in invalid_dimensions:
+        with pytest.raises(ValueError, match="batch_size"):
+            RocQuantumRuntime.from_bindings(1, batch_size=batch_size)
+
+    assert len(_FakeQuantumSimulator.instances) == initial_instance_count
+
+    runtime = RocQuantumRuntime.from_bindings(np.int64(1), batch_size=np.int64(2))
+    assert runtime.num_qubits() == 1
+    assert runtime.batch_size() == 2
+
+
 def test_qiskit_backend_samples_mid_circuit_measurement_trajectory(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

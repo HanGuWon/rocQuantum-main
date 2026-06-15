@@ -71,13 +71,17 @@ def normalize_targets(targets: Iterable[int]) -> list[int]:
     return normalized
 
 
-def normalize_shots(shots: object) -> int:
-    if isinstance(shots, (bool, np.bool_)) or not isinstance(shots, Integral):
-        raise ValueError("shots must be a positive integer.")
-    normalized = int(shots)
+def normalize_positive_integer(value: object, label: str) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+        raise ValueError(f"{label} must be a positive integer.")
+    normalized = int(value)
     if normalized <= 0:
-        raise ValueError("shots must be positive.")
+        raise ValueError(f"{label} must be positive.")
     return normalized
+
+
+def normalize_shots(shots: object) -> int:
+    return normalize_positive_integer(shots, "shots")
 
 
 def normalize_params(params: Iterable[object] | None) -> list[float]:
@@ -715,12 +719,11 @@ class RocQuantumRuntime:
             simulator_cls = getattr(binding_module, "QSim", None)
         if simulator_cls is None:
             raise ImportError("rocquantum_bind exposes neither QuantumSimulator nor QSim.")
-        batch_size = int(batch_size)
-        if batch_size < 1:
-            raise ValueError("batch_size must be at least 1.")
+        num_qubits = normalize_positive_integer(num_qubits, "num_qubits")
+        batch_size = normalize_positive_integer(batch_size, "batch_size")
         if batch_size == 1:
-            return cls(simulator_cls(int(num_qubits)))
-        return cls(simulator_cls(int(num_qubits), batch_size))
+            return cls(simulator_cls(num_qubits))
+        return cls(simulator_cls(num_qubits, batch_size))
 
     def reset(self) -> None:
         reset = getattr(self.simulator, "reset", None)
