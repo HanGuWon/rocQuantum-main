@@ -15,6 +15,9 @@ Current supported subset:
   undirected edges before emitting ansatz cost phases or cost terms.
 - `VQE_Solver` passes vectors as one ansatz argument when the target kernel has a single vector-style parameter, including one-element vectors, so the QAOA helper and vector-parameter ansatzes can be evaluated directly by the VQE objective path.
 
+Install `rocquantum[solvers]` when using the default `SciPyOptimizer`; the
+base package keeps SciPy optional for users that provide their own optimizer.
+
 Minimal VQE example:
 
 ```python

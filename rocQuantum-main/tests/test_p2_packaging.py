@@ -114,6 +114,14 @@ class TestPyprojectExists(unittest.TestCase):
             data = tomllib.load(f)
         self.assertEqual(data["build-system"]["build-backend"], "scikit_build_core.build")
 
+    def test_pyproject_declares_core_runtime_dependency(self):
+        import tomllib
+        path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        self.assertIn("numpy>=1.21", data["project"]["dependencies"])
+
     def test_pyproject_includes_framework_adapter_packages(self):
         import tomllib
         path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
@@ -136,7 +144,8 @@ class TestPyprojectExists(unittest.TestCase):
 
         optional = data["project"]["optional-dependencies"]
         self.assertIn("cirq-core>=1.0", optional["cirq"])
-        self.assertIn("rocquantum[backends,pennylane,qiskit,cirq,dev]", optional["all"])
+        self.assertIn("scipy>=1.10", optional["solvers"])
+        self.assertIn("rocquantum[backends,pennylane,qiskit,cirq,solvers,dev]", optional["all"])
 
 
 if __name__ == "__main__":
