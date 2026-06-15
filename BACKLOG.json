@@ -369,14 +369,16 @@
                                 ],
                       "evidence":  [
                                        "rocQuantum-main/rocqCompiler/MLIRCompiler.cpp:83",
-                                       "rocQuantum-main/bindings.cpp:22"
+                                       "rocQuantum-main/rocq/kernel.py:228",
+                                       "rocQuantum-main/tests/test_p1_compiler.py:73",
+                                       "rocQuantum-main/tests/test_runtime_api_contract.py:159"
                                    ],
-                      "notes":  "Depends on stable hipStateVec gate backend semantics.",
-                      "status":  "Blocked",
+                      "notes":  "MVP Python and source-contract path is implemented; real ROCm runtime validation is still required for hardware evidence.",
+                      "status":  "Implemented",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "pending-local-commit",
-                      "evidence_link":  "rocQuantum-main/rocqCompiler/MLIRCompiler.cpp:83",
-                      "verification_path":  "Implement compile_and_execute runtime path; run tests.test_e2e_compiler_python_flows in \u0027.github/workflows/rocm-linux-build.yml\u0027 build job on ROCm host (/dev/kfd)."
+                      "commit_link":  "3253fcd",
+                      "evidence_link":  "rocQuantum-main/rocq/kernel.py:228",
+                      "verification_path":  "Run tests/test_p1_compiler.py, tests/test_runtime_api_contract.py, and tests/test_e2e_compiler_python_flows.py locally; run the same compile_and_execute path on a ROCm host (/dev/kfd) for hardware evidence."
                   },
                   {
                       "id":  "P1-PYAPI-002",
@@ -394,15 +396,17 @@
                                     "Docs examples for capability-driven selection"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/core.py:13",
-                                       "rocQuantum-main/tests/test_iqm_backend.py:1"
+                                       "rocQuantum-main/rocquantum/core.py:56",
+                                       "rocQuantum-main/rocq_cli.py:48",
+                                       "rocQuantum-main/tests/test_provider_backend_contract.py:17",
+                                       "rocQuantum-main/tests/test_p0_fixes.py:397"
                                    ],
-                      "notes":  "Improves user expectation management and error clarity.",
-                      "status":  "Blocked",
+                      "notes":  "Backend status metadata is exposed through list_backends() and rocq list-backends; skeleton providers remain opt-in only.",
+                      "status":  "Implemented",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "pending-local-commit",
-                      "evidence_link":  "rocQuantum-main/rocquantum/core.py:13",
-                      "verification_path":  "Land backend-status policy changes in rocquantum/core.py; run python-tests job and provider contract tests with credentials."
+                      "commit_link":  "9a0b664+d7a0859",
+                      "evidence_link":  "rocQuantum-main/rocquantum/core.py:56",
+                      "verification_path":  "Run tests/test_provider_backend_contract.py and tests/test_p0_fixes.py; provider credential lanes remain required for real non-skeleton backends."
                   },
                   {
                       "id":  "P2-STATEVEC-004",

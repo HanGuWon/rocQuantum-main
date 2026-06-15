@@ -9,12 +9,14 @@ No GPU / HIP / ROCm / requests / boto3 required.
 
 import ast
 import inspect
+import io
 import json
 import os
 import sys
 import tempfile
 import types
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -386,6 +388,39 @@ class TestCliRigettiPreflight(unittest.TestCase):
             source = f.read()
         self.assertIn("ROCQ_RIGETTI_S3_OUTPUT", source,
                        "CLI check_environment_vars must validate ROCQ_RIGETTI_S3_OUTPUT")
+
+    def test_list_backends_prints_status_metadata(self):
+        _ensure_fake_module("requests")
+        import importlib
+        import rocq_cli
+
+        rocq_cli = importlib.reload(rocq_cli)
+        stdout = io.StringIO()
+
+        with mock.patch.object(sys, "argv", ["rocq", "list-backends"]):
+            with redirect_stdout(stdout):
+                rocq_cli.main()
+
+        output = stdout.getvalue()
+        self.assertIn("Backend\tStatus\tNotes", output)
+        self.assertIn("qristal\tlocal_cli_client\trequires Qristal SDK CLI", output)
+        self.assertIn("ionq\tclient\t-", output)
+        self.assertNotIn("iqm\tunsupported_stub", output)
+
+    def test_list_backends_can_show_experimental_stubs(self):
+        _ensure_fake_module("requests")
+        import importlib
+        import rocq_cli
+
+        rocq_cli = importlib.reload(rocq_cli)
+        stdout = io.StringIO()
+
+        with mock.patch.object(sys, "argv", ["rocq", "list-backends", "--include-experimental"]):
+            with redirect_stdout(stdout):
+                rocq_cli.main()
+
+        output = stdout.getvalue()
+        self.assertIn("iqm\tunsupported_stub\trequires experimental opt-in", output)
 
 
 if __name__ == "__main__":
