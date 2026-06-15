@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import warnings
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -22,10 +23,27 @@ except ImportError:
 _MOCK_ENV_VAR = "ROCQ_ENABLE_MOCK_BACKENDS"
 _DISABLE_FUSION_ENV_VAR = "ROCQ_DISABLE_GATE_FUSION"
 _FUSABLE_SINGLE_QUBIT_GATES = {"x", "y", "z", "h", "s", "t", "rx", "ry", "rz"}
+_MOCK_BACKEND_NOTE = (
+    "{backend_name} is using the Python mock fallback because {env_var}=1 and the "
+    "native ROCm binding is unavailable. This path is for local smoke tests only; "
+    "it does not validate native ROCm/cuQuantum-style execution or performance."
+)
+
+
+class MockBackendWarning(RuntimeWarning):
+    """Raised when a canonical backend falls back to the Python mock implementation."""
 
 
 def _mock_backends_enabled() -> bool:
     return os.environ.get(_MOCK_ENV_VAR, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _warn_mock_backend(backend_name: str) -> None:
+    warnings.warn(
+        _MOCK_BACKEND_NOTE.format(backend_name=backend_name, env_var=_MOCK_ENV_VAR),
+        MockBackendWarning,
+        stacklevel=3,
+    )
 
 
 def _native_backend_error(module_name: str, backend_name: str) -> RuntimeError:
@@ -806,6 +824,7 @@ class StateVectorBackend(_BaseBackend):
         if hip_backend is None:
             if not _mock_backends_enabled():
                 raise _native_backend_error("_rocq_hip_backend", "state_vector")
+            _warn_mock_backend("state_vector")
             self._state = _MockStateVectorState(num_qubits)
             self._uses_mock = True
         else:
@@ -915,6 +934,7 @@ class DensityMatrixBackend(_BaseBackend):
         if dm_backend is None:
             if not _mock_backends_enabled():
                 raise _native_backend_error("rocq_hip", "density_matrix")
+            _warn_mock_backend("density_matrix")
             self._state = _MockDensityMatrixState(num_qubits)
             self._uses_mock = True
         else:

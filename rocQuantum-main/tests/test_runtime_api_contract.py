@@ -45,6 +45,22 @@ class _FakeBackend:
 
 
 class TestCanonicalRuntimeSurface(unittest.TestCase):
+    def _make_mock_statevector_backend(self, num_qubits=1):
+        from rocq.backends import MockBackendWarning, StateVectorBackend
+
+        with mock.patch("rocq.backends.hip_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                with self.assertWarnsRegex(MockBackendWarning, "state_vector is using the Python mock fallback"):
+                    return StateVectorBackend(num_qubits)
+
+    def _make_mock_density_backend(self, num_qubits=1):
+        from rocq.backends import DensityMatrixBackend, MockBackendWarning
+
+        with mock.patch("rocq.backends.dm_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                with self.assertWarnsRegex(MockBackendWarning, "density_matrix is using the Python mock fallback"):
+                    return DensityMatrixBackend(num_qubits)
+
     def test_observe_and_sample_exports_exist(self):
         self.assertTrue(callable(rocq.observe))
         self.assertTrue(callable(rocq.sample))
@@ -189,11 +205,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                 rocq.compile_and_execute(prep_state)
 
     def test_mock_statevector_backend_evaluates_hermitian_operator(self):
-        from rocq.backends import StateVectorBackend
-
-        with mock.patch("rocq.backends.hip_backend", None):
-            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
-                backend = StateVectorBackend(1)
+        backend = self._make_mock_statevector_backend(1)
 
         operator = HermitianOperator(np.diag([1.0, -1.0]), targets=[0])
 
@@ -224,11 +236,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(calls[0][4], np.dtype("complex64"))
 
     def test_mock_statevector_backend_evaluates_sparse_hamiltonian_operator(self):
-        from rocq.backends import StateVectorBackend
-
-        with mock.patch("rocq.backends.hip_backend", None):
-            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
-                backend = StateVectorBackend(1)
+        backend = self._make_mock_statevector_backend(1)
 
         operator = SparseHamiltonianOperator(
             data=np.array([1.0, -1.0], dtype=np.complex128),
@@ -395,44 +403,28 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(calls, [(1, [0, 1], [0, 1, 2], 2, 2)])
 
     def test_mock_statevector_sum_keeps_matrix_fallback(self):
-        from rocq.backends import StateVectorBackend
-
-        with mock.patch("rocq.backends.hip_backend", None):
-            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
-                backend = StateVectorBackend(1)
+        backend = self._make_mock_statevector_backend(1)
 
         operator = HermitianOperator(np.diag([1.0, -1.0]), targets=[0]) + 0.5
 
         self.assertEqual(backend.expectation(operator), 1.5)
 
     def test_mock_statevector_observable_division_scales_matrix_fallback(self):
-        from rocq.backends import StateVectorBackend
-
-        with mock.patch("rocq.backends.hip_backend", None):
-            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
-                backend = StateVectorBackend(1)
+        backend = self._make_mock_statevector_backend(1)
 
         operator = HermitianOperator(np.diag([1.0, -1.0]), targets=[0]) / 2
 
         self.assertEqual(backend.expectation(operator), 0.5)
 
     def test_mock_density_backend_evaluates_hermitian_sum(self):
-        from rocq.backends import DensityMatrixBackend
-
-        with mock.patch("rocq.backends.dm_backend", None):
-            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
-                backend = DensityMatrixBackend(1)
+        backend = self._make_mock_density_backend(1)
 
         operator = HermitianOperator(np.diag([1.0, -1.0]), targets=[0]) + 0.5
 
         self.assertEqual(backend.expectation(operator), 1.5)
 
     def test_mock_density_backend_evaluates_sparse_hamiltonian_sum(self):
-        from rocq.backends import DensityMatrixBackend
-
-        with mock.patch("rocq.backends.dm_backend", None):
-            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
-                backend = DensityMatrixBackend(1)
+        backend = self._make_mock_density_backend(1)
 
         operator = SparseHamiltonianOperator(
             data=np.array([1.0, -1.0], dtype=np.complex128),
@@ -444,11 +436,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(backend.expectation(operator), 1.5)
 
     def test_mock_density_backend_evaluates_offdiagonal_hermitian(self):
-        from rocq.backends import DensityMatrixBackend
-
-        with mock.patch("rocq.backends.dm_backend", None):
-            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
-                backend = DensityMatrixBackend(1)
+        backend = self._make_mock_density_backend(1)
 
         backend._state._density = np.array(  # noqa: SLF001 - contract test for fallback math
             [[0.5, 0.5], [0.5, 0.5]],
@@ -459,12 +447,9 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(backend.expectation(operator), 1.0)
 
     def test_mock_density_backend_applies_multi_qubit_kraus_noise_model(self):
-        from rocq.backends import DensityMatrixBackend
         from rocq.kernel import GateOp
 
-        with mock.patch("rocq.backends.dm_backend", None):
-            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
-                backend = DensityMatrixBackend(2)
+        backend = self._make_mock_density_backend(2)
 
         kraus = np.zeros((1, 4, 4), dtype=np.complex64)
         kraus[0, 3, 0] = 1.0

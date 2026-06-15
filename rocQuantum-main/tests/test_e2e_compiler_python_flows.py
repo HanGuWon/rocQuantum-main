@@ -16,6 +16,7 @@ import math
 import os
 import sys
 import unittest
+import warnings
 from unittest import mock
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -138,6 +139,8 @@ class TestCompilerE2EFlow(unittest.TestCase):
 
 class TestPythonPublicAPIFlow(unittest.TestCase):
     def test_rocq_execute_bell_flow(self):
+        from rocq.backends import MockBackendWarning
+
         @rocq.kernel
         def bell_program():
             q = rocq.qvec(2)
@@ -145,7 +148,9 @@ class TestPythonPublicAPIFlow(unittest.TestCase):
             rocq.cnot(q[0], q[1])
 
         with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
-            state = rocq.execute(bell_program, backend="state_vector")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", MockBackendWarning)
+                state = rocq.execute(bell_program, backend="state_vector")
         if isinstance(state, str):
             self.assertIn("mock_cpp_state_vector_data", state)
         else:
