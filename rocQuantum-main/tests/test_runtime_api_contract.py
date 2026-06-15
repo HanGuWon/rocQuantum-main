@@ -134,7 +134,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         data = np.array([1.0 + 0.0j])
         indices = np.array([0])
-        indptr = np.array([0, 1])
+        indptr = np.array([0, 1, 1])
         for shape in ((0, 2), (-2, 2), (2.5, 2), (True, 2), ("2", 2)):
             with self.subTest(shape=shape):
                 with self.assertRaisesRegex(ValueError, "SparseHamiltonianOperator shape dimension"):
@@ -151,11 +151,50 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         sparse = SparseHamiltonianOperator(data, indices, indptr, shape=(np.int64(2), np.int64(2)))
         self.assertEqual(sparse.shape, (2, 2))
 
+    def test_sparse_operator_validates_csr_payload_inputs(self):
+        data = np.array([1.0 + 0.0j])
+        indices = np.array([0])
+        indptr = np.array([0, 1, 1])
+
+        invalid_data = ([np.nan], [np.inf], [True], ["1.0"])
+        for value in invalid_data:
+            with self.subTest(data=value):
+                with self.assertRaisesRegex(ValueError, "CSR data"):
+                    SparseHamiltonianOperator(value, indices, indptr, shape=(2, 2))
+
+        invalid_indices = ([0.5], [True], ["0"], [-1])
+        for value in invalid_indices:
+            with self.subTest(indices=value):
+                with self.assertRaisesRegex(ValueError, "CSR indices"):
+                    SparseHamiltonianOperator(data, value, indptr, shape=(2, 2))
+
+        invalid_indptr = ([0, 1.5, 1], [0, True, 1], [0, "1", 1], [0, -1, 1])
+        for value in invalid_indptr:
+            with self.subTest(indptr=value):
+                with self.assertRaisesRegex(ValueError, "CSR indptr"):
+                    SparseHamiltonianOperator(data, indices, value, shape=(2, 2))
+
+        with self.assertRaisesRegex(ValueError, "data and indices lengths"):
+            SparseHamiltonianOperator([1.0, 2.0], indices, indptr, shape=(2, 2))
+        with self.assertRaisesRegex(ValueError, "indptr length"):
+            SparseHamiltonianOperator(data, indices, [0, 1], shape=(2, 2))
+        with self.assertRaisesRegex(ValueError, "start at 0 and end"):
+            SparseHamiltonianOperator(data, indices, [1, 1, 1], shape=(2, 2))
+        with self.assertRaisesRegex(ValueError, "monotonic"):
+            SparseHamiltonianOperator(data, indices, [0, 2, 1], shape=(2, 2))
+        with self.assertRaisesRegex(ValueError, "column index"):
+            SparseHamiltonianOperator(data, [2], indptr, shape=(2, 2))
+
+        sparse = SparseHamiltonianOperator(data, indices, indptr, shape=(2, 2))
+        np.testing.assert_array_equal(sparse.data, np.array([1.0 + 0.0j], dtype=np.complex128))
+        np.testing.assert_array_equal(sparse.indices, np.array([0], dtype=np.int64))
+        np.testing.assert_array_equal(sparse.indptr, np.array([0, 1, 1], dtype=np.int64))
+
     def test_observable_coefficients_must_be_finite_numeric_values(self):
         matrix = np.eye(2)
         data = np.array([1.0 + 0.0j])
         indices = np.array([0])
-        indptr = np.array([0, 1])
+        indptr = np.array([0, 1, 1])
 
         invalid_values = (np.nan, np.inf, -np.inf, True, "1.0")
         for value in invalid_values:

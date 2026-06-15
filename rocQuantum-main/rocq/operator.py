@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from numbers import Integral, Number
 from typing import TYPE_CHECKING, Iterable, List, Sequence, Tuple
 
+import numpy as np
+
 if TYPE_CHECKING:
     from .kernel import QuantumKernel
 
@@ -75,6 +77,71 @@ def _normalize_sparse_shape(shape) -> tuple[int, int]:
     if rows & (rows - 1):
         raise ValueError("SparseHamiltonianOperator shape dimension must be a power of two.")
     return rows, cols
+
+
+def _normalize_sparse_data(data):
+    try:
+        raw_data = np.asarray(data, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "SparseHamiltonianOperator CSR data must contain finite numeric values."
+        ) from exc
+
+    normalized = []
+    for value in raw_data:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError(
+                "SparseHamiltonianOperator CSR data must contain finite numeric values."
+            )
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError("SparseHamiltonianOperator CSR data must be finite.")
+        normalized.append(scalar)
+    return np.asarray(normalized, dtype=np.complex128)
+
+
+def _normalize_sparse_index_vector(values, label: str):
+    if isinstance(values, (str, bytes)):
+        raise ValueError(f"SparseHamiltonianOperator CSR {label} must contain integer indices.")
+    try:
+        raw_values = np.asarray(values, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"SparseHamiltonianOperator CSR {label} must contain integer indices."
+        ) from exc
+    normalized = [
+        _validate_nonnegative_integer(value, f"SparseHamiltonianOperator CSR {label}")
+        for value in raw_values
+    ]
+    try:
+        return np.asarray(normalized, dtype=np.int64)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(
+            f"SparseHamiltonianOperator CSR {label} must fit in signed 64-bit integers."
+        ) from exc
+
+
+def _normalize_sparse_csr(data, indices, indptr, shape: tuple[int, int]):
+    data_array = _normalize_sparse_data(data)
+    indices_array = _normalize_sparse_index_vector(indices, "indices")
+    indptr_array = _normalize_sparse_index_vector(indptr, "indptr")
+    rows, cols = shape
+
+    if data_array.size != indices_array.size:
+        raise ValueError("SparseHamiltonianOperator CSR data and indices lengths must match.")
+    if indptr_array.size != rows + 1:
+        raise ValueError("SparseHamiltonianOperator CSR indptr length must equal rows + 1.")
+    if (
+        indptr_array.size == 0
+        or int(indptr_array[0]) != 0
+        or int(indptr_array[-1]) != data_array.size
+    ):
+        raise ValueError("SparseHamiltonianOperator CSR indptr must start at 0 and end at nnz.")
+    if np.any(indptr_array[:-1] > indptr_array[1:]):
+        raise ValueError("SparseHamiltonianOperator CSR indptr must be monotonic.")
+    if np.any(indices_array < 0) or np.any(indices_array >= cols):
+        raise ValueError("SparseHamiltonianOperator CSR column index is out of bounds.")
+    return data_array, indices_array, indptr_array
 
 
 def _normalize_coefficient(value, name: str = "coefficient") -> complex:
@@ -197,10 +264,13 @@ class SparseHamiltonianOperator(QuantumOperator):
 
     def __init__(self, data, indices, indptr, shape, coefficient: Number = 1.0):
         super().__init__(coefficient)
-        self.data = data
-        self.indices = indices
-        self.indptr = indptr
         self.shape = _normalize_sparse_shape(shape)
+        self.data, self.indices, self.indptr = _normalize_sparse_csr(
+            data,
+            indices,
+            indptr,
+            self.shape,
+        )
 
     def to_string(self) -> str:
         return f"{self.coefficient} * SparseHamiltonian(CSR, shape={self.shape})"
