@@ -304,6 +304,14 @@ class TestVqeSolverContract(unittest.TestCase):
         from rocq.operator import PauliOperator
         from rocquantum.solvers.vqe_solver import Optimizer, VQE_Solver
 
+        class MissingEnergyOptimizer(Optimizer):
+            def minimize(self, fun, x0, args=()):
+                return types.SimpleNamespace(x=np.asarray(x0, dtype=float))
+
+        class MissingParameterOptimizer(Optimizer):
+            def minimize(self, fun, x0, args=()):
+                return types.SimpleNamespace(fun=-0.25)
+
         class BadEnergyOptimizer(Optimizer):
             def minimize(self, fun, x0, args=()):
                 return types.SimpleNamespace(fun=np.nan, x=np.asarray(x0, dtype=float))
@@ -325,6 +333,22 @@ class TestVqeSolverContract(unittest.TestCase):
         with mock.patch("rocquantum.solvers.vqe_solver.observe", return_value=np.inf):
             with self.assertRaisesRegex(ValueError, "observed energy must be finite"):
                 solver.evaluate_energy(hamiltonian, ansatz, 1, parameters=[0.25])
+
+        with self.assertRaisesRegex(ValueError, "optimizer result must provide 'fun'"):
+            VQE_Solver(optimizer=MissingEnergyOptimizer()).solve(
+                hamiltonian,
+                ansatz,
+                1,
+                initial_params=[0.25],
+            )
+
+        with self.assertRaisesRegex(ValueError, "optimizer result must provide 'x'"):
+            VQE_Solver(optimizer=MissingParameterOptimizer()).solve(
+                hamiltonian,
+                ansatz,
+                1,
+                initial_params=[0.25],
+            )
 
         with self.assertRaisesRegex(ValueError, "optimizer result energy must be finite"):
             VQE_Solver(optimizer=BadEnergyOptimizer()).solve(

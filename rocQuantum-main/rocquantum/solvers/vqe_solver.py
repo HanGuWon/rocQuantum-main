@@ -141,6 +141,13 @@ def _validate_backend_name(backend: str) -> str:
     return backend
 
 
+def _optimizer_result_attribute(result, attribute: str):
+    try:
+        return getattr(result, attribute)
+    except AttributeError as exc:
+        raise ValueError(f"optimizer result must provide '{attribute}'.") from exc
+
+
 def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
     params = _parameter_vector(params)
     underlying = getattr(ansatz_kernel, "_func", ansatz_kernel)
@@ -389,9 +396,12 @@ class VQE_Solver:
             x0=_parameter_vector(initial_params, label="initial_params"),
             args=(hamiltonian, ansatz_kernel, num_qubits)
         )
-        optimal_energy = _finite_real_scalar(result.fun, "optimizer result energy")
+        optimal_energy = _finite_real_scalar(
+            _optimizer_result_attribute(result, "fun"),
+            "optimizer result energy",
+        )
         optimal_parameters = _parameter_vector(
-            result.x,
+            _optimizer_result_attribute(result, "x"),
             label="optimizer result parameters",
         )
 

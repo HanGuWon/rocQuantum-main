@@ -20,8 +20,8 @@ Current supported subset:
   string parameters are rejected instead of being coerced to numeric values.
   Gradient methods must be supported method-name strings.
   Solver backends must match the canonical runtime supported backend names.
-  Observed energies and optimizer result energies/parameters must also be finite
-  real values; finite-difference steps must be positive finite real values.
+  Observed energies and optimizer results must provide finite real `fun` energy
+  and `x` parameter values; finite-difference steps must be positive finite real values.
   Custom optimizer objects must expose a callable `minimize()` method.
   `SciPyOptimizer` options must be a string-keyed mapping and are copied at
   construction so later caller-side mutation cannot silently change solver
