@@ -37,7 +37,7 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | Native HIP simulator core | IMPLEMENTED | Core statevector, tensor-network, and limited density-matrix primitives are real |
 | Compiler-driven execution | PARTIAL | `compile_and_execute()` has a narrow source-level qalloc/H/X/Y/Z/S/Sdg/T/Tdg/CNOT/CZ/SWAP/CCX/MCX/CSWAP/RX/RY/RZ/P/CRX/CRY/CRZ/CP MLIR subset; default Python bindings and the unwired `ROCQUANTUM_ENABLE_MLIR_COMPILER` CMake option now fail fast instead of linking unresolved MLIR compiler symbols, and broad compiler/runtime parity is still absent |
 | High-level expectation APIs | PARTIAL | Native kernels exist, and canonical `rocq` now has an experimental Clifford-only stabilizer/tableau path for Pauli propagation, but public API coverage is split and inconsistent |
-| Multi-GPU / distributed | PARTIAL | Real single-node scaffolding exists, multi-node requests now fail fast as explicit unsupported stubs, and many distributed paths remain `NOT_IMPLEMENTED` |
+| Multi-GPU / distributed | PARTIAL | Real single-node scaffolding exists, sampling/probability reductions can swap-localize covered non-local measured qubits, multi-node requests now fail fast as explicit unsupported stubs, and many broader distributed paths remain `NOT_IMPLEMENTED` |
 | Packaging / install / export | PARTIAL | Native build exists, but releasable packaging is not coherent |
 | Python surfaces | PARTIAL | Two divergent stacks exist, one with mock fallbacks |
 | Integrations | PARTIAL | Thin adapters exist, but PennyLane/Cirq/Qiskit sampling now prefers native `measure()` where available; Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, loop-local `break_loop` / `continue_loop`, and `switch_case` sampling can use state-collapsing `measure_qubit()` trajectories; Qiskit/PennyLane Pauli-observable paths avoid mandatory statevector readback; PennyLane `qml.Hermitian` and supported Qiskit dense `Operator` observables can use native dense-matrix single/batch expectation paths for supported targets; default multi-control gates route to native `MCX` / `CSWAP`; PennyLane `SparseHamiltonian` can use native CSR moments, including local batch readouts, with a correctness-first CSR statevector fallback; self-hosted ROCm CI now has a native binding/PennyLane/Qiskit/Cirq Bell-state smoke path, but artifacts are still required for hardware proof |
@@ -56,7 +56,7 @@ Current truth:
 - Experimental CI ROCm lane: `7.2.4`
 - Latest production ROCm verified from official AMD docs during this refresh: `7.2.4`
 - Newest AMD GPU target verified during this audit: `MI355X` / `gfx950`
-- Distributed non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix correctness fallback exists only as explicit slow/debug mode via `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
+- Distributed non-local single-qubit, controlled single-qubit, CNOT/CZ, generic matrix/control-matrix, and covered sampling/probability paths use RCCL-backed swap-localization where implemented; remaining unsupported distributed paths have explicit slow/debug fallback only via `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
 - RCCL is now wired for local-domain distributed expectation and sampling probability reductions when `ROCQ_HAVE_RCCL` is available, but this is still not general distributed execution.
 
 Recommended compatibility plan:

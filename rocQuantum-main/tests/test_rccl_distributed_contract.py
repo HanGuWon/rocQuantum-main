@@ -111,6 +111,7 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("distributed_expectation_host_fallback", source)
         self.assertIn("distributed_expectation_with_fallback", source)
         self.assertIn("distributed_sample_rccl", source)
+        self.assertIn("accumulate_distributed_sample_probabilities_rccl_localized", source)
         self.assertIn("distributed_sample_host_fallback", source)
         self.assertIn("distributed_sample_with_fallback", source)
         self.assertGreaterEqual(source.count("return distributed_expectation_with_fallback"), 5)
@@ -127,6 +128,24 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("status = distributed_expectation_matrix_rccl", matrix_block)
         self.assertIn("if (status != ROCQ_STATUS_NOT_IMPLEMENTED)", matrix_block)
         self.assertIn("return expectation_matrix_distributed_host_fallback", matrix_block)
+
+        sample_localized_block = source.split(
+            "inline rocqStatus_t accumulate_distributed_sample_probabilities_rccl_localized", 1
+        )[1].split("inline rocqStatus_t distributed_sample_rccl", 1)[0]
+        self.assertIn("localize_distributed_qubits_for_operation(handle, measured", sample_localized_block)
+        self.assertIn("restore_distributed_qubit_swaps(handle, swaps)", sample_localized_block)
+        self.assertIn("free_distributed_probability_buffers(handle, *rank_probs_out)", sample_localized_block)
+        self.assertIn("localized_measured", sample_localized_block)
+        self.assertIn("accumulate_distributed_sample_probabilities_rccl(", sample_localized_block)
+
+        probabilities_block = source.split("inline rocqStatus_t compute_distributed_sample_probabilities", 1)[1].split(
+            "inline rocqStatus_t apply_matrix_distributed_local_targets", 1
+        )[0]
+        self.assertIn("accumulate_distributed_sample_probabilities_rccl_localized", probabilities_block)
+        sample_block = source.split("inline rocqStatus_t distributed_sample_rccl", 1)[1].split(
+            "inline rocqStatus_t host_sample_state", 1
+        )[0]
+        self.assertIn("accumulate_distributed_sample_probabilities_rccl_localized", sample_block)
 
         sparse_block = source.split("rocqStatus_t rocsvGetSparseMatrixMoments(", 1)[1].split(
             "rocqStatus_t rocsvGetSparseMatrixMomentsBatch", 1
@@ -160,6 +179,16 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("rocqStatus_t rccl_status = distributed_swap_bits_rccl_remap", swap_block)
         self.assertIn("if (!distributed_host_fallback_enabled())", swap_block)
         self.assertIn("return distributed_swap_bits_host_remap(handle, qubit_idx1, qubit_idx2)", swap_block)
+
+        localize_block = source.split("inline rocqStatus_t localize_distributed_qubits_for_operation", 1)[1].split(
+            "inline rocqStatus_t launch_single_qubit_matrix_distributed_localized", 1
+        )[0]
+        self.assertIn("for (unsigned q : qubits)", localize_block)
+        self.assertIn("distributed_qubit_local(handle, q)", localize_block)
+        self.assertLess(
+            localize_block.find("if (distributed_qubit_local(handle, q) &&"),
+            localize_block.find("if (distributed_qubit_local(handle, q))"),
+        )
 
     def test_sampling_and_expectation_host_fallbacks_are_explicit(self):
         with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:

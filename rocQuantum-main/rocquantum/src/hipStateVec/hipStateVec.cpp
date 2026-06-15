@@ -1238,11 +1238,15 @@ inline rocqStatus_t localize_distributed_qubits_for_operation(
     std::vector<unsigned> reserved;
     reserved.reserve(qubits.size());
     for (unsigned q : qubits) {
+        if (distributed_qubit_local(handle, q) &&
+            std::find(reserved.begin(), reserved.end(), q) == reserved.end()) {
+            reserved.push_back(q);
+        }
+    }
+
+    for (unsigned q : qubits) {
         if (distributed_qubit_local(handle, q)) {
             localized_qubits->push_back(q);
-            if (std::find(reserved.begin(), reserved.end(), q) == reserved.end()) {
-                reserved.push_back(q);
-            }
             continue;
         }
 
@@ -4682,6 +4686,47 @@ inline rocqStatus_t accumulate_distributed_sample_probabilities_rccl(
     return ROCQ_STATUS_SUCCESS;
 }
 
+inline rocqStatus_t accumulate_distributed_sample_probabilities_rccl_localized(
+    rocsvInternalHandle* handle,
+    unsigned numQubits,
+    const std::vector<unsigned>& measured,
+    std::vector<double*>* rank_probs_out) {
+    if (!handle || measured.empty() || !rank_probs_out) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (distributed_all_qubits_local(handle, measured)) {
+        return accumulate_distributed_sample_probabilities_rccl(
+            handle, numQubits, measured, rank_probs_out);
+    }
+
+    std::vector<unsigned> localized_measured;
+    std::vector<std::pair<unsigned, unsigned>> swaps;
+    rocqStatus_t status =
+        localize_distributed_qubits_for_operation(handle, measured, &localized_measured, &swaps);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    status = accumulate_distributed_sample_probabilities_rccl(
+        handle, numQubits, localized_measured, rank_probs_out);
+    rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        if (rank_probs_out && !rank_probs_out->empty()) {
+            (void)free_distributed_probability_buffers(handle, *rank_probs_out);
+            rank_probs_out->clear();
+        }
+        return status;
+    }
+    if (restore_status != ROCQ_STATUS_SUCCESS) {
+        if (rank_probs_out && !rank_probs_out->empty()) {
+            (void)free_distributed_probability_buffers(handle, *rank_probs_out);
+            rank_probs_out->clear();
+        }
+        return restore_status;
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
 inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
                                             unsigned numQubits,
                                             const std::vector<unsigned>& measured,
@@ -4695,7 +4740,7 @@ inline rocqStatus_t distributed_sample_rccl(rocsvInternalHandle* handle,
     }
 
     std::vector<double*> rank_probs;
-    rocqStatus_t status = accumulate_distributed_sample_probabilities_rccl(
+    rocqStatus_t status = accumulate_distributed_sample_probabilities_rccl_localized(
         handle, numQubits, measured, &rank_probs);
     if (status != ROCQ_STATUS_SUCCESS) {
         return status;
@@ -5208,7 +5253,7 @@ inline rocqStatus_t compute_distributed_sample_probabilities(rocsvInternalHandle
     }
 
     std::vector<double*> rank_probs;
-    rocqStatus_t status = accumulate_distributed_sample_probabilities_rccl(
+    rocqStatus_t status = accumulate_distributed_sample_probabilities_rccl_localized(
         handle, numQubits, measured, &rank_probs);
     if (status != ROCQ_STATUS_SUCCESS) {
         return status;
