@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import subprocess
 import sys
@@ -107,6 +108,9 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("--json-output", smoke)
         self.assertIn("native_framework_smoke", smoke)
         self.assertIn("\"schema_version\": 1", smoke)
+        self.assertIn("native_rocm_evidence", smoke)
+        self.assertIn("actual_dev_kfd", smoke)
+        self.assertIn("assumed_rocm_device", smoke)
         self.assertIn("allow-missing-device-skip", smoke)
         self.assertIn("Build native Python bindings for framework smoke", workflow)
         self.assertIn("ROCQUANTUM_BUILD_BINDINGS=ON", workflow)
@@ -150,6 +154,56 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             self.assertEqual(payload["status"], "skipped")
             self.assertEqual(payload["results"], [])
             self.assertIn("/dev/kfd", payload["reason"])
+            self.assertFalse(payload["has_rocm_device"])
+            self.assertEqual(payload["device_probe"], "missing_dev_kfd")
+            self.assertFalse(payload["native_rocm_evidence"])
+            self.assertEqual(payload["native_rocm_evidence_count"], 0)
+            self.assertEqual(payload["evidence_kind"], "skip")
+
+    def test_native_rocm_framework_smoke_report_labels_only_real_device_passes_as_evidence(self):
+        spec = importlib.util.spec_from_file_location("native_framework_smoke", _NATIVE_FRAMEWORK_SMOKE)
+        module = importlib.util.module_from_spec(spec)
+        self.assertIsNotNone(spec.loader)
+        spec.loader.exec_module(module)
+
+        passed_steps = [
+            {"name": "native_binding", "status": "passed", "elapsed_ms": 1.0},
+            {"name": "pennylane", "status": "passed", "elapsed_ms": 2.0},
+        ]
+        real_report = module._make_report(
+            "passed",
+            passed_steps,
+            {"has_rocm_device": True, "device_probe": "actual_dev_kfd"},
+        )
+        assumed_report = module._make_report(
+            "passed",
+            passed_steps,
+            {"has_rocm_device": True, "device_probe": "assumed_rocm_device"},
+        )
+        failed_report = module._make_report(
+            "failed",
+            [
+                {"name": "native_binding", "status": "passed", "elapsed_ms": 1.0},
+                {"name": "pennylane", "status": "failed", "elapsed_ms": 2.0},
+            ],
+            {"has_rocm_device": True, "device_probe": "actual_dev_kfd"},
+        )
+
+        self.assertTrue(real_report["native_rocm_evidence"])
+        self.assertEqual(real_report["native_rocm_evidence_count"], 2)
+        self.assertEqual(real_report["evidence_kind"], "native_rocm")
+        self.assertTrue(all(result["native_rocm_evidence"] for result in real_report["results"]))
+
+        self.assertFalse(assumed_report["native_rocm_evidence"])
+        self.assertEqual(assumed_report["native_rocm_evidence_count"], 0)
+        self.assertEqual(assumed_report["evidence_kind"], "assumed_rocm_device")
+        self.assertTrue(all(not result["native_rocm_evidence"] for result in assumed_report["results"]))
+
+        self.assertFalse(failed_report["native_rocm_evidence"])
+        self.assertEqual(failed_report["native_rocm_evidence_count"], 1)
+        self.assertEqual(failed_report["evidence_kind"], "native_rocm_failed")
+        self.assertEqual(failed_report["results"][0]["evidence_kind"], "native_rocm")
+        self.assertEqual(failed_report["results"][1]["evidence_kind"], "native_rocm_failed")
 
     def test_shared_runtime_exposes_controlled_rotation_aliases(self):
         with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:

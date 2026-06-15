@@ -27,11 +27,19 @@ for path in [
     sys.path.insert(0, str(path))
 
 
-def _require_rocm_device() -> None:
+def _rocm_device_probe() -> dict[str, Any]:
+    if Path("/dev/kfd").exists():
+        return {"has_rocm_device": True, "device_probe": "actual_dev_kfd"}
     if os.environ.get("ROCQ_NATIVE_SMOKE_ASSUME_ROCM_DEVICE", "").strip().lower() in {"1", "true", "yes", "on"}:
-        return
-    if not Path("/dev/kfd").exists():
+        return {"has_rocm_device": True, "device_probe": "assumed_rocm_device"}
+    return {"has_rocm_device": False, "device_probe": "missing_dev_kfd"}
+
+
+def _require_rocm_device() -> dict[str, Any]:
+    probe = _rocm_device_probe()
+    if not probe["has_rocm_device"]:
         raise RuntimeError("Native framework smoke requires a ROCm runtime device at /dev/kfd.")
+    return probe
 
 
 def _assert_bell_state(statevector: object) -> None:
@@ -124,14 +132,49 @@ def _run_step(name: str, callback: Callable[[], None]) -> dict[str, Any]:
     }
 
 
-def _make_report(status: str, results: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+def _native_evidence_kind(status: str, device_probe: str) -> str:
+    if status == "skipped":
+        return "skip"
+    if status == "passed" and device_probe == "actual_dev_kfd":
+        return "native_rocm"
+    if device_probe == "actual_dev_kfd":
+        return "native_rocm_failed"
+    if device_probe == "assumed_rocm_device":
+        return "assumed_rocm_device"
+    return "non_native_or_failed"
+
+
+def _make_report(
+    status: str,
+    results: list[dict[str, Any]],
+    device_probe: dict[str, Any] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    probe = dict(device_probe or _rocm_device_probe())
+    actual_rocm_device = probe.get("device_probe") == "actual_dev_kfd"
+    evidence_count = 0
+    annotated_results = []
+    for result in results:
+        annotated = dict(result)
+        step_is_evidence = actual_rocm_device and annotated.get("status") == "passed"
+        annotated["native_rocm_evidence"] = bool(step_is_evidence)
+        annotated["evidence_kind"] = "native_rocm" if step_is_evidence else _native_evidence_kind(status, probe["device_probe"])
+        if step_is_evidence:
+            evidence_count += 1
+        annotated_results.append(annotated)
+    suite_is_evidence = bool(results) and status == "passed" and evidence_count == len(results)
     report = {
         "schema_version": 1,
         "suite": "native_framework_smoke",
         "status": status,
         "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "requires_rocm_device": True,
-        "results": results,
+        "has_rocm_device": bool(probe.get("has_rocm_device")),
+        "device_probe": probe["device_probe"],
+        "native_rocm_evidence": suite_is_evidence,
+        "native_rocm_evidence_count": evidence_count,
+        "evidence_kind": "native_rocm" if suite_is_evidence else _native_evidence_kind(status, probe["device_probe"]),
+        "results": annotated_results,
     }
     report.update(extra)
     return report
@@ -156,10 +199,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        _require_rocm_device()
+        device_probe = _require_rocm_device()
     except RuntimeError as exc:
         status = "skipped" if args.allow_missing_device_skip else "failed"
-        report = _make_report(status, [], reason=str(exc))
+        report = _make_report(status, [], _rocm_device_probe(), reason=str(exc))
         _write_report(report, args.json_output)
         if args.allow_missing_device_skip:
             print(f"native framework smoke: skipped: {exc}")
@@ -175,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     ]
     results = [_run_step(name, callback) for name, callback in steps]
     status = "passed" if all(result["status"] == "passed" for result in results) else "failed"
-    report = _make_report(status, results)
+    report = _make_report(status, results, device_probe)
     _write_report(report, args.json_output)
     return 0 if status == "passed" else 1
 
