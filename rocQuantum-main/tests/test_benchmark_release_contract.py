@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,6 +21,15 @@ DISTRIBUTED_BENCHMARK = os.path.join(
     "benchmarks",
     "distributed_reduction_benchmark.cpp",
 )
+
+
+def _load_runner_module():
+    spec = importlib.util.spec_from_file_location("run_release_benchmarks", RUNNER)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 class TestBenchmarkReleaseContract(unittest.TestCase):
@@ -75,6 +86,88 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
             self.assertTrue(all(result["status"] == "skipped" for result in summary["results"]))
             for result in summary["results"]:
                 self.assertTrue(os.path.exists(result["output"]))
+
+    def test_release_runner_extracts_distributed_speedup_metrics(self):
+        runner = _load_runner_module()
+        speedups = runner.extract_case_speedups(
+            {
+                "cases": [
+                    {
+                        "name": "rccl",
+                        "status": 0,
+                        "expectation_ms": 2.0,
+                        "dense_expectation_ms": 4.0,
+                        "sparse_moments_ms": 5.0,
+                        "sampling_ms": 10.0,
+                    },
+                    {
+                        "name": "host_fallback",
+                        "status": 0,
+                        "expectation_ms": 8.0,
+                        "dense_expectation_ms": 20.0,
+                        "sparse_moments_ms": 25.0,
+                        "sampling_ms": 8.0,
+                    },
+                ]
+            }
+        )
+
+        by_metric = {entry["metric"]: entry for entry in speedups}
+        self.assertEqual(by_metric["expectation_ms"]["baseline_case"], "host_fallback")
+        self.assertEqual(by_metric["expectation_ms"]["optimized_case"], "rccl")
+        self.assertAlmostEqual(by_metric["expectation_ms"]["speedup"], 4.0)
+        self.assertAlmostEqual(by_metric["dense_expectation_ms"]["speedup"], 5.0)
+        self.assertAlmostEqual(by_metric["sparse_moments_ms"]["speedup"], 5.0)
+        self.assertFalse(by_metric["sampling_ms"]["faster_than_baseline"])
+
+    def test_release_runner_adds_speedups_to_summary_when_output_has_cases(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "payload = {\n"
+                "    'cases': [\n"
+                "        {'name': 'rccl', 'status': 0, 'expectation_ms': 2.0, 'sparse_moments_ms': 3.0},\n"
+                "        {'name': 'host_fallback', 'status': 0, 'expectation_ms': 10.0, 'sparse_moments_ms': 9.0},\n"
+                "    ]\n"
+                "}\n"
+                "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                "    json.dump(payload, f)\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_distributed",
+                                "category": "distributed",
+                                "executable": sys.executable,
+                                "output": "fake-distributed.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = runner.run(
+                manifest_path=manifest_path,
+                build_dir=tmp_path / "build",
+                output_dir=tmp_path / "artifacts",
+            )
+
+        result = summary["results"][0]
+        by_metric = {entry["metric"]: entry for entry in result["speedups"]}
+        self.assertEqual(result["status"], "passed")
+        self.assertAlmostEqual(by_metric["expectation_ms"]["speedup"], 5.0)
+        self.assertAlmostEqual(by_metric["sparse_moments_ms"]["speedup"], 3.0)
 
     def test_cmake_exposes_release_benchmark_targets(self):
         statevec_cmake = os.path.join(PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "CMakeLists.txt")

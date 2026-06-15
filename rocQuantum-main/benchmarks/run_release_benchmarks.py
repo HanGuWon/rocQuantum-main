@@ -48,6 +48,48 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def extract_case_speedups(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract host-fallback-over-RCCL speedups from benchmark case timings."""
+    cases = payload.get("cases")
+    if not isinstance(cases, list):
+        return []
+
+    by_name = {
+        case.get("name"): case
+        for case in cases
+        if isinstance(case, dict) and isinstance(case.get("name"), str)
+    }
+    rccl = by_name.get("rccl")
+    host_fallback = by_name.get("host_fallback")
+    if not isinstance(rccl, dict) or not isinstance(host_fallback, dict):
+        return []
+
+    metrics = sorted(
+        key
+        for key in set(rccl).intersection(host_fallback)
+        if key.endswith("_ms") and isinstance(rccl.get(key), (int, float)) and isinstance(host_fallback.get(key), (int, float))
+    )
+    speedups: list[dict[str, Any]] = []
+    for metric in metrics:
+        optimized_ms = float(rccl[metric])
+        baseline_ms = float(host_fallback[metric])
+        if optimized_ms <= 0.0 or baseline_ms <= 0.0:
+            continue
+        speedup = baseline_ms / optimized_ms
+        speedups.append(
+            {
+                "metric": metric,
+                "optimized_case": "rccl",
+                "baseline_case": "host_fallback",
+                "optimized_ms": optimized_ms,
+                "baseline_ms": baseline_ms,
+                "speedup": speedup,
+                "faster_than_baseline": speedup >= 1.0,
+            }
+        )
+    return speedups
+
+
 def _skip_result(entry: dict[str, Any], output_path: Path, reason: str, executable: Path) -> dict[str, Any]:
     payload = {
         "benchmark": entry["id"],
@@ -102,7 +144,7 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
             },
         )
 
-    return {
+    result = {
         "id": entry["id"],
         "category": entry.get("category"),
         "status": status,
@@ -113,6 +155,14 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
         "executable": str(executable),
         "duration_seconds": duration,
     }
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        speedups = extract_case_speedups(payload)
+        if speedups:
+            result["speedups"] = speedups
+    except (OSError, json.JSONDecodeError) as exc:
+        result["analysis_warning"] = f"could not analyze benchmark output: {exc}"
+    return result
 
 
 def run(manifest_path: Path, build_dir: Path, output_dir: Path) -> dict[str, Any]:
