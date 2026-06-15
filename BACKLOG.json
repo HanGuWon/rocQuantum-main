@@ -303,15 +303,18 @@
                                 ],
                       "evidence":  [
                                        "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet_api.h:7",
-                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:169",
-                                       "rocQuantum-main/rocquantum/src/hipTensorNet/CMakeLists.txt:10"
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:49",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:107",
+                                       "rocQuantum-main/python/rocq/bindings.cpp:60",
+                                       "rocQuantum-main/python/rocq/bindings.cpp:97",
+                                       "rocQuantum-main/tests/test_tensornet_contract.py:79"
                                    ],
-                      "notes":  "Current config API is richer than runtime behavior.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Runtime contraction planning now uses an effective pathfinder algorithm: unavailable METIS/KAHYPAR requests fall back to GREEDY, and the Python binding emits an explicit warning that points callers to get_tensornet_capabilities(). Real METIS/KAHYPAR library integration remains P1-TN-002.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet_api.h:7",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:49",
+                      "verification_path":  "Run rocQuantum-main/tests/test_tensornet_contract.py locally; run TensorNet contraction fallback smoke tests on a ROCm runner for hardware evidence."
                   },
                   {
                       "id":  "P1-TN-002",

@@ -79,6 +79,8 @@ class TestTensorNetContract(unittest.TestCase):
 
         self.assertIn("validate_optimizer_config", source)
         self.assertIn("pathfinder_algorithm_available", source)
+        self.assertIn("effective_pathfinder_algorithm", source)
+        self.assertIn(": ROCTN_PATHFINDER_ALGO_GREEDY", source)
         self.assertIn("ROCTN_PATHFINDER_ALGO_KAHYPAR", source)
         self.assertIn("ROCTN_PATHFINDER_ALGO_METIS", source)
         self.assertIn("selection_cost_for_algorithm", source)
@@ -86,6 +88,7 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("num_slices", source)
         self.assertIn("supports_memory_limit_planning = 1", source)
         self.assertIn("supports_runtime_slicing = 0", source)
+        self.assertNotIn("if (!pathfinder_algorithm_available(config.pathfinder_algorithm))", source)
 
     def test_python_binding_passes_optimizer_algorithm(self):
         with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
@@ -96,6 +99,7 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("ROCTN_PATHFINDER_ALGO_KAHYPAR", source)
         self.assertIn("ROCTN_PATHFINDER_ALGO_METIS", source)
         self.assertIn("get_tensornet_capabilities", source)
+        self.assertIn("warn_tensornet_pathfinder_fallback(config)", source)
 
     def test_python_binding_reports_actionable_tensornet_status_errors(self):
         with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
@@ -105,7 +109,9 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("tensornet_contract_status_message", source)
         self.assertIn("get_tensornet_capabilities()", source)
         self.assertIn("pathfinder_algorithm=", source)
-        self.assertIn("METIS/KAHYPAR pathfinders require", source)
+        self.assertIn("tensornet_pathfinder_supported", source)
+        self.assertIn("falling back to greedy", source)
+        self.assertIn("METIS/KAHYPAR parity", source)
         self.assertIn("Runtime slicing is not implemented", source)
         self.assertIn("num_slices must be non-negative", source)
         self.assertNotIn(

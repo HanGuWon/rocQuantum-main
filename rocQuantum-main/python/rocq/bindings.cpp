@@ -58,6 +58,20 @@ std::string tensornet_pathfinder_name(rocPathfinderAlgorithm_t algorithm) {
     }
 }
 
+bool tensornet_pathfinder_supported(const hipTensorNetCapabilities_t& caps,
+                                    rocPathfinderAlgorithm_t algorithm) {
+    switch (algorithm) {
+        case ROCTN_PATHFINDER_ALGO_GREEDY:
+            return caps.supports_pathfinder_greedy != 0;
+        case ROCTN_PATHFINDER_ALGO_KAHYPAR:
+            return caps.supports_pathfinder_kahypar != 0;
+        case ROCTN_PATHFINDER_ALGO_METIS:
+            return caps.supports_pathfinder_metis != 0;
+        default:
+            return true;
+    }
+}
+
 std::string tensornet_status_message(const std::string& operation, rocqStatus_t status) {
     std::string message = operation + " failed with " + rocq_status_name(status);
     if (status == ROCQ_STATUS_NOT_IMPLEMENTED) {
@@ -80,17 +94,37 @@ std::string tensornet_contract_status_message(
     message += std::string(" pathfinder_algorithm=") +
                tensornet_pathfinder_name(config.pathfinder_algorithm) + ".";
     if (status == ROCQ_STATUS_NOT_IMPLEMENTED) {
-        if (config.pathfinder_algorithm == ROCTN_PATHFINDER_ALGO_KAHYPAR ||
-            config.pathfinder_algorithm == ROCTN_PATHFINDER_ALGO_METIS) {
-            message += " METIS/KAHYPAR pathfinders require a build compiled with the matching optional library.";
-        } else {
-            message += " Runtime slicing is not implemented; memory_limit_bytes and num_slices only influence planning cost.";
-        }
+        message += " Runtime slicing is not implemented, or the requested TensorNet functionality is unavailable; "
+                   "memory_limit_bytes and num_slices only influence planning cost.";
     }
     if (status == ROCQ_STATUS_INVALID_VALUE && config.num_slices < 0) {
         message += " num_slices must be non-negative.";
     }
     return message;
+}
+
+void warn_tensornet_pathfinder_fallback(const hipTensorNetContractionOptimizerConfig_t& config) {
+    if (config.pathfinder_algorithm == ROCTN_PATHFINDER_ALGO_GREEDY) {
+        return;
+    }
+
+    hipTensorNetCapabilities_t caps{};
+    rocqStatus_t status = rocTensorNetworkGetCapabilities(&caps);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        throw std::runtime_error(tensornet_status_message("rocTensorNetworkGetCapabilities", status));
+    }
+    if (tensornet_pathfinder_supported(caps, config.pathfinder_algorithm)) {
+        return;
+    }
+
+    const std::string message =
+        "TensorNet pathfinder_algorithm=" +
+        tensornet_pathfinder_name(config.pathfinder_algorithm) +
+        " is not available in this build; falling back to greedy. "
+        "Check get_tensornet_capabilities() before relying on METIS/KAHYPAR parity.";
+    if (PyErr_WarnEx(PyExc_RuntimeWarning, message.c_str(), 1) != 0) {
+        throw py::error_already_set();
+    }
 }
 
 void warn_tensornet_planning_only_slicing(const hipTensorNetContractionOptimizerConfig_t& config) {
@@ -1192,6 +1226,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                 }
             }
 
+            warn_tensornet_pathfinder_fallback(config);
             warn_tensornet_planning_only_slicing(config);
 
             // TODO: The rocblas_handle and hipStream_t should be retrieved from the simulator handle.

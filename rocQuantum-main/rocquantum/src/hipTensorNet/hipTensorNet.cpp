@@ -49,6 +49,10 @@ inline bool pathfinder_algorithm_available(rocPathfinderAlgorithm_t algorithm) {
     }
 }
 
+inline rocPathfinderAlgorithm_t effective_pathfinder_algorithm(rocPathfinderAlgorithm_t algorithm) {
+    return pathfinder_algorithm_available(algorithm) ? algorithm : ROCTN_PATHFINDER_ALGO_GREEDY;
+}
+
 inline rocqStatus_t validate_optimizer_config(const hipTensorNetContractionOptimizerConfig_t& config) {
     switch (config.pathfinder_algorithm) {
         case ROCTN_PATHFINDER_ALGO_GREEDY:
@@ -57,9 +61,6 @@ inline rocqStatus_t validate_optimizer_config(const hipTensorNetContractionOptim
             break;
         default:
             return ROCQ_STATUS_INVALID_VALUE;
-    }
-    if (!pathfinder_algorithm_available(config.pathfinder_algorithm)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
     }
     if (config.num_slices < 0) {
         return ROCQ_STATUS_INVALID_VALUE;
@@ -105,9 +106,11 @@ inline size_t estimate_pair_memory_bytes(const rocquantum::util::rocTensor& a,
 inline size_t selection_cost_for_algorithm(const hipTensorNetContractionOptimizerConfig_t& config,
                                            size_t required_bytes,
                                            size_t contracted_modes) {
+    const rocPathfinderAlgorithm_t algorithm =
+        effective_pathfinder_algorithm(config.pathfinder_algorithm);
     size_t cost = required_bytes;
 
-    if (config.pathfinder_algorithm == ROCTN_PATHFINDER_ALGO_GREEDY) {
+    if (algorithm == ROCTN_PATHFINDER_ALGO_GREEDY) {
         cost += contracted_modes;
     }
 
