@@ -39,6 +39,40 @@ _COMPILER_UNSUPPORTED_FEATURES = (
     "arbitrary unitary/matrix operations",
     "release-linked default MLIR runtime",
 )
+_RUNTIME_EXECUTION_ENTRY_POINTS = (
+    "execute",
+    "get_state",
+    "sample",
+    "observe",
+    "execute_async",
+    "get_state_async",
+    "sample_async",
+    "observe_async",
+)
+_RUNTIME_SUPPORTED_BACKENDS = (
+    "state_vector",
+    "density_matrix",
+    "stabilizer",
+    "tableau",
+    "clifford",
+)
+_RUNTIME_SUPPORTED_FEATURES = (
+    "canonical kernel recording through @rocq.kernel",
+    "state readback through get_state()/execute()",
+    "selected-qubit sampling through sample()",
+    "observable evaluation through observe()",
+    "host-side Future wrappers for execute/get_state/sample/observe",
+    "state-vector-only enable_fusion execution option",
+    "density-matrix noise model execution",
+    "experimental Clifford stabilizer Pauli propagation backend",
+)
+_RUNTIME_UNSUPPORTED_FEATURES = (
+    "native HIP-stream futures",
+    "multi-QPU or distributed scheduler futures",
+    "statevector or estimator output for dynamic control-flow trajectories",
+    "one unified compiler/runtime stack across rocq and legacy python/rocq",
+    "production multi-GPU parity without self-hosted ROCm artifacts",
+)
 _BUILD_LOCK = threading.RLock()
 _ASYNC_EXECUTOR_LOCK = threading.Lock()
 _ASYNC_EXECUTOR: Optional[ThreadPoolExecutor] = None
@@ -77,6 +111,39 @@ def compiler_capabilities() -> Dict[str, object]:
             "Compiler execution requires rocquantum_bind.MLIRCompiler with the "
             "experimental rocqCompiler MLIR stack linked; default builds may expose "
             "a fail-fast DisabledRuntimeMLIRCompiler instead."
+        ),
+    }
+
+
+def runtime_capabilities() -> Dict[str, object]:
+    """Return the canonical Python runtime contract without running a kernel."""
+
+    return {
+        "status": "partial",
+        "primary_python_surface": "rocq",
+        "legacy_python_surface": "python/rocq compatibility API",
+        "execution_entry_points": list(_RUNTIME_EXECUTION_ENTRY_POINTS),
+        "supported_backends": list(_RUNTIME_SUPPORTED_BACKENDS),
+        "supported_features": list(_RUNTIME_SUPPORTED_FEATURES),
+        "unsupported_features": list(_RUNTIME_UNSUPPORTED_FEATURES),
+        "runtime_options": {
+            "enable_fusion": (
+                "Optional boolean accepted by state_vector execute/get_state/sample/"
+                "observe and their host-side async wrappers."
+            ),
+        },
+        "environment_switches": {
+            "ROCQ_DISABLE_GATE_FUSION": "Disables state-vector GateFusion when truthy.",
+            "ROCQ_ENABLE_MOCK_BACKENDS": "Enables local CPU mock backends when native ROCm bindings are missing.",
+        },
+        "legacy_note": (
+            "The python/rocq package remains a compatibility surface with conceptual "
+            "MLIR inspection and Python circuit replay; canonical runtime work should "
+            "target rocq."
+        ),
+        "performance_note": (
+            "Local tests can prove Python dispatch contracts, but ROCm performance proof "
+            "requires self-hosted ROCm CI artifacts or real AMD GPU hardware."
         ),
     }
 

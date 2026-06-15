@@ -64,6 +64,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
     def test_observe_and_sample_exports_exist(self):
         self.assertTrue(callable(rocq.distributed_capabilities))
+        self.assertTrue(callable(rocq.runtime_capabilities))
         self.assertTrue(callable(rocq.observe))
         self.assertTrue(callable(rocq.sample))
         self.assertTrue(callable(rocq.compile_and_execute))
@@ -83,6 +84,29 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         ):
             self.assertIn(name, rocq.__all__)
         self.assertIn("distributed_capabilities", rocq.__all__)
+        self.assertIn("runtime_capabilities", rocq.__all__)
+
+    def test_runtime_capabilities_expose_canonical_runtime_contract(self):
+        capabilities = rocq.runtime_capabilities()
+
+        self.assertEqual(capabilities["status"], "partial")
+        self.assertEqual(capabilities["primary_python_surface"], "rocq")
+        self.assertIn("python/rocq", capabilities["legacy_python_surface"])
+        self.assertIn("execute", capabilities["execution_entry_points"])
+        self.assertIn("observe_async", capabilities["execution_entry_points"])
+        self.assertIn("state_vector", capabilities["supported_backends"])
+        self.assertIn(
+            "state-vector-only enable_fusion execution option",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
+            "native HIP-stream futures",
+            capabilities["unsupported_features"],
+        )
+        self.assertIn("enable_fusion", capabilities["runtime_options"])
+        self.assertIn("ROCQ_DISABLE_GATE_FUSION", capabilities["environment_switches"])
+        self.assertIn("compatibility surface", capabilities["legacy_note"])
+        self.assertIn("self-hosted ROCm CI", capabilities["performance_note"])
 
     def test_distributed_capabilities_expose_partial_runtime_contract(self):
         capabilities = rocq.distributed_capabilities()

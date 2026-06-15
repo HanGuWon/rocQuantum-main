@@ -46,6 +46,7 @@ class TestCanonicalImports(unittest.TestCase):
             get_state_async,
             observe,
             observe_async,
+            runtime_capabilities,
             sample,
             sample_async,
         )
@@ -57,6 +58,7 @@ class TestCanonicalImports(unittest.TestCase):
         self.assertIsNotNone(get_state_async)
         self.assertIsNotNone(observe)
         self.assertIsNotNone(observe_async)
+        self.assertIsNotNone(runtime_capabilities)
         self.assertIsNotNone(sample)
         self.assertIsNotNone(sample_async)
 
@@ -77,6 +79,7 @@ class TestFutureCanonicalRuntimeSurface(unittest.TestCase):
         import rocq
         self.assertTrue(callable(rocq.distributed_capabilities))
         self.assertTrue(callable(rocq.compiler_capabilities))
+        self.assertTrue(callable(rocq.runtime_capabilities))
         self.assertTrue(callable(rocq.observe))
         self.assertTrue(callable(rocq.sample))
         self.assertTrue(callable(rocq.get_state))

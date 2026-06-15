@@ -15,6 +15,7 @@ from .kernel import (
     kernel,
     observe,
     observe_async,
+    runtime_capabilities,
     sample,
     sample_async,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "distributed_capabilities",
     "QuantumKernel",
     "compiler_capabilities",
+    "runtime_capabilities",
     "QuantumOperator",
     "PauliOperator",
     "HermitianOperator",
