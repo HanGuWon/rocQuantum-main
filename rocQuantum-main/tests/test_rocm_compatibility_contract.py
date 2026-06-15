@@ -114,6 +114,27 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn("CMAKE_HIP_ARCHITECTURES", ci_setup)
         self.assertNotIn("AMDGPU_TARGETS", ci_setup)
 
+    def test_self_hosted_rocm_runtime_workflow_is_mandatory_source_contract(self):
+        workflow = _read(ROCM_CI_WORKFLOW)
+
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("rocm-runtime-self-hosted:", workflow)
+        self.assertIn("needs: fast-checks", workflow)
+        self.assertIn("github.event.pull_request.head.repo.fork == false", workflow)
+        for label in ["self-hosted", "linux", "x64", "rocm", "rocm-gpu", "gfx90a"]:
+            self.assertIn(f"- {label}", workflow)
+        self.assertIn("Probe ROCm runtime prerequisites", workflow)
+        self.assertIn("bash scripts/probe_rocm_runtime.sh", workflow)
+        self.assertIn("Run ROCm runtime tests (1 GPU smoke)", workflow)
+        self.assertIn("HipTensorNetContractionRegression", workflow)
+        self.assertIn("RocTensorUtilTest", workflow)
+        self.assertIn("SlicingLogicTest", workflow)
+        self.assertIn("PermutationKernelTest", workflow)
+        self.assertIn("Run distributed MultiGPUTests when >= 2 GPUs", workflow)
+        self.assertIn('-R "MultiGPUTests"', workflow)
+        self.assertIn("actions/upload-artifact@v4", workflow)
+        self.assertIn("rocm-runtime-${{ github.run_id }}", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

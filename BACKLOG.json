@@ -17,15 +17,19 @@
                                     "Self-hosted run: ctest -R \"MultiGPUTests|HipTensorNetContractionRegression\""
                                 ],
                       "evidence":  [
-                                       ".github/workflows/rocm-linux-build.yml:54",
-                                       ".github/workflows/rocm-linux-build.yml:106"
+                                       ".github/workflows/rocm-ci.yml:86",
+                                       ".github/workflows/rocm-ci.yml:91",
+                                       ".github/workflows/rocm-ci.yml:129",
+                                       ".github/workflows/rocm-ci.yml:165",
+                                       ".github/workflows/rocm-ci.yml:185",
+                                       "rocQuantum-main/tests/test_rocm_compatibility_contract.py:115"
                                    ],
-                      "notes":  "Container compile lane exists but runtime is currently skippable without /dev/kfd.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Self-hosted gfx90a runtime workflow is source-defined and contract-tested; real pass/fail artifacts still require an attached ROCm runner.",
+                      "status":  "Implemented",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "1ae04e5",
-                      "evidence_link":  ".github/workflows/rocm-ci.yml:79",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-ci.yml\u0027 job \u0027rocm-runtime-self-hosted\u0027 on a labeled gfx90a runner and attach artifacts."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  ".github/workflows/rocm-ci.yml:86",
+                      "verification_path":  "Run tests/test_rocm_compatibility_contract.py locally; run \u0027.github/workflows/rocm-ci.yml\u0027 job \u0027rocm-runtime-self-hosted\u0027 on a labeled gfx90a runner and attach artifacts."
                   },
                   {
                       "id":  "P0-CI-002",
