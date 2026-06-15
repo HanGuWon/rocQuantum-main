@@ -17,7 +17,9 @@ Current supported subset:
 - End-of-circuit ancilla sampling through `rocq.sample()`.
 - Generic `QEC_Experiment.run_single_round()` can execute generated canonical
   stabilizer fragments through `rocq.sample()` when legacy `circuit_ref`
-  measurement hooks are unavailable.
+  measurement hooks are unavailable. Custom code and decoder objects must expose
+  callable `generate_stabilizer_circuits()`, `define_logical_operators()`, and
+  `decode()` methods.
 - Lookup-table correction through `RepetitionCodeDecoder`.
 - Syndrome histogram, repeated-round correction summary, and correction-success
   analysis for sampled counts.

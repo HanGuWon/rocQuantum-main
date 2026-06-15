@@ -792,7 +792,7 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "positive-integer shot/round/num_qubits, backend, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
+            "positive-integer shot/round/num_qubits, backend, code/decoder interface, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -939,6 +939,38 @@ class TestQecHelpers(unittest.TestCase):
             run_repetition_code_rounds(rounds=1.5)
         with self.assertRaisesRegex(ValueError, "shots must be positive"):
             run_repetition_code_rounds(shots=0)
+
+    def test_qec_experiment_validates_code_and_decoder_interfaces(self):
+        from rocquantum.qec.framework import QEC_Experiment
+
+        class MissingLogicalCode:
+            def generate_stabilizer_circuits(self, initial_state_kernel, num_qubits, backend="state_vector"):
+                return []
+
+        class ValidInterfaceCode:
+            def generate_stabilizer_circuits(self, initial_state_kernel, num_qubits, backend="state_vector"):
+                return []
+
+            def define_logical_operators(self):
+                return {}
+
+        class MissingDecode:
+            pass
+
+        experiment = QEC_Experiment()
+        with self.assertRaisesRegex(ValueError, "generate_stabilizer_circuits"):
+            experiment.run_single_round(object(), MissingDecode(), None, 5, [], shots=1)
+        with self.assertRaisesRegex(ValueError, "define_logical_operators"):
+            experiment.run_single_round(MissingLogicalCode(), MissingDecode(), None, 5, [], shots=1)
+        with self.assertRaisesRegex(ValueError, "decoder must define"):
+            experiment.run_single_round(
+                ValidInterfaceCode(),
+                MissingDecode(),
+                None,
+                5,
+                [],
+                shots=1,
+            )
 
     def test_repetition_code_counts_analysis_reports_success_rate(self):
         from rocquantum.qec import analyze_repetition_code_counts

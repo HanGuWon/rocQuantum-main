@@ -101,6 +101,15 @@ def _validate_backend_name(backend: str) -> str:
     return backend
 
 
+def _validate_code_and_decoder(code, decoder) -> None:
+    if not callable(getattr(code, "generate_stabilizer_circuits", None)):
+        raise ValueError("code must define a callable generate_stabilizer_circuits method.")
+    if not callable(getattr(code, "define_logical_operators", None)):
+        raise ValueError("code must define a callable define_logical_operators method.")
+    if not callable(getattr(decoder, "decode", None)):
+        raise ValueError("decoder must define a callable decode method.")
+
+
 class QuantumErrorCode(ABC):
     """Abstract base class for defining a quantum error-correcting code."""
     @abstractmethod
@@ -202,6 +211,7 @@ class QEC_Experiment:
             ancilla_qubit_indices,
             num_qubits,
         )
+        _validate_code_and_decoder(code, decoder)
 
         self._log("Step 1: Generating stabilizer measurement circuit fragments...")
         stabilizer_circuits = code.generate_stabilizer_circuits(
