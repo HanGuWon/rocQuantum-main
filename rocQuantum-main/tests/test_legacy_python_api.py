@@ -28,7 +28,29 @@ def _fake_backend(with_fusion=True):
     backend.rocqStatus = _Status
     backend.DeviceBuffer = type("DeviceBuffer", (), {})
     backend.GateOp = type("GateOp", (), {})
-    backend.MLIRCompiler = type("MLIRCompiler", (), {})
+
+    class _MLIRCompiler:
+        def __init__(self):
+            self.module_name = None
+            self.module_string = ""
+
+        def initialize_module(self, name):
+            self.module_name = name
+            backend.calls.append(("initialize_module", (name,)))
+            return True
+
+        def load_module_from_string(self, mlir_string):
+            self.module_string = mlir_string
+            backend.calls.append(("load_module", (mlir_string,)))
+            return True
+
+        def get_module_string(self):
+            return self.module_string
+
+        def dump_module(self):
+            backend.calls.append(("dump_module", (self.module_string,)))
+
+    backend.MLIRCompiler = _MLIRCompiler
 
     def _record(name, value):
         def _helper(*args):
@@ -43,6 +65,8 @@ def _fake_backend(with_fusion=True):
     backend.get_expectation_pauli_string = _record("pauli", 0.125)
     backend.allocate_state_internal = _record("allocate_state", "device-state")
     backend.initialize_state = _record("initialize_state", _Status.SUCCESS)
+    backend.allocate_distributed_state = _record("allocate_distributed_state", _Status.SUCCESS)
+    backend.initialize_distributed_state = _record("initialize_distributed_state", _Status.SUCCESS)
     backend.get_state_vector_full = _record(
         "state_full",
         np.array([1, 0, 0, 0, 0, 1, 0, 0], dtype=np.complex64),
@@ -185,6 +209,19 @@ class TestLegacyCircuitBatchState(unittest.TestCase):
         with self.assertRaisesRegex(NotImplementedError, "multi_gpu=True"):
             module.Circuit(2, simulator, multi_gpu=True, batch_size=2)
 
+    def test_multi_gpu_constructor_warns_about_partial_support(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        simulator = _make_simulator(module)
+
+        with self.assertWarnsRegex(module.ExperimentalMultiGpuWarning, "experimental partial") as warning:
+            circuit = module.Circuit(2, simulator, multi_gpu=True)
+
+        self.assertTrue(circuit.is_multi_gpu)
+        self.assertEqual(circuit.execution_notes, [str(warning.warning)])
+        self.assertIn(("allocate_distributed_state", ("handle", 2)), backend.calls)
+        self.assertIn(("initialize_distributed_state", ("handle",)), backend.calls)
+
     def test_batched_statevector_readback_can_return_slice_or_full_batch(self):
         backend = _fake_backend()
         backend.get_state_vector_slice = lambda *args: (
@@ -257,6 +294,46 @@ class TestLegacyCircuitExpectation(unittest.TestCase):
 
         self.assertEqual(result, 0.5)
         self.assertEqual([call[0] for call in backend.calls], ["x"])
+
+
+class TestLegacyBuildExecutionContract(unittest.TestCase):
+    def test_build_records_python_replay_mode_and_warns(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        simulator = _make_simulator(module)
+
+        @module.kernel
+        def bell(circuit):
+            circuit.h(0)
+            circuit.cx(0, 1)
+
+        with self.assertWarnsRegex(module.LegacyCompilerReplayWarning, "Python circuit replay") as warning:
+            program = module.build(bell, 2, simulator)
+
+        self.assertEqual(program.execution_mode, "python-replay")
+        self.assertFalse(program.compiler_execution_supported)
+        self.assertEqual(program.execution_notes, [str(warning.warning)])
+        self.assertIn("execution_mode='python-replay'", repr(program))
+        self.assertIsInstance(program.circuit_ref, module.Circuit)
+        self.assertIn(("allocate_state", ("handle", 2, 1)), backend.calls)
+        self.assertIn(("initialize_state", ("handle", "device-state", 2)), backend.calls)
+        self.assertEqual([op.name for op in program.circuit_ref._gate_queue], ["H", "CNOT"])
+
+    def test_build_without_simulator_is_conceptual_mlir_only(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+
+        @module.kernel
+        def single(circuit):
+            circuit.h(0)
+
+        program = module.build(single, 1, None)
+
+        self.assertEqual(program.execution_mode, "conceptual-mlir")
+        self.assertIsNone(program.circuit_ref)
+        self.assertFalse(program.compiler_execution_supported)
+        self.assertEqual(len(program.execution_notes), 1)
+        self.assertIn("does not call MLIRCompiler.compile_and_execute()", program.execution_notes[0])
 
 
 if __name__ == "__main__":

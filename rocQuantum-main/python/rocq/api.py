@@ -1,10 +1,32 @@
 import os
+import warnings
 
 import numpy as np
 from . import _rocq_hip_backend as backend # Assuming the compiled module is named this
 
 _DISABLE_FUSION_ENV_VAR = "ROCQ_DISABLE_GATE_FUSION"
 _FUSABLE_SINGLE_QUBIT_GATES = {"X", "Y", "Z", "H", "S", "T", "RX", "RY", "RZ"}
+_LEGACY_CONCEPTUAL_MLIR_MODE = "conceptual-mlir"
+_LEGACY_PYTHON_REPLAY_MODE = "python-replay"
+_LEGACY_BUILD_EXECUTION_NOTE = (
+    "legacy python/rocq build() emits conceptual MLIR for inspection, but "
+    "runtime execution is Python circuit replay through Circuit methods. It "
+    "does not call MLIRCompiler.compile_and_execute()."
+)
+_MULTI_GPU_PARTIAL_NOTE = (
+    "multi_gpu=True uses experimental partial distributed state-vector support. "
+    "Only local-domain gates and limited measurement/readback paths are native; "
+    "non-local correctness fallbacks must be enabled explicitly and are slow/debug "
+    "paths, not CUDA-Q/cuStateVec-style full distributed execution."
+)
+
+
+class LegacyCompilerReplayWarning(RuntimeWarning):
+    """Raised when legacy build() execution uses Python replay rather than MLIR execution."""
+
+
+class ExperimentalMultiGpuWarning(RuntimeWarning):
+    """Raised when the legacy API enters the partial multi-GPU backend path."""
 
 class Simulator:
     """
@@ -54,6 +76,7 @@ class Circuit:
         self.simulator = simulator
         self._sim_handle = simulator._handle_wrapper
         self.is_multi_gpu = multi_gpu
+        self.execution_notes = [_MULTI_GPU_PARTIAL_NOTE] if self.is_multi_gpu else []
         self.batch_size = batch_size
         self._d_state_buffer = None
         self._gate_queue = []
@@ -62,6 +85,7 @@ class Circuit:
 
         try:
             if self.is_multi_gpu:
+                warnings.warn(_MULTI_GPU_PARTIAL_NOTE, ExperimentalMultiGpuWarning, stacklevel=2)
                 if num_qubits == 0 and self.simulator.handle.get_num_gpus() > 1:
                      raise ValueError("Cannot create a 0-qubit distributed state across multiple GPUs. Use single GPU mode or at least log2(num_gpus) qubits.")
                 try:
@@ -614,7 +638,10 @@ import inspect
 
 class QuantumProgram:
     def __init__(self, name: str, num_qubits: int, mlir_compiler: backend.MLIRCompiler,
-                 kernel_func=None, static_args=None, simulator_ref=None):
+                 kernel_func=None, static_args=None, simulator_ref=None,
+                 execution_mode: str = _LEGACY_CONCEPTUAL_MLIR_MODE,
+                 compiler_execution_supported: bool = False,
+                 execution_notes: list[str] | None = None):
         self.name = name
         self.num_qubits = num_qubits
         self.mlir_compiler = mlir_compiler
@@ -623,10 +650,16 @@ class QuantumProgram:
         self._kernel_func = kernel_func
         self._static_args = static_args
         self._simulator_ref = simulator_ref
+        self.execution_mode = execution_mode
+        self.compiler_execution_supported = compiler_execution_supported
+        self.execution_notes = list(execution_notes or [])
 
     def __repr__(self):
         self.mlir_string = self.mlir_compiler.get_module_string()
-        return f"<QuantumProgram name='{self.name}' num_qubits={self.num_qubits}>\nMLIR:\n{self.mlir_string}"
+        return (
+            f"<QuantumProgram name='{self.name}' num_qubits={self.num_qubits} "
+            f"execution_mode='{self.execution_mode}'>\nMLIR:\n{self.mlir_string}"
+        )
 
     def dump(self):
         self.mlir_compiler.dump_module()
@@ -747,12 +780,20 @@ def build(kernel_func, num_qubits: int, simulator: Simulator, *args) -> QuantumP
                              compiler_instance,
                              kernel_func=kernel_func,
                              static_args=None,
-                             simulator_ref=simulator)
+                             simulator_ref=simulator,
+                             execution_mode=(
+                                 _LEGACY_PYTHON_REPLAY_MODE
+                                 if simulator
+                                 else _LEGACY_CONCEPTUAL_MLIR_MODE
+                             ),
+                             compiler_execution_supported=False,
+                             execution_notes=[_LEGACY_BUILD_EXECUTION_NOTE])
 
     if simulator:
         if not isinstance(simulator, Simulator):
              raise TypeError("A valid rocQ Simulator object is required if execution is expected.")
 
+        warnings.warn(_LEGACY_BUILD_EXECUTION_NOTE, LegacyCompilerReplayWarning, stacklevel=2)
         program.circuit_ref = Circuit(num_qubits, program._simulator_ref)
 
         kernel_args_for_py_call = [program.circuit_ref] + list(args)
