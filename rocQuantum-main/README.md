@@ -151,11 +151,13 @@ DensityMat channel/observable/sampling timing. The runner
 emits one JSON file per benchmark plus `benchmark-summary.json` and `benchmark-summary.md`;
 distributed RCCL-vs-host artifacts include host-fallback-over-RCCL speedup ratios when both cases
 run, and configured minimum speedups or missing configured speedup metrics fail the benchmark job
-through `--fail-on-error`. If a native binary or ROCm device is unavailable, it writes an explicit
-skipped artifact instead of pretending a result exists. If a benchmark executable runs but fails to
-write valid JSON, the runner marks that benchmark failed so `--fail-on-error` cannot publish an
-empty performance proof. Passing `--history-path` also updates a bounded `benchmark-history.json` so
-CI artifacts can retain recent speedup/status trends.
+through `--fail-on-error`. Each result and summary also records whether it is native performance
+evidence, so skipped, CPU-only, mock, or fake benchmark runs cannot be mistaken for ROCm timing
+proof. If a native binary or ROCm device is unavailable, it writes an explicit skipped artifact
+instead of pretending a result exists. If a benchmark executable runs but fails to write valid JSON,
+the runner marks that benchmark failed so `--fail-on-error` cannot publish an empty performance
+proof. Passing `--history-path` also updates a bounded `benchmark-history.json` so CI artifacts can
+retain recent speedup/status trends.
 
 ```bash
 python3 benchmarks/run_release_benchmarks.py \

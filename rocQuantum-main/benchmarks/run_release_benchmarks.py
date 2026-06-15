@@ -86,6 +86,8 @@ def _history_result_entry(result: dict[str, Any]) -> dict[str, Any]:
         "id": result.get("id"),
         "category": result.get("category"),
         "status": result.get("status"),
+        "performance_evidence": result.get("performance_evidence"),
+        "evidence_kind": result.get("evidence_kind"),
         "duration_seconds": result.get("duration_seconds"),
         "reason": result.get("reason"),
         "failure_reason": result.get("failure_reason"),
@@ -105,6 +107,8 @@ def _history_run_entry(summary: dict[str, Any]) -> dict[str, Any]:
         "build_dir": summary.get("build_dir"),
         "output_dir": summary.get("output_dir"),
         "has_rocm_device": summary.get("has_rocm_device"),
+        "has_native_performance_evidence": summary.get("has_native_performance_evidence"),
+        "native_performance_evidence_count": summary.get("native_performance_evidence_count"),
         "baseline_summary": summary.get("baseline_summary"),
         "max_speedup_regression": summary.get("max_speedup_regression"),
         "results": [
@@ -141,6 +145,24 @@ def update_benchmark_history(
     }
     _write_json(history_path, updated)
     return updated
+
+
+def refresh_performance_evidence_summary(summary: dict[str, Any]) -> None:
+    """Mark only final passed native ROCm results as performance evidence."""
+
+    count = 0
+    for result in summary.get("results", []):
+        if not isinstance(result, dict):
+            continue
+        is_evidence = (
+            result.get("status") == "passed"
+            and result.get("evidence_kind") == "native_rocm"
+        )
+        result["performance_evidence"] = bool(is_evidence)
+        if is_evidence:
+            count += 1
+    summary["has_native_performance_evidence"] = count > 0
+    summary["native_performance_evidence_count"] = count
 
 
 def extract_case_speedups(
@@ -265,6 +287,7 @@ def format_benchmark_summary_markdown(summary: dict[str, Any]) -> str:
         "# Release Benchmark Summary",
         "",
         f"- ROCm device detected: {_markdown_bool(bool(summary.get('has_rocm_device')))}",
+        f"- Native performance evidence: {_markdown_bool(bool(summary.get('has_native_performance_evidence')))}",
         f"- Output directory: `{summary.get('output_dir', '')}`",
     ]
     if summary.get("history"):
@@ -301,6 +324,8 @@ def _skip_result(entry: dict[str, Any], output_path: Path, reason: str, executab
     payload = {
         "benchmark": entry["id"],
         "status": "skipped",
+        "performance_evidence": False,
+        "evidence_kind": "skip",
         "reason": reason,
         "expected_executable": str(executable),
         "created_at_utc": _utc_now(),
@@ -310,6 +335,8 @@ def _skip_result(entry: dict[str, Any], output_path: Path, reason: str, executab
         "id": entry["id"],
         "category": entry.get("category"),
         "status": "skipped",
+        "performance_evidence": False,
+        "evidence_kind": "skip",
         "reason": reason,
         "output": str(output_path),
         "executable": str(executable),
@@ -357,6 +384,12 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
         "id": entry["id"],
         "category": entry.get("category"),
         "status": status,
+        "performance_evidence": False,
+        "evidence_kind": (
+            "native_rocm"
+            if entry.get("requires_rocm_device", False) and has_device
+            else "non_rocm_or_mock"
+        ),
         "returncode": completed.returncode,
         "output": str(output_path),
         "stdout": str(stdout_path),
@@ -403,6 +436,10 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
             result["failure_reason"] = f"{result['failure_reason']}; could not analyze benchmark output"
         else:
             result["failure_reason"] = "could not analyze benchmark output"
+    result["performance_evidence"] = (
+        result["status"] == "passed"
+        and result["evidence_kind"] == "native_rocm"
+    )
     return result
 
 
@@ -435,6 +472,8 @@ def run(
         "build_dir": str(build_dir),
         "output_dir": str(output_dir),
         "has_rocm_device": has_device,
+        "has_native_performance_evidence": False,
+        "native_performance_evidence_count": 0,
         "results": results,
     }
     if baseline_summary_path is not None:
@@ -442,6 +481,7 @@ def run(
         summary["baseline_summary"] = str(baseline_summary_path)
         summary["max_speedup_regression"] = max_speedup_regression
         apply_speedup_trend_gate(summary, baseline_summary, max_speedup_regression)
+    refresh_performance_evidence_summary(summary)
     if history_path is not None:
         history = update_benchmark_history(history_path, summary, history_limit)
         summary["history"] = str(history_path)

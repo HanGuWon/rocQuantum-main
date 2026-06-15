@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -92,16 +93,25 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                 summary = json.load(f)
 
             self.assertEqual(summary["schema_version"], 1)
+            self.assertFalse(summary["has_native_performance_evidence"])
+            self.assertEqual(summary["native_performance_evidence_count"], 0)
             self.assertTrue(summary["results"])
             self.assertTrue(all(result["status"] == "skipped" for result in summary["results"]))
             for result in summary["results"]:
+                self.assertFalse(result["performance_evidence"])
+                self.assertEqual(result["evidence_kind"], "skip")
                 self.assertTrue(os.path.exists(result["output"]))
+                with open(result["output"], "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                self.assertFalse(payload["performance_evidence"])
+                self.assertEqual(payload["evidence_kind"], "skip")
             markdown_path = os.path.join(output_dir, "benchmark-summary.md")
             self.assertTrue(os.path.exists(markdown_path))
             with open(markdown_path, "r", encoding="utf-8") as f:
                 markdown = f.read()
             self.assertIn("# Release Benchmark Summary", markdown)
             self.assertIn("ROCm device detected", markdown)
+            self.assertIn("Native performance evidence: no", markdown)
             self.assertIn("skipped", markdown)
 
     def test_release_runner_extracts_distributed_speedup_metrics(self):
@@ -189,10 +199,64 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         result = summary["results"][0]
         by_metric = {entry["metric"]: entry for entry in result["speedups"]}
         self.assertEqual(result["status"], "passed")
+        self.assertFalse(result["performance_evidence"])
+        self.assertEqual(result["evidence_kind"], "non_rocm_or_mock")
+        self.assertFalse(summary["has_native_performance_evidence"])
         self.assertAlmostEqual(by_metric["expectation_ms"]["speedup"], 5.0)
         self.assertAlmostEqual(by_metric["sparse_moments_ms"]["speedup"], 3.0)
         self.assertIn("`expectation_ms`: 5.000x", markdown)
         self.assertIn("`sparse_moments_ms`: 3.000x", markdown)
+
+    def test_release_runner_marks_passed_rocm_required_runs_as_performance_evidence(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "payload = {'cases': [\n"
+                "    {'name': 'rccl', 'status': 0, 'expectation_ms': 2.0},\n"
+                "    {'name': 'host_fallback', 'status': 0, 'expectation_ms': 8.0},\n"
+                "]}\n"
+                "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                "    json.dump(payload, f)\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_rocm_required",
+                                "category": "statevec",
+                                "executable": sys.executable,
+                                "output": "fake-rocm-required.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": True,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(os.environ, {"ROCQ_BENCHMARK_ASSUME_ROCM_DEVICE": "1"}):
+                summary = runner.run(
+                    manifest_path=manifest_path,
+                    build_dir=tmp_path / "build",
+                    output_dir=tmp_path / "artifacts",
+                )
+            markdown = (tmp_path / "artifacts" / "benchmark-summary.md").read_text(encoding="utf-8")
+
+        result = summary["results"][0]
+        self.assertEqual(result["status"], "passed")
+        self.assertTrue(result["performance_evidence"])
+        self.assertEqual(result["evidence_kind"], "native_rocm")
+        self.assertTrue(summary["has_native_performance_evidence"])
+        self.assertEqual(summary["native_performance_evidence_count"], 1)
+        self.assertIn("Native performance evidence: yes", markdown)
 
     def test_release_runner_fails_missing_declared_json_output(self):
         runner = _load_runner_module()
@@ -598,6 +662,8 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmark-summary.md", readme)
         self.assertIn("benchmark-history.json", readme)
         self.assertIn("speedup ratios", readme)
+        self.assertIn("native performance", readme)
+        self.assertIn("ROCm timing", readme)
         self.assertIn("--baseline-summary", readme)
         self.assertIn("self-hosted ROCm workflows restore the previous benchmark summary and bounded history", readme)
         self.assertIn("dense expectation, sparse moments, and generic matrix", readme)
