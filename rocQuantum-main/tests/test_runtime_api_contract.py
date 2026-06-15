@@ -161,6 +161,48 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(rocq.observe(phase_state, PauliOperator("Y0"), backend="stabilizer"), 1.0)
         self.assertEqual(rocq.observe(phase_state, PauliOperator("X0"), backend="stabilizer"), 0.0)
 
+    def test_stabilizer_backend_evaluates_pauli_sums(self):
+        @kernel
+        def bell():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+            rocq.cnot(q[0], q[1])
+
+        operator = 0.5 + 0.25 * PauliOperator("Z0 Z1") + 0.75 * PauliOperator("X0 X1")
+
+        self.assertEqual(rocq.observe(bell, operator, backend="stabilizer"), 1.5)
+
+    def test_stabilizer_backend_samples_marginal_probabilities(self):
+        @kernel
+        def bell():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+            rocq.cnot(q[0], q[1])
+
+        calls = []
+
+        def fake_choice(num_outcomes, size, p):
+            calls.append((num_outcomes, size, np.asarray(p)))
+            return np.array([0, 1, 0, 1], dtype=np.uint64)
+
+        with mock.patch("rocq.backends.np.random.choice", side_effect=fake_choice):
+            counts = rocq.sample(bell, 4, backend="stabilizer", qubits=[0])
+
+        self.assertEqual(counts, {"0": 2, "1": 2})
+        self.assertEqual(calls[0][0], 2)
+        self.assertEqual(calls[0][1], 4)
+        np.testing.assert_allclose(calls[0][2], np.array([0.5, 0.5]))
+
+    def test_stabilizer_backend_tracks_swap_tableau(self):
+        @kernel
+        def swapped_plus_state():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+            rocq.swap(q[0], q[1])
+
+        self.assertEqual(rocq.observe(swapped_plus_state, PauliOperator("X1"), backend="stabilizer"), 1.0)
+        self.assertEqual(rocq.observe(swapped_plus_state, PauliOperator("X0"), backend="stabilizer"), 0.0)
+
     def test_stabilizer_backend_rejects_non_clifford_gates(self):
         @kernel
         def non_clifford():

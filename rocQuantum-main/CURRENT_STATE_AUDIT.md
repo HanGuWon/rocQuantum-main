@@ -200,7 +200,7 @@ What is not real today:
 - Targetless controlled PennyLane `GlobalPhase` wrappers are also covered by execution, batch, and adjoint lowering, including open-control `X` wrapping and native multi-control phase-projector decomposition.
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling now reduces measured-qubit marginal probabilities on device before host-side shot drawing, avoiding full density-matrix or full-diagonal host transfer for subset measurements, but it is still not a fully GPU-resident sampling path.
-- Stabilizer/tableau/Pauli-propagation backends were not found.
+- The canonical `stabilizer` / `tableau` / `clifford` aliases now route to an experimental Python `StabilizerBackend` with Clifford-only Pauli propagation, Pauli-sum expectations, and terminal marginal sampling; mid-circuit measurement, noise, non-Clifford simulation, and GPU-accelerated stabilizer execution remain absent.
 - CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, CUDA-Q-style spin factories, VQE-compatible MaxCut-style QAOA kernel/cost/solve helper, and a 3-qubit repetition-code syndrome subset with single/repeated-round aggregation.
 
 ## Highest-Risk Overclaims Before This Audit
