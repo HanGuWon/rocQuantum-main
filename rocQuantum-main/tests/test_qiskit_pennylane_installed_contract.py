@@ -757,6 +757,8 @@ def test_framework_runtime_rejects_nonfinite_statevector_uploads(monkeypatch):
         np.array([1.0, np.nan], dtype=np.complex128),
         np.array([1.0, np.inf], dtype=np.complex128),
         np.array([1.0, 1.0j * np.inf], dtype=np.complex128),
+        [True, 0.0],
+        ["1.0", 0.0],
     )
     for state in invalid_states:
         with pytest.raises(ValueError, match="Statevector amplitudes"):
@@ -771,8 +773,14 @@ def test_framework_runtime_rejects_nonfinite_statevector_uploads(monkeypatch):
 
     batch_runtime = RocQuantumRuntime.from_bindings(1, batch_size=2)
     batch_sim = _FakeQuantumSimulator.instances[-1]
-    with pytest.raises(ValueError, match="Statevector amplitudes"):
-        batch_runtime.set_statevectors(np.array([[1.0, 0.0], [np.nan, 0.0]], dtype=np.complex128))
+    invalid_batched_states = (
+        np.array([[1.0, 0.0], [np.nan, 0.0]], dtype=np.complex128),
+        [[1.0, 0.0], [True, 0.0]],
+        [[1.0, 0.0], ["1.0", 0.0]],
+    )
+    for states in invalid_batched_states:
+        with pytest.raises(ValueError, match="Statevector amplitudes"):
+            batch_runtime.set_statevectors(states)
     assert batch_sim.statevectors == []
 
 
@@ -898,10 +906,18 @@ def test_framework_runtime_rejects_nonfinite_probability_payloads():
 
     with pytest.raises(ValueError, match="Sampler probabilities"):
         sample_indices_from_probabilities([0.5, np.nan], 4)
+    with pytest.raises(ValueError, match="Sampler probabilities"):
+        sample_indices_from_probabilities([True, 0.0], 4)
+    with pytest.raises(ValueError, match="Sampler probabilities"):
+        sample_indices_from_probabilities(["0.5", 0.5], 4)
     with pytest.raises(ValueError, match="Batched sampler probabilities"):
         sample_indices_batch_from_probabilities([[1.0, 0.0], [np.inf, 0.0]], 4)
+    with pytest.raises(ValueError, match="Batched sampler probabilities"):
+        sample_indices_batch_from_probabilities([[1.0, 0.0], [True, 0.0]], 4)
     with pytest.raises(ValueError, match="Statevector amplitudes"):
         probabilities_from_statevector(np.array([1.0, np.nan], dtype=np.complex128))
+    with pytest.raises(ValueError, match="Statevector amplitudes"):
+        probabilities_from_statevector([True, 0.0])
 
     class _BadProbabilitySimulator:
         def __init__(self):

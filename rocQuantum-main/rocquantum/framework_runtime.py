@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 import math
-from numbers import Integral, Number
+from numbers import Integral, Number, Real
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -102,6 +102,25 @@ def normalize_params(params: Iterable[object] | None) -> list[float]:
 def validate_finite_complex_array(values: object, label: str) -> None:
     if not np.all(np.isfinite(values)):
         raise ValueError(f"{label} must contain finite values.")
+
+
+def as_complex_vector(values: object, label: str = "Statevector amplitudes") -> np.ndarray:
+    try:
+        raw = np.asarray(values, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must contain finite numeric values.") from exc
+
+    normalized = []
+    for value in raw.reshape(-1):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError(f"{label} must contain finite numeric values.")
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError(f"{label} must contain finite values.")
+        normalized.append(scalar)
+    return np.ascontiguousarray(
+        np.asarray(normalized, dtype=np.complex128).reshape(raw.shape)
+    )
 
 
 def as_complex_matrix(matrix: object, label: str = "Operation matrix") -> np.ndarray:
@@ -317,12 +336,10 @@ def sparse_matrix_to_little_endian_wires(sparse_matrix: object):
 
 def statevector_to_little_endian_wires(statevector: object) -> np.ndarray:
     """Convert a full wire-ordered statevector to rocQuantum's little-endian basis."""
-    normalized = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    normalized = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
     dimension = normalized.shape[0]
     if dimension == 0 or dimension & (dimension - 1):
         raise ValueError("Statevector length must be a power of two.")
-    if not np.all(np.isfinite(normalized)):
-        raise ValueError("Statevector amplitudes must be finite.")
 
     num_wires = int(np.log2(dimension))
     if num_wires <= 1:
@@ -341,8 +358,7 @@ def samples_to_binary_rows(raw_samples: Sequence[int], num_wires: int) -> np.nda
 
 def sample_rows_from_statevector(statevector: Sequence[complex], shots: int, rng=None) -> np.ndarray:
     shots = normalize_shots(shots)
-    state = np.asarray(statevector, dtype=np.complex128)
-    validate_finite_complex_array(state, "Statevector amplitudes")
+    state = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
     probabilities = np.abs(state) ** 2
     total = float(np.sum(probabilities))
     if total <= 0.0:
@@ -357,19 +373,34 @@ def sample_rows_from_statevector(statevector: Sequence[complex], shots: int, rng
     return samples_to_binary_rows(sample_indices, num_wires)
 
 
+def _as_real_probability_array(values: object, label: str) -> np.ndarray:
+    try:
+        raw = np.asarray(values, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must contain finite real numeric values.") from exc
+
+    normalized = []
+    for value in raw.reshape(-1):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+            raise ValueError(f"{label} must contain finite real numeric values.")
+        probability = float(value)
+        if not math.isfinite(probability):
+            raise ValueError(f"{label} must contain finite values.")
+        normalized.append(probability)
+    return np.asarray(normalized, dtype=float).reshape(raw.shape)
+
+
 def normalize_probability_vector(probabilities: Sequence[float], label: str = "Probability vector") -> np.ndarray:
-    probabilities = np.asarray(probabilities, dtype=float).reshape(-1)
+    probabilities = _as_real_probability_array(probabilities, label).reshape(-1)
     if probabilities.size == 0:
         raise ValueError(f"{label} cannot be empty.")
-    if not np.all(np.isfinite(probabilities)):
-        raise ValueError(f"{label} must contain finite values.")
     if np.any(probabilities < -1.0e-12):
         raise ValueError(f"{label} must be non-negative.")
     return np.ascontiguousarray(np.clip(probabilities, 0.0, None))
 
 
 def normalize_probability_matrix(probabilities: Sequence[Sequence[float]], label: str = "Batched probability vector") -> np.ndarray:
-    probabilities = np.asarray(probabilities, dtype=float)
+    probabilities = _as_real_probability_array(probabilities, label)
     if probabilities.ndim != 2:
         raise ValueError(f"{label} must be a two-dimensional array.")
     if probabilities.shape[0] == 0:
@@ -407,8 +438,7 @@ def probabilities_from_statevector(
     statevector: Sequence[complex],
     qubits: Iterable[int] | None = None,
 ) -> np.ndarray:
-    state = np.asarray(statevector, dtype=np.complex128)
-    validate_finite_complex_array(state, "Statevector amplitudes")
+    state = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
     probabilities = np.abs(state) ** 2
     total = float(np.sum(probabilities))
     if total <= 0.0:
@@ -481,7 +511,7 @@ def expectation_from_statevector(
     pauli_string: str,
     targets: Sequence[int],
 ) -> float:
-    state = np.asarray(statevector, dtype=np.complex128)
+    state = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
     if len(pauli_string) != len(targets):
         raise ValueError("Pauli string length must match target qubit count.")
     if not targets:
@@ -524,7 +554,7 @@ def expectation_matrix_from_statevector(
     matrix: object,
     targets: Sequence[int],
 ) -> complex:
-    state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    state = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
     num_qubits = int(np.log2(state.size)) if state.size else 0
     if state.size != (1 << num_qubits):
         raise ValueError("Statevector length must be a power of two.")
@@ -569,7 +599,7 @@ def sparse_hamiltonian_moments_from_statevector(
     indptr: object,
     shape: Sequence[int],
 ) -> tuple[complex, complex]:
-    state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    state = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
     normalized_data = np.asarray(data, dtype=np.complex128).reshape(-1)
     normalized_indices = np.asarray(indices, dtype=np.int64).reshape(-1)
     normalized_indptr = np.asarray(indptr, dtype=np.int64).reshape(-1)
@@ -609,7 +639,7 @@ def apply_sparse_matrix_to_statevector(
     targets: Iterable[int],
     num_qubits: int,
 ) -> np.ndarray:
-    state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    state = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
     normalized_data = np.asarray(data, dtype=np.complex128).reshape(-1)
     normalized_indices = np.asarray(indices, dtype=np.int64).reshape(-1)
     normalized_indptr = np.asarray(indptr, dtype=np.int64).reshape(-1)
@@ -971,9 +1001,10 @@ class RocQuantumRuntime:
         raise NotImplementedError("The active rocQuantum binding does not expose native adjoint Jacobian.")
 
     def set_statevector(self, statevector: object) -> None:
-        normalized_state = np.ascontiguousarray(np.asarray(statevector, dtype=np.complex128).reshape(-1))
-        if not np.all(np.isfinite(normalized_state)):
-            raise ValueError("Statevector amplitudes must be finite.")
+        normalized_state = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
+        expected_size = 1 << self.num_qubits()
+        if normalized_state.size != expected_size:
+            raise ValueError("Statevector length must match the simulator qubit count.")
         setter = getattr(self.simulator, "set_statevector", None)
         if callable(setter):
             setter(normalized_state)
@@ -987,9 +1018,10 @@ class RocQuantumRuntime:
         raise NotImplementedError("The active rocQuantum binding does not expose statevector upload.")
 
     def set_statevectors(self, statevectors: object) -> None:
-        normalized_states = np.ascontiguousarray(np.asarray(statevectors, dtype=np.complex128).reshape(-1))
-        if not np.all(np.isfinite(normalized_states)):
-            raise ValueError("Statevector amplitudes must be finite.")
+        normalized_states = as_complex_vector(statevectors, "Statevector amplitudes").reshape(-1)
+        expected_size = self.batch_size() * (1 << self.num_qubits())
+        if normalized_states.size != expected_size:
+            raise ValueError("Batched statevector length must match simulator batch and qubit count.")
         setter = getattr(self.simulator, "set_statevectors", None)
         if callable(setter):
             setter(normalized_states)
@@ -1009,17 +1041,17 @@ class RocQuantumRuntime:
             raise NotImplementedError("The active rocQuantum binding does not expose state readback.")
         if batch_index == 0:
             try:
-                return np.asarray(getter(batch_index), dtype=np.complex128)
+                return as_complex_vector(getter(batch_index), "Statevector amplitudes").reshape(-1)
             except TypeError:
-                return np.asarray(getter(), dtype=np.complex128)
-        return np.asarray(getter(batch_index), dtype=np.complex128)
+                return as_complex_vector(getter(), "Statevector amplitudes").reshape(-1)
+        return as_complex_vector(getter(batch_index), "Statevector amplitudes").reshape(-1)
 
     def statevectors(self) -> np.ndarray:
         getter = getattr(self.simulator, "get_statevectors", None)
         if not callable(getter):
             getter = getattr(self.simulator, "GetStateVectors", None)
         if callable(getter):
-            states = np.asarray(getter(), dtype=np.complex128)
+            states = as_complex_vector(getter(), "Statevector amplitudes").reshape(-1)
             return states.reshape(self.batch_size(), 1 << self.num_qubits())
         if self.batch_size() == 1:
             return self.statevector().reshape(1, -1)
@@ -1089,7 +1121,10 @@ class RocQuantumRuntime:
         native = getattr(self.simulator, "probabilities_batch", None)
         if callable(native):
             try:
-                probabilities = np.asarray(native(native_qubits), dtype=float).reshape(self.batch_size(), -1)
+                probabilities = _as_real_probability_array(
+                    native(native_qubits),
+                    "Batched probability vector",
+                ).reshape(self.batch_size(), -1)
                 return normalize_probability_matrix(probabilities, "Batched probability vector")
             except Exception as exc:
                 if not _native_probabilities_unavailable(exc):
@@ -1098,7 +1133,10 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "ProbabilitiesBatch", None)
         if callable(legacy):
             try:
-                probabilities = np.asarray(legacy(native_qubits), dtype=float).reshape(self.batch_size(), -1)
+                probabilities = _as_real_probability_array(
+                    legacy(native_qubits),
+                    "Batched probability vector",
+                ).reshape(self.batch_size(), -1)
                 return normalize_probability_matrix(probabilities, "Batched probability vector")
             except Exception as exc:
                 if not _native_probabilities_unavailable(exc):

@@ -300,6 +300,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def probabilities(self, qubits", source)
         self.assertIn("def probabilities_batch(self, qubits", source)
         self.assertIn("def measure_batch(self, qubits", source)
+        self.assertIn("def as_complex_vector", source)
+        self.assertIn("def _as_real_probability_array", source)
         self.assertIn("def normalize_probability_vector", source)
         self.assertIn("def normalize_probability_matrix", source)
         self.assertIn("def sample_indices_from_probabilities", source)
