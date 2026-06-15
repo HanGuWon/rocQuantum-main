@@ -24,6 +24,75 @@ rocDataType_t get_rocq_dtype_from_numpy(py::dtype dt) {
     throw std::runtime_error("Unsupported NumPy data type for TensorNetwork");
 }
 
+std::string rocq_status_name(rocqStatus_t status) {
+    switch (status) {
+        case ROCQ_STATUS_SUCCESS:
+            return "ROCQ_STATUS_SUCCESS";
+        case ROCQ_STATUS_FAILURE:
+            return "ROCQ_STATUS_FAILURE";
+        case ROCQ_STATUS_INVALID_VALUE:
+            return "ROCQ_STATUS_INVALID_VALUE";
+        case ROCQ_STATUS_ALLOCATION_FAILED:
+            return "ROCQ_STATUS_ALLOCATION_FAILED";
+        case ROCQ_STATUS_HIP_ERROR:
+            return "ROCQ_STATUS_HIP_ERROR";
+        case ROCQ_STATUS_NOT_IMPLEMENTED:
+            return "ROCQ_STATUS_NOT_IMPLEMENTED";
+        case ROCQ_STATUS_RCCL_ERROR:
+            return "ROCQ_STATUS_RCCL_ERROR";
+        default:
+            return std::string("ROCQ_STATUS_UNKNOWN(") + std::to_string(static_cast<int>(status)) + ")";
+    }
+}
+
+std::string tensornet_pathfinder_name(rocPathfinderAlgorithm_t algorithm) {
+    switch (algorithm) {
+        case ROCTN_PATHFINDER_ALGO_GREEDY:
+            return "greedy";
+        case ROCTN_PATHFINDER_ALGO_KAHYPAR:
+            return "kahypar";
+        case ROCTN_PATHFINDER_ALGO_METIS:
+            return "metis";
+        default:
+            return std::string("unknown(") + std::to_string(static_cast<int>(algorithm)) + ")";
+    }
+}
+
+std::string tensornet_status_message(const std::string& operation, rocqStatus_t status) {
+    std::string message = operation + " failed with " + rocq_status_name(status);
+    if (status == ROCQ_STATUS_NOT_IMPLEMENTED) {
+        message +=
+            ". This TensorNet path is not available in the current build; "
+            "call get_tensornet_capabilities() to check compiled dtype, "
+            "pathfinder, and runtime slicing support.";
+    } else if (status == ROCQ_STATUS_INVALID_VALUE) {
+        message += ". The TensorNet handle, tensor, dtype, or optimizer configuration is invalid.";
+    } else if (status == ROCQ_STATUS_ALLOCATION_FAILED) {
+        message += ". TensorNet device or host allocation failed.";
+    }
+    return message;
+}
+
+std::string tensornet_contract_status_message(
+    rocqStatus_t status,
+    const hipTensorNetContractionOptimizerConfig_t& config) {
+    std::string message = tensornet_status_message("rocTensorNetworkContract", status);
+    message += std::string(" pathfinder_algorithm=") +
+               tensornet_pathfinder_name(config.pathfinder_algorithm) + ".";
+    if (status == ROCQ_STATUS_NOT_IMPLEMENTED) {
+        if (config.pathfinder_algorithm == ROCTN_PATHFINDER_ALGO_KAHYPAR ||
+            config.pathfinder_algorithm == ROCTN_PATHFINDER_ALGO_METIS) {
+            message += " METIS/KAHYPAR pathfinders require a build compiled with the matching optional library.";
+        } else {
+            message += " Runtime slicing is not implemented; memory_limit_bytes and num_slices only influence planning cost.";
+        }
+    }
+    if (status == ROCQ_STATUS_INVALID_VALUE && config.num_slices < 0) {
+        message += " num_slices must be non-negative.";
+    }
+    return message;
+}
+
 
 // Helper to convert py::array_t<rocComplex> (NumPy array from Python) to rocComplex* on device
 // This is a simplified helper. Error handling and memory management need care.
@@ -1013,7 +1082,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             
             rocqStatus_t status = rocTensorNetworkCreate(&handle_, rocq_dtype);
             if (status != ROCQ_STATUS_SUCCESS) {
-                throw std::runtime_error("Failed to create rocTensorNetworkHandle: " + std::to_string(status));
+                throw std::runtime_error(tensornet_status_message("rocTensorNetworkCreate", status));
             }
         }
 
@@ -1048,7 +1117,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         .def("add_tensor", [](RocTensorNetworkHandleWrapper& self, const rocquantum::util::rocTensor& tensor) {
             rocqStatus_t status = rocTensorNetworkAddTensor(self.get(), &tensor);
             if (status != ROCQ_STATUS_SUCCESS) {
-                throw std::runtime_error("rocTensorNetworkAddTensor failed: " + std::to_string(status));
+                throw std::runtime_error(tensornet_status_message("rocTensorNetworkAddTensor", status));
             }
         }, py::arg("tensor"))
 
@@ -1103,7 +1172,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             rocqStatus_t status = rocTensorNetworkContract(self.get(), &config, &result_tensor_py, blas_h, stream);
             
             if (status != ROCQ_STATUS_SUCCESS) {
-                throw std::runtime_error("rocTensorNetworkContract failed: " + std::to_string(status));
+                throw std::runtime_error(tensornet_contract_status_message(status, config));
             }
         }, py::arg("optimizer_config"), py::arg("result_tensor").noconvert(), "Contracts the tensor network. Result tensor must be pre-allocated.");
 
@@ -1111,7 +1180,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         hipTensorNetCapabilities_t caps{};
         rocqStatus_t status = rocTensorNetworkGetCapabilities(&caps);
         if (status != ROCQ_STATUS_SUCCESS) {
-            throw std::runtime_error("rocTensorNetworkGetCapabilities failed: " + std::to_string(status));
+            throw std::runtime_error(tensornet_status_message("rocTensorNetworkGetCapabilities", status));
         }
         py::dict result;
         result["supports_c64"] = caps.supports_c64 != 0;
@@ -1140,7 +1209,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
 
             rocqStatus_t status = rocTensorSVD(handle.get(), &U, &S, &V, &A, workspace.ptr_);
             if (status != ROCQ_STATUS_SUCCESS) {
-                throw std::runtime_error("rocTensorSVD failed: " + std::to_string(status));
+                throw std::runtime_error(tensornet_status_message("rocTensorSVD", status));
             }
             return std::make_tuple(U, S, V);
         }, py::arg("handle"), py::arg("A"), "Performs SVD on a 2D tensor A, returning (U, S, V).");

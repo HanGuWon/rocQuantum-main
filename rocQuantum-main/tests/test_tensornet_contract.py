@@ -82,6 +82,22 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("ROCTN_PATHFINDER_ALGO_METIS", source)
         self.assertIn("get_tensornet_capabilities", source)
 
+    def test_python_binding_reports_actionable_tensornet_status_errors(self):
+        with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("tensornet_status_message", source)
+        self.assertIn("tensornet_contract_status_message", source)
+        self.assertIn("get_tensornet_capabilities()", source)
+        self.assertIn("pathfinder_algorithm=", source)
+        self.assertIn("METIS/KAHYPAR pathfinders require", source)
+        self.assertIn("Runtime slicing is not implemented", source)
+        self.assertIn("num_slices must be non-negative", source)
+        self.assertNotIn(
+            'rocTensorNetworkContract failed: " + std::to_string(status)',
+            source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
