@@ -523,11 +523,83 @@ def _density_matrix_expectation_matrix(density_matrix, matrix, targets: Sequence
     return total
 
 
+def _normalize_sparse_hamiltonian_data(data) -> np.ndarray:
+    try:
+        raw_data = np.asarray(data, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "SparseHamiltonianOperator CSR data must contain finite numeric values."
+        ) from exc
+
+    normalized = []
+    for value in raw_data:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError(
+                "SparseHamiltonianOperator CSR data must contain finite numeric values."
+            )
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError("SparseHamiltonianOperator CSR data must be finite.")
+        normalized.append(scalar)
+    return np.asarray(normalized, dtype=np.complex128)
+
+
+def _normalize_sparse_hamiltonian_index_vector(values, label: str) -> np.ndarray:
+    if isinstance(values, (str, bytes)):
+        raise ValueError(f"SparseHamiltonianOperator CSR {label} must contain integer indices.")
+    try:
+        raw_values = np.asarray(values, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"SparseHamiltonianOperator CSR {label} must contain integer indices."
+        ) from exc
+
+    normalized = []
+    for value in raw_values:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+            raise ValueError(f"SparseHamiltonianOperator CSR {label} must contain integer indices.")
+        integer = int(value)
+        if integer < 0:
+            raise ValueError(f"SparseHamiltonianOperator CSR {label} must be non-negative.")
+        normalized.append(integer)
+    try:
+        return np.asarray(normalized, dtype=np.int64)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(
+            f"SparseHamiltonianOperator CSR {label} must fit in signed 64-bit integers."
+        ) from exc
+
+
+def _normalize_sparse_hamiltonian_shape(shape) -> tuple[int, int]:
+    if isinstance(shape, (str, bytes)):
+        raise ValueError("SparseHamiltonianOperator shape must have two dimensions.")
+    try:
+        raw_shape = list(shape)
+    except TypeError as exc:
+        raise ValueError("SparseHamiltonianOperator shape must have two dimensions.") from exc
+    if len(raw_shape) != 2:
+        raise ValueError("SparseHamiltonianOperator shape must have two dimensions.")
+
+    normalized = []
+    for value in raw_shape:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+            raise ValueError("SparseHamiltonianOperator shape dimensions must be positive integers.")
+        dimension = int(value)
+        if dimension <= 0:
+            raise ValueError("SparseHamiltonianOperator shape dimensions must be positive.")
+        normalized.append(dimension)
+
+    rows, cols = normalized
+    if rows != cols:
+        raise ValueError("SparseHamiltonianOperator shape must be square.")
+    return rows, cols
+
+
 def _normalize_sparse_hamiltonian(operator: SparseHamiltonianOperator, num_qubits: int):
-    data = np.asarray(operator.data, dtype=np.complex128).reshape(-1)
-    indices = np.asarray(operator.indices, dtype=np.int64).reshape(-1)
-    indptr = np.asarray(operator.indptr, dtype=np.int64).reshape(-1)
-    rows, cols = (int(operator.shape[0]), int(operator.shape[1]))
+    data = _normalize_sparse_hamiltonian_data(operator.data)
+    indices = _normalize_sparse_hamiltonian_index_vector(operator.indices, "indices")
+    indptr = _normalize_sparse_hamiltonian_index_vector(operator.indptr, "indptr")
+    rows, cols = _normalize_sparse_hamiltonian_shape(operator.shape)
     state_dim = 1 << int(num_qubits)
 
     if rows != state_dim or cols != state_dim:

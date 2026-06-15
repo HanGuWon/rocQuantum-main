@@ -72,6 +72,7 @@ _RUNTIME_SUPPORTED_FEATURES = (
     "Pauli observable target validation before backend dispatch",
     "lazy statevector fallback for legacy Pauli expectation bindings",
     "dense matrix operation validation before native device upload",
+    "sparse Hamiltonian observable CSR validation before native/backend dispatch",
     "density-matrix Kraus channel payload validation before native device upload",
     "density-matrix noise model execution",
     "experimental Clifford stabilizer Pauli propagation backend",

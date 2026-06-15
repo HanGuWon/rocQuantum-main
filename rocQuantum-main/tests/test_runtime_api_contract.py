@@ -132,6 +132,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "sparse Hamiltonian observable CSR validation before native/backend dispatch",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "density-matrix Kraus channel payload validation before native device upload",
             capabilities["supported_features"],
         )
@@ -1418,6 +1422,51 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         self.assertEqual(result, 0.5)
         self.assertEqual(calls[0], (1, np.dtype("complex64"), [0, 1], [0, 1, 2], 2, 2))
+
+    def test_hip_statevector_backend_revalidates_sparse_observable_before_native_dispatch(self):
+        from rocq.backends import _HipStateVectorState
+
+        calls = []
+
+        class _FakeHipBackend:
+            def get_sparse_matrix_moments(self, handle, d_state, num_qubits, data, indices, indptr, rows, cols):
+                calls.append((data, indices, indptr, rows, cols))
+                return 0.25 + 0.0j, 0.5 + 0.0j
+
+        def sparse_operator_with(**updates):
+            operator = SparseHamiltonianOperator(
+                data=np.array([1.0], dtype=np.complex128),
+                indices=np.array([0], dtype=np.int64),
+                indptr=np.array([0, 1, 1], dtype=np.int64),
+                shape=(2, 2),
+            )
+            for name, value in updates.items():
+                setattr(operator, name, value)
+            return operator
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+
+        invalid_operators = (
+            sparse_operator_with(data=[True]),
+            sparse_operator_with(data=["1.0"]),
+            sparse_operator_with(data=[np.nan]),
+            sparse_operator_with(indices=[True]),
+            sparse_operator_with(indices=["0"]),
+            sparse_operator_with(indptr=[0, True, 1]),
+            sparse_operator_with(shape=(True, 2)),
+            sparse_operator_with(shape="22"),
+        )
+
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
+            for operator in invalid_operators:
+                with self.subTest(operator=operator):
+                    with self.assertRaisesRegex(ValueError, "SparseHamiltonianOperator"):
+                        state.expectation(operator)
+
+        self.assertEqual(calls, [])
 
     def test_hip_statevector_backend_combines_duplicate_pauli_terms(self):
         from rocq.backends import _HipStateVectorState
