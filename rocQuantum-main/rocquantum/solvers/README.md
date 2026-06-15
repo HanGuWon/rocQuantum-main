@@ -5,7 +5,7 @@ This package is an experimental, minimal higher-level layer over the canonical
 
 Current supported subset:
 
-- `VQE_Solver` evaluates canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, scaled/divided composite sums, and full-state CSR sparse observables on the state-vector backend or density-matrix correctness fallback.
+- `VQE_Solver.evaluate_energy()` and `VQE_Solver.solve()` evaluate canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, scaled/divided composite sums, and full-state CSR sparse observables on the state-vector backend or density-matrix correctness fallback.
 - `VQE_Solver.solve()` is quiet by default for library and batch use; pass
   `verbose=True` to print start/finish progress messages.
 - `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`;
@@ -14,7 +14,8 @@ Current supported subset:
   optimizer `intermediate_results` trace. VQE objective, optimizer initial
   parameters, and gradient parameters must be finite real values; boolean or
   string parameters are rejected instead of being coerced to numeric values.
-  Finite-difference steps must be positive finite real values.
+  Observed energies and optimizer result energies/parameters must also be finite
+  real values; finite-difference steps must be positive finite real values.
 - `make_maxcut_qaoa_kernel()` builds a MaxCut-style QAOA ansatz using H, CNOT,
   RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.
@@ -51,11 +52,11 @@ def ansatz(theta):
 
 
 solver = VQE_Solver(backend="state_vector")
-energy = solver._objective_function(
-    np.array([0.25]),
+energy = solver.evaluate_energy(
     PauliOperator("Z0"),
     ansatz,
     num_qubits=1,
+    parameters=np.array([0.25]),
 )
 gradient = solver.estimate_gradient(np.array([0.25]), PauliOperator("Z0"), ansatz, 1)
 ```

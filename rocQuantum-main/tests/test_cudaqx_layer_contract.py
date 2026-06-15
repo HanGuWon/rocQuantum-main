@@ -59,6 +59,44 @@ class TestVqeSolverContract(unittest.TestCase):
         self.assertEqual(energy, -0.5)
         patched_observe.assert_called_once_with(ansatz, hamiltonian, 0.125, backend="state_vector")
 
+    def test_public_energy_evaluation_uses_canonical_observe_once(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        def ansatz(theta):
+            return None
+
+        solver = VQE_Solver(backend="state_vector")
+        hamiltonian = PauliOperator("Z0")
+        with mock.patch(
+            "rocquantum.solvers.vqe_solver.observe",
+            return_value=-0.25 + 1.0e-12j,
+        ) as patched_observe:
+            energy = solver.evaluate_energy(
+                hamiltonian,
+                ansatz,
+                1,
+                parameters=[0.125],
+            )
+
+        self.assertEqual(energy, -0.25)
+        self.assertEqual(solver._intermediate_results, [])
+        patched_observe.assert_called_once_with(ansatz, hamiltonian, 0.125, backend="state_vector")
+
+        with mock.patch(
+            "rocquantum.solvers.vqe_solver.observe",
+            return_value=-0.25,
+        ):
+            recorded_energy = solver.evaluate_energy(
+                hamiltonian,
+                ansatz,
+                1,
+                parameters=[0.25],
+                record_intermediate=True,
+            )
+        self.assertEqual(recorded_energy, -0.25)
+        self.assertEqual(len(solver._intermediate_results), 1)
+
     def test_parameter_shift_gradient_is_available(self):
         import rocq
         from rocq.operator import PauliOperator
@@ -217,6 +255,53 @@ class TestVqeSolverContract(unittest.TestCase):
                     step=True,
                 )
         patched_observe.assert_not_called()
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+            with self.assertRaisesRegex(ValueError, "num_qubits"):
+                solver._objective_function(np.array([0.25]), hamiltonian, ansatz, 0)
+        patched_observe.assert_not_called()
+
+    def test_vqe_rejects_non_real_or_nonfinite_energy_results(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import Optimizer, VQE_Solver
+
+        class BadEnergyOptimizer(Optimizer):
+            def minimize(self, fun, x0, args=()):
+                return types.SimpleNamespace(fun=np.nan, x=np.asarray(x0, dtype=float))
+
+        class BadParameterOptimizer(Optimizer):
+            def minimize(self, fun, x0, args=()):
+                return types.SimpleNamespace(fun=-0.25, x=np.array([np.inf]))
+
+        def ansatz(theta):
+            return None
+
+        solver = VQE_Solver()
+        hamiltonian = PauliOperator("Z0")
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe", return_value=1.0j):
+            with self.assertRaisesRegex(ValueError, "observed energy must be real"):
+                solver.evaluate_energy(hamiltonian, ansatz, 1, parameters=[0.25])
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe", return_value=np.inf):
+            with self.assertRaisesRegex(ValueError, "observed energy must be finite"):
+                solver.evaluate_energy(hamiltonian, ansatz, 1, parameters=[0.25])
+
+        with self.assertRaisesRegex(ValueError, "optimizer result energy must be finite"):
+            VQE_Solver(optimizer=BadEnergyOptimizer()).solve(
+                hamiltonian,
+                ansatz,
+                1,
+                initial_params=[0.25],
+            )
+
+        with self.assertRaisesRegex(ValueError, "optimizer result parameters must be finite"):
+            VQE_Solver(optimizer=BadParameterOptimizer()).solve(
+                hamiltonian,
+                ansatz,
+                1,
+                initial_params=[0.25],
+            )
 
     def test_solve_normalizes_scalar_initial_parameter(self):
         from rocq.operator import PauliOperator

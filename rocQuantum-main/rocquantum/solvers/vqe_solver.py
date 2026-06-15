@@ -8,7 +8,7 @@ High-level Variational Quantum Eigensolver (VQE) using rocQuantum primitives.
 """
 
 import inspect
-from numbers import Real
+from numbers import Integral, Real
 from typing import Callable, List, Dict, Any
 import numpy as np
 from abc import ABC, abstractmethod
@@ -83,6 +83,40 @@ def _parameter_vector(params, label: str = "parameters") -> np.ndarray:
         values.append(normalized)
     vector = np.asarray(values, dtype=float)
     return vector
+
+
+def _positive_integer(value, name: str) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a positive integer.")
+    integer = int(value)
+    if integer <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return integer
+
+
+def _finite_real_scalar(value, label: str) -> float:
+    try:
+        scalar = np.asarray(value).reshape(())
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a finite real scalar.") from exc
+
+    raw_value = scalar.item()
+    if isinstance(raw_value, (bool, np.bool_)):
+        raise ValueError(f"{label} must be a finite real scalar.")
+    if isinstance(raw_value, (complex, np.complexfloating)):
+        real_part = float(np.real(raw_value))
+        imag_part = float(np.imag(raw_value))
+        if not np.isfinite(real_part) or not np.isfinite(imag_part):
+            raise ValueError(f"{label} must be finite.")
+        if abs(imag_part) > 1.0e-9:
+            raise ValueError(f"{label} must be real.")
+        return real_part
+    if not isinstance(raw_value, Real):
+        raise ValueError(f"{label} must be a finite real scalar.")
+    real_value = float(raw_value)
+    if not np.isfinite(real_value):
+        raise ValueError(f"{label} must be finite.")
+    return real_value
 
 
 def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
@@ -213,6 +247,8 @@ class VQE_Solver:
         """
         Internal objective function evaluated by the classical optimizer.
         """
+        params = _parameter_vector(params)
+        _positive_integer(num_qubits, "num_qubits")
         if observe is None:
             raise RuntimeError(
                 "Canonical 'rocq' package is not available. Install the Python package "
@@ -224,13 +260,30 @@ class VQE_Solver:
             *_ansatz_parameter_args(params, ansatz_kernel),
             backend=self.backend,
         )
-        energy = float(np.real(energy))
+        energy = _finite_real_scalar(energy, "observed energy")
         if record_intermediate:
             self._intermediate_results.append({
-                "parameters": np.asarray(params, dtype=float).copy(),
+                "parameters": params.copy(),
                 "energy": energy,
             })
         return energy
+
+    def evaluate_energy(
+        self,
+        hamiltonian: QuantumOperator,
+        ansatz_kernel: AnsatzKernel,
+        num_qubits: int,
+        parameters: np.ndarray,
+        record_intermediate: bool = False,
+    ) -> float:
+        """Evaluate the VQE objective once without invoking the optimizer."""
+        return self._objective_function(
+            parameters,
+            hamiltonian,
+            ansatz_kernel,
+            num_qubits,
+            record_intermediate=record_intermediate,
+        )
 
     def estimate_gradient(
         self,
@@ -243,6 +296,7 @@ class VQE_Solver:
     ) -> np.ndarray:
         """Estimate the VQE objective gradient for the supported experimental subset."""
         params = _parameter_vector(params)
+        _positive_integer(num_qubits, "num_qubits")
         gradient = np.zeros_like(params, dtype=float)
         method = method.lower()
 
@@ -291,6 +345,7 @@ class VQE_Solver:
         """
         Executes the VQE algorithm.
         """
+        num_qubits = _positive_integer(num_qubits, "num_qubits")
         if self.verbose:
             print("Starting VQE optimization...")
         self._intermediate_results = []
@@ -300,13 +355,18 @@ class VQE_Solver:
             x0=_parameter_vector(initial_params, label="initial_params"),
             args=(hamiltonian, ansatz_kernel, num_qubits)
         )
+        optimal_energy = _finite_real_scalar(result.fun, "optimizer result energy")
+        optimal_parameters = _parameter_vector(
+            result.x,
+            label="optimizer result parameters",
+        )
 
         if self.verbose:
             print("VQE optimization finished.")
 
         solution = {
-            'optimal_energy': result.fun,
-            'optimal_parameters': result.x,
+            'optimal_energy': optimal_energy,
+            'optimal_parameters': optimal_parameters,
             'optimizer_result': result,
             'intermediate_results': self._intermediate_results
         }
