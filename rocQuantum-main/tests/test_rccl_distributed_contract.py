@@ -28,6 +28,13 @@ _STATEVEC_CMAKE = os.path.join(
     "hipStateVec",
     "CMakeLists.txt",
 )
+_SWAP_KERNELS_SOURCE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "swap_kernels.hip",
+)
 _BINDINGS_SOURCE = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
 
 
@@ -97,6 +104,32 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("return distributed_sample_with_fallback", source)
         self.assertIn("distributed_all_qubits_local(handle, targets)", source)
         self.assertIn("distributed_all_qubits_local(handle, measured)", source)
+
+    def test_nonlocal_swap_remap_uses_rccl_send_recv_before_host_fallback(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+        with open(_SWAP_KERNELS_SOURCE, "r", encoding="utf-8") as f:
+            kernels = f.read()
+
+        self.assertIn("distributed_swap_bits_rccl_remap", source)
+        self.assertIn("distributed_swap_bits_rccl_rank_remap", source)
+        self.assertIn("distributed_swap_bits_rccl_local_global", source)
+        self.assertIn("ncclSend", source)
+        self.assertIn("ncclRecv", source)
+        self.assertIn("pack_local_global_swap_kernel", source)
+        self.assertIn("unpack_local_global_swap_kernel", source)
+        self.assertIn("static_cast<size_t>(rank) ^ rank_mask", source)
+        self.assertIn("handle->distributedSwapBuffers[idx] + packed_elements", source)
+        self.assertIn("pack_local_global_swap_kernel", kernels)
+        self.assertIn("unpack_local_global_swap_kernel", kernels)
+        self.assertIn("rocquant_kernel_insert_bit", kernels)
+
+        swap_block = source.split("rocqStatus_t rocsvSwapIndexBits", 1)[1].split(
+            "// --- Single-qubit named gates", 1
+        )[0]
+        self.assertIn("rocqStatus_t rccl_status = distributed_swap_bits_rccl_remap", swap_block)
+        self.assertIn("if (!distributed_host_fallback_enabled())", swap_block)
+        self.assertIn("return distributed_swap_bits_host_remap(handle, qubit_idx1, qubit_idx2)", swap_block)
 
     def test_sampling_and_expectation_host_fallbacks_are_explicit(self):
         with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:

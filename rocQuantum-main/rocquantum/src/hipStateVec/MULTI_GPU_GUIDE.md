@@ -5,7 +5,7 @@ This document describes the current implementation status, not the eventual desi
 ## Current Truth
 
 - Multi-GPU support is experimental and single-node only.
-- Distributed handles, state-allocation helpers, local-domain operations, explicit slow/debug host fallback paths, and RCCL reduction fast paths exist.
+- Distributed handles, state-allocation helpers, local-domain operations, RCCL-backed non-local swap/remap, explicit slow/debug host fallback paths, and RCCL reduction fast paths exist.
 - `rocsvGetDistributedBackend` reports `rccl`, `host_fallback`, or `none` for the current distributed handle state.
 - Unsupported distributed code paths return `ROCQ_STATUS_NOT_IMPLEMENTED` unless an explicit fallback mode covers the operation.
 - There is no release-grade multi-GPU CI coverage in this repo today.
@@ -16,11 +16,11 @@ This document describes the current implementation status, not the eventual desi
 | --- | --- | --- | --- | --- |
 | Distributed state lifecycle | `rocsvAllocateDistributedState`, `rocsvInitializeDistributedState`, and communicator teardown paths exist for one host with multiple visible GPUs | HIP allocation/copy streams per local slice | None | Experimental infrastructure only |
 | Local-domain named gates | Supported only when all touched qubits are local to each slice | HIP local-slice kernels | None | Non-local variants may return `ROCQ_STATUS_NOT_IMPLEMENTED` |
-| Non-local single/control/CNOT/CZ/generic matrix paths | Named single-qubit gates, controlled single-qubit paths, `MCX`, and `CSWAP` localize touched qubits with `rocsvSwapIndexBits`, apply the local kernel, then restore layout; broader generic matrix paths remain limited | Swap-localization over existing distributed swap/remap helpers for covered named gates | `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1` gathers to host and reapplies correctness fallback for covered generic matrix paths | Correctness path, not CUDA-Q/cuStateVec-scale distributed execution |
+| Non-local single/control/CNOT/CZ/generic matrix paths | Named single-qubit gates, controlled single-qubit paths, `MCX`, and `CSWAP` localize touched qubits with `rocsvSwapIndexBits`, apply the local kernel, then restore layout; broader generic matrix paths remain limited | `rocsvSwapIndexBits` uses RCCL send/recv for rank/rank and local/rank remap when communicators are ready | `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1` gathers to host and reapplies correctness fallback for covered generic matrix paths or non-RCCL debug runs | Correctness path, not CUDA-Q/cuStateVec-scale distributed execution |
 | Dense matrix expectation | Local small-target path is native; distributed or large-target cases are limited | HIP reduction for supported local cases | Explicit host fallback for large/distributed cases when fallback env vars are set | Correctness fallback exists; performance parity is not claimed |
 | Sparse matrix moments | Local single/batched CSR paths are native; distributed full-state CSR is limited | HIP CSR row reductions for supported local cases | Explicit distributed host fallback when fallback env vars are set | Correctness fallback exists; performant distributed sparse reductions remain future work |
 | Sparse matrix apply | Local-domain distributed slices can use the CSR kernel | HIP CSR apply for local-domain slices | Explicit distributed host fallback for non-local distributed sparse apply | Avoids dense materialization only on supported local-domain paths |
-| Expectation reductions over local-domain qubits | RCCL can sum per-rank expectation scalars when communicators are ready | `distributed_expectation_rccl` with `ncclAllReduce` | Host fallback after `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` | RCCL path is reduction-only, not general state redistribution |
+| Expectation reductions over local-domain qubits | RCCL can sum per-rank expectation scalars when communicators are ready | `distributed_expectation_rccl` with `ncclAllReduce` | Host fallback after `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` | RCCL path covers local-domain reductions; broader dense/sparse observables remain limited |
 | Sampling probabilities over local-domain measured qubits | RCCL can sum per-rank probabilities when measured qubits are local-domain | `distributed_sample_rccl` / `accumulate_distributed_sample_probabilities_rccl` | Host fallback after `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` | Measured slice-domain bits remain unsupported without host fallback |
 | Multi-node execution | Not implemented | None | None | Out of scope today |
 | Public Python multi-GPU contract | Legacy `Circuit(..., multi_gpu=True)` exposes only experimental partial behavior | Binding-dependent | Warning and execution notes describe the boundary | Do not treat as a stable CUDA-Q-style distributed target |
@@ -50,8 +50,8 @@ This document describes the current implementation status, not the eventual desi
 
 | Area | Limitation | Expected result |
 | --- | --- | --- |
-| Non-local gates | Swap-localized correctness paths exist for named single-qubit gates, controlled single-qubit/CNOT/CZ, `MCX`, and `CSWAP`, but general high-arity generic matrix remap/localization is still incomplete | Covered named paths use swap-localization; unsupported generic paths return `ROCQ_STATUS_NOT_IMPLEMENTED` unless an explicit host fallback applies |
-| Controlled/multi-control matrices | Distributed controlled matrix and multi-control non-local paths are incomplete | `ROCQ_STATUS_NOT_IMPLEMENTED` for unsupported arities or non-local layouts |
+| Non-local gates | Swap-localized correctness paths exist for named single-qubit gates, controlled single-qubit/CNOT/CZ, `MCX`, and `CSWAP`, but general high-arity generic matrix remap/localization is still incomplete | Covered named paths use RCCL-backed swap-localization when available; unsupported generic paths return `ROCQ_STATUS_NOT_IMPLEMENTED` unless an explicit host fallback applies |
+| Controlled/multi-control matrices | Common named distributed multi-control paths are covered, but broader controlled-matrix arities remain incomplete | Covered named paths use swap-localization; unsupported arities or layouts return `ROCQ_STATUS_NOT_IMPLEMENTED` unless an explicit host fallback applies |
 | Sampling | Slice-domain measured qubits do not have a native distributed sampler today | RCCL path returns `ROCQ_STATUS_NOT_IMPLEMENTED`; explicit host fallback can provide slow correctness when enabled |
 | Expectations | Slice-domain X/Y/global Pauli cases and broad dense/sparse distributed observables are not fully native | RCCL path returns `ROCQ_STATUS_NOT_IMPLEMENTED`; explicit host fallback can provide slow correctness when enabled |
 | Performance | Host fallback gathers distributed state to CPU memory | Correctness/debug only; no performance parity claim |
@@ -72,7 +72,7 @@ This document describes the current implementation status, not the eventual desi
 The codebase contains the beginnings of an RCCL-based distributed architecture, but that architecture is not yet complete enough to describe as finished functionality. Future work should continue to center on:
 
 - explicit bit-sliced distributed state ownership
-- RCCL-backed redistribution for non-local operations
+- RCCL-backed redistribution for more non-local operations and broader runtime validation
 - capability-gated Python/runtime APIs
 - dedicated multi-GPU runtime tests on ROCm Linux
 

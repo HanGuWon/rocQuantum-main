@@ -173,6 +173,16 @@ __global__ void local_bit_swap_permutation_kernel(rocComplex* d_local_slice,
                                                   size_t local_slice_num_elements,
                                                   unsigned local_qubit_idx1,
                                                   unsigned local_qubit_idx2);
+__global__ void pack_local_global_swap_kernel(const rocComplex* d_local_slice,
+                                              rocComplex* d_packed_buffer,
+                                              size_t packed_elements,
+                                              unsigned local_qubit_idx,
+                                              unsigned rank_bit_value);
+__global__ void unpack_local_global_swap_kernel(rocComplex* d_local_slice,
+                                                const rocComplex* d_packed_buffer,
+                                                size_t packed_elements,
+                                                unsigned local_qubit_idx,
+                                                unsigned rank_bit_value);
 
 struct rocsvInternalHandle {
     hipStream_t streams[1];
@@ -442,6 +452,10 @@ inline bool uses_distributed_state(const rocsvInternalHandle* handle, const rocC
 
 inline bool distributed_qubit_local(const rocsvInternalHandle* handle, unsigned qubit) {
     return handle && qubit < handle->numLocalQubitsPerGpu;
+}
+
+inline bool distributed_qubit_global(const rocsvInternalHandle* handle, unsigned qubit) {
+    return handle && qubit >= handle->numLocalQubitsPerGpu && qubit < handle->globalNumQubits;
 }
 
 inline bool distributed_all_qubits_local(const rocsvInternalHandle* handle,
@@ -780,6 +794,259 @@ inline rocqStatus_t distributed_swap_bits_host_remap(rocsvInternalHandle* handle
     }
 
     return scatter_host_state_to_distributed(handle, host_output);
+}
+
+inline size_t rccl_complex_scalar_count(size_t complex_elements) {
+    return complex_elements * size_t{2};
+}
+
+inline rocqStatus_t distributed_swap_bits_rccl_rank_remap(rocsvInternalHandle* handle,
+                                                          unsigned qubit_idx1,
+                                                          unsigned qubit_idx2) {
+    if (!handle || !handle->distributedMode) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_rccl_ready(handle)) {
+        return distributed_rccl_required() ? ROCQ_STATUS_RCCL_ERROR : ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!distributed_qubit_global(handle, qubit_idx1) ||
+        !distributed_qubit_global(handle, qubit_idx2)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (handle->localSliceElements == 0) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+#ifdef ROCQ_HAVE_RCCL
+    const unsigned rank_bit1 = qubit_idx1 - handle->numLocalQubitsPerGpu;
+    const unsigned rank_bit2 = qubit_idx2 - handle->numLocalQubitsPerGpu;
+    const size_t scalar_count = rccl_complex_scalar_count(handle->localSliceElements);
+#ifdef ROCQ_PRECISION_DOUBLE
+    constexpr ncclDataType_t scalar_type = ncclDouble;
+#else
+    constexpr ncclDataType_t scalar_type = ncclFloat;
+#endif
+
+    std::vector<int> peer_rank(static_cast<size_t>(handle->distributedGpuCount), 0);
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t remapped_rank = swap_bits_host(static_cast<size_t>(rank), rank_bit1, rank_bit2);
+        if (remapped_rank >= static_cast<size_t>(handle->distributedGpuCount)) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        peer_rank[static_cast<size_t>(rank)] = static_cast<int>(remapped_rank);
+    }
+
+    ncclResult_t status = ncclGroupStart();
+    if (status != ncclSuccess) {
+        return ROCQ_STATUS_RCCL_ERROR;
+    }
+
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        const int peer = peer_rank[idx];
+        if (peer == rank) {
+            continue;
+        }
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        status = ncclRecv(handle->distributedSwapBuffers[idx],
+                          scalar_count,
+                          scalar_type,
+                          peer,
+                          handle->distributedComms[idx],
+                          handle->distributedStreams[idx]);
+        if (status != ncclSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_RCCL_ERROR;
+        }
+        status = ncclSend(handle->distributedSlices[idx],
+                          scalar_count,
+                          scalar_type,
+                          peer,
+                          handle->distributedComms[idx],
+                          handle->distributedStreams[idx]);
+        if (status != ncclSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_RCCL_ERROR;
+        }
+    }
+
+    status = ncclGroupEnd();
+    if (status != ncclSuccess) {
+        return ROCQ_STATUS_RCCL_ERROR;
+    }
+
+    const size_t bytes = handle->localSliceElements * sizeof(rocComplex);
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        if (peer_rank[idx] == rank) {
+            continue;
+        }
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        if (hipMemcpyAsync(handle->distributedSlices[idx],
+                           handle->distributedSwapBuffers[idx],
+                           bytes,
+                           hipMemcpyDeviceToDevice,
+                           handle->distributedStreams[idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+    }
+    return sync_distributed_streams(handle); // ROCQ_ASYNC_ALLOWED_SYNC
+#else
+    (void)handle;
+    (void)qubit_idx1;
+    (void)qubit_idx2;
+    return ROCQ_STATUS_NOT_IMPLEMENTED;
+#endif
+}
+
+inline rocqStatus_t distributed_swap_bits_rccl_local_global(rocsvInternalHandle* handle,
+                                                            unsigned local_qubit_idx,
+                                                            unsigned global_qubit_idx) {
+    if (!handle || !handle->distributedMode) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_rccl_ready(handle)) {
+        return distributed_rccl_required() ? ROCQ_STATUS_RCCL_ERROR : ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (!distributed_qubit_local(handle, local_qubit_idx) ||
+        !distributed_qubit_global(handle, global_qubit_idx)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (handle->localSliceElements < 2) {
+        return ROCQ_STATUS_SUCCESS;
+    }
+
+#ifdef ROCQ_HAVE_RCCL
+    const unsigned rank_bit = global_qubit_idx - handle->numLocalQubitsPerGpu;
+    const size_t rank_mask = size_t{1} << rank_bit;
+    const size_t packed_elements = handle->localSliceElements >> 1;
+    const size_t scalar_count = rccl_complex_scalar_count(packed_elements);
+    constexpr int threads_per_block = 256;
+    const int blocks = static_cast<int>((packed_elements + threads_per_block - 1) / threads_per_block);
+#ifdef ROCQ_PRECISION_DOUBLE
+    constexpr ncclDataType_t scalar_type = ncclDouble;
+#else
+    constexpr ncclDataType_t scalar_type = ncclFloat;
+#endif
+
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        const unsigned rank_bit_value = static_cast<unsigned>((rank >> rank_bit) & 1);
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        hipLaunchKernelGGL(pack_local_global_swap_kernel,
+                           dim3(blocks > 0 ? blocks : 1),
+                           dim3(threads_per_block),
+                           0,
+                           handle->distributedStreams[idx],
+                           handle->distributedSlices[idx],
+                           handle->distributedSwapBuffers[idx],
+                           packed_elements,
+                           local_qubit_idx,
+                           rank_bit_value);
+        rocqStatus_t launch_status = check_last_hip_error();
+        if (launch_status != ROCQ_STATUS_SUCCESS) {
+            return launch_status;
+        }
+    }
+
+    ncclResult_t status = ncclGroupStart();
+    if (status != ncclSuccess) {
+        return ROCQ_STATUS_RCCL_ERROR;
+    }
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        const size_t peer = static_cast<size_t>(rank) ^ rank_mask;
+        if (peer >= static_cast<size_t>(handle->distributedGpuCount)) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        rocComplex* send_buffer = handle->distributedSwapBuffers[idx];
+        rocComplex* recv_buffer = handle->distributedSwapBuffers[idx] + packed_elements;
+        status = ncclRecv(recv_buffer,
+                          scalar_count,
+                          scalar_type,
+                          static_cast<int>(peer),
+                          handle->distributedComms[idx],
+                          handle->distributedStreams[idx]);
+        if (status != ncclSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_RCCL_ERROR;
+        }
+        status = ncclSend(send_buffer,
+                          scalar_count,
+                          scalar_type,
+                          static_cast<int>(peer),
+                          handle->distributedComms[idx],
+                          handle->distributedStreams[idx]);
+        if (status != ncclSuccess) {
+            (void)ncclGroupEnd();
+            return ROCQ_STATUS_RCCL_ERROR;
+        }
+    }
+    status = ncclGroupEnd();
+    if (status != ncclSuccess) {
+        return ROCQ_STATUS_RCCL_ERROR;
+    }
+
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        const unsigned rank_bit_value = static_cast<unsigned>((rank >> rank_bit) & 1);
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        hipLaunchKernelGGL(unpack_local_global_swap_kernel,
+                           dim3(blocks > 0 ? blocks : 1),
+                           dim3(threads_per_block),
+                           0,
+                           handle->distributedStreams[idx],
+                           handle->distributedSlices[idx],
+                           handle->distributedSwapBuffers[idx] + packed_elements,
+                           packed_elements,
+                           local_qubit_idx,
+                           rank_bit_value);
+        rocqStatus_t launch_status = check_last_hip_error();
+        if (launch_status != ROCQ_STATUS_SUCCESS) {
+            return launch_status;
+        }
+    }
+
+    return sync_distributed_streams(handle); // ROCQ_ASYNC_ALLOWED_SYNC
+#else
+    (void)handle;
+    (void)local_qubit_idx;
+    (void)global_qubit_idx;
+    return ROCQ_STATUS_NOT_IMPLEMENTED;
+#endif
+}
+
+inline rocqStatus_t distributed_swap_bits_rccl_remap(rocsvInternalHandle* handle,
+                                                     unsigned qubit_idx1,
+                                                     unsigned qubit_idx2) {
+    if (!handle || !handle->distributedMode) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const bool q1_local = distributed_qubit_local(handle, qubit_idx1);
+    const bool q2_local = distributed_qubit_local(handle, qubit_idx2);
+    if (q1_local && q2_local) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!q1_local && !q2_local) {
+        return distributed_swap_bits_rccl_rank_remap(handle, qubit_idx1, qubit_idx2);
+    }
+    return q1_local
+        ? distributed_swap_bits_rccl_local_global(handle, qubit_idx1, qubit_idx2)
+        : distributed_swap_bits_rccl_local_global(handle, qubit_idx2, qubit_idx1);
 }
 
 inline rocqStatus_t reduce_prob0_on_slice(rocsvInternalHandle* handle,
@@ -4906,6 +5173,16 @@ rocqStatus_t rocsvSwapIndexBits(rocsvHandle_t handle,
                 }
             }
             return ROCQ_STATUS_SUCCESS;
+        }
+        rocqStatus_t rccl_status = distributed_swap_bits_rccl_remap(handle, qubit_idx1, qubit_idx2);
+        if (rccl_status == ROCQ_STATUS_SUCCESS) {
+            return ROCQ_STATUS_SUCCESS;
+        }
+        if (rccl_status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+            return rccl_status;
+        }
+        if (!distributed_host_fallback_enabled()) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
         }
         return distributed_swap_bits_host_remap(handle, qubit_idx1, qubit_idx2);
     }

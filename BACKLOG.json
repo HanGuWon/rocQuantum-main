@@ -287,14 +287,17 @@
                                 ],
                       "evidence":  [
                                        "rocQuantum-main/rocquantum/src/hipStateVec/CMakeLists.txt:41",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:31"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:803",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/swap_kernels.hip:129",
+                                       "rocQuantum-main/tests/test_rccl_distributed_contract.py:94",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:17"
                                    ],
-                      "notes":  "Requires deterministic fallback and comm-mode instrumentation first.",
-                      "status":  "Needs ROCm CI",
-                      "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/CMakeLists.txt:41",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "notes":  "RCCL communicators now cover supported local-domain reductions with ncclAllReduce and non-local distributed swap/remap with ncclSend/ncclRecv for rank/rank plus local/rank swaps. Host gather remap is no longer the default; it requires explicit host-fallback mode when RCCL is unavailable. Real A/B parity and timing artifacts still require a ROCm multi-GPU runner.",
+                      "status":  "Implemented",
+                      "pr_link":  "integration/rocm-validation-handoff",
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:803",
+                      "verification_path":  "Run rocQuantum-main/tests/test_rccl_distributed_contract.py locally; run 2-rank rank/rank and local/rank rocsvSwapIndexBits parity tests plus expectation/sample reduction tests on a ROCm multi-GPU runner and attach artifacts."
                   },
                   {
                       "id":  "P1-TN-001",
