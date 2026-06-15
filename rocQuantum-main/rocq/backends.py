@@ -24,6 +24,35 @@ except ImportError:
 _MOCK_ENV_VAR = "ROCQ_ENABLE_MOCK_BACKENDS"
 _DISABLE_FUSION_ENV_VAR = "ROCQ_DISABLE_GATE_FUSION"
 _FUSABLE_SINGLE_QUBIT_GATES = {"x", "y", "z", "h", "s", "t", "rx", "ry", "rz"}
+_DISTRIBUTED_RUNTIME_SWITCHES = (
+    "ROCQ_DISTRIBUTED_COMM",
+    "ROCQ_REQUIRE_RCCL",
+    "ROCQ_DISABLE_RCCL",
+    "ROCQ_DISTRIBUTED_FALLBACK_MODE",
+    "ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK",
+)
+_DISTRIBUTED_SUPPORTED_FEATURES = (
+    "distributed handle/allocation metadata",
+    "local-domain state-vector gate application",
+    "swap-localized non-local named single/control/CNOT/CZ gates",
+    "swap-localized non-local MCX/CSWAP gates",
+    "swap-localized 1-4 target dense matrix application",
+    "local-domain sparse matrix application",
+    "local-domain selected-qubit sampling/probabilities",
+    "local-domain Pauli, dense-matrix, and rank-local CSR expectation reductions",
+    "optional RCCL all-reduce/send-recv paths when native bindings are built with RCCL",
+    "explicit slow/debug host fallback when enabled",
+)
+_DISTRIBUTED_UNSUPPORTED_FEATURES = (
+    "multi-node distributed allocation",
+    "production-grade multi-GPU performance parity",
+    "general non-local controlled dense matrices",
+    "general non-local sparse matrix application",
+    "non-local arbitrary sparse expectation reductions",
+    "slice-domain measured-bit sampling/probabilities beyond covered swap-localized paths",
+    "distributed scheduler or multi-QPU async execution",
+    "local hardware proof without self-hosted ROCm CI artifacts",
+)
 _MOCK_BACKEND_NOTE = (
     "{backend_name} is using the Python mock fallback because {env_var}=1 and the "
     "native ROCm binding is unavailable. This path is for local smoke tests only; "
@@ -63,6 +92,27 @@ def _warn_mock_backend(backend_name: str) -> None:
         MockBackendWarning,
         stacklevel=3,
     )
+
+
+def distributed_capabilities() -> Dict[str, object]:
+    """Return the advertised canonical distributed runtime contract."""
+
+    return {
+        "status": "partial",
+        "native_binding_available": hip_backend is not None,
+        "native_backend_query_available": (
+            hip_backend is not None
+            and hasattr(hip_backend, "get_distributed_backend")
+        ),
+        "runtime_switches": list(_DISTRIBUTED_RUNTIME_SWITCHES),
+        "supported_features": list(_DISTRIBUTED_SUPPORTED_FEATURES),
+        "unsupported_features": list(_DISTRIBUTED_UNSUPPORTED_FEATURES),
+        "guide": "rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md",
+        "performance_note": (
+            "Distributed support is experimental and correctness-oriented; "
+            "ROCm multi-GPU performance proof requires self-hosted ROCm CI or real hardware."
+        ),
+    }
 
 
 def _native_backend_error(module_name: str, backend_name: str) -> RuntimeError:

@@ -75,6 +75,7 @@ class TestFutureCanonicalRuntimeSurface(unittest.TestCase):
 
     def test_observe_and_sample_exports(self):
         import rocq
+        self.assertTrue(callable(rocq.distributed_capabilities))
         self.assertTrue(callable(rocq.compiler_capabilities))
         self.assertTrue(callable(rocq.observe))
         self.assertTrue(callable(rocq.sample))

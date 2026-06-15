@@ -1,5 +1,6 @@
 """Canonical rocQuantum Python API."""
 
+from .backends import distributed_capabilities
 from .noise import NoiseModel
 from . import spin
 from .kernel import (
@@ -60,6 +61,7 @@ from .gates import (
 __all__ = [
     "NoiseModel",
     "spin",
+    "distributed_capabilities",
     "QuantumKernel",
     "compiler_capabilities",
     "QuantumOperator",

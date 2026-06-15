@@ -185,6 +185,7 @@ What is not real today:
 ### Multi-GPU/distributed
 
 - Distributed handles, allocation, distributed metadata, and some local-domain distributed operations exist.
+- Canonical `rocq.distributed_capabilities()` exposes the partial distributed runtime contract, runtime switches, binding/query availability, supported features, unsupported features, and guide path without requiring a ROCm device.
 - Many distributed operations still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
 - Non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix operations can use an explicit correctness-first host fallback with `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
 - When RCCL is found at build time, local-domain distributed Pauli expectation, sampling, and probability-vector reductions can use RCCL `AllReduce(sum)` instead of gathering the full state to host.

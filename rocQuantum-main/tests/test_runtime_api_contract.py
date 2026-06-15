@@ -63,6 +63,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                     return DensityMatrixBackend(num_qubits)
 
     def test_observe_and_sample_exports_exist(self):
+        self.assertTrue(callable(rocq.distributed_capabilities))
         self.assertTrue(callable(rocq.observe))
         self.assertTrue(callable(rocq.sample))
         self.assertTrue(callable(rocq.compile_and_execute))
@@ -81,6 +82,25 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             "compile_and_execute_async",
         ):
             self.assertIn(name, rocq.__all__)
+        self.assertIn("distributed_capabilities", rocq.__all__)
+
+    def test_distributed_capabilities_expose_partial_runtime_contract(self):
+        capabilities = rocq.distributed_capabilities()
+
+        self.assertEqual(capabilities["status"], "partial")
+        self.assertIn("native_binding_available", capabilities)
+        self.assertIn("native_backend_query_available", capabilities)
+        self.assertIn("ROCQ_REQUIRE_RCCL", capabilities["runtime_switches"])
+        self.assertIn(
+            "local-domain selected-qubit sampling/probabilities",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
+            "multi-node distributed allocation",
+            capabilities["unsupported_features"],
+        )
+        self.assertIn("MULTI_GPU_GUIDE.md", capabilities["guide"])
+        self.assertIn("self-hosted ROCm CI", capabilities["performance_note"])
 
     def test_top_level_phase_gate_exports_record_canonical_ops(self):
         for name in ("tdg", "tdag", "p", "phase", "cp", "cphase"):
