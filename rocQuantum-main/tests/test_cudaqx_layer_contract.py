@@ -127,6 +127,37 @@ class TestVqeSolverContract(unittest.TestCase):
         np.testing.assert_allclose(optimizer.x0, np.array([0.25]))
         np.testing.assert_allclose(result["optimal_parameters"], np.array([0.25]))
 
+    def test_solve_is_quiet_by_default_with_verbose_opt_in(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.solvers.vqe_solver import Optimizer, VQE_Solver
+
+        class NoopOptimizer(Optimizer):
+            def minimize(self, fun, x0, args=()):
+                return types.SimpleNamespace(fun=-0.25, x=np.asarray(x0, dtype=float))
+
+        def ansatz(theta):
+            return None
+
+        with mock.patch("builtins.print") as patched_print:
+            VQE_Solver(optimizer=NoopOptimizer()).solve(
+                PauliOperator("Z0"),
+                ansatz,
+                1,
+                initial_params=[0.25],
+            )
+        patched_print.assert_not_called()
+
+        with mock.patch("builtins.print") as patched_print:
+            VQE_Solver(optimizer=NoopOptimizer(), verbose=True).solve(
+                PauliOperator("Z0"),
+                ansatz,
+                1,
+                initial_params=[0.25],
+            )
+        self.assertEqual(patched_print.call_count, 2)
+        self.assertEqual(patched_print.call_args_list[0].args[0], "Starting VQE optimization...")
+        self.assertEqual(patched_print.call_args_list[1].args[0], "VQE optimization finished.")
+
     def test_objective_passes_multi_parameter_vector_to_qaoa_kernel(self):
         from rocq.operator import PauliOperator
         from rocquantum.solvers.qaoa import make_maxcut_qaoa_kernel

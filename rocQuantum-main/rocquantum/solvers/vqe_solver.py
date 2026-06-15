@@ -168,7 +168,8 @@ class VQE_Solver:
     def __init__(
         self,
         optimizer: Optimizer = None,
-        backend: str = "state_vector"
+        backend: str = "state_vector",
+        verbose: bool = False,
     ):
         """
         Initializes the VQE_Solver.
@@ -180,6 +181,7 @@ class VQE_Solver:
         """
         self.optimizer = optimizer if optimizer is not None else SciPyOptimizer()
         self.backend = backend
+        self.verbose = bool(verbose)
 
         self._intermediate_results = []
 
@@ -254,7 +256,8 @@ class VQE_Solver:
         """
         Executes the VQE algorithm.
         """
-        print("Starting VQE optimization...")
+        if self.verbose:
+            print("Starting VQE optimization...")
         self._intermediate_results = []
 
         result = self.optimizer.minimize(
@@ -263,7 +266,8 @@ class VQE_Solver:
             args=(hamiltonian, ansatz_kernel, num_qubits)
         )
 
-        print("VQE optimization finished.")
+        if self.verbose:
+            print("VQE optimization finished.")
 
         solution = {
             'optimal_energy': result.fun,
@@ -286,7 +290,7 @@ if __name__ == '__main__':
     num_qubits_for_problem = 1
 
     scipy_optimizer = SciPyOptimizer(options={'method': 'COBYLA', 'tol': 1e-6})
-    vqe_solver = VQE_Solver(optimizer=scipy_optimizer)
+    vqe_solver = VQE_Solver(optimizer=scipy_optimizer, verbose=True)
 
     vqe_result = vqe_solver.solve(
         hamiltonian=hamiltonian,
