@@ -17,6 +17,28 @@ if _PROJECT_ROOT not in sys.path:
 
 
 class TestVqeSolverContract(unittest.TestCase):
+    def test_solver_capabilities_expose_experimental_cudaqx_boundary(self):
+        import rocquantum.solvers as solvers
+        from rocquantum.solvers import capabilities, solver_capabilities
+
+        capability_data = solver_capabilities()
+
+        self.assertEqual(capability_data["status"], "experimental_partial")
+        self.assertEqual(capabilities(), capability_data)
+        self.assertIn("VQE_Solver.evaluate_energy", capability_data["entry_points"])
+        self.assertIn(
+            "VQE one-shot energy evaluation through rocq.observe()",
+            capability_data["supported_features"],
+        )
+        self.assertIn(
+            "GPU-resident native adjoint differentiation",
+            capability_data["unsupported_features"],
+        )
+        self.assertIn("scipy", capability_data["optional_dependencies"])
+        self.assertIn("CUDA-QX", capability_data["comparison_target"])
+        self.assertIn("self-hosted ROCm CI", capability_data["performance_note"])
+        self.assertIn("solver_capabilities", solvers.__all__)
+
     def test_objective_uses_canonical_observe(self):
         import rocq
         from rocq.operator import PauliOperator
@@ -637,6 +659,31 @@ class TestQaoaHelpers(unittest.TestCase):
 
 
 class TestQecHelpers(unittest.TestCase):
+    def test_qec_capabilities_expose_experimental_cudaqx_boundary(self):
+        import rocquantum.qec as qec
+        from rocquantum.qec import capabilities, qec_capabilities
+
+        capability_data = qec_capabilities()
+
+        self.assertEqual(capability_data["status"], "experimental_partial")
+        self.assertEqual(capabilities(), capability_data)
+        self.assertIn("QEC_Experiment.run_single_round", capability_data["entry_points"])
+        self.assertIn(
+            "three-qubit bit-flip repetition-code single-round sampling",
+            capability_data["supported_features"],
+        )
+        self.assertIn(
+            "mid-circuit measurement and classical feedback",
+            capability_data["unsupported_features"],
+        )
+        self.assertEqual(
+            capability_data["supported_code_family"],
+            "three-qubit bit-flip repetition code",
+        )
+        self.assertIn("CUDA-QX", capability_data["comparison_target"])
+        self.assertIn("self-hosted ROCm CI", capability_data["performance_note"])
+        self.assertIn("qec_capabilities", qec.__all__)
+
     def test_qec_experiment_samples_canonical_fragments(self):
         from rocq.operator import PauliOperator
         from rocquantum.qec.framework import Decoder, QEC_Experiment, QuantumErrorCode

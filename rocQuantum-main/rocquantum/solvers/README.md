@@ -5,6 +5,10 @@ This package is an experimental, minimal higher-level layer over the canonical
 
 Current supported subset:
 
+- `rocquantum.solvers.solver_capabilities()` and the package-level
+  `capabilities()` alias expose the experimental supported/unsupported solver
+  contract, entry points, optional SciPy dependency, docs path, and ROCm
+  validation limit for CUDA-QX comparisons.
 - `VQE_Solver.evaluate_energy()` and `VQE_Solver.solve()` evaluate canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, scaled/divided composite sums, and full-state CSR sparse observables on the state-vector backend or density-matrix correctness fallback.
 - `VQE_Solver.solve()` is quiet by default for library and batch use; pass
   `verbose=True` to print start/finish progress messages.

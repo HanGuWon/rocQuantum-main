@@ -5,6 +5,10 @@ runtime. It is not a full CUDA-QX QEC library.
 
 Current supported subset:
 
+- `rocquantum.qec.qec_capabilities()` and the package-level `capabilities()`
+  alias expose the experimental supported/unsupported QEC contract, entry
+  points, code-family scope, measurement-error model, docs path, and ROCm
+  validation limit for CUDA-QX comparisons.
 - 3 data qubits plus 2 ancilla qubits.
 - One bit-flip repetition-code syndrome round plus sequential repeated-round
   aggregation over the same 3-qubit code.
