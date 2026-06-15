@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 import math
-from numbers import Integral
+from numbers import Integral, Number
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -105,11 +105,169 @@ def validate_finite_complex_array(values: object, label: str) -> None:
 
 
 def as_complex_matrix(matrix: object, label: str = "Operation matrix") -> np.ndarray:
-    out = np.asarray(matrix, dtype=np.complex128)
+    try:
+        raw = np.asarray(matrix, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must contain finite numeric values.") from exc
+
+    if raw.ndim != 2 or raw.shape[0] != raw.shape[1]:
+        raise ValueError(f"{label} must be square.")
+
+    normalized = []
+    for value in raw.reshape(-1):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError(f"{label} must contain finite numeric values.")
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError(f"{label} must contain finite values.")
+        normalized.append(scalar)
+
+    out = np.asarray(normalized, dtype=np.complex128).reshape(raw.shape)
     if out.ndim != 2 or out.shape[0] != out.shape[1]:
         raise ValueError(f"{label} must be square.")
     validate_finite_complex_array(out, label)
     return np.ascontiguousarray(out)
+
+
+def validate_operation_targets(
+    targets: Iterable[int],
+    num_qubits: int,
+    label: str = "Operation targets",
+) -> list[int]:
+    normalized = normalize_targets(targets)
+    if not normalized:
+        raise ValueError(f"{label} must include at least one qubit.")
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{label} must be unique.")
+    for target in normalized:
+        if target < 0 or target >= int(num_qubits):
+            raise ValueError(f"{label} is out of range.")
+    return normalized
+
+
+def operation_matrix_for_targets(
+    matrix: object,
+    targets: Iterable[int],
+    num_qubits: int,
+    label: str,
+) -> tuple[np.ndarray, list[int]]:
+    normalized_targets = validate_operation_targets(targets, num_qubits, f"{label} targets")
+    normalized_matrix = as_complex_matrix(matrix, label)
+    dimension = 1 << len(normalized_targets)
+    if normalized_matrix.shape != (dimension, dimension):
+        raise ValueError(f"{label} dimension must be 2^len(targets).")
+    return normalized_matrix, normalized_targets
+
+
+def normalize_sparse_operation_csr(
+    data: object,
+    indices: object,
+    indptr: object,
+    shape: Iterable[int],
+    targets: Iterable[int],
+    num_qubits: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[int, int], list[int]]:
+    normalized_targets = validate_operation_targets(
+        targets,
+        num_qubits,
+        "Sparse operation targets",
+    )
+
+    try:
+        raw_data = np.asarray(data, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Sparse operation CSR data must contain finite numeric values.") from exc
+
+    normalized_data_values = []
+    for value in raw_data:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError("Sparse operation CSR data must contain finite numeric values.")
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError("Sparse operation CSR data must contain finite values.")
+        normalized_data_values.append(scalar)
+    normalized_data = np.ascontiguousarray(
+        np.asarray(normalized_data_values, dtype=np.complex128)
+    )
+
+    normalized_indices = _normalize_sparse_index_vector(indices, "indices")
+    normalized_indptr = _normalize_sparse_index_vector(indptr, "indptr")
+    normalized_shape = _normalize_sparse_shape(shape)
+    local_dimension = 1 << len(normalized_targets)
+
+    if normalized_shape != (local_dimension, local_dimension):
+        raise ValueError("Sparse operation matrix shape must match target wires.")
+    if normalized_indptr.size != local_dimension + 1:
+        raise ValueError("Sparse operation CSR indptr length must equal rows + 1.")
+    if normalized_data.size != normalized_indices.size:
+        raise ValueError("Sparse operation CSR data and indices lengths must match.")
+    if (
+        normalized_indptr.size == 0
+        or int(normalized_indptr[0]) != 0
+        or int(normalized_indptr[-1]) != normalized_data.size
+    ):
+        raise ValueError("Sparse operation CSR indptr must start at 0 and end at nnz.")
+    if np.any(normalized_indptr[:-1] > normalized_indptr[1:]):
+        raise ValueError("Sparse operation CSR indptr must be monotonic.")
+    if np.any(normalized_indices < 0) or np.any(normalized_indices >= local_dimension):
+        raise ValueError("Sparse operation CSR column index is out of bounds.")
+
+    return (
+        normalized_data,
+        normalized_indices,
+        normalized_indptr,
+        normalized_shape,
+        normalized_targets,
+    )
+
+
+def _normalize_sparse_shape(shape: Iterable[int]) -> tuple[int, int]:
+    if isinstance(shape, (str, bytes)):
+        raise ValueError("Sparse operation matrix shape must have two dimensions.")
+    try:
+        raw_shape = list(shape)
+    except TypeError as exc:
+        raise ValueError("Sparse operation matrix shape must have two dimensions.") from exc
+    if len(raw_shape) != 2:
+        raise ValueError("Sparse operation matrix shape must have two dimensions.")
+
+    rows = _normalize_positive_dimension(raw_shape[0], "Sparse operation matrix shape")
+    cols = _normalize_positive_dimension(raw_shape[1], "Sparse operation matrix shape")
+    if rows != cols:
+        raise ValueError("Sparse operation matrix must be square.")
+    if rows & (rows - 1):
+        raise ValueError("Sparse operation matrix dimension must be a power of two.")
+    return rows, cols
+
+
+def _normalize_positive_dimension(value: object, label: str) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+        raise ValueError(f"{label} dimensions must be positive integers.")
+    normalized = int(value)
+    if normalized <= 0:
+        raise ValueError(f"{label} dimensions must be positive.")
+    return normalized
+
+
+def _normalize_sparse_index_vector(values: object, label: str) -> np.ndarray:
+    if isinstance(values, (str, bytes)):
+        raise ValueError(f"Sparse operation CSR {label} must contain integer indices.")
+    try:
+        raw_values = np.asarray(values, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Sparse operation CSR {label} must contain integer indices."
+        ) from exc
+
+    normalized = []
+    for value in raw_values:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+            raise ValueError(f"Sparse operation CSR {label} must contain integer indices.")
+        integer = int(value)
+        if integer < 0:
+            raise ValueError(f"Sparse operation CSR {label} must be non-negative.")
+        normalized.append(integer)
+    return np.ascontiguousarray(np.asarray(normalized, dtype=np.int64))
 
 
 def _reverse_bits(value: int, width: int) -> int:
@@ -661,8 +819,12 @@ class RocQuantumRuntime:
         raise NotImplementedError("The active rocQuantum binding does not expose batched parameter gates.")
 
     def apply_matrix(self, matrix: object, targets: Iterable[int]) -> None:
-        normalized_targets = normalize_targets(targets)
-        normalized_matrix = as_complex_matrix(matrix, "Operation matrix")
+        normalized_matrix, normalized_targets = operation_matrix_for_targets(
+            matrix,
+            targets,
+            self.num_qubits(),
+            "Operation matrix",
+        )
         apply_matrix = getattr(self.simulator, "apply_matrix", None)
         if callable(apply_matrix):
             apply_matrix(normalized_matrix, normalized_targets)
@@ -681,9 +843,19 @@ class RocQuantumRuntime:
         controls: Iterable[int],
         targets: Iterable[int],
     ) -> None:
-        normalized_controls = normalize_targets(controls)
-        normalized_targets = normalize_targets(targets)
-        normalized_matrix = as_complex_matrix(matrix, "Controlled operation matrix")
+        normalized_controls = validate_operation_targets(
+            controls,
+            self.num_qubits(),
+            "Controlled operation controls",
+        )
+        normalized_matrix, normalized_targets = operation_matrix_for_targets(
+            matrix,
+            targets,
+            self.num_qubits(),
+            "Controlled operation matrix",
+        )
+        if set(normalized_controls).intersection(normalized_targets):
+            raise ValueError("Controlled operation controls and targets must be disjoint.")
 
         native = getattr(self.simulator, "apply_controlled_matrix", None)
         if callable(native):
@@ -705,12 +877,20 @@ class RocQuantumRuntime:
         shape: Iterable[int],
         targets: Iterable[int],
     ) -> None:
-        normalized_targets = normalize_targets(targets)
-        normalized_data = np.ascontiguousarray(np.asarray(data, dtype=np.complex128).reshape(-1))
-        normalized_indices = np.ascontiguousarray(np.asarray(indices, dtype=np.int64).reshape(-1))
-        normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
-        normalized_shape = tuple(int(dim) for dim in shape)
-        validate_finite_complex_array(normalized_data, "Sparse operation CSR data")
+        (
+            normalized_data,
+            normalized_indices,
+            normalized_indptr,
+            normalized_shape,
+            normalized_targets,
+        ) = normalize_sparse_operation_csr(
+            data,
+            indices,
+            indptr,
+            shape,
+            targets,
+            self.num_qubits(),
+        )
 
         native = getattr(self.simulator, "apply_sparse_matrix", None)
         if callable(native):

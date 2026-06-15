@@ -825,6 +825,69 @@ def test_framework_runtime_rejects_nonfinite_matrix_and_sparse_payloads(monkeypa
     assert sim.sparse_moments == []
 
 
+def test_framework_runtime_validates_matrix_shapes_and_sparse_csr_before_native_dispatch(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    runtime = RocQuantumRuntime.from_bindings(2)
+    sim = _FakeQuantumSimulator.instances[-1]
+
+    invalid_matrix_cases = (
+        (np.eye(2, dtype=np.complex128), [0, 1]),
+        (np.eye(4, dtype=np.complex128), [0, 0]),
+        (np.eye(2, dtype=np.complex128), []),
+        (np.eye(2, dtype=np.complex128), [-1]),
+        ([[1.0, 0.0], [0.0, True]], [0]),
+        ([[1.0, 0.0], [0.0, "1.0"]], [0]),
+    )
+    for matrix, targets in invalid_matrix_cases:
+        with pytest.raises(ValueError):
+            runtime.apply_matrix(matrix, targets)
+    assert sim.matrices == []
+
+    invalid_controlled_cases = (
+        (np.eye(2, dtype=np.complex128), [], [1]),
+        (np.eye(2, dtype=np.complex128), [0], [0]),
+        (np.eye(2, dtype=np.complex128), [0, 0], [1]),
+        (np.eye(4, dtype=np.complex128), [0], [1]),
+        ([[1.0, 0.0], [0.0, True]], [0], [1]),
+    )
+    for matrix, controls, targets in invalid_controlled_cases:
+        with pytest.raises(ValueError):
+            runtime.apply_controlled_matrix(matrix, controls, targets)
+    assert sim.controlled_matrices == []
+
+    class _NativeSparseSimulator(_FakeQuantumSimulator):
+        def __init__(self, num_qubits):
+            super().__init__(num_qubits)
+            self.sparse_applications = []
+
+        def apply_sparse_matrix(self, data, indices, indptr, shape, targets):
+            self.sparse_applications.append((data, indices, indptr, shape, targets))
+
+    sparse_sim = _NativeSparseSimulator(2)
+    sparse_runtime = RocQuantumRuntime(sparse_sim)
+    invalid_sparse_cases = (
+        ([True], [0], [0, 1], (2, 2), [0]),
+        ([1.0], [True], [0, 1], (2, 2), [0]),
+        ([1.0], [-1], [0, 1], (2, 2), [0]),
+        ([1.0], [0], [0, True], (2, 2), [0]),
+        ([1.0], [0], [0, 1], (4, 4), [0]),
+        ([1.0], [0], [0, 1], (2, 2), [0, 0]),
+        ([1.0, 2.0], [0], [0, 1], (2, 2), [0]),
+        ([1.0], [0], [1, 1], (2, 2), [0]),
+        ([1.0], [0], [0, 1, 0], (2, 2), [0]),
+        ([1.0], [2], [0, 1], (2, 2), [0]),
+    )
+    for data, indices, indptr, shape, targets in invalid_sparse_cases:
+        with pytest.raises(ValueError):
+            sparse_runtime.apply_sparse_matrix(data, indices, indptr, shape, targets)
+
+    assert sparse_sim.sparse_applications == []
+    assert sparse_sim.statevector_reads == 0
+
+
 def test_framework_runtime_rejects_nonfinite_probability_payloads():
     from rocquantum.framework_runtime import (
         RocQuantumRuntime,
