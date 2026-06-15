@@ -9,6 +9,7 @@ Runtime update note (2026-04-06):
 - Native state-vector sampling and Pauli expectation paths are wired into the canonical `rocq` surface.
 - Canonical sampling now rejects non-positive or non-integral shots and invalid selected-qubit lists before native backend dispatch; direct canonical backends share the same positive-integer shot and qubit-list validation.
 - Canonical kernel recording now rejects non-integer or out-of-range gate targets and non-finite gate parameters before native backend dispatch.
+- Canonical top-level `rocq` now exports the recorded phase-gate aliases (`tdg`/`tdag`, `p`/`phase`, `cp`/`cphase`) instead of requiring users to reach into `rocq.gates`.
 - Packaging has moved to a CMake-first `scikit-build-core` path.
 
 Audit refresh note (2026-06-10):

@@ -66,6 +66,39 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertTrue(callable(rocq.sample))
         self.assertTrue(callable(rocq.compile_and_execute))
 
+    def test_top_level_phase_gate_exports_record_canonical_ops(self):
+        for name in ("tdg", "tdag", "p", "phase", "cp", "cphase"):
+            with self.subTest(name=name):
+                self.assertTrue(callable(getattr(rocq, name)))
+                self.assertIn(name, rocq.__all__)
+
+        @kernel
+        def phase_gates():
+            q = rocq.qvec(2)
+            rocq.tdg(q[0])
+            rocq.tdag(q[1])
+            rocq.p(0.125, q[0])
+            rocq.phase(0.25, q[1])
+            rocq.cp(0.5, q[0], q[1])
+            rocq.cphase(0.75, q[1], q[0])
+
+        fake_backend = _FakeBackend()
+        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+            rocq.execute(phase_gates, backend="state_vector")
+
+        recorded = [(op.name.lower(), op.targets, op.params) for op in fake_backend.ops]
+        self.assertEqual(
+            recorded,
+            [
+                ("tdg", [0], {}),
+                ("tdg", [1], {}),
+                ("p", [0], {"phi": 0.125}),
+                ("p", [1], {"phi": 0.25}),
+                ("cp", [0, 1], {"phi": 0.5}),
+                ("cp", [1, 0], {"phi": 0.75}),
+            ],
+        )
+
     def test_get_expectation_value_delegates_to_observe(self):
         @kernel
         def prep_state():
