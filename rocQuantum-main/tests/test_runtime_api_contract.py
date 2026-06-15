@@ -141,6 +141,12 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                     SparseHamiltonianOperator(data, indices, indptr, shape=shape)
         with self.assertRaisesRegex(ValueError, "two dimensions"):
             SparseHamiltonianOperator(data, indices, indptr, shape=(2,))
+        with self.assertRaisesRegex(ValueError, "two dimensions"):
+            SparseHamiltonianOperator(data, indices, indptr, shape=2)
+        with self.assertRaisesRegex(ValueError, "square"):
+            SparseHamiltonianOperator(data, indices, indptr, shape=(2, 4))
+        with self.assertRaisesRegex(ValueError, "power of two"):
+            SparseHamiltonianOperator(data, indices, indptr, shape=(3, 3))
 
         sparse = SparseHamiltonianOperator(data, indices, indptr, shape=(np.int64(2), np.int64(2)))
         self.assertEqual(sparse.shape, (2, 2))

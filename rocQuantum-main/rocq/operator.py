@@ -52,6 +52,31 @@ def _normalize_observable_targets(targets, name: str):
     return normalized
 
 
+def _normalize_sparse_shape(shape) -> tuple[int, int]:
+    if isinstance(shape, (str, bytes)):
+        raise ValueError("SparseHamiltonianOperator shape must have two dimensions.")
+    try:
+        raw_shape = list(shape)
+    except TypeError as exc:
+        raise ValueError("SparseHamiltonianOperator shape must have two dimensions.") from exc
+    if len(raw_shape) != 2:
+        raise ValueError("SparseHamiltonianOperator shape must have two dimensions.")
+
+    rows = _validate_positive_integer(
+        raw_shape[0],
+        "SparseHamiltonianOperator shape dimension",
+    )
+    cols = _validate_positive_integer(
+        raw_shape[1],
+        "SparseHamiltonianOperator shape dimension",
+    )
+    if rows != cols:
+        raise ValueError("SparseHamiltonianOperator shape must be square.")
+    if rows & (rows - 1):
+        raise ValueError("SparseHamiltonianOperator shape dimension must be a power of two.")
+    return rows, cols
+
+
 def _normalize_coefficient(value, name: str = "coefficient") -> complex:
     if isinstance(value, bool) or not isinstance(value, Number):
         raise ValueError(f"{name} must be a finite numeric value.")
@@ -175,12 +200,7 @@ class SparseHamiltonianOperator(QuantumOperator):
         self.data = data
         self.indices = indices
         self.indptr = indptr
-        if len(shape) != 2:
-            raise ValueError("SparseHamiltonianOperator shape must have two dimensions.")
-        self.shape = (
-            _validate_positive_integer(shape[0], "SparseHamiltonianOperator shape dimension"),
-            _validate_positive_integer(shape[1], "SparseHamiltonianOperator shape dimension"),
-        )
+        self.shape = _normalize_sparse_shape(shape)
 
     def to_string(self) -> str:
         return f"{self.coefficient} * SparseHamiltonian(CSR, shape={self.shape})"
