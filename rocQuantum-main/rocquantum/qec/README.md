@@ -9,7 +9,8 @@ Current supported subset:
   alias expose the experimental supported/unsupported QEC contract, entry
   points, code-family scope, measurement-error model, docs path, and ROCm
   validation limit for CUDA-QX comparisons.
-- 3 data qubits plus 2 ancilla qubits.
+- 3 data qubits plus 2 ancilla qubits; concrete repetition-code circuit
+  generation requires a positive integer `num_qubits >= 5`.
 - One bit-flip repetition-code syndrome round plus sequential repeated-round
   aggregation over the same 3-qubit code.
 - End-of-circuit ancilla sampling through `rocq.sample()`.

@@ -10,7 +10,7 @@ from typing import Callable, Dict, List
 import rocq
 from rocq.operator import PauliOperator
 
-from rocquantum.qec.framework import QuantumErrorCode
+from rocquantum.qec.framework import QuantumErrorCode, _validate_positive_integer
 
 
 AnsatzKernel = Callable[..., None]
@@ -30,6 +30,7 @@ class ThreeQubitRepetitionCode(QuantumErrorCode):
         backend: str = "state_vector",
     ) -> List[object]:
         del backend
+        num_qubits = _validate_positive_integer(num_qubits, "num_qubits")
         if num_qubits < 5:
             raise ValueError("ThreeQubitRepetitionCode requires at least 5 qubits.")
 

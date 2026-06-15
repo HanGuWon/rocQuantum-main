@@ -772,6 +772,20 @@ class TestQecHelpers(unittest.TestCase):
         self.assertEqual(args, ("fragment-1", 4))
         self.assertEqual(kwargs, {"backend": "state_vector", "qubits": [4]})
 
+    def test_repetition_code_generator_validates_num_qubits(self):
+        from rocquantum.qec.codes.repetition_code import ThreeQubitRepetitionCode
+
+        code = ThreeQubitRepetitionCode()
+        circuits = code.generate_stabilizer_circuits(None, np.int64(5))
+
+        self.assertEqual(len(circuits), 2)
+        for num_qubits in (True, 5.0, "5"):
+            with self.subTest(num_qubits=num_qubits):
+                with self.assertRaisesRegex(ValueError, "num_qubits must be a positive integer"):
+                    code.generate_stabilizer_circuits(None, num_qubits)
+        with self.assertRaisesRegex(ValueError, "at least 5 qubits"):
+            code.generate_stabilizer_circuits(None, 4)
+
     def test_qec_experiment_validates_ancilla_sample_counts(self):
         from rocquantum.qec.framework import _most_likely_single_bit
 
