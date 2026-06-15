@@ -142,6 +142,35 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         sparse = SparseHamiltonianOperator(data, indices, indptr, shape=(np.int64(2), np.int64(2)))
         self.assertEqual(sparse.shape, (2, 2))
 
+    def test_observable_coefficients_must_be_finite_numeric_values(self):
+        matrix = np.eye(2)
+        data = np.array([1.0 + 0.0j])
+        indices = np.array([0])
+        indptr = np.array([0, 1])
+
+        invalid_values = (np.nan, np.inf, -np.inf, True, "1.0")
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "coefficient|scalar|divisor"):
+                    PauliOperator("Z0", coefficient=value)
+                with self.assertRaisesRegex(ValueError, "coefficient|scalar|divisor"):
+                    HermitianOperator(matrix, coefficient=value, targets=[0])
+                with self.assertRaisesRegex(ValueError, "coefficient|scalar|divisor"):
+                    SparseHamiltonianOperator(data, indices, indptr, shape=(2, 2), coefficient=value)
+
+        for value in (np.nan, np.inf, -np.inf, True):
+            with self.subTest(arithmetic_value=value):
+                with self.assertRaisesRegex(ValueError, "coefficient|scalar|divisor"):
+                    PauliOperator("Z0") * value
+                with self.assertRaisesRegex(ValueError, "coefficient|scalar|divisor"):
+                    PauliOperator("Z0") + value
+
+        with self.assertRaisesRegex(ValueError, "divisor must be non-zero"):
+            PauliOperator("Z0") / 0
+
+        operator = PauliOperator("Z0", coefficient=1.0 + 0.5j)
+        self.assertEqual(operator.coefficient, 1.0 + 0.5j)
+
     def test_noise_model_validates_probability_targets_and_names(self):
         invalid_probabilities = (-0.1, 1.1, np.nan, np.inf, True, "0.1")
         for probability in invalid_probabilities:
@@ -181,6 +210,13 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                 "kraus_matrices": None,
             },
         )
+
+        with mock.patch("builtins.print") as patched_print:
+            noise = rocq.NoiseModel()
+            noise.add_channel(" depolarizing ", 0.1, after_op=" H ")
+        patched_print.assert_not_called()
+        self.assertEqual(noise.get_channels()[0]["type"], "depolarizing")
+        self.assertEqual(noise.get_channels()[0]["op"], "h")
 
     def test_get_expectation_value_delegates_to_observe(self):
         @kernel

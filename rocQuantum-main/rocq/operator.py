@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from abc import ABC, abstractmethod
 from numbers import Integral, Number
@@ -30,17 +31,27 @@ def _validate_nonnegative_integer(value, name: str) -> int:
     return index
 
 
+def _normalize_coefficient(value, name: str = "coefficient") -> complex:
+    if isinstance(value, bool) or not isinstance(value, Number):
+        raise ValueError(f"{name} must be a finite numeric value.")
+    coefficient = complex(value)
+    if not math.isfinite(coefficient.real) or not math.isfinite(coefficient.imag):
+        raise ValueError(f"{name} must be finite.")
+    return coefficient
+
+
 class QuantumOperator(ABC):
     """Abstract base class for quantum observables."""
 
     def __init__(self, coefficient: Number = 1.0):
-        self.coefficient = complex(coefficient)
+        self.coefficient = _normalize_coefficient(coefficient)
 
     def __mul__(self, other):
         if isinstance(other, Number):
+            scalar = _normalize_coefficient(other, "scalar")
             new_op = self.__class__.__new__(self.__class__)
             new_op.__dict__.update(self.__dict__)
-            new_op.coefficient = self.coefficient * other
+            new_op.coefficient = _normalize_coefficient(self.coefficient * scalar)
             return new_op
         if isinstance(other, QuantumOperator):
             return _multiply_operator_pauli_terms(self, other)
@@ -51,23 +62,28 @@ class QuantumOperator(ABC):
 
     def __truediv__(self, other):
         if isinstance(other, Number):
-            return self * (1 / other)
+            scalar = _normalize_coefficient(other, "divisor")
+            if scalar == 0:
+                raise ValueError("divisor must be non-zero.")
+            return self * (1 / scalar)
         raise NotImplementedError(f"Cannot divide QuantumOperator by {type(other)}")
 
     def __add__(self, other):
         if isinstance(other, QuantumOperator):
             return SumOperator([self, other])
         if isinstance(other, Number):
-            if other == 0:
+            scalar = _normalize_coefficient(other, "scalar")
+            if scalar == 0:
                 return self
-            return SumOperator([self, _identity_operator(other)])
+            return SumOperator([self, _identity_operator(scalar)])
         raise NotImplementedError(f"Cannot add QuantumOperator to {type(other)}")
 
     def __radd__(self, other):
         if isinstance(other, Number):
-            if other == 0:
+            scalar = _normalize_coefficient(other, "scalar")
+            if scalar == 0:
                 return self
-            return SumOperator([_identity_operator(other), self])
+            return SumOperator([_identity_operator(scalar), self])
         raise NotImplementedError(f"Cannot add {type(other)} to QuantumOperator")
 
     def __neg__(self):
@@ -77,14 +93,15 @@ class QuantumOperator(ABC):
         if isinstance(other, QuantumOperator):
             return self + (-other)
         if isinstance(other, Number):
-            if other == 0:
+            scalar = _normalize_coefficient(other, "scalar")
+            if scalar == 0:
                 return self
-            return self + _identity_operator(-other)
+            return self + _identity_operator(-scalar)
         raise NotImplementedError(f"Cannot subtract {type(other)} from QuantumOperator")
 
     def __rsub__(self, other):
         if isinstance(other, Number):
-            return _identity_operator(other) + (-self)
+            return _identity_operator(_normalize_coefficient(other, "scalar")) + (-self)
         raise NotImplementedError(f"Cannot subtract QuantumOperator from {type(other)}")
 
     @abstractmethod

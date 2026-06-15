@@ -47,7 +47,7 @@ def _normalize_optional_op(after_op):
         return None
     if not isinstance(after_op, str) or not after_op.strip():
         raise ValueError("after_op must be a non-empty string when provided.")
-    return after_op.lower()
+    return after_op.strip().lower()
 
 
 class NoiseModel:
@@ -103,7 +103,7 @@ class NoiseModel:
 
         if not isinstance(channel_type, str) or not channel_type.strip():
             raise ValueError("channel_type must be a non-empty string.")
-        channel_lower = channel_type.lower()
+        channel_lower = channel_type.strip().lower()
         if channel_lower == "kraus" and kraus_matrices is None:
             raise ValueError("Kraus noise channels require kraus_matrices.")
         if channel_lower != "kraus" and kraus_matrices is not None:
@@ -117,7 +117,6 @@ class NoiseModel:
             "kraus_matrices": kraus_matrices,
         }
         self._channels.append(channel_spec)
-        print(f"NOISE_MODEL: Added '{channel_type}' channel with prob={probability}.")
 
     def get_channels(self):
         """Returns the list of configured noise channels."""
