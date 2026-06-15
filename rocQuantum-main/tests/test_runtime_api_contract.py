@@ -99,6 +99,16 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             ],
         )
 
+    def test_qvec_requires_positive_integer_size(self):
+        for invalid_size in (0, -1, 1.5, True, "2"):
+            with self.subTest(size=invalid_size):
+                with self.assertRaisesRegex(ValueError, "qvec size must be a positive integer"):
+                    rocq.qvec(invalid_size)
+
+        register = rocq.qvec(np.int64(2))
+        self.assertEqual(len(register), 2)
+        self.assertEqual(register.qubits, [0, 1])
+
     def test_get_expectation_value_delegates_to_observe(self):
         @kernel
         def prep_state():
