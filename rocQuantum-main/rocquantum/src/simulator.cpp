@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <complex>
 #include <cstdlib>
 #include <limits>
@@ -35,6 +36,25 @@ void check_hip(hipError_t status, const char* context) {
     if (status != hipSuccess) {
         throw std::runtime_error(std::string("HIP error during ") + context + ": " +
                                  hipGetErrorString(status));
+    }
+}
+
+double require_finite_angle_param(const std::vector<double>& params, const char* gate_name) {
+    if (params.empty()) {
+        throw std::invalid_argument(std::string(gate_name) + " requires one angle parameter.");
+    }
+    const double angle = params[0];
+    if (!std::isfinite(angle)) {
+        throw std::invalid_argument(std::string(gate_name) + " angle parameter must be finite.");
+    }
+    return angle;
+}
+
+void validate_finite_batch_params(const std::vector<double>& params_by_batch) {
+    for (double parameter : params_by_batch) {
+        if (!std::isfinite(parameter)) {
+            throw std::invalid_argument("Batched gate parameters must be finite.");
+        }
     }
 }
 
@@ -345,10 +365,8 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
         if (targets.size() != 1) {
             throw std::invalid_argument("RX requires exactly 1 target qubit.");
         }
-        if (params.empty()) {
-            throw std::invalid_argument("RX requires one angle parameter.");
-        }
-        check_status(rocsvApplyRx(sim_handle_, device_state_vector_, num_qubits_, targets[0], params[0]),
+        const double angle = require_finite_angle_param(params, "RX");
+        check_status(rocsvApplyRx(sim_handle_, device_state_vector_, num_qubits_, targets[0], angle),
                      "apply RX");
         return;
     }
@@ -356,10 +374,8 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
         if (targets.size() != 1) {
             throw std::invalid_argument("RY requires exactly 1 target qubit.");
         }
-        if (params.empty()) {
-            throw std::invalid_argument("RY requires one angle parameter.");
-        }
-        check_status(rocsvApplyRy(sim_handle_, device_state_vector_, num_qubits_, targets[0], params[0]),
+        const double angle = require_finite_angle_param(params, "RY");
+        check_status(rocsvApplyRy(sim_handle_, device_state_vector_, num_qubits_, targets[0], angle),
                      "apply RY");
         return;
     }
@@ -367,10 +383,8 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
         if (targets.size() != 1) {
             throw std::invalid_argument("RZ requires exactly 1 target qubit.");
         }
-        if (params.empty()) {
-            throw std::invalid_argument("RZ requires one angle parameter.");
-        }
-        check_status(rocsvApplyRz(sim_handle_, device_state_vector_, num_qubits_, targets[0], params[0]),
+        const double angle = require_finite_angle_param(params, "RZ");
+        check_status(rocsvApplyRz(sim_handle_, device_state_vector_, num_qubits_, targets[0], angle),
                      "apply RZ");
         return;
     }
@@ -378,10 +392,8 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
         if (targets.size() != 1) {
             throw std::invalid_argument("P requires exactly 1 target qubit.");
         }
-        if (params.empty()) {
-            throw std::invalid_argument("P requires one angle parameter.");
-        }
-        check_status(rocsvApplyP(sim_handle_, device_state_vector_, num_qubits_, targets[0], params[0]),
+        const double angle = require_finite_angle_param(params, "P");
+        check_status(rocsvApplyP(sim_handle_, device_state_vector_, num_qubits_, targets[0], angle),
                      "apply P");
         return;
     }
@@ -389,10 +401,8 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
         if (targets.size() != 2) {
             throw std::invalid_argument("CRX requires control and target qubits.");
         }
-        if (params.empty()) {
-            throw std::invalid_argument("CRX requires one angle parameter.");
-        }
-        check_status(rocsvApplyCRX(sim_handle_, device_state_vector_, num_qubits_, targets[0], targets[1], params[0]),
+        const double angle = require_finite_angle_param(params, "CRX");
+        check_status(rocsvApplyCRX(sim_handle_, device_state_vector_, num_qubits_, targets[0], targets[1], angle),
                      "apply CRX");
         return;
     }
@@ -400,10 +410,8 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
         if (targets.size() != 2) {
             throw std::invalid_argument("CRY requires control and target qubits.");
         }
-        if (params.empty()) {
-            throw std::invalid_argument("CRY requires one angle parameter.");
-        }
-        check_status(rocsvApplyCRY(sim_handle_, device_state_vector_, num_qubits_, targets[0], targets[1], params[0]),
+        const double angle = require_finite_angle_param(params, "CRY");
+        check_status(rocsvApplyCRY(sim_handle_, device_state_vector_, num_qubits_, targets[0], targets[1], angle),
                      "apply CRY");
         return;
     }
@@ -411,10 +419,8 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
         if (targets.size() != 2) {
             throw std::invalid_argument("CRZ requires control and target qubits.");
         }
-        if (params.empty()) {
-            throw std::invalid_argument("CRZ requires one angle parameter.");
-        }
-        check_status(rocsvApplyCRZ(sim_handle_, device_state_vector_, num_qubits_, targets[0], targets[1], params[0]),
+        const double angle = require_finite_angle_param(params, "CRZ");
+        check_status(rocsvApplyCRZ(sim_handle_, device_state_vector_, num_qubits_, targets[0], targets[1], angle),
                      "apply CRZ");
         return;
     }
@@ -422,10 +428,8 @@ void QuantumSimulator::apply_gate(const std::string& gate_name,
         if (targets.size() != 2) {
             throw std::invalid_argument("CP requires control and target qubits.");
         }
-        if (params.empty()) {
-            throw std::invalid_argument("CP requires one angle parameter.");
-        }
-        check_status(rocsvApplyCP(sim_handle_, device_state_vector_, num_qubits_, targets[0], targets[1], params[0]),
+        const double angle = require_finite_angle_param(params, "CP");
+        check_status(rocsvApplyCP(sim_handle_, device_state_vector_, num_qubits_, targets[0], targets[1], angle),
                      "apply CP");
         return;
     }
@@ -483,6 +487,7 @@ void QuantumSimulator::apply_gate_batch(const std::string& gate_name,
     if (params_by_batch.size() != batch_size_) {
         throw std::invalid_argument("Batched gate parameter count must equal batch_size.");
     }
+    validate_finite_batch_params(params_by_batch);
 
     if (normalized == "RX" || normalized == "RY" || normalized == "RZ" || normalized == "P") {
         if (targets.size() != 1) {
