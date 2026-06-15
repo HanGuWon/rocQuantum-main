@@ -188,12 +188,26 @@ class TestLegacyCircuitBatchState(unittest.TestCase):
         module = _load_legacy_api(backend)
         simulator = _make_simulator(module)
 
-        circuit = module.Circuit(2, simulator, batch_size=3)
+        circuit = module.Circuit(np.int64(2), simulator, batch_size=np.int64(3))
 
         self.assertEqual(circuit.batch_size, 3)
+        self.assertEqual(circuit.num_qubits, 2)
         self.assertEqual(circuit._d_state_buffer, "device-state")
         self.assertIn(("allocate_state", ("handle", 2, 3)), backend.calls)
         self.assertIn(("initialize_state", ("handle", "device-state", 2)), backend.calls)
+
+    def test_constructor_rejects_ambiguous_circuit_options(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        simulator = _make_simulator(module)
+
+        for num_qubits in (True, 2.0, "2", -1):
+            with self.subTest(num_qubits=num_qubits):
+                with self.assertRaisesRegex(ValueError, "Number of qubits"):
+                    module.Circuit(num_qubits, simulator)
+
+        with self.assertRaisesRegex(ValueError, "multi_gpu must be a boolean"):
+            module.Circuit(2, simulator, multi_gpu="yes")
 
     def test_constructor_rejects_invalid_batch_size(self):
         backend = _fake_backend()
@@ -208,6 +222,48 @@ class TestLegacyCircuitBatchState(unittest.TestCase):
 
         with self.assertRaisesRegex(NotImplementedError, "multi_gpu=True"):
             module.Circuit(2, simulator, multi_gpu=True, batch_size=2)
+
+    def test_gate_methods_validate_targets_and_angles_before_backend_dispatch(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        circuit = _make_circuit(module)
+
+        for target in (True, 0.5, "0", -1, 3):
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(ValueError, "target qubit"):
+                    circuit.x(target)
+
+        for angle in (True, "0.125", np.nan, np.inf):
+            with self.subTest(angle=angle):
+                with self.assertRaisesRegex(ValueError, "angle"):
+                    circuit.rx(angle, 0)
+
+        with self.assertRaisesRegex(ValueError, "Control and target"):
+            circuit.cx(0, 0)
+        with self.assertRaisesRegex(ValueError, "distinct"):
+            circuit.ccx(0, 1, 1)
+        with self.assertRaisesRegex(ValueError, "distinct"):
+            circuit.cswap(0, 1, 1)
+
+        circuit.ry(np.float64(0.125), np.int64(1))
+        self.assertEqual(circuit._gate_queue[-1].targets, [1])
+        self.assertEqual(circuit._gate_queue[-1].params, [0.125])
+
+    def test_sample_validates_qubits_and_shots_before_backend_dispatch(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        circuit = _make_circuit(module)
+
+        invalid_qubit_lists = ([], [True], [0.5], ["0"], [-1], [0, 0])
+        for measured_qubits in invalid_qubit_lists:
+            with self.subTest(measured_qubits=measured_qubits):
+                with self.assertRaisesRegex(ValueError, "measured_qubits|List of measured_qubits"):
+                    circuit.sample(measured_qubits, 10)
+
+        for shots in (0, -1, True, 1.5, "10"):
+            with self.subTest(shots=shots):
+                with self.assertRaisesRegex(ValueError, "Number of shots"):
+                    circuit.sample([0], shots)
 
     def test_multi_gpu_constructor_warns_about_partial_support(self):
         backend = _fake_backend()
@@ -271,6 +327,26 @@ class TestLegacyCircuitBatchState(unittest.TestCase):
 
 
 class TestLegacyCircuitExpectation(unittest.TestCase):
+    def test_legacy_pauli_operator_validates_coefficients(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+
+        for coeff in (True, "1.0", np.nan, np.inf):
+            with self.subTest(coeff=coeff):
+                with self.assertRaisesRegex(ValueError, "Coefficient"):
+                    module.PauliOperator({"Z0": coeff})
+
+        operator = module.PauliOperator({"Z0": np.float64(2.0)})
+        self.assertEqual(operator.terms, [([("Z", 0)], 2.0)])
+
+        scaled = operator * np.float64(0.5)
+        self.assertEqual(scaled.terms, [([("Z", 0)], 1.0)])
+
+        for scalar in (True, np.nan, np.inf):
+            with self.subTest(scalar=scalar):
+                with self.assertRaisesRegex(ValueError, "scalar"):
+                    operator * scalar
+
     def test_expval_uses_native_single_pauli_helper(self):
         backend = _fake_backend()
         module = _load_legacy_api(backend)

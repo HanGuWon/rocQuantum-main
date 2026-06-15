@@ -1,5 +1,7 @@
+import math
 import os
 import warnings
+from numbers import Integral, Real
 
 import numpy as np
 from . import _rocq_hip_backend as backend # Assuming the compiled module is named this
@@ -24,6 +26,39 @@ _MULTI_NODE_UNSUPPORTED_NOTE = (
     "supports only experimental single-node multi-GPU scaffolding; use "
     "multi_gpu=True on one ROCm host or run separate jobs explicitly."
 )
+
+
+def _validate_nonnegative_integer(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a non-negative integer.")
+    normalized = int(value)
+    if normalized < 0:
+        raise ValueError(f"{name} must be a non-negative integer.")
+    return normalized
+
+
+def _validate_positive_integer(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a positive integer.")
+    normalized = int(value)
+    if normalized <= 0:
+        raise ValueError(f"{name} must be a positive integer.")
+    return normalized
+
+
+def _validate_boolean(value, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean.")
+    return value
+
+
+def _validate_finite_real(value, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError(f"{name} must be a finite real number.")
+    normalized = float(value)
+    if not math.isfinite(normalized):
+        raise ValueError(f"{name} must be finite.")
+    return normalized
 
 
 class LegacyCompilerReplayWarning(RuntimeWarning):
@@ -78,14 +113,11 @@ class Circuit:
     ):
         if not isinstance(simulator, Simulator):
             raise TypeError("A valid Simulator instance is required.")
-        if num_qubits < 0:
-            raise ValueError("Number of qubits must be non-negative.")
-        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
-            raise ValueError("batch_size must be a positive integer.")
-        if not isinstance(multi_node, bool):
-            raise ValueError("multi_node must be a boolean.")
-        if isinstance(node_count, bool) or not isinstance(node_count, int) or node_count < 1:
-            raise ValueError("node_count must be a positive integer.")
+        num_qubits = _validate_nonnegative_integer(num_qubits, "Number of qubits")
+        batch_size = _validate_positive_integer(batch_size, "batch_size")
+        multi_gpu = _validate_boolean(multi_gpu, "multi_gpu")
+        multi_node = _validate_boolean(multi_node, "multi_node")
+        node_count = _validate_positive_integer(node_count, "node_count")
         if multi_node or node_count > 1:
             raise NotImplementedError(_MULTI_NODE_UNSUPPORTED_NOTE)
         if multi_gpu and batch_size != 1:
@@ -280,108 +312,124 @@ class Circuit:
         return self._d_state_buffer
 
     def _validate_qubit_index(self, qubit_index, name="target qubit"):
-        if not isinstance(qubit_index, int) or not (0 <= qubit_index < self.num_qubits):
-            if not (self.num_qubits == 0 and qubit_index == 0):
-                 raise ValueError(
-                    f"{name} index {qubit_index} is out of range for {self.num_qubits} qubits."
-                )
+        if isinstance(qubit_index, bool) or not isinstance(qubit_index, Integral):
+            raise ValueError(f"{name} must be an integer qubit index.")
+        index = int(qubit_index)
+        if index < 0 or index >= self.num_qubits:
+            raise ValueError(f"{name} index {index} is out of range for {self.num_qubits} qubits.")
+        return index
 
     def _validate_control_target(self, control_qubit, target_qubit):
-        self._validate_qubit_index(control_qubit, "control qubit")
-        self._validate_qubit_index(target_qubit, "target qubit")
-        if control_qubit == target_qubit and self.num_qubits > 0 :
+        control = self._validate_qubit_index(control_qubit, "control qubit")
+        target = self._validate_qubit_index(target_qubit, "target qubit")
+        if control == target:
             raise ValueError("Control and target qubits cannot be the same.")
+        return control, target
 
     def x(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("X", targets=[target_qubit])
 
     def y(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("Y", targets=[target_qubit])
 
     def z(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("Z", targets=[target_qubit])
 
     def h(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("H", targets=[target_qubit])
 
     def s(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("S", targets=[target_qubit])
 
     def t(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("T", targets=[target_qubit])
 
     def tdg(self, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("TDG", targets=[target_qubit])
 
     def rx(self, angle: float, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        angle = _validate_finite_real(angle, "RX angle")
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("RX", targets=[target_qubit], params=[angle])
 
     def ry(self, angle: float, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        angle = _validate_finite_real(angle, "RY angle")
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("RY", targets=[target_qubit], params=[angle])
 
     def rz(self, angle: float, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        angle = _validate_finite_real(angle, "RZ angle")
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("RZ", targets=[target_qubit], params=[angle])
 
     def p(self, angle: float, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
+        angle = _validate_finite_real(angle, "P angle")
+        target_qubit = self._validate_qubit_index(target_qubit)
         self._enqueue_gate("P", targets=[target_qubit], params=[angle])
 
     def cx(self, control_qubit: int, target_qubit: int): # CNOT
-        self._validate_control_target(control_qubit, target_qubit)
+        control_qubit, target_qubit = self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CNOT", targets=[target_qubit], controls=[control_qubit])
 
     def cz(self, qubit1: int, qubit2: int):
-        self._validate_control_target(qubit1, qubit2)
+        qubit1, qubit2 = self._validate_control_target(qubit1, qubit2)
         self._enqueue_gate("CZ", targets=[qubit2], controls=[qubit1])
 
     def swap(self, qubit1: int, qubit2: int):
-        self._validate_control_target(qubit1, qubit2)
+        qubit1, qubit2 = self._validate_control_target(qubit1, qubit2)
         self._enqueue_gate("SWAP", targets=[qubit1, qubit2])
 
     def crx(self, angle: float, control_qubit: int, target_qubit: int):
-        self._validate_control_target(control_qubit, target_qubit)
+        angle = _validate_finite_real(angle, "CRX angle")
+        control_qubit, target_qubit = self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CRX", targets=[target_qubit], controls=[control_qubit], params=[angle])
 
     def cry(self, angle: float, control_qubit: int, target_qubit: int):
-        self._validate_control_target(control_qubit, target_qubit)
+        angle = _validate_finite_real(angle, "CRY angle")
+        control_qubit, target_qubit = self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CRY", targets=[target_qubit], controls=[control_qubit], params=[angle])
 
     def crz(self, angle: float, control_qubit: int, target_qubit: int):
-        self._validate_control_target(control_qubit, target_qubit)
+        angle = _validate_finite_real(angle, "CRZ angle")
+        control_qubit, target_qubit = self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CRZ", targets=[target_qubit], controls=[control_qubit], params=[angle])
 
     def cp(self, angle: float, control_qubit: int, target_qubit: int):
-        self._validate_control_target(control_qubit, target_qubit)
+        angle = _validate_finite_real(angle, "CP angle")
+        control_qubit, target_qubit = self._validate_control_target(control_qubit, target_qubit)
         self._enqueue_gate("CP", targets=[target_qubit], controls=[control_qubit], params=[angle])
 
     def ccx(self, control_qubit1: int, control_qubit2: int, target_qubit: int):
-        self._validate_qubit_index(target_qubit)
-        self._validate_qubit_index(control_qubit1)
-        self._validate_qubit_index(control_qubit2)
+        target_qubit = self._validate_qubit_index(target_qubit)
+        control_qubit1 = self._validate_qubit_index(control_qubit1)
+        control_qubit2 = self._validate_qubit_index(control_qubit2)
+        if len({control_qubit1, control_qubit2, target_qubit}) != 3:
+            raise ValueError("control and target qubits must be distinct.")
         self._enqueue_gate("MCX", targets=[target_qubit], controls=[control_qubit1, control_qubit2])
 
     def cswap(self, control_qubit: int, target_qubit1: int, target_qubit2: int):
-        self._validate_qubit_index(control_qubit)
-        self._validate_qubit_index(target_qubit1)
-        self._validate_qubit_index(target_qubit2)
+        control_qubit = self._validate_qubit_index(control_qubit)
+        target_qubit1 = self._validate_qubit_index(target_qubit1)
+        target_qubit2 = self._validate_qubit_index(target_qubit2)
+        if len({control_qubit, target_qubit1, target_qubit2}) != 3:
+            raise ValueError("control and target qubits must be distinct.")
         self._enqueue_gate("CSWAP", targets=[target_qubit1, target_qubit2], controls=[control_qubit])
 
     def apply_unitary(self, qubit_indices: list[int], matrix: np.ndarray):
         self.flush()
         if not qubit_indices:
             raise ValueError("qubit_indices cannot be empty.")
-        for idx in qubit_indices:
+        qubit_indices = [
             self._validate_qubit_index(idx, "qubit_indices element")
+            for idx in qubit_indices
+        ]
         if len(set(qubit_indices)) != len(qubit_indices):
             raise ValueError("qubit_indices must be unique.")
 
@@ -412,10 +460,14 @@ class Circuit:
         if set(control_qubits).intersection(target_qubits):
             raise ValueError("control_qubits and target_qubits must be disjoint.")
 
-        for idx in control_qubits:
+        control_qubits = [
             self._validate_qubit_index(idx, "control_qubits element")
-        for idx in target_qubits:
+            for idx in control_qubits
+        ]
+        target_qubits = [
             self._validate_qubit_index(idx, "target_qubits element")
+            for idx in target_qubits
+        ]
 
         matrix = np.asarray(matrix, dtype=np.complex64, order='C')
         dim = 1 << len(target_qubits)
@@ -435,7 +487,7 @@ class Circuit:
 
     def measure(self, qubit_to_measure: int) -> tuple[int, float]:
         self.flush()
-        self._validate_qubit_index(qubit_to_measure)
+        qubit_to_measure = self._validate_qubit_index(qubit_to_measure)
         d_state_arg = self._get_d_state_for_backend()
         try:
             outcome, probability = backend.measure(
@@ -449,10 +501,13 @@ class Circuit:
         self.flush()
         if not measured_qubits:
             raise ValueError("List of measured_qubits cannot be empty.")
-        for idx in measured_qubits:
+        measured_qubits = [
             self._validate_qubit_index(idx, f"measured_qubits element {idx}")
-        if num_shots <= 0:
-            raise ValueError("Number of shots must be positive.")
+            for idx in measured_qubits
+        ]
+        if len(set(measured_qubits)) != len(measured_qubits):
+            raise ValueError("measured_qubits must be unique.")
+        num_shots = _validate_positive_integer(num_shots, "Number of shots")
 
         d_state_arg = self._get_d_state_for_backend()
         try:
@@ -526,13 +581,12 @@ class PauliOperator:
     def _add_pauli_string(self, pauli_str: str, coeff: float):
         if not isinstance(pauli_str, str):
             raise TypeError("Pauli string must be a string.")
-        if not isinstance(coeff, (float, int)):
-            raise TypeError("Coefficient must be a float or int.")
+        coeff = _validate_finite_real(coeff, "Coefficient")
 
         components = pauli_str.strip().upper().split()
         if not components and pauli_str:
              if pauli_str.strip().upper() == "I":
-                self.terms.append(([], float(coeff)))
+                self.terms.append(([], coeff))
                 return
              else:
                 raise ValueError(f"Invalid Pauli string component: {pauli_str}")
@@ -557,7 +611,7 @@ class PauliOperator:
             if pauli_char != 'I':
                 parsed_ops.append((pauli_char, qubit_idx))
 
-        self.terms.append((parsed_ops, float(coeff)))
+        self.terms.append((parsed_ops, coeff))
 
     def __repr__(self):
         if not self.terms:
@@ -579,10 +633,11 @@ class PauliOperator:
         return new_op
 
     def __mul__(self, scalar: float):
-        if not isinstance(scalar, (float, int)):
+        if not isinstance(scalar, Real):
             return NotImplemented
+        scalar = _validate_finite_real(scalar, "scalar")
         new_op = PauliOperator()
-        new_op.terms = [(ops, coeff * float(scalar)) for ops, coeff in self.terms]
+        new_op.terms = [(ops, coeff * scalar) for ops, coeff in self.terms]
         return new_op
 
     def __rmul__(self, scalar: float):

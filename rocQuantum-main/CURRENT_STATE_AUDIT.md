@@ -125,7 +125,7 @@ What is not real today:
 | `rocquantum/src/simulator.cpp` | Real public C++ simulator wrapper; now exposes `MCX` / `CSWAP`, `reset_qubit`, and generic all-one-control `apply_controlled_matrix`, but controlled-unitary breadth remains narrower than full backend capability |
 | `rocqCompiler/*` | Partial MLIR/QIR codegen path; not integrated into a working execution loop |
 | `rocq/*` | Top-level Python surface with direct backend execution and mock fallbacks |
-| `python/rocq/*` | Separate legacy-ish Python surface with top-level CMake-built `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers, but broader runtime behavior remains split |
+| `python/rocq/*` | Separate legacy-ish Python surface with top-level CMake-built `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers and common circuit/gate/sample/Pauli coefficient inputs reject ambiguous bool, non-integral, duplicate, or non-finite values before backend dispatch, but broader runtime behavior remains split |
 | `integrations/*` | Thin framework adapters with mixed native and host-side behavior |
 | `rocquantum/backends/*` | Mixed remote-provider clients, local mocks, and skeleton placeholders |
 | `rocquantum/qec`, `rocquantum/solvers` | Experimental VQE/QAOA/repetition-code helpers, including a VQE-backed MaxCut QAOA solve wrapper and repeated-round repetition-code aggregation, not production-ready CUDA-QX analogs |
