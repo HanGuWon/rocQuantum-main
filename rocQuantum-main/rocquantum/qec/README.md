@@ -34,12 +34,13 @@ Current supported subset:
   execution helpers.
 - Execution helpers require positive integer `shots`; generic single-round
   orchestration also requires canonical runtime backend names, positive integer
-  `num_qubits` plus in-range integer `ancilla_qubit_indices`, and boolean
+  `num_qubits` plus unique in-range integer `ancilla_qubit_indices`, and boolean
   `verbose` options; repeated-round helpers require positive integer `rounds`;
   and count/bit/syndrome inputs are validated as non-empty
-  one- or two-bit binary count keys, non-negative integer counts, length-2
-  decoder syndrome bits, and non-boolean data/error/logical bits plus finite
-  measurement error probabilities in `[0, 0.5)`.
+  one-bit ancilla sample keys, one- or two-bit repetition-code count keys,
+  non-negative integer counts, length-2 decoder syndrome bits, and non-boolean
+  data/error/logical bits plus finite measurement error probabilities in
+  `[0, 0.5)`.
 
 Minimal example:
 

@@ -1061,7 +1061,7 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "positive-integer shot/round/num_qubits, backend, verbose-option, code/decoder interface, non-empty non-mapping stabilizer-fragment sequence, logical-operator result, decoder-correction result, ancilla-index, callable-or-None initial-state, syndrome, and bool-safe count/bit validation",
+            "positive-integer shot/round/num_qubits, backend, verbose-option, code/decoder interface, non-empty non-mapping stabilizer-fragment sequence, logical-operator result, decoder-correction result, unique ancilla-index, callable-or-None initial-state, one-bit ancilla sample, syndrome, and bool-safe count/bit validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -1135,6 +1135,58 @@ class TestQecHelpers(unittest.TestCase):
         self.assertEqual(args, ("fragment-1", 4))
         self.assertEqual(kwargs, {"backend": "state_vector", "qubits": [4]})
 
+    def test_qec_experiment_validates_legacy_measurement_outcomes_before_decoding(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.qec.framework import Decoder, QEC_Experiment, QuantumErrorCode
+
+        class Fragment:
+            def __init__(self, outcome):
+                self.circuit_ref = self
+                self.outcome = outcome
+
+            def measure(self, qubit):
+                return self.outcome, {"qubit": qubit}
+
+        class FragmentCode(QuantumErrorCode):
+            def __init__(self, outcome):
+                self.outcome = outcome
+
+            def generate_stabilizer_circuits(
+                self,
+                initial_state_kernel,
+                num_qubits,
+                backend="state_vector",
+            ):
+                return [Fragment(self.outcome)]
+
+            def define_logical_operators(self):
+                return {"logical_Z": PauliOperator("Z0")}
+
+        class RecordingDecoder(Decoder):
+            def __init__(self):
+                self.called = False
+
+            def decode(self, syndrome):
+                self.called = True
+                return PauliOperator("I")
+
+        experiment = QEC_Experiment()
+        for outcome in (2, True, "1"):
+            with self.subTest(outcome=outcome):
+                decoder = RecordingDecoder()
+                with mock.patch("rocquantum.qec.framework.rocq.sample") as patched_sample:
+                    with self.assertRaisesRegex(ValueError, "ancilla measurement outcome"):
+                        experiment.run_single_round(
+                            FragmentCode(outcome),
+                            decoder,
+                            None,
+                            5,
+                            [3],
+                            shots=1,
+                        )
+                self.assertFalse(decoder.called)
+                patched_sample.assert_not_called()
+
     def test_repetition_code_generator_validates_num_qubits(self):
         from rocquantum.qec.codes.repetition_code import ThreeQubitRepetitionCode
 
@@ -1163,6 +1215,8 @@ class TestQecHelpers(unittest.TestCase):
             _most_likely_single_bit({"": 1})
         with self.assertRaisesRegex(ValueError, "non-empty binary"):
             _most_likely_single_bit({"2": 1})
+        with self.assertRaisesRegex(ValueError, "exactly one bit"):
+            _most_likely_single_bit({"10": 1})
         with self.assertRaisesRegex(ValueError, "non-negative integers"):
             _most_likely_single_bit({"0": 1, "1": -1})
         with self.assertRaisesRegex(ValueError, "non-negative integers"):
@@ -1206,6 +1260,8 @@ class TestQecHelpers(unittest.TestCase):
             experiment.run_single_round(None, None, None, 2, [2], shots=1)
         with self.assertRaisesRegex(ValueError, "range for num_qubits"):
             experiment.run_single_round(None, None, None, 2, [-1], shots=1)
+        with self.assertRaisesRegex(ValueError, "unique"):
+            experiment.run_single_round(None, None, None, 3, [1, 1], shots=1)
         with self.assertRaisesRegex(ValueError, "shots must be a positive integer"):
             run_repetition_code_single_round(shots=True)
         with self.assertRaisesRegex(ValueError, "rounds must be a positive integer"):

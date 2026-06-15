@@ -50,6 +50,13 @@ def _validate_binary_count_key(bitstring: str, label: str) -> str:
     return bitstring
 
 
+def _validate_single_ancilla_count_key(bitstring: str) -> str:
+    bitstring = _validate_binary_count_key(bitstring, "Ancilla sample counts")
+    if len(bitstring) != 1:
+        raise ValueError("Ancilla sample counts keys must contain exactly one bit.")
+    return bitstring
+
+
 def _validate_nonnegative_count(count: int, label: str) -> int:
     if isinstance(count, bool) or not isinstance(count, Integral):
         raise ValueError(f"{label} values must be non-negative integers.")
@@ -191,7 +198,7 @@ def _most_likely_single_bit(counts: Dict[str, int]) -> int:
 
     total_shots = 0
     for bitstring, count in counts.items():
-        _validate_binary_count_key(bitstring, "Ancilla sample counts")
+        _validate_single_ancilla_count_key(bitstring)
         total_shots += _validate_nonnegative_count(count, "Ancilla sample counts")
 
     if total_shots <= 0:
@@ -227,6 +234,8 @@ def _validate_ancilla_qubit_indices(ancilla_qubit_indices, num_qubits: int) -> L
         if qubit < 0 or qubit >= num_qubits:
             raise ValueError("ancilla_qubit_indices entries must be in range for num_qubits.")
         normalized.append(qubit)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("ancilla_qubit_indices entries must be unique.")
     return normalized
 
 
@@ -282,6 +291,7 @@ class QEC_Experiment:
             ancilla_idx = ancilla_qubit_indices[i]
             if hasattr(stab_program, "circuit_ref") and hasattr(stab_program.circuit_ref, "measure"):
                 outcome, _ = stab_program.circuit_ref.measure(ancilla_idx)
+                outcome = _validate_binary_bit(outcome, "ancilla measurement outcome")
             else:
                 counts = rocq.sample(
                     stab_program,
