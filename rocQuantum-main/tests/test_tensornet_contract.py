@@ -98,6 +98,16 @@ class TestTensorNetContract(unittest.TestCase):
             source,
         )
 
+    def test_python_binding_warns_when_slicing_knobs_are_planning_only(self):
+        with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("warn_tensornet_planning_only_slicing", source)
+        self.assertIn("PyErr_WarnEx(PyExc_RuntimeWarning", source)
+        self.assertIn("contraction planning cost only", source)
+        self.assertIn("supports_runtime_slicing", source)
+        self.assertIn("warn_tensornet_planning_only_slicing(config)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

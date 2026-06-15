@@ -93,6 +93,21 @@ std::string tensornet_contract_status_message(
     return message;
 }
 
+void warn_tensornet_planning_only_slicing(const hipTensorNetContractionOptimizerConfig_t& config) {
+    if (config.memory_limit_bytes == 0 && config.num_slices <= 0) {
+        return;
+    }
+
+    const std::string message =
+        "TensorNet memory_limit_bytes and num_slices currently influence "
+        "contraction planning cost only; runtime sliced execution is not "
+        "implemented. Check get_tensornet_capabilities()['supports_runtime_slicing'] "
+        "before relying on cuTensorNet-style sliced execution.";
+    if (PyErr_WarnEx(PyExc_RuntimeWarning, message.c_str(), 1) != 0) {
+        throw py::error_already_set();
+    }
+}
+
 
 // Helper to convert py::array_t<rocComplex> (NumPy array from Python) to rocComplex* on device
 // This is a simplified helper. Error handling and memory management need care.
@@ -1162,6 +1177,8 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                     config.num_slices = config_dict["num_slices"].cast<int>();
                 }
             }
+
+            warn_tensornet_planning_only_slicing(config);
 
             // TODO: The rocblas_handle and hipStream_t should be retrieved from the simulator handle.
             // The current structure of RocsvHandleWrapper makes this difficult without modifying it.
