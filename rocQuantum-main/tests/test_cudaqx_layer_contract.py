@@ -405,6 +405,80 @@ class TestQaoaHelpers(unittest.TestCase):
 
 
 class TestQecHelpers(unittest.TestCase):
+    def test_qec_experiment_samples_canonical_fragments(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.qec.framework import Decoder, QEC_Experiment, QuantumErrorCode
+
+        class FragmentCode(QuantumErrorCode):
+            def __init__(self):
+                self.generate_args = None
+
+            def generate_stabilizer_circuits(
+                self,
+                initial_state_kernel,
+                num_qubits,
+                backend="state_vector",
+            ):
+                self.generate_args = (initial_state_kernel, num_qubits, backend)
+                return ["fragment-0", "fragment-1"]
+
+            def define_logical_operators(self):
+                return {"logical_Z": PauliOperator("Z0")}
+
+        class RecordingDecoder(Decoder):
+            def __init__(self):
+                self.syndrome = None
+
+            def decode(self, syndrome):
+                self.syndrome = list(syndrome)
+                return PauliOperator("X0")
+
+        code = FragmentCode()
+        decoder = RecordingDecoder()
+        experiment = QEC_Experiment(backend="state_vector")
+
+        with mock.patch("builtins.print") as patched_print, mock.patch(
+            "rocquantum.qec.framework.rocq.sample",
+            side_effect=[{"1": 3, "0": 1}, {"0": 4}],
+        ) as patched_sample:
+            result = experiment.run_single_round(
+                code,
+                decoder,
+                initial_state_kernel=None,
+                num_qubits=5,
+                ancilla_qubit_indices=[3, 4],
+                shots=4,
+            )
+
+        patched_print.assert_not_called()
+        self.assertEqual(code.generate_args, (None, 5, "state_vector"))
+        self.assertEqual(decoder.syndrome, [1, 0])
+        self.assertEqual(result["syndrome"], [1, 0])
+        self.assertIn("X0", result["correction_applied"])
+        self.assertEqual(result["shots"], 4)
+        self.assertEqual(patched_sample.call_count, 2)
+        _, args, kwargs = patched_sample.mock_calls[0]
+        self.assertEqual(args, ("fragment-0", 4))
+        self.assertEqual(kwargs, {"backend": "state_vector", "qubits": [3]})
+        _, args, kwargs = patched_sample.mock_calls[1]
+        self.assertEqual(args, ("fragment-1", 4))
+        self.assertEqual(kwargs, {"backend": "state_vector", "qubits": [4]})
+
+    def test_qec_experiment_validates_ancilla_sample_counts(self):
+        from rocquantum.qec.framework import _most_likely_single_bit
+
+        self.assertEqual(_most_likely_single_bit({"0": 1, "1": 2}), 1)
+        with self.assertRaisesRegex(ValueError, "No ancilla samples"):
+            _most_likely_single_bit({})
+        with self.assertRaisesRegex(ValueError, "non-empty binary"):
+            _most_likely_single_bit({"": 1})
+        with self.assertRaisesRegex(ValueError, "non-empty binary"):
+            _most_likely_single_bit({"2": 1})
+        with self.assertRaisesRegex(ValueError, "non-negative integers"):
+            _most_likely_single_bit({"0": 1, "1": -1})
+        with self.assertRaisesRegex(ValueError, "at least one shot"):
+            _most_likely_single_bit({"0": 0, "1": 0})
+
     def test_repetition_code_counts_analysis_reports_success_rate(self):
         from rocquantum.qec import analyze_repetition_code_counts
 

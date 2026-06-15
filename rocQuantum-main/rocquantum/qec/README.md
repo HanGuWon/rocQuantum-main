@@ -9,6 +9,9 @@ Current supported subset:
 - One bit-flip repetition-code syndrome round plus sequential repeated-round
   aggregation over the same 3-qubit code.
 - End-of-circuit ancilla sampling through `rocq.sample()`.
+- Generic `QEC_Experiment.run_single_round()` can execute generated canonical
+  stabilizer fragments through `rocq.sample()` when legacy `circuit_ref`
+  measurement hooks are unavailable.
 - Lookup-table correction through `RepetitionCodeDecoder`.
 - Syndrome histogram, repeated-round correction summary, and correction-success
   analysis for sampled counts.

@@ -52,15 +52,44 @@ class Decoder(ABC):
         """Processes a syndrome to determine the required correction."""
         pass
 
+
+def _most_likely_single_bit(counts: Dict[str, int]) -> int:
+    if not counts:
+        raise ValueError("No ancilla samples were produced.")
+
+    total_shots = 0
+    for bitstring, count in counts.items():
+        if (
+            not isinstance(bitstring, str)
+            or not bitstring
+            or any(bit not in "01" for bit in bitstring)
+        ):
+            raise ValueError("Ancilla sample counts keys must be non-empty binary strings.")
+        if not isinstance(count, int) or count < 0:
+            raise ValueError("Ancilla sample counts values must be non-negative integers.")
+        total_shots += count
+
+    if total_shots <= 0:
+        raise ValueError("Ancilla sample counts must contain at least one shot.")
+
+    bitstring, _ = max(counts.items(), key=lambda item: item[1])
+    return int(bitstring[-1])
+
+
 class QEC_Experiment:
     """Orchestrates a QEC experiment using a "Circuit Fragmentation" strategy."""
-    def __init__(self, backend: str = "state_vector"):
+    def __init__(self, backend: str = "state_vector", verbose: bool = False):
         if rocq is None:
             raise RuntimeError(
                 "Canonical 'rocq' package is not available. Install the Python package "
                 "before running QEC experiments."
             )
         self.backend = backend
+        self.verbose = bool(verbose)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            print(message)
 
     def run_single_round(
         self,
@@ -68,10 +97,14 @@ class QEC_Experiment:
         decoder: Decoder,
         initial_state_kernel: AnsatzKernel,
         num_qubits: int,
-        ancilla_qubit_indices: List[int]
+        ancilla_qubit_indices: List[int],
+        shots: int = 1,
     ) -> Dict[str, Any]:
         """Executes a single, complete round of quantum error correction."""
-        print("Step 1: Generating stabilizer measurement circuit fragments...")
+        if shots <= 0:
+            raise ValueError("shots must be positive.")
+
+        self._log("Step 1: Generating stabilizer measurement circuit fragments...")
         stabilizer_circuits = code.generate_stabilizer_circuits(
             initial_state_kernel, num_qubits, self.backend
         )
@@ -81,30 +114,40 @@ class QEC_Experiment:
                 "stabilizer circuits."
             )
 
-        print("Step 2: Measuring syndrome by executing each fragment...")
+        self._log("Step 2: Measuring syndrome by executing each fragment...")
         syndrome = []
         for i, stab_program in enumerate(stabilizer_circuits):
             ancilla_idx = ancilla_qubit_indices[i]
-            if not hasattr(stab_program, "circuit_ref") or not hasattr(stab_program.circuit_ref, "measure"):
-                raise NotImplementedError(
-                    "QEC fragment execution requires 'circuit_ref.measure(...)' support. "
-                    "The canonical backend bridge is not fully wired yet."
+            if hasattr(stab_program, "circuit_ref") and hasattr(stab_program.circuit_ref, "measure"):
+                outcome, _ = stab_program.circuit_ref.measure(ancilla_idx)
+            else:
+                counts = rocq.sample(
+                    stab_program,
+                    shots,
+                    backend=self.backend,
+                    qubits=[ancilla_idx],
                 )
-            outcome, _ = stab_program.circuit_ref.measure(ancilla_idx)
-            print(f"  - Measured stabilizer {i} on ancilla q[{ancilla_idx}]: outcome = {outcome}")
+                outcome = _most_likely_single_bit(counts)
+            self._log(f"  - Measured stabilizer {i} on ancilla q[{ancilla_idx}]: outcome = {outcome}")
             syndrome.append(outcome)
 
-        print(f"\nStep 3: Decoding syndrome {syndrome}...")
+        self._log(f"\nStep 3: Decoding syndrome {syndrome}...")
         correction_operator = decoder.decode(syndrome)
-        print(f"  - Decoder determined correction: {correction_operator}")
+        self._log(f"  - Decoder determined correction: {correction_operator}")
+        correction_text = (
+            correction_operator.to_string()
+            if hasattr(correction_operator, "to_string")
+            else str(correction_operator)
+        )
 
         # Note: Final state calculation can be added here if needed.
         # For now, the primary goal is verifying the syndrome and correction.
 
         return {
             "syndrome": syndrome,
-            "correction_applied": str(correction_operator),
+            "correction_applied": correction_text,
             "logical_operators": code.define_logical_operators(),
+            "shots": shots,
         }
 
 
