@@ -129,6 +129,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def probabilities(self, qubits", source)
         self.assertIn("def probabilities_batch(self, qubits", source)
         self.assertIn("def measure_batch(self, qubits", source)
+        self.assertIn("def normalize_probability_vector", source)
+        self.assertIn("def normalize_probability_matrix", source)
         self.assertIn("def sample_indices_from_probabilities", source)
         self.assertIn("def sample_indices_batch_from_probabilities", source)
         self.assertIn("def expectation_pauli_string_batch", source)

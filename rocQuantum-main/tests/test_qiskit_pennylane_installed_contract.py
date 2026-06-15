@@ -825,6 +825,50 @@ def test_framework_runtime_rejects_nonfinite_matrix_and_sparse_payloads(monkeypa
     assert sim.sparse_moments == []
 
 
+def test_framework_runtime_rejects_nonfinite_probability_payloads():
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        probabilities_from_statevector,
+        sample_indices_batch_from_probabilities,
+        sample_indices_from_probabilities,
+    )
+
+    with pytest.raises(ValueError, match="Sampler probabilities"):
+        sample_indices_from_probabilities([0.5, np.nan], 4)
+    with pytest.raises(ValueError, match="Batched sampler probabilities"):
+        sample_indices_batch_from_probabilities([[1.0, 0.0], [np.inf, 0.0]], 4)
+    with pytest.raises(ValueError, match="Statevector amplitudes"):
+        probabilities_from_statevector(np.array([1.0, np.nan], dtype=np.complex128))
+
+    class _BadProbabilitySimulator:
+        def __init__(self):
+            self.statevector_reads = 0
+
+        def batch_size(self):
+            return 2
+
+        def probabilities(self, qubits):
+            return np.array([0.5, np.nan], dtype=float)
+
+        def probabilities_batch(self, qubits):
+            return np.array([[1.0, 0.0], [np.inf, 0.0]], dtype=float)
+
+        def get_statevector(self):
+            self.statevector_reads += 1
+            return np.array([1.0, 0.0], dtype=np.complex128)
+
+    simulator = _BadProbabilitySimulator()
+    runtime = RocQuantumRuntime(simulator)
+
+    with pytest.raises(ValueError, match="Probability vector"):
+        runtime.probabilities([0])
+    with pytest.raises(ValueError, match="Batched probability vector"):
+        runtime.probabilities_batch([0])
+    with pytest.raises(ValueError, match="Batched probability vector"):
+        runtime.measure_batch([0], 4)
+    assert simulator.statevector_reads == 0
+
+
 def test_framework_runtime_rejects_ambiguous_gate_parameters(monkeypatch):
     _install_fake_binding(monkeypatch)
 

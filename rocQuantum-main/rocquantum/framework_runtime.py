@@ -161,6 +161,7 @@ def samples_to_binary_rows(raw_samples: Sequence[int], num_wires: int) -> np.nda
 
 def sample_rows_from_statevector(statevector: Sequence[complex], shots: int, rng=None) -> np.ndarray:
     state = np.asarray(statevector, dtype=np.complex128)
+    validate_finite_complex_array(state, "Statevector amplitudes")
     probabilities = np.abs(state) ** 2
     total = float(np.sum(probabilities))
     if total <= 0.0:
@@ -175,13 +176,30 @@ def sample_rows_from_statevector(statevector: Sequence[complex], shots: int, rng
     return samples_to_binary_rows(sample_indices, num_wires)
 
 
-def sample_indices_from_probabilities(probabilities: Sequence[float], shots: int, rng=None) -> np.ndarray:
+def normalize_probability_vector(probabilities: Sequence[float], label: str = "Probability vector") -> np.ndarray:
     probabilities = np.asarray(probabilities, dtype=float).reshape(-1)
     if probabilities.size == 0:
-        raise ValueError("Sampler probabilities cannot be empty.")
+        raise ValueError(f"{label} cannot be empty.")
+    if not np.all(np.isfinite(probabilities)):
+        raise ValueError(f"{label} must contain finite values.")
     if np.any(probabilities < -1.0e-12):
-        raise ValueError("Sampler probabilities must be non-negative.")
-    probabilities = np.clip(probabilities, 0.0, None)
+        raise ValueError(f"{label} must be non-negative.")
+    return np.ascontiguousarray(np.clip(probabilities, 0.0, None))
+
+
+def normalize_probability_matrix(probabilities: Sequence[Sequence[float]], label: str = "Batched probability vector") -> np.ndarray:
+    probabilities = np.asarray(probabilities, dtype=float)
+    if probabilities.ndim != 2:
+        raise ValueError(f"{label} must be a two-dimensional array.")
+    if probabilities.shape[0] == 0:
+        return np.empty((0, probabilities.shape[1]), dtype=float)
+    return np.vstack(
+        [normalize_probability_vector(row, label) for row in probabilities]
+    ).astype(float, copy=False)
+
+
+def sample_indices_from_probabilities(probabilities: Sequence[float], shots: int, rng=None) -> np.ndarray:
+    probabilities = normalize_probability_vector(probabilities, "Sampler probabilities")
     total = float(np.sum(probabilities))
     if total <= 0.0:
         raise ValueError("Sampler probabilities sum to zero.")
@@ -194,9 +212,7 @@ def sample_indices_from_probabilities(probabilities: Sequence[float], shots: int
 
 
 def sample_indices_batch_from_probabilities(probabilities: Sequence[Sequence[float]], shots: int, rng=None) -> np.ndarray:
-    probabilities = np.asarray(probabilities, dtype=float)
-    if probabilities.ndim != 2:
-        raise ValueError("Batched sampler probabilities must be a two-dimensional array.")
+    probabilities = normalize_probability_matrix(probabilities, "Batched sampler probabilities")
     shots = int(shots)
     if probabilities.shape[0] == 0:
         return np.empty((0, shots), dtype=np.int64)
@@ -210,6 +226,7 @@ def probabilities_from_statevector(
     qubits: Iterable[int] | None = None,
 ) -> np.ndarray:
     state = np.asarray(statevector, dtype=np.complex128)
+    validate_finite_complex_array(state, "Statevector amplitudes")
     probabilities = np.abs(state) ** 2
     total = float(np.sum(probabilities))
     if total <= 0.0:
@@ -841,7 +858,7 @@ class RocQuantumRuntime:
         native = getattr(self.simulator, "probabilities", None)
         if callable(native):
             try:
-                return np.asarray(native(native_qubits), dtype=float)
+                return normalize_probability_vector(native(native_qubits), "Probability vector")
             except Exception as exc:
                 if not _native_probabilities_unavailable(exc):
                     raise
@@ -849,7 +866,7 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "Probabilities", None)
         if callable(legacy):
             try:
-                return np.asarray(legacy(native_qubits), dtype=float)
+                return normalize_probability_vector(legacy(native_qubits), "Probability vector")
             except Exception as exc:
                 if not _native_probabilities_unavailable(exc):
                     raise
@@ -867,8 +884,8 @@ class RocQuantumRuntime:
         native = getattr(self.simulator, "probabilities_batch", None)
         if callable(native):
             try:
-                probabilities = np.asarray(native(native_qubits), dtype=float)
-                return probabilities.reshape(self.batch_size(), -1)
+                probabilities = np.asarray(native(native_qubits), dtype=float).reshape(self.batch_size(), -1)
+                return normalize_probability_matrix(probabilities, "Batched probability vector")
             except Exception as exc:
                 if not _native_probabilities_unavailable(exc):
                     raise
@@ -876,8 +893,8 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "ProbabilitiesBatch", None)
         if callable(legacy):
             try:
-                probabilities = np.asarray(legacy(native_qubits), dtype=float)
-                return probabilities.reshape(self.batch_size(), -1)
+                probabilities = np.asarray(legacy(native_qubits), dtype=float).reshape(self.batch_size(), -1)
+                return normalize_probability_matrix(probabilities, "Batched probability vector")
             except Exception as exc:
                 if not _native_probabilities_unavailable(exc):
                     raise
