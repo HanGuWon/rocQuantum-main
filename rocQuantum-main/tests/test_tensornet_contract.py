@@ -35,6 +35,13 @@ _TENSOR_UTIL_SOURCE = os.path.join(
     "hipTensorNet",
     "rocTensorUtil.cpp",
 )
+_TENSORNET_CMAKE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipTensorNet",
+    "CMakeLists.txt",
+)
 _BINDINGS_SOURCE = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
 
 
@@ -89,6 +96,28 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("supports_memory_limit_planning = 1", source)
         self.assertIn("supports_runtime_slicing = 0", source)
         self.assertNotIn("if (!pathfinder_algorithm_available(config.pathfinder_algorithm))", source)
+
+    def test_optional_metis_build_guard_and_runtime_partitioning(self):
+        with open(_TENSORNET_CMAKE, "r", encoding="utf-8") as f:
+            cmake = f.read()
+        with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("ROCQUANTUM_TENSORNET_ENABLE_METIS", cmake)
+        self.assertIn("find_path(METIS_INCLUDE_DIR metis.h)", cmake)
+        self.assertIn("find_library(METIS_LIBRARY NAMES metis)", cmake)
+        self.assertIn("message(FATAL_ERROR", cmake)
+        self.assertIn("HAS_METIS=1", cmake)
+        self.assertIn("target_link_libraries(rocqsim_tensornet PUBLIC ${METIS_LIBRARY})", cmake)
+
+        self.assertIn("#include <metis.h>", source)
+        self.assertIn("metis_partition_active_tensors", source)
+        self.assertIn("METIS_SetDefaultOptions", source)
+        self.assertIn("METIS_OPTION_NITER", source)
+        self.assertIn("METIS_PartGraphKway", source)
+        self.assertIn("ROCTN_PATHFINDER_ALGO_METIS", source)
+        self.assertIn("using_metis_partition", source)
+        self.assertIn("add_metis_partition_penalty", source)
 
     def test_python_binding_passes_optimizer_algorithm(self):
         with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:

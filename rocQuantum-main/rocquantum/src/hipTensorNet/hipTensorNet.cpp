@@ -13,6 +13,10 @@
 #include <rocblas/rocblas.h>
 #include <rocsolver/rocsolver.h>
 
+#ifdef HAS_METIS
+#include <metis.h>
+#endif
+
 struct rocTnStruct {
     rocquantum::TensorNetworkBase* tn_instance = nullptr;
     rocDataType_t dtype = ROC_TENSORNET_COMPILED_COMPLEX_DTYPE;
@@ -127,6 +131,118 @@ inline size_t selection_cost_for_algorithm(const hipTensorNetContractionOptimize
 
     return cost;
 }
+
+#ifdef HAS_METIS
+inline idx_t metis_shared_mode_weight(const rocquantum::util::rocTensor& a,
+                                      const rocquantum::util::rocTensor& b) {
+    idx_t weight = 0;
+    for (size_t i = 0; i < a.labels_.size(); ++i) {
+        for (size_t j = 0; j < b.labels_.size(); ++j) {
+            if (a.labels_[i] == b.labels_[j] && a.dimensions_[i] == b.dimensions_[j]) {
+                const long long dim = std::max<long long>(1, a.dimensions_[i]);
+                const long long capped = std::min<long long>(
+                    dim, static_cast<long long>(std::numeric_limits<idx_t>::max()));
+                weight += static_cast<idx_t>(capped);
+            }
+        }
+    }
+    return weight;
+}
+
+inline bool metis_partition_active_tensors(
+    const std::map<int, rocquantum::util::rocTensor>& active,
+    const hipTensorNetContractionOptimizerConfig_t& config,
+    std::map<int, int>* partition_by_id) {
+    if (!partition_by_id || active.size() < 3) {
+        return false;
+    }
+
+    std::vector<int> tensor_ids;
+    tensor_ids.reserve(active.size());
+    std::vector<const rocquantum::util::rocTensor*> tensors;
+    tensors.reserve(active.size());
+    for (const auto& entry : active) {
+        tensor_ids.push_back(entry.first);
+        tensors.push_back(&entry.second);
+    }
+
+    std::vector<std::vector<std::pair<idx_t, idx_t>>> adjacency(tensors.size());
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        for (size_t j = i + 1; j < tensors.size(); ++j) {
+            const idx_t weight = metis_shared_mode_weight(*tensors[i], *tensors[j]);
+            if (weight <= 0) {
+                continue;
+            }
+            adjacency[i].push_back({static_cast<idx_t>(j), weight});
+            adjacency[j].push_back({static_cast<idx_t>(i), weight});
+        }
+    }
+
+    size_t edge_entries = 0;
+    for (const auto& neighbors : adjacency) {
+        edge_entries += neighbors.size();
+    }
+    if (edge_entries == 0) {
+        return false;
+    }
+
+    std::vector<idx_t> xadj(tensors.size() + 1, 0);
+    std::vector<idx_t> adjncy;
+    std::vector<idx_t> adjwgt;
+    adjncy.reserve(edge_entries);
+    adjwgt.reserve(edge_entries);
+    for (size_t i = 0; i < adjacency.size(); ++i) {
+        xadj[i + 1] = xadj[i] + static_cast<idx_t>(adjacency[i].size());
+        for (const auto& neighbor : adjacency[i]) {
+            adjncy.push_back(neighbor.first);
+            adjwgt.push_back(neighbor.second);
+        }
+    }
+
+    idx_t nvtxs = static_cast<idx_t>(tensors.size());
+    idx_t ncon = 1;
+    idx_t nparts = 2;
+    idx_t edgecut = 0;
+    std::vector<idx_t> part(tensors.size(), 0);
+    std::vector<idx_t> options(METIS_NOPTIONS);
+    METIS_SetDefaultOptions(options.data());
+    if (config.algo_config.metis_config.num_iterations > 0) {
+        options[METIS_OPTION_NITER] =
+            static_cast<idx_t>(config.algo_config.metis_config.num_iterations);
+    }
+
+    const int metis_status = METIS_PartGraphKway(&nvtxs,
+                                                 &ncon,
+                                                 xadj.data(),
+                                                 adjncy.data(),
+                                                 nullptr,
+                                                 nullptr,
+                                                 adjwgt.data(),
+                                                 &nparts,
+                                                 nullptr,
+                                                 nullptr,
+                                                 options.data(),
+                                                 &edgecut,
+                                                 part.data());
+    if (metis_status != METIS_OK) {
+        return false;
+    }
+
+    partition_by_id->clear();
+    for (size_t i = 0; i < tensor_ids.size(); ++i) {
+        (*partition_by_id)[tensor_ids[i]] = static_cast<int>(part[i]);
+    }
+    return true;
+}
+
+inline size_t add_metis_partition_penalty(size_t selection_cost) {
+    constexpr size_t penalty = std::numeric_limits<size_t>::max() / 4;
+    if (selection_cost > std::numeric_limits<size_t>::max() - penalty) {
+        return std::numeric_limits<size_t>::max();
+    }
+    return selection_cost + penalty;
+}
+#endif
 
 } // namespace
 
@@ -252,6 +368,15 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
         std::vector<long long> best_result_dims;
         std::vector<std::string> best_result_labels;
 
+        std::map<int, int> metis_partition;
+#ifdef HAS_METIS
+        const bool using_metis_partition =
+            effective_pathfinder_algorithm(config->pathfinder_algorithm) == ROCTN_PATHFINDER_ALGO_METIS &&
+            metis_partition_active_tensors(active, *config, &metis_partition);
+#else
+        constexpr bool using_metis_partition = false;
+#endif
+
         for (auto it_a = active.begin(); it_a != active.end(); ++it_a) {
             auto it_b = it_a;
             ++it_b;
@@ -266,8 +391,14 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
 
                 const size_t required_bytes = estimate_pair_memory_bytes(a, b, result_dims);
 
-                const size_t selection_cost =
+                size_t selection_cost =
                     selection_cost_for_algorithm(*config, required_bytes, mode_pairs.size());
+#ifdef HAS_METIS
+                if (using_metis_partition &&
+                    metis_partition[it_a->first] != metis_partition[it_b->first]) {
+                    selection_cost = add_metis_partition_penalty(selection_cost);
+                }
+#endif
 
                 if (!found || selection_cost < best_cost) {
                     found = true;

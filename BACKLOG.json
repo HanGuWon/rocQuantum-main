@@ -345,15 +345,17 @@
                                     "Runtime fallback behavior tests"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/Pathfinder.cpp:326",
-                                       "rocQuantum-main/rocquantum/src/Pathfinder.cpp:339"
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/CMakeLists.txt:30",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:14",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:132",
+                                       "rocQuantum-main/tests/test_tensornet_contract.py:95"
                                    ],
-                      "notes":  "Requires integration of Pathfinder sources into tensornet build.",
-                      "status":  "Needs ROCm CI",
-                      "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/Pathfinder.cpp:326",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "notes":  "TensorNet now has an explicit ROCQUANTUM_TENSORNET_ENABLE_METIS build option. When enabled, CMake requires METIS headers/library before defining HAS_METIS; runtime contraction planning calls METIS_PartGraphKway for partition-biased pair selection. When METIS support is absent, requested METIS continues to fall back cleanly to GREEDY with Python warnings and capability metadata.",
+                      "status":  "Implemented",
+                      "pr_link":  "integration/rocm-validation-handoff",
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipTensorNet/CMakeLists.txt:30",
+                      "verification_path":  "Run rocQuantum-main/tests/test_tensornet_contract.py locally; build TensorNet with ROCQUANTUM_TENSORNET_ENABLE_METIS=OFF and ON against a METIS install, then run TensorNet contraction regression on a ROCm runner."
                   },
                   {
                       "id":  "P1-TN-003",

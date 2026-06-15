@@ -33,6 +33,18 @@ target_link_libraries(rocqsim_tensornet
         roc::rocsolver
 )
 
+option(ROCQUANTUM_TENSORNET_ENABLE_METIS "Enable optional METIS pathfinder integration" OFF)
+if(ROCQUANTUM_TENSORNET_ENABLE_METIS)
+    find_path(METIS_INCLUDE_DIR metis.h)
+    find_library(METIS_LIBRARY NAMES metis)
+    if(NOT METIS_INCLUDE_DIR OR NOT METIS_LIBRARY)
+        message(FATAL_ERROR "ROCQUANTUM_TENSORNET_ENABLE_METIS=ON requires METIS headers and library")
+    endif()
+    target_compile_definitions(rocqsim_tensornet PRIVATE HAS_METIS=1)
+    target_include_directories(rocqsim_tensornet PRIVATE ${METIS_INCLUDE_DIR})
+    target_link_libraries(rocqsim_tensornet PUBLIC ${METIS_LIBRARY})
+endif()
+
 install(
     TARGETS rocqsim_tensornet
     EXPORT ${ROCQUANTUM_EXPORT_SET_NAME}
