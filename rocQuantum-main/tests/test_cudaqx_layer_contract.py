@@ -997,9 +997,16 @@ class TestQecHelpers(unittest.TestCase):
         from rocq.operator import PauliOperator
         from rocquantum.qec.decoders.repetition_decoder import RepetitionCodeDecoder
 
-        correction = RepetitionCodeDecoder().decode([0, 1])
+        decoder = RepetitionCodeDecoder()
+        correction = decoder.decode([0, 1])
         self.assertIsInstance(correction, PauliOperator)
         self.assertIn("X2", correction.to_string())
+
+        invalid_syndromes = ([0], [0, 1, 0], [0, 2], [True, 0], "01", None)
+        for syndrome in invalid_syndromes:
+            with self.subTest(syndrome=syndrome):
+                with self.assertRaisesRegex(ValueError, "syndrome"):
+                    decoder.decode(syndrome)
 
 
 if __name__ == "__main__":
