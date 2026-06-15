@@ -156,6 +156,10 @@ python3 benchmarks/run_release_benchmarks.py \
   --fail-on-error
 ```
 
+The self-hosted ROCm workflows restore the previous benchmark summary from the GitHub Actions
+cache and pass it as a baseline automatically when one is available; each run saves its current
+summary back to the cache for the next run.
+
 On a ROCm multi-GPU runner, the distributed reduction benchmark can also be run directly:
 
 ```bash

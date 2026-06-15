@@ -368,6 +368,12 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmark-summary.md", combined)
         self.assertIn("GITHUB_STEP_SUMMARY", combined)
         self.assertIn("--fail-on-error", combined)
+        self.assertGreaterEqual(combined.count("set -o pipefail"), 3)
+        self.assertIn("actions/cache/restore@v4", combined)
+        self.assertIn("actions/cache/save@v4", combined)
+        self.assertIn("benchmark-baseline-rocm-runtime", combined)
+        self.assertIn("benchmark-baseline-rocm-nightly", combined)
+        self.assertIn("BASELINE_ARGS=(--baseline-summary", combined)
         self.assertIn("actions/upload-artifact@v4", combined)
 
     def test_readme_describes_release_benchmark_registry(self):
@@ -380,6 +386,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmark-summary.md", readme)
         self.assertIn("speedup ratios", readme)
         self.assertIn("--baseline-summary", readme)
+        self.assertIn("self-hosted ROCm workflows restore the previous benchmark summary", readme)
         self.assertIn("dense expectation, sparse moments, and generic matrix", readme)
 
 
