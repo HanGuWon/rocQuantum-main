@@ -127,6 +127,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("from numbers import Integral", source)
         self.assertIn("def normalize_targets", source)
         self.assertIn("not isinstance(target, Integral)", source)
+        self.assertIn("def normalize_shots", source)
+        self.assertIn("shots must be a positive integer", source)
         self.assertIn("def statevector_to_little_endian_wires", source)
         self.assertIn("def probabilities_from_statevector", source)
         self.assertIn("def probabilities(self, qubits", source)

@@ -933,6 +933,46 @@ def test_framework_runtime_rejects_ambiguous_targets_before_native_dispatch(monk
     assert batch_sim.probability_requests == []
 
 
+def test_framework_runtime_rejects_ambiguous_shots_before_native_dispatch(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        normalize_shots,
+        sample_indices_batch_from_probabilities,
+        sample_indices_from_probabilities,
+        sample_rows_from_statevector,
+    )
+
+    invalid_shots = (0, -1, True, np.bool_(False), 1.5, "4", b"4", 1.0 + 0.0j)
+    for shots in invalid_shots:
+        with pytest.raises(ValueError, match="shots must"):
+            normalize_shots(shots)
+        with pytest.raises(ValueError, match="shots must"):
+            sample_rows_from_statevector(np.array([1.0, 0.0], dtype=np.complex128), shots)
+        with pytest.raises(ValueError, match="shots must"):
+            sample_indices_from_probabilities([1.0, 0.0], shots)
+        with pytest.raises(ValueError, match="shots must"):
+            sample_indices_batch_from_probabilities([[1.0, 0.0]], shots)
+
+    assert normalize_shots(np.int64(3)) == 3
+
+    runtime = RocQuantumRuntime.from_bindings(1)
+    sim = _FakeQuantumSimulator.instances[-1]
+    for shots in invalid_shots:
+        with pytest.raises(ValueError, match="shots must"):
+            runtime.measure([0], shots)
+    assert sim.measurements == []
+
+    batch_runtime = RocQuantumRuntime.from_bindings(1, batch_size=2)
+    batch_sim = _FakeQuantumSimulator.instances[-1]
+    for shots in invalid_shots:
+        with pytest.raises(ValueError, match="shots must"):
+            batch_runtime.measure_batch([0], shots)
+    assert batch_sim.measurements == []
+    assert batch_sim.probability_requests == []
+
+
 def test_qiskit_backend_samples_mid_circuit_measurement_trajectory(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

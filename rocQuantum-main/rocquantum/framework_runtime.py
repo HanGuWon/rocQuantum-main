@@ -71,6 +71,15 @@ def normalize_targets(targets: Iterable[int]) -> list[int]:
     return normalized
 
 
+def normalize_shots(shots: object) -> int:
+    if isinstance(shots, (bool, np.bool_)) or not isinstance(shots, Integral):
+        raise ValueError("shots must be a positive integer.")
+    normalized = int(shots)
+    if normalized <= 0:
+        raise ValueError("shots must be positive.")
+    return normalized
+
+
 def normalize_params(params: Iterable[object] | None) -> list[float]:
     if params is None:
         return []
@@ -173,6 +182,7 @@ def samples_to_binary_rows(raw_samples: Sequence[int], num_wires: int) -> np.nda
 
 
 def sample_rows_from_statevector(statevector: Sequence[complex], shots: int, rng=None) -> np.ndarray:
+    shots = normalize_shots(shots)
     state = np.asarray(statevector, dtype=np.complex128)
     validate_finite_complex_array(state, "Statevector amplitudes")
     probabilities = np.abs(state) ** 2
@@ -183,7 +193,7 @@ def sample_rows_from_statevector(statevector: Sequence[complex], shots: int, rng
 
     if rng is None:
         rng = np.random
-    counts = rng.multinomial(int(shots), probabilities)
+    counts = rng.multinomial(shots, probabilities)
     sample_indices = np.repeat(np.arange(len(probabilities)), counts)
     num_wires = int(np.log2(len(probabilities))) if len(probabilities) else 0
     return samples_to_binary_rows(sample_indices, num_wires)
@@ -212,6 +222,7 @@ def normalize_probability_matrix(probabilities: Sequence[Sequence[float]], label
 
 
 def sample_indices_from_probabilities(probabilities: Sequence[float], shots: int, rng=None) -> np.ndarray:
+    shots = normalize_shots(shots)
     probabilities = normalize_probability_vector(probabilities, "Sampler probabilities")
     total = float(np.sum(probabilities))
     if total <= 0.0:
@@ -220,13 +231,13 @@ def sample_indices_from_probabilities(probabilities: Sequence[float], shots: int
 
     if rng is None:
         rng = np.random
-    counts = rng.multinomial(int(shots), probabilities)
+    counts = rng.multinomial(shots, probabilities)
     return np.repeat(np.arange(probabilities.size, dtype=np.int64), counts)
 
 
 def sample_indices_batch_from_probabilities(probabilities: Sequence[Sequence[float]], shots: int, rng=None) -> np.ndarray:
+    shots = normalize_shots(shots)
     probabilities = normalize_probability_matrix(probabilities, "Batched sampler probabilities")
-    shots = int(shots)
     if probabilities.shape[0] == 0:
         return np.empty((0, shots), dtype=np.int64)
     return np.vstack(
@@ -835,14 +846,15 @@ class RocQuantumRuntime:
         raise NotImplementedError("The active rocQuantum binding does not expose batched state readback.")
 
     def measure(self, qubits: Iterable[int], shots: int) -> list[int]:
+        shots = normalize_shots(shots)
         measure = getattr(self.simulator, "measure", None)
         if not callable(measure):
             raise NotImplementedError("The active rocQuantum binding does not expose native sampling.")
-        return [int(sample) for sample in measure(normalize_targets(qubits), int(shots))]
+        return [int(sample) for sample in measure(normalize_targets(qubits), shots)]
 
     def measure_batch(self, qubits: Iterable[int], shots: int) -> np.ndarray:
         normalized_qubits = normalize_targets(qubits)
-        shots = int(shots)
+        shots = normalize_shots(shots)
 
         native = getattr(self.simulator, "measure_batch", None)
         if not callable(native):
