@@ -748,6 +748,33 @@ def test_framework_runtime_converts_full_statevectors_to_little_endian_order():
     )
 
 
+def test_framework_runtime_rejects_ambiguous_gate_parameters(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import RocQuantumRuntime, normalize_params
+
+    invalid_values = (True, np.bool_(False), "0.25", b"0.25", np.nan, np.inf, -np.inf, 0.25 + 0.0j)
+    for value in invalid_values:
+        with pytest.raises((TypeError, ValueError), match="Operation parameters"):
+            normalize_params([value])
+
+    np.testing.assert_allclose(normalize_params([np.float64(0.25), 1]), [0.25, 1.0])
+
+    runtime = RocQuantumRuntime.from_bindings(1)
+    sim = _FakeQuantumSimulator.instances[-1]
+    for value in invalid_values:
+        with pytest.raises((TypeError, ValueError), match="Operation parameters"):
+            runtime.apply_operation("RX", [0], [value])
+    assert sim.ops == []
+
+    batch_runtime = RocQuantumRuntime.from_bindings(1, batch_size=2)
+    batch_sim = _FakeQuantumSimulator.instances[-1]
+    for value in invalid_values:
+        with pytest.raises((TypeError, ValueError), match="Operation parameters"):
+            batch_runtime.apply_operation_batch("RX", [0], [0.1, value])
+    assert batch_sim.batch_ops == []
+
+
 def test_qiskit_backend_samples_mid_circuit_measurement_trajectory(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import math
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -62,9 +63,17 @@ def normalize_params(params: Iterable[object] | None) -> list[float]:
         return []
     normalized = []
     for param in params:
+        if isinstance(param, (bool, np.bool_)) or isinstance(param, (str, bytes)):
+            raise ValueError("Operation parameters must be finite real numeric values.")
         if hasattr(param, "bind"):
             raise TypeError(f"Unbound symbolic parameter {param!r} cannot be executed.")
-        normalized.append(float(param))
+        try:
+            value = float(param)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("Operation parameters must be real numeric values.") from exc
+        if not math.isfinite(value):
+            raise ValueError("Operation parameters must be finite real numeric values.")
+        normalized.append(value)
     return normalized
 
 
