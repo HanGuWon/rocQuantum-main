@@ -43,14 +43,17 @@
                                     "CI artifact contains probe output"
                                 ],
                       "evidence":  [
-                                       ".github/workflows/rocm-linux-build.yml:106"
+                                       "rocQuantum-main/scripts/probe_rocm_runtime.sh:1",
+                                       ".github/workflows/rocm-ci.yml:129",
+                                       ".github/workflows/rocm-nightly.yml:53",
+                                       "rocQuantum-main/tests/test_rocm_compatibility_contract.py:93"
                                    ],
-                      "notes":  "Current workflow can skip runtime silently on generic runners.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Reusable ROCm runtime probe now checks hipcc, rocminfo, rocm-smi, and /dev/kfd before configure/build in self-hosted runtime lanes. Actual artifact capture still requires a ROCm runner.",
+                      "status":  "Implemented",
                       "pr_link":  "integration/rocm-validation-handoff",
-                      "commit_link":  "1ae04e5",
-                      "evidence_link":  ".github/workflows/rocm-ci.yml:101",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-ci.yml\u0027 and verify probe logs plus /dev/kfd fail-fast behavior."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/scripts/probe_rocm_runtime.sh:1",
+                      "verification_path":  "Run tests/test_rocm_compatibility_contract.py locally; run \u0027.github/workflows/rocm-ci.yml\u0027 and verify rocm-runtime-probe.log plus /dev/kfd fail-fast behavior on a ROCm runner."
                   },
                   {
                       "id":  "P0-CI-003",

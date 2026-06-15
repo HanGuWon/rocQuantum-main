@@ -36,7 +36,7 @@ cmake -S . -B build-ci -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON \
   -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc \
-  -DAMDGPU_TARGETS=gfx90a
+  -DCMAKE_HIP_ARCHITECTURES=gfx90a
 ```
 
 Optional legacy lane configure:
@@ -46,7 +46,7 @@ cmake -S . -B build-legacy -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON \
   -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc \
-  -DAMDGPU_TARGETS=gfx906\;gfx908
+  -DCMAKE_HIP_ARCHITECTURES=gfx906\;gfx908
 ```
 
 ## Full Build/Test Commands
@@ -54,12 +54,13 @@ From `rocQuantum-main/`:
 
 ```bash
 bash scripts/check_async_contract.sh
+bash scripts/probe_rocm_runtime.sh
 
 cmake -S . -B build-ci -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON \
   -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc \
-  -DAMDGPU_TARGETS=gfx90a
+  -DCMAKE_HIP_ARCHITECTURES=gfx90a
 
 cmake --build build-ci --parallel
 
@@ -95,10 +96,7 @@ Required profiles for this repo's workflows:
 Install ROCm from the official AMD package channel for your chosen lane (`6.2.2` or `7.2.4`), then validate:
 
 ```bash
-hipcc --version
-rocminfo
-rocm-smi
-ls -l /dev/kfd
+bash scripts/probe_rocm_runtime.sh
 ```
 
 Expected:

@@ -51,6 +51,13 @@ jobs:
             ls -l /dev/kfd || true
           } | tee "${ARTIFACT_DIR}/runner-env.log"
 
+      - name: Probe ROCm runtime prerequisites
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          set -o pipefail
+          bash scripts/probe_rocm_runtime.sh 2>&1 | tee "${ARTIFACT_DIR}/rocm-runtime-probe.log"
+
       - name: Configure
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
@@ -76,10 +83,6 @@ jobs:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
           TEST_REGEX: MultiGPUTests|HipTensorNetContractionRegression
         run: |
-          if [ ! -e /dev/kfd ]; then
-            echo "ROCm runtime device /dev/kfd is missing on nightly runner." | tee "${ARTIFACT_DIR}/ctest-nightly.log"
-            exit 1
-          fi
           set -o pipefail
           if ctest --help | grep -q -- "--output-junit"; then
             ctest --test-dir build-rocm-nightly --output-on-failure \

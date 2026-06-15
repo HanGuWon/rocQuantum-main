@@ -8,6 +8,7 @@ import unittest
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(PROJECT_ROOT)
 ROOT_CMAKE = os.path.join(PROJECT_ROOT, "CMakeLists.txt")
 PACKAGE_CONFIG_TEMPLATE = os.path.join(PROJECT_ROOT, "cmake", "rocQuantumConfig.cmake.in")
 PYTHON_ROCQ_CMAKE = os.path.join(PROJECT_ROOT, "python", "rocq", "CMakeLists.txt")
@@ -15,6 +16,10 @@ PYPROJECT = os.path.join(PROJECT_ROOT, "pyproject.toml")
 README = os.path.join(PROJECT_ROOT, "README.md")
 ROCM_AUDIT = os.path.join(PROJECT_ROOT, "ROCM_INTEGRATION_AUDIT.md")
 FEATURE_MATRIX = os.path.join(PROJECT_ROOT, "FEATURE_TRUTH_MATRIX.md")
+ROCM_CI_SETUP = os.path.join(REPO_ROOT, "ROCM_CI_SETUP.md")
+ROCM_PROBE = os.path.join(PROJECT_ROOT, "scripts", "probe_rocm_runtime.sh")
+ROCM_CI_WORKFLOW = os.path.join(REPO_ROOT, ".github", "workflows", "rocm-ci.yml")
+ROCM_NIGHTLY_WORKFLOW = os.path.join(REPO_ROOT, ".github", "workflows", "rocm-nightly.yml")
 COMPONENT_CMAKES = [
     os.path.join(PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "CMakeLists.txt"),
     os.path.join(PROJECT_ROOT, "rocquantum", "src", "hipTensorNet", "CMakeLists.txt"),
@@ -90,6 +95,24 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn("Linux x86_64", combined)
         self.assertIn("`hip` / `hip::host`", combined)
         self.assertIn("`rccl`", combined)
+
+    def test_rocm_runtime_probe_is_fail_fast_and_reused_by_gpu_workflows(self):
+        probe = _read(ROCM_PROBE)
+        workflows = "\n".join(_read(path) for path in [ROCM_CI_WORKFLOW, ROCM_NIGHTLY_WORKFLOW])
+        ci_setup = _read(ROCM_CI_SETUP)
+
+        self.assertIn("set -euo pipefail", probe)
+        self.assertIn("require_command hipcc", probe)
+        self.assertIn("require_command rocminfo", probe)
+        self.assertIn("require_command rocm-smi", probe)
+        self.assertIn("[[ ! -e /dev/kfd ]]", probe)
+        self.assertIn("exit 1", probe)
+        self.assertIn("ROCm runtime prerequisites are missing", probe)
+        self.assertGreaterEqual(workflows.count("scripts/probe_rocm_runtime.sh"), 2)
+        self.assertIn("rocm-runtime-probe.log", workflows)
+        self.assertIn("bash scripts/probe_rocm_runtime.sh", ci_setup)
+        self.assertIn("CMAKE_HIP_ARCHITECTURES", ci_setup)
+        self.assertNotIn("AMDGPU_TARGETS", ci_setup)
 
 
 if __name__ == "__main__":

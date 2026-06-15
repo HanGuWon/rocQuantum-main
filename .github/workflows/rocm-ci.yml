@@ -125,6 +125,13 @@ jobs:
             ls -l /dev/kfd || true
           } | tee "${ARTIFACT_DIR}/runner-env.log"
 
+      - name: Probe ROCm runtime prerequisites
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -o pipefail
+          bash scripts/probe_rocm_runtime.sh 2>&1 | tee "${ARTIFACT_DIR}/rocm-runtime-probe.log"
+
       - name: Async contract gate
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
@@ -157,10 +164,6 @@ jobs:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
           TEST_REGEX: HipTensorNetContractionRegression|RocTensorUtilTest|SlicingLogicTest|PermutationKernelTest
         run: |
-          if [ ! -e /dev/kfd ]; then
-            echo "ROCm runtime device /dev/kfd is missing on self-hosted runner." | tee "${ARTIFACT_DIR}/ctest-runtime.log"
-            exit 1
-          fi
           set -o pipefail
           if ctest --help | grep -q -- "--output-junit"; then
             ctest --test-dir build-rocm-ci --output-on-failure \
