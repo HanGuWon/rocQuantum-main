@@ -23,11 +23,12 @@ Current supported subset:
   `mitigate_repetition_syndrome_counts()` and the
   `measurement_error_probability=` option on repetition-code analysis and
   execution helpers.
-- Execution helpers require positive integer `shots`, repeated-round helpers
-  require positive integer `rounds`, and count/bit inputs are validated as
-  non-empty binary strings, non-negative integer counts, and non-boolean
-  data/error/logical bits plus finite measurement error probabilities in
-  `[0, 0.5)`.
+- Execution helpers require positive integer `shots`; generic single-round
+  orchestration also requires positive integer `num_qubits` plus in-range
+  integer `ancilla_qubit_indices`; repeated-round helpers require positive
+  integer `rounds`; and count/bit inputs are validated as non-empty binary
+  strings, non-negative integer counts, and non-boolean data/error/logical
+  bits plus finite measurement error probabilities in `[0, 0.5)`.
 
 Minimal example:
 

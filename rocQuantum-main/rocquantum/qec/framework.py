@@ -129,6 +129,27 @@ def _validate_positive_integer(value: int, name: str) -> int:
     return int(value)
 
 
+def _validate_ancilla_qubit_indices(ancilla_qubit_indices, num_qubits: int) -> List[int]:
+    if isinstance(ancilla_qubit_indices, (bool, str, bytes)):
+        raise ValueError("ancilla_qubit_indices must be a sequence of integer qubit indices.")
+    try:
+        raw_indices = list(ancilla_qubit_indices)
+    except TypeError as exc:
+        raise ValueError(
+            "ancilla_qubit_indices must be a sequence of integer qubit indices."
+        ) from exc
+
+    normalized = []
+    for index in raw_indices:
+        if isinstance(index, bool) or not isinstance(index, Integral):
+            raise ValueError("ancilla_qubit_indices entries must be integer qubit indices.")
+        qubit = int(index)
+        if qubit < 0 or qubit >= num_qubits:
+            raise ValueError("ancilla_qubit_indices entries must be in range for num_qubits.")
+        normalized.append(qubit)
+    return normalized
+
+
 class QEC_Experiment:
     """Orchestrates a QEC experiment using a "Circuit Fragmentation" strategy."""
     def __init__(self, backend: str = "state_vector", verbose: bool = False):
@@ -155,6 +176,11 @@ class QEC_Experiment:
     ) -> Dict[str, Any]:
         """Executes a single, complete round of quantum error correction."""
         shots = _validate_positive_integer(shots, "shots")
+        num_qubits = _validate_positive_integer(num_qubits, "num_qubits")
+        ancilla_qubit_indices = _validate_ancilla_qubit_indices(
+            ancilla_qubit_indices,
+            num_qubits,
+        )
 
         self._log("Step 1: Generating stabilizer measurement circuit fragments...")
         stabilizer_circuits = code.generate_stabilizer_circuits(

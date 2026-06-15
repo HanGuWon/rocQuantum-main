@@ -802,6 +802,16 @@ class TestQecHelpers(unittest.TestCase):
         experiment = QEC_Experiment()
         with self.assertRaisesRegex(ValueError, "shots must be a positive integer"):
             experiment.run_single_round(None, None, None, 0, [], shots=1.5)
+        with self.assertRaisesRegex(ValueError, "num_qubits must be a positive integer"):
+            experiment.run_single_round(None, None, None, True, [], shots=1)
+        with self.assertRaisesRegex(ValueError, "ancilla_qubit_indices"):
+            experiment.run_single_round(None, None, None, 2, True, shots=1)
+        with self.assertRaisesRegex(ValueError, "integer qubit indices"):
+            experiment.run_single_round(None, None, None, 2, [0.5], shots=1)
+        with self.assertRaisesRegex(ValueError, "range for num_qubits"):
+            experiment.run_single_round(None, None, None, 2, [2], shots=1)
+        with self.assertRaisesRegex(ValueError, "range for num_qubits"):
+            experiment.run_single_round(None, None, None, 2, [-1], shots=1)
         with self.assertRaisesRegex(ValueError, "shots must be a positive integer"):
             run_repetition_code_single_round(shots=True)
         with self.assertRaisesRegex(ValueError, "rounds must be a positive integer"):
