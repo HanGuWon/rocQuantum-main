@@ -1012,6 +1012,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(capabilities["status"], "partial")
         self.assertFalse(capabilities["binding_available"])
         self.assertEqual(capabilities["default_backend"], "hip_statevec")
+        self.assertEqual(capabilities["supported_backends"], ["hip_statevec"])
         self.assertIn("Supported canonical MLIR gates", capabilities["supported_subset"])
         self.assertEqual(
             capabilities["supported_gate_groups"]["parametric_single_qubit"],
@@ -1134,6 +1135,21 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             with self.subTest(strict=strict):
                 with self.assertRaisesRegex(ValueError, "strict must be a boolean"):
                     rocq.compile_and_execute(prep_state, strict=strict)
+
+    def test_compile_and_execute_rejects_unsupported_compiler_backend_before_binding(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        for compiler_backend in ("state_vector", "cudaq", "", 1, True, None):
+            with self.subTest(compiler_backend=compiler_backend):
+                with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None):
+                    with self.assertRaisesRegex(ValueError, "compiler_backend"):
+                        rocq.compile_and_execute(
+                            prep_state,
+                            compiler_backend=compiler_backend,
+                        )
 
     def test_compile_and_execute_augments_compiler_failures(self):
         @kernel

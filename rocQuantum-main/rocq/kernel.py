@@ -31,6 +31,7 @@ _COMPILER_SUPPORTED_GATE_GROUPS = {
     "parametric_single_qubit": ("rx", "ry", "rz", "p"),
     "parametric_controlled": ("crx", "cry", "crz", "cp"),
 }
+_COMPILER_SUPPORTED_BACKENDS = ("hip_statevec",)
 _COMPILER_UNSUPPORTED_FEATURES = (
     "mid-circuit measurement",
     "classical control flow",
@@ -105,6 +106,7 @@ def compiler_capabilities() -> Dict[str, object]:
         "status": "partial",
         "binding_available": rocquantum_bind is not None,
         "default_backend": "hip_statevec",
+        "supported_backends": list(_COMPILER_SUPPORTED_BACKENDS),
         "supported_subset": _COMPILER_SUPPORTED_MLIR_SUBSET,
         "supported_gate_groups": {
             key: list(values)
@@ -250,6 +252,19 @@ def _validate_boolean(value, name: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{name} must be a boolean.")
     return value
+
+
+def _validate_compiler_backend(backend) -> str:
+    if not isinstance(backend, str):
+        raise ValueError(
+            f"compiler_backend must be one of: {list(_COMPILER_SUPPORTED_BACKENDS)}."
+        )
+    if backend not in _COMPILER_SUPPORTED_BACKENDS:
+        raise ValueError(
+            f"Unsupported compiler_backend '{backend}'. "
+            f"Supported compiler backends are: {list(_COMPILER_SUPPORTED_BACKENDS)}."
+        )
+    return backend
 
 
 class QuantumKernel:
@@ -452,6 +467,7 @@ class QuantumKernel:
     ):
         """Compile the supported MLIR subset and execute it through the native compiler binding."""
         strict = _validate_boolean(strict, "strict")
+        compiler_backend = _validate_compiler_backend(compiler_backend)
         if rocquantum_bind is None:
             raise RuntimeError(_COMPILER_BINDING_MISSING_MESSAGE)
         mlir_code = self.mlir(*args, **kwargs)
