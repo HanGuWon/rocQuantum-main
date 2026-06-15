@@ -156,8 +156,17 @@ def _validate_hamiltonian(hamiltonian):
     return hamiltonian
 
 
+def _validate_ansatz_kernel(ansatz_kernel):
+    if QuantumKernel is not None and isinstance(ansatz_kernel, QuantumKernel):
+        return ansatz_kernel
+    if not callable(ansatz_kernel):
+        raise ValueError("ansatz_kernel must be a callable or rocq.kernel.QuantumKernel.")
+    return ansatz_kernel
+
+
 def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
     params = _parameter_vector(params)
+    ansatz_kernel = _validate_ansatz_kernel(ansatz_kernel)
     underlying = getattr(ansatz_kernel, "_func", ansatz_kernel)
     try:
         signature = inspect.signature(underlying)
@@ -440,6 +449,7 @@ class VQE_Solver:
         initial_parameter_vector = _parameter_vector(initial_params, label="initial_params")
         expected_parameter_count = initial_parameter_vector.size
         hamiltonian = _validate_hamiltonian(hamiltonian)
+        ansatz_kernel = _validate_ansatz_kernel(ansatz_kernel)
 
         result = self.optimizer.minimize(
             fun=self._objective_function,

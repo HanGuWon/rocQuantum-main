@@ -21,7 +21,7 @@ _SOLVER_SUPPORTED_FEATURES = (
     "MaxCut solve wrapper that maximizes cut value through a negated VQE objective",
     "QAOA edge-list and edge-weight mapping normalization",
     "VQE ansatz and optimizer result parameter-count validation",
-    "QuantumOperator objective, finite-real parameter, energy, backend, gradient-method, optimizer-result, optimizer-interface, and optimizer-option validation",
+    "QuantumOperator objective, ansatz-kernel, finite-real parameter, energy, backend, gradient-method, optimizer-result, optimizer-interface, and optimizer-option validation",
 )
 
 _SOLVER_UNSUPPORTED_FEATURES = (
