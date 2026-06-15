@@ -121,10 +121,13 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
     def test_observable_targets_and_sparse_shape_require_integer_inputs(self):
         matrix = np.eye(2)
-        for targets in ([-1], [0.5], [True], ["0"]):
+        for targets in (-1, 0.5, True, "0", [-1], [0.5], [True], ["0"], [0, 0]):
             with self.subTest(targets=targets):
                 with self.assertRaisesRegex(ValueError, "HermitianOperator target"):
                     HermitianOperator(matrix, targets=targets)
+
+        scalar_operator = HermitianOperator(matrix, targets=np.int64(0))
+        self.assertEqual(scalar_operator.targets, [0])
 
         operator = HermitianOperator(matrix, targets=[np.int64(0)])
         self.assertEqual(operator.targets, [0])

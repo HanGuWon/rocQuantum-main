@@ -31,6 +31,27 @@ def _validate_nonnegative_integer(value, name: str) -> int:
     return index
 
 
+def _normalize_observable_targets(targets, name: str):
+    if targets is None:
+        return None
+    if isinstance(targets, bool) or isinstance(targets, (str, bytes)):
+        raise ValueError(f"{name} must be an integer index or a sequence of integer indices.")
+    if isinstance(targets, Integral):
+        raw_targets = [targets]
+    else:
+        try:
+            raw_targets = list(targets)
+        except TypeError as exc:
+            raise ValueError(
+                f"{name} must be an integer index or a sequence of integer indices."
+            ) from exc
+
+    normalized = [_validate_nonnegative_integer(target, name) for target in raw_targets]
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{name}s must be unique.")
+    return normalized
+
+
 def _normalize_coefficient(value, name: str = "coefficient") -> complex:
     if isinstance(value, bool) or not isinstance(value, Number):
         raise ValueError(f"{name} must be a finite numeric value.")
@@ -140,11 +161,7 @@ class HermitianOperator(QuantumOperator):
     def __init__(self, matrix, coefficient: Number = 1.0, targets=None):
         super().__init__(coefficient)
         self.matrix = matrix
-        self.targets = (
-            None
-            if targets is None
-            else [_validate_nonnegative_integer(target, "HermitianOperator target") for target in targets]
-        )
+        self.targets = _normalize_observable_targets(targets, "HermitianOperator target")
 
     def to_string(self) -> str:
         return f"{self.coefficient} * Hermitian(matrix)"
