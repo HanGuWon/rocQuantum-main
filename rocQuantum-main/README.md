@@ -175,6 +175,12 @@ The self-hosted ROCm workflows restore the previous benchmark summary and bounde
 GitHub Actions cache, pass the summary as a baseline automatically when one is available, and save
 the current summary/history back to the cache for the next run.
 
+`benchmarks/run_benchmark.py` provides a smaller QFT comparison through the PennyLane and Qiskit
+adapters. It uses the current `lightning.rocq` PennyLane entry point, falls back from `qiskit-aer`
+to Qiskit's `BasicSimulator` for the CPU baseline when Aer is not installed, writes
+`framework-benchmark-results.json`, and records explicit skipped framework results when
+`rocquantum_bind` is unavailable instead of emitting a stack trace or pretending GPU timings exist.
+
 On a ROCm multi-GPU runner, the distributed reduction benchmark can also be run directly:
 
 ```bash
