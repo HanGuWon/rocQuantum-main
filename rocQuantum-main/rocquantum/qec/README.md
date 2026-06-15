@@ -15,6 +15,8 @@ Current supported subset:
 - Lookup-table correction through `RepetitionCodeDecoder`.
 - Syndrome histogram, repeated-round correction summary, and correction-success
   analysis for sampled counts.
+- Execution helpers require positive integer `shots`, and repeated-round helpers
+  require positive integer `rounds`.
 
 Minimal example:
 

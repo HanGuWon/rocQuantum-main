@@ -585,6 +585,23 @@ class TestQecHelpers(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at least one shot"):
             _most_likely_single_bit({"0": 0, "1": 0})
 
+    def test_qec_execution_helpers_require_integer_shots_and_rounds(self):
+        from rocquantum.qec.framework import (
+            QEC_Experiment,
+            run_repetition_code_rounds,
+            run_repetition_code_single_round,
+        )
+
+        experiment = QEC_Experiment()
+        with self.assertRaisesRegex(ValueError, "shots must be a positive integer"):
+            experiment.run_single_round(None, None, None, 0, [], shots=1.5)
+        with self.assertRaisesRegex(ValueError, "shots must be a positive integer"):
+            run_repetition_code_single_round(shots=True)
+        with self.assertRaisesRegex(ValueError, "rounds must be a positive integer"):
+            run_repetition_code_rounds(rounds=1.5)
+        with self.assertRaisesRegex(ValueError, "shots must be positive"):
+            run_repetition_code_rounds(shots=0)
+
     def test_repetition_code_counts_analysis_reports_success_rate(self):
         from rocquantum.qec import analyze_repetition_code_counts
 

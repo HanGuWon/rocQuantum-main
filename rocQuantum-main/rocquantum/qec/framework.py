@@ -76,6 +76,14 @@ def _most_likely_single_bit(counts: Dict[str, int]) -> int:
     return int(bitstring[-1])
 
 
+def _validate_positive_integer(value: int, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be a positive integer.")
+    if value <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return int(value)
+
+
 class QEC_Experiment:
     """Orchestrates a QEC experiment using a "Circuit Fragmentation" strategy."""
     def __init__(self, backend: str = "state_vector", verbose: bool = False):
@@ -101,8 +109,7 @@ class QEC_Experiment:
         shots: int = 1,
     ) -> Dict[str, Any]:
         """Executes a single, complete round of quantum error correction."""
-        if shots <= 0:
-            raise ValueError("shots must be positive.")
+        shots = _validate_positive_integer(shots, "shots")
 
         self._log("Step 1: Generating stabilizer measurement circuit fragments...")
         stabilizer_circuits = code.generate_stabilizer_circuits(
@@ -163,9 +170,8 @@ def _validate_error_qubit(error_qubit: Optional[int]) -> None:
         raise ValueError("error_qubit must be one of 0, 1, 2, or None.")
 
 
-def _validate_repetition_rounds(rounds: int) -> None:
-    if rounds <= 0:
-        raise ValueError("rounds must be positive.")
+def _validate_repetition_rounds(rounds: int) -> int:
+    return _validate_positive_integer(rounds, "rounds")
 
 
 def _validate_error_qubit_schedule(
@@ -412,8 +418,7 @@ def run_repetition_code_single_round(
             "Canonical 'rocq' package is not available. Install the Python package "
             "before running QEC experiments."
         )
-    if shots <= 0:
-        raise ValueError("shots must be positive.")
+    shots = _validate_positive_integer(shots, "shots")
 
     bits = _validate_repetition_bits(initial_bits)
     _validate_error_qubit(error_qubit)
@@ -459,9 +464,8 @@ def run_repetition_code_rounds(
     backend: str = "state_vector",
 ) -> Dict[str, Any]:
     """Run repeated experimental 3-qubit repetition-code syndrome rounds."""
-    _validate_repetition_rounds(rounds)
-    if shots <= 0:
-        raise ValueError("shots must be positive.")
+    rounds = _validate_repetition_rounds(rounds)
+    shots = _validate_positive_integer(shots, "shots")
 
     bits = _validate_repetition_bits(initial_bits)
     error_schedule = _validate_error_qubit_schedule(error_qubits, rounds)
