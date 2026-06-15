@@ -39,6 +39,10 @@ class TestVqeSolverContract(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
+            "VQE optimizer result parameter-count validation",
+            capability_data["supported_features"],
+        )
+        self.assertIn(
             "GPU-resident native adjoint differentiation",
             capability_data["unsupported_features"],
         )
@@ -324,6 +328,10 @@ class TestVqeSolverContract(unittest.TestCase):
             def minimize(self, fun, x0, args=()):
                 return types.SimpleNamespace(fun=-0.25, x=np.array([np.inf]))
 
+        class WrongParameterCountOptimizer(Optimizer):
+            def minimize(self, fun, x0, args=()):
+                return types.SimpleNamespace(fun=-0.25, x=np.array([0.1, 0.2]))
+
         def ansatz(theta):
             return None
 
@@ -364,6 +372,14 @@ class TestVqeSolverContract(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "optimizer result parameters must be finite"):
             VQE_Solver(optimizer=BadParameterOptimizer()).solve(
+                hamiltonian,
+                ansatz,
+                1,
+                initial_params=[0.25],
+            )
+
+        with self.assertRaisesRegex(ValueError, "optimizer result parameters must contain 1 value"):
+            VQE_Solver(optimizer=WrongParameterCountOptimizer()).solve(
                 hamiltonian,
                 ansatz,
                 1,

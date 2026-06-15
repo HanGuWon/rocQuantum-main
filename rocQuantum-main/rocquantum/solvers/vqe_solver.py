@@ -390,10 +390,12 @@ class VQE_Solver:
         if self.verbose:
             print("Starting VQE optimization...")
         self._intermediate_results = []
+        initial_parameter_vector = _parameter_vector(initial_params, label="initial_params")
+        expected_parameter_count = initial_parameter_vector.size
 
         result = self.optimizer.minimize(
             fun=self._objective_function,
-            x0=_parameter_vector(initial_params, label="initial_params"),
+            x0=initial_parameter_vector,
             args=(hamiltonian, ansatz_kernel, num_qubits)
         )
         optimal_energy = _finite_real_scalar(
@@ -404,6 +406,11 @@ class VQE_Solver:
             _optimizer_result_attribute(result, "x"),
             label="optimizer result parameters",
         )
+        if optimal_parameters.size != expected_parameter_count:
+            raise ValueError(
+                "optimizer result parameters must contain "
+                f"{expected_parameter_count} value(s)."
+            )
 
         if self.verbose:
             print("VQE optimization finished.")
