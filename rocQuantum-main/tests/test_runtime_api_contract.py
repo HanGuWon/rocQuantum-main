@@ -124,6 +124,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "lazy statevector fallback for legacy Pauli expectation bindings",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "native HIP-stream futures",
             capabilities["unsupported_features"],
         )
@@ -1355,6 +1359,30 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(result, 1.25)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][2:], (1, 0))
+
+    def test_hip_statevector_backend_falls_back_for_missing_pauli_expectation_helpers(self):
+        from rocq.backends import _HipStateVectorState
+
+        statevector_reads = []
+
+        class _FakeHipBackend:
+            def get_state_vector_full(self, handle, d_state, num_qubits, batch_size):
+                statevector_reads.append((handle, d_state, num_qubits, batch_size))
+                inv_sqrt2 = 1.0 / np.sqrt(2.0)
+                return np.array([inv_sqrt2, 0.0, 0.0, inv_sqrt2], dtype=np.complex128)
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 2
+        operator = PauliOperator("X0 X1") + PauliOperator("Z0 Z1") + PauliOperator("Y0 Y1")
+
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
+            result = state.expectation(operator)
+
+        self.assertAlmostEqual(result, 1.0)
+        self.assertEqual(len(statevector_reads), 1)
+        self.assertEqual(statevector_reads[0][2:], (2, 1))
 
     def test_hip_statevector_backend_reuses_duplicate_hermitian_sum_terms(self):
         from rocq.backends import _HipStateVectorState

@@ -420,6 +420,40 @@ def _statevector_expectation_matrix(statevector, matrix, targets: Sequence[int],
     return total
 
 
+def _statevector_pauli_expectation(statevector, paulis: Sequence[tuple[str, int]], num_qubits: int):
+    state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
+    expected_state_dim = 1 << int(num_qubits)
+    if state.size != expected_state_dim:
+        raise ValueError("Statevector dimension does not match backend qubit count.")
+
+    transformed = np.zeros_like(state)
+    for basis_index, amplitude in enumerate(state):
+        if amplitude == 0:
+            continue
+        output_index = int(basis_index)
+        phase = 1.0 + 0.0j
+        for pauli, qubit in paulis:
+            qubit_index = int(qubit)
+            if qubit_index < 0 or qubit_index >= int(num_qubits):
+                raise ValueError(
+                    f"Pauli observable qubit index {qubit_index} is out of range "
+                    f"for {num_qubits} qubits."
+                )
+            mask = 1 << qubit_index
+            bit_set = bool(basis_index & mask)
+            if pauli == "X":
+                output_index ^= mask
+            elif pauli == "Y":
+                output_index ^= mask
+                phase *= -1j if bit_set else 1j
+            elif pauli == "Z":
+                phase *= -1.0 if bit_set else 1.0
+            else:
+                raise NotImplementedError(f"Unsupported Pauli observable '{pauli}'.")
+        transformed[output_index] += phase * amplitude
+    return np.vdot(state, transformed)
+
+
 def _density_matrix_expectation_matrix(density_matrix, matrix, targets: Sequence[int], num_qubits: int):
     density = np.asarray(density_matrix, dtype=np.complex128)
     expected_dim = 1 << int(num_qubits)
@@ -837,28 +871,7 @@ class _MockStateVectorState:
         return np.random.choice(len(probs), size=int(num_shots), p=probs).astype(np.uint64)
 
     def _pauli_expectation(self, paulis: Sequence[tuple[str, int]]) -> complex:
-        state = np.asarray(self._state, dtype=np.complex128)
-        transformed = np.zeros_like(state)
-        for basis_index, amplitude in enumerate(state):
-            if amplitude == 0:
-                continue
-            output_index = int(basis_index)
-            phase = 1.0 + 0.0j
-            for pauli, qubit in paulis:
-                qubit = self._validate_qubit(qubit)
-                mask = 1 << qubit
-                bit_set = bool(basis_index & mask)
-                if pauli == "X":
-                    output_index ^= mask
-                elif pauli == "Y":
-                    output_index ^= mask
-                    phase *= -1j if bit_set else 1j
-                elif pauli == "Z":
-                    phase *= -1.0 if bit_set else 1.0
-                else:
-                    raise NotImplementedError(f"Unsupported Pauli observable '{pauli}'.")
-            transformed[output_index] += phase * amplitude
-        return np.vdot(state, transformed)
+        return _statevector_pauli_expectation(self._state, paulis, self._num_qubits)
 
     def expectation(self, operator):
         if isinstance(operator, HermitianOperator):
@@ -1177,6 +1190,18 @@ class _HipStateVectorState:
             terms = _combined_pauli_terms(operator, self._num_qubits)
 
         total = 0.0 + 0.0j
+        fallback_state = None
+
+        def fallback_pauli_expectation(pauli_terms):
+            nonlocal fallback_state
+            if fallback_state is None:
+                fallback_state = self.get_state_vector()
+            return _statevector_pauli_expectation(
+                fallback_state,
+                pauli_terms,
+                self._num_qubits,
+            )
+
         for coefficient, paulis in terms:
             if not paulis:
                 total += coefficient
@@ -1185,35 +1210,47 @@ class _HipStateVectorState:
             if len(paulis) == 1:
                 pauli, qubit = paulis[0]
                 if pauli == "X":
-                    value = hip_backend.get_expectation_value_x(self._handle, self._d_state, self._num_qubits, qubit)
+                    native = getattr(hip_backend, "get_expectation_value_x", None)
                 elif pauli == "Y":
-                    value = hip_backend.get_expectation_value_y(self._handle, self._d_state, self._num_qubits, qubit)
+                    native = getattr(hip_backend, "get_expectation_value_y", None)
                 elif pauli == "Z":
-                    value = hip_backend.get_expectation_value_z(self._handle, self._d_state, self._num_qubits, qubit)
+                    native = getattr(hip_backend, "get_expectation_value_z", None)
                 else:
                     raise NotImplementedError(f"Unsupported Pauli observable '{pauli}'.")
+                if callable(native):
+                    value = native(self._handle, self._d_state, self._num_qubits, qubit)
+                else:
+                    value = fallback_pauli_expectation(paulis)
                 total += coefficient * value
                 continue
 
             if all(pauli == "Z" for pauli, _ in paulis):
-                value = hip_backend.get_expectation_value_pauli_product_z(
-                    self._handle,
-                    self._d_state,
-                    self._num_qubits,
-                    [qubit for _, qubit in paulis],
-                )
+                native = getattr(hip_backend, "get_expectation_value_pauli_product_z", None)
+                if callable(native):
+                    value = native(
+                        self._handle,
+                        self._d_state,
+                        self._num_qubits,
+                        [qubit for _, qubit in paulis],
+                    )
+                else:
+                    value = fallback_pauli_expectation(paulis)
                 total += coefficient * value
                 continue
 
             pauli_string = "".join(pauli for pauli, _ in paulis)
             qubits = [qubit for _, qubit in paulis]
-            value = hip_backend.get_expectation_pauli_string(
-                self._handle,
-                self._d_state,
-                self._num_qubits,
-                pauli_string,
-                qubits,
-            )
+            native = getattr(hip_backend, "get_expectation_pauli_string", None)
+            if callable(native):
+                value = native(
+                    self._handle,
+                    self._d_state,
+                    self._num_qubits,
+                    pauli_string,
+                    qubits,
+                )
+            else:
+                value = fallback_pauli_expectation(paulis)
             total += coefficient * value
 
         return _finalize_expectation(total)
