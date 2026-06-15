@@ -71,6 +71,7 @@ _RUNTIME_SUPPORTED_FEATURES = (
     "GateFusion rotation-angle validation before native queue dispatch",
     "Pauli observable target validation before backend dispatch",
     "lazy statevector fallback for legacy Pauli expectation bindings",
+    "dense Hermitian observable validation before native/backend dispatch",
     "dense matrix operation validation before native device upload",
     "sparse Hamiltonian observable CSR validation before native/backend dispatch",
     "density-matrix Kraus channel payload validation before native device upload",

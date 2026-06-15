@@ -128,6 +128,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "dense Hermitian observable validation before native/backend dispatch",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "dense matrix operation validation before native device upload",
             capabilities["supported_features"],
         )
@@ -1382,6 +1386,47 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(calls[0][2], 1)
         self.assertEqual(calls[0][3], [0])
         self.assertEqual(calls[0][4], np.dtype("complex64"))
+
+    def test_hip_statevector_backend_revalidates_hermitian_observable_before_native_dispatch(self):
+        from rocq.backends import _HipStateVectorState
+
+        calls = []
+
+        class _FakeHipBackend:
+            def get_expectation_matrix(self, handle, d_state, num_qubits, targets, matrix):
+                calls.append((targets, matrix))
+                return 0.5 + 0.0j
+
+        def hermitian_operator_with(**updates):
+            operator = HermitianOperator(np.diag([1.0, -1.0]), targets=[0])
+            for name, value in updates.items():
+                setattr(operator, name, value)
+            return operator
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+
+        invalid_operators = (
+            hermitian_operator_with(matrix=[[True, 0.0], [0.0, 1.0]]),
+            hermitian_operator_with(matrix=[["1.0", 0.0], [0.0, 1.0]]),
+            hermitian_operator_with(matrix=[[np.nan, 0.0], [0.0, 1.0]]),
+            hermitian_operator_with(matrix=np.ones((2, 3), dtype=np.complex128)),
+            hermitian_operator_with(targets=[True]),
+            hermitian_operator_with(targets=["0"]),
+            hermitian_operator_with(targets=[0, 0]),
+            hermitian_operator_with(targets=[-1]),
+            hermitian_operator_with(targets=object()),
+        )
+
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend()):
+            for operator in invalid_operators:
+                with self.subTest(operator=operator):
+                    with self.assertRaisesRegex(ValueError, "HermitianOperator"):
+                        state.expectation(operator)
+
+        self.assertEqual(calls, [])
 
     def test_mock_statevector_backend_evaluates_sparse_hamiltonian_operator(self):
         backend = self._make_mock_statevector_backend(1)

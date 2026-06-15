@@ -403,15 +403,34 @@ def _expect_mixed_sum_operator(operator: SumOperator, num_qubits: int, expectati
     return _finalize_expectation(total)
 
 
-def _normalize_matrix_targets(matrix, targets, num_qubits: int):
-    matrix_array = np.asarray(matrix, dtype=np.complex128)
-    if matrix_array.ndim != 2 or matrix_array.shape[0] != matrix_array.shape[1]:
+def _normalize_dense_observable_matrix(matrix) -> np.ndarray:
+    try:
+        raw_matrix = np.asarray(matrix, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("HermitianOperator matrix must contain finite numeric values.") from exc
+
+    if raw_matrix.ndim != 2 or raw_matrix.shape[0] != raw_matrix.shape[1]:
         raise ValueError("HermitianOperator matrix must be square.")
 
-    matrix_dim = int(matrix_array.shape[0])
+    matrix_dim = int(raw_matrix.shape[0])
     if matrix_dim <= 0 or matrix_dim & (matrix_dim - 1):
         raise ValueError("HermitianOperator matrix dimension must be a power of two.")
 
+    normalized = []
+    for value in raw_matrix.reshape(-1):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError("HermitianOperator matrix must contain finite numeric values.")
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError("HermitianOperator matrix must be finite.")
+        normalized.append(scalar)
+
+    return np.asarray(normalized, dtype=np.complex128).reshape(raw_matrix.shape)
+
+
+def _normalize_matrix_targets(matrix, targets, num_qubits: int):
+    matrix_array = _normalize_dense_observable_matrix(matrix)
+    matrix_dim = int(matrix_array.shape[0])
     target_count = int(math.log2(matrix_dim))
     if targets is None:
         if target_count != int(num_qubits):
@@ -420,7 +439,21 @@ def _normalize_matrix_targets(matrix, targets, num_qubits: int):
             )
         normalized_targets = list(range(int(num_qubits)))
     else:
-        normalized_targets = [int(target) for target in targets]
+        if isinstance(targets, (bool, np.bool_)) or isinstance(targets, (str, bytes)):
+            raise ValueError("HermitianOperator targets must be integer qubit indices.")
+        if isinstance(targets, Integral):
+            raw_targets = [targets]
+        else:
+            try:
+                raw_targets = list(targets)
+            except TypeError as exc:
+                raise ValueError("HermitianOperator targets must be integer qubit indices.") from exc
+
+        normalized_targets = []
+        for target in raw_targets:
+            if isinstance(target, (bool, np.bool_)) or not isinstance(target, Integral):
+                raise ValueError("HermitianOperator targets must be integer qubit indices.")
+            normalized_targets.append(int(target))
         if len(normalized_targets) != target_count:
             raise ValueError("HermitianOperator target count must match matrix dimension.")
         if len(set(normalized_targets)) != len(normalized_targets):
