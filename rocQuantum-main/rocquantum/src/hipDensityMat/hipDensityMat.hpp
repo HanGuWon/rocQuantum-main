@@ -27,15 +27,11 @@ typedef enum {
     HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED = 4
 } hipDensityMatStatus_t;
 
-/**
- * @brief Host-side description of a single-qubit Kraus channel.
- *
- * kraus_matrices_host points to num_kraus contiguous 2x2 row-major hipComplex
- * matrices in host memory.
- */
 typedef struct {
     int num_kraus;
     const hipComplex* kraus_matrices_host;
+    int num_targets;
+    const int* target_qubits_host;
 } hipDensityMatChannel_t;
 
 /**
@@ -228,10 +224,20 @@ hipDensityMatStatus_t hipDensityMatApplyControlledGate(
 
 
 /**
- * @brief Applies a generic single-qubit Kraus channel to a target qubit.
+ * @brief Applies a generic Kraus channel to one or more target qubits.
+ *
+ * For legacy single-qubit callers, channel_params may point to a
+ * hipDensityMatChannel_t with num_targets <= 0 or target_qubits_host == nullptr;
+ * target_qubit is then used and kraus_matrices_host is interpreted as
+ * num_kraus contiguous 2x2 row-major matrices.
+ *
+ * For multi-qubit channels, target_qubits_host supplies num_targets unique
+ * target qubits and kraus_matrices_host is interpreted as num_kraus contiguous
+ * (2^num_targets)x(2^num_targets) row-major matrices. The target-qubit order
+ * defines the local matrix bit order.
  *
  * @param[in] state The state handle.
- * @param[in] target_qubit The index of the qubit to apply the channel to.
+ * @param[in] target_qubit Legacy single-qubit target when channel_params does not provide target_qubits_host.
  * @param[in] channel_params Pointer to a hipDensityMatChannel_t.
  * @return hipDensityMatStatus_t Status of the operation.
  */

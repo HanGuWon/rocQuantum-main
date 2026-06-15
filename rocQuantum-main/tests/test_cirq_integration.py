@@ -23,6 +23,8 @@ _ADAPTER_PATH = os.path.join(
     _PROJECT_ROOT, "integrations", "cirq-rocm", "cirq_rocm",
     "roc_quantum_simulator.py",
 )
+_PACKAGE_DIR = os.path.dirname(_ADAPTER_PATH)
+_PACKAGE_INIT_PATH = os.path.join(_PACKAGE_DIR, "__init__.py")
 
 
 class _MeasurementGate:
@@ -238,6 +240,33 @@ class TestCirqAdapterRuntime(unittest.TestCase):
         self.assertEqual(result["m"].shape, (3, 1))
         self.assertEqual(qsim.measured, [((0,), 3)])
         np.testing.assert_array_equal(result["m"][:, 0], np.array([0, 1, 1], dtype=np.int64))
+
+    def test_package_import_defers_missing_native_binding_error_until_execution(self):
+        fake_cirq = _build_fake_cirq_module()
+        module_name = "cirq_rocm"
+        submodule_name = "cirq_rocm.roc_quantum_simulator"
+
+        with mock.patch.dict(sys.modules, {"cirq": fake_cirq, "rocquantum_bind": None}, clear=False):
+            sys.modules.pop(module_name, None)
+            sys.modules.pop(submodule_name, None)
+            spec = importlib.util.spec_from_file_location(
+                module_name,
+                _PACKAGE_INIT_PATH,
+                submodule_search_locations=[_PACKAGE_DIR],
+            )
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            if spec.loader is None:
+                raise RuntimeError("Unable to load Cirq package module.")
+            spec.loader.exec_module(module)
+
+            sim = module.RocQuantumSimulator()
+            with self.assertRaises(ImportError) as ctx:
+                sim._get_final_statevector(_FakeCircuit([]), [])
+
+        self.assertIn("rocquantum_bind", str(ctx.exception))
+        sys.modules.pop(module_name, None)
+        sys.modules.pop(submodule_name, None)
 
 
 if __name__ == "__main__":

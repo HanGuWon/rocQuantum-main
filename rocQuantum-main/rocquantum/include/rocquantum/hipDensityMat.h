@@ -17,6 +17,8 @@ typedef enum {
 typedef struct {
     int num_kraus;
     const hipComplex* kraus_matrices_host;
+    int num_targets;
+    const int* target_qubits_host;
 } rocdmChannel_t;
 
 #ifdef __cplusplus

@@ -63,6 +63,62 @@ __global__ void apply_single_qubit_kraus_kernel(
     rho_out[row * dim + col] = result;
 }
 
+__global__ void apply_multi_qubit_kraus_kernel(
+    hipComplex* rho_out,
+    const hipComplex* rho_in,
+    const hipComplex* K,
+    const int* target_qubits,
+    int num_targets,
+    int num_qubits)
+{
+    const int64_t dim = 1LL << num_qubits;
+    const int target_dim = 1 << num_targets;
+    const int64_t row = blockIdx.y * blockDim.y + threadIdx.y;
+    const int64_t col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= dim || col >= dim) return;
+
+    int64_t row_base = row;
+    int64_t col_base = col;
+    int row_target = 0;
+    int col_target = 0;
+    for (int bit = 0; bit < num_targets; ++bit) {
+        const int qubit = target_qubits[bit];
+        const int64_t mask = 1LL << qubit;
+        if (row & mask) row_target |= (1 << bit);
+        if (col & mask) col_target |= (1 << bit);
+        row_base &= ~mask;
+        col_base &= ~mask;
+    }
+
+    hipComplex result = make_hipFloatComplex(0.0f, 0.0f);
+    for (int kt = 0; kt < target_dim; ++kt) {
+        int64_t k = row_base;
+        for (int bit = 0; bit < num_targets; ++bit) {
+            if ((kt >> bit) & 1) {
+                k |= (1LL << target_qubits[bit]);
+            }
+        }
+
+        for (int lt = 0; lt < target_dim; ++lt) {
+            int64_t l = col_base;
+            for (int bit = 0; bit < num_targets; ++bit) {
+                if ((lt >> bit) & 1) {
+                    l |= (1LL << target_qubits[bit]);
+                }
+            }
+
+            hipComplex k_row = K[row_target * target_dim + kt];
+            hipComplex rho_kl = rho_in[k * dim + l];
+            hipComplex k_col_conj = hipConjf(K[col_target * target_dim + lt]);
+            hipComplex term = hipCmulf(k_row, rho_kl);
+            term = hipCmulf(term, k_col_conj);
+            result = hipCaddf(result, term);
+        }
+    }
+    rho_out[row * dim + col] = result;
+}
+
 /**
  * @brief GPU kernel for element-wise addition: target += source.
  */
@@ -155,6 +211,120 @@ hipDensityMatStatus_t apply_kraus_channel(
     hipFree(accumulator_rho_device);
     hipFree(temp_rho_device);
     hipFree(kraus_matrix_device);
+
+    return check_hip_error(hip_err);
+}
+
+hipDensityMatStatus_t apply_multi_qubit_kraus_channel(
+    hipDensityMatState* internal_state,
+    const int* target_qubits_host,
+    int num_targets,
+    const hipComplex* kraus_matrices_host,
+    int num_kraus)
+{
+    if (internal_state == nullptr || target_qubits_host == nullptr ||
+        kraus_matrices_host == nullptr || num_targets <= 0 || num_kraus <= 0) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
+    if (num_targets > internal_state->num_qubits_ || num_targets > 20) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
+
+    for (int i = 0; i < num_targets; ++i) {
+        const int qubit = target_qubits_host[i];
+        if (qubit < 0 || qubit >= internal_state->num_qubits_) {
+            return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+        }
+        for (int j = i + 1; j < num_targets; ++j) {
+            if (qubit == target_qubits_host[j]) {
+                return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+            }
+        }
+    }
+
+    if (num_targets == 1) {
+        return apply_kraus_channel(internal_state, target_qubits_host[0], kraus_matrices_host, num_kraus);
+    }
+
+    const int64_t dim = 1LL << internal_state->num_qubits_;
+    const int target_dim = 1 << num_targets;
+    const size_t kraus_size = static_cast<size_t>(target_dim) * static_cast<size_t>(target_dim);
+    const size_t size_bytes = internal_state->num_elements_ * sizeof(hipComplex);
+
+    hipComplex* accumulator_rho_device = nullptr;
+    hipComplex* temp_rho_device = nullptr;
+    hipComplex* kraus_matrix_device = nullptr;
+    int* target_qubits_device = nullptr;
+
+    hipError_t hip_err = hipMalloc(&accumulator_rho_device, size_bytes);
+    if (hip_err != hipSuccess) return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
+
+    hip_err = hipMalloc(&temp_rho_device, size_bytes);
+    if (hip_err != hipSuccess) {
+        hipFree(accumulator_rho_device);
+        return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
+    }
+
+    hip_err = hipMalloc(&kraus_matrix_device, kraus_size * sizeof(hipComplex));
+    if (hip_err != hipSuccess) {
+        hipFree(accumulator_rho_device);
+        hipFree(temp_rho_device);
+        return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
+    }
+
+    hip_err = hipMalloc(&target_qubits_device, static_cast<size_t>(num_targets) * sizeof(int));
+    if (hip_err != hipSuccess) {
+        hipFree(accumulator_rho_device);
+        hipFree(temp_rho_device);
+        hipFree(kraus_matrix_device);
+        return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
+    }
+
+    hip_err = hipMemcpy(
+        target_qubits_device,
+        target_qubits_host,
+        static_cast<size_t>(num_targets) * sizeof(int),
+        hipMemcpyHostToDevice);
+    if (hip_err == hipSuccess) {
+        hip_err = hipMemset(accumulator_rho_device, 0, size_bytes);
+    }
+
+    if (hip_err == hipSuccess) {
+        dim3 blockDim2D(16, 16);
+        dim3 gridDim2D((dim + blockDim2D.x - 1) / blockDim2D.x,
+                       (dim + blockDim2D.y - 1) / blockDim2D.y);
+        dim3 blockDim1D(256);
+        dim3 gridDim1D((internal_state->num_elements_ + blockDim1D.x - 1) / blockDim1D.x);
+
+        for (int k = 0; k < num_kraus && hip_err == hipSuccess; ++k) {
+            hip_err = hipMemcpy(
+                kraus_matrix_device,
+                kraus_matrices_host + (kraus_size * static_cast<size_t>(k)),
+                kraus_size * sizeof(hipComplex),
+                hipMemcpyHostToDevice);
+            if (hip_err != hipSuccess) break;
+
+            hipLaunchKernelGGL(apply_multi_qubit_kraus_kernel, gridDim2D, blockDim2D, 0, internal_state->stream_,
+                temp_rho_device, static_cast<const hipComplex*>(internal_state->device_data_),
+                kraus_matrix_device, target_qubits_device, num_targets, internal_state->num_qubits_);
+            hip_err = hipGetLastError();
+            if (hip_err != hipSuccess) break;
+
+            hipLaunchKernelGGL(accumulate_kernel, gridDim1D, blockDim1D, 0, internal_state->stream_,
+                accumulator_rho_device, temp_rho_device, internal_state->num_elements_);
+            hip_err = hipGetLastError();
+        }
+    }
+
+    if (hip_err == hipSuccess) hip_err = hipStreamSynchronize(internal_state->stream_);
+    if (hip_err == hipSuccess) {
+        hip_err = hipMemcpy(internal_state->device_data_, accumulator_rho_device, size_bytes, hipMemcpyDeviceToDevice);
+    }
+
+    hipFree(accumulator_rho_device);
+    hipFree(temp_rho_device);
+    hipFree(kraus_matrix_device);
+    hipFree(target_qubits_device);
 
     return check_hip_error(hip_err);
 }
@@ -915,6 +1085,15 @@ hipDensityMatStatus_t hipDensityMatApplyChannel(hipDensityMatState_t state, int 
     }
 
     hipDensityMatState* internal_state = static_cast<hipDensityMatState*>(state);
+    if (channel->num_targets > 0 && channel->target_qubits_host != nullptr) {
+        return apply_multi_qubit_kraus_channel(
+            internal_state,
+            channel->target_qubits_host,
+            channel->num_targets,
+            channel->kraus_matrices_host,
+            channel->num_kraus);
+    }
+
     return apply_kraus_channel(internal_state, target_qubit, channel->kraus_matrices_host, channel->num_kraus);
 }
 

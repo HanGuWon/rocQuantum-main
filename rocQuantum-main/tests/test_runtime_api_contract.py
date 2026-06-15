@@ -375,6 +375,27 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         self.assertEqual(backend.expectation(operator), 1.0)
 
+    def test_mock_density_backend_applies_multi_qubit_kraus_noise_model(self):
+        from rocq.backends import DensityMatrixBackend
+        from rocq.kernel import GateOp
+
+        with mock.patch("rocq.backends.dm_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                backend = DensityMatrixBackend(2)
+
+        kraus = np.zeros((1, 4, 4), dtype=np.complex64)
+        kraus[0, 3, 0] = 1.0
+        noise = rocq.NoiseModel()
+        noise.add_channel("kraus", 0.25, on_qubits=[0, 1], kraus_matrices=kraus)
+
+        backend.run_ops([GateOp("z", [0], {})], noise_model=noise)
+
+        np.testing.assert_allclose(
+            np.diag(backend.get_state()).real,
+            np.array([0.75, 0.0, 0.0, 0.25], dtype=np.float32),
+            atol=1e-7,
+        )
+
     def test_framework_runtime_exposes_native_adjoint_jacobian_hook(self):
         from rocquantum.framework_runtime import RocQuantumRuntime
 

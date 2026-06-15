@@ -5,7 +5,7 @@ import numpy as np
 try:
     import rocquantum_bind
 except ImportError:
-    raise ImportError("The 'rocquantum_bind' module is not installed.")
+    rocquantum_bind = None
 
 CIRQ_TO_ROCQ_GATES = {
     type(cirq.X): "X",
@@ -27,6 +27,14 @@ def _samples_to_bits(raw_samples, width):
 
 
 class RocQuantumSimulator(cirq.SimulatesFinalState, cirq.SimulatesSamples):
+    def _require_binding(self):
+        if rocquantum_bind is None:
+            raise ImportError(
+                "The 'rocquantum_bind' module is not installed. "
+                "Build rocQuantum with native Python bindings before executing Cirq circuits."
+            )
+        return rocquantum_bind
+
     def _run(self, circuit, param_resolver, repetitions):
         qubit_order = sorted(circuit.all_qubits())
         sim, q_map = self._execute_circuit(circuit, qubit_order)
@@ -52,8 +60,9 @@ class RocQuantumSimulator(cirq.SimulatesFinalState, cirq.SimulatesSamples):
         return measurements
 
     def _execute_circuit(self, circuit, qubit_order):
+        binding = self._require_binding()
         q_map = {q: i for i, q in enumerate(qubit_order)}
-        sim = rocquantum_bind.QSim(num_qubits=len(q_map))
+        sim = binding.QSim(num_qubits=len(q_map))
         for op in circuit.all_operations():
             if isinstance(op.gate, cirq.MeasurementGate):
                 continue

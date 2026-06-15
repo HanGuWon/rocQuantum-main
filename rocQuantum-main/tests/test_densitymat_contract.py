@@ -56,8 +56,11 @@ class TestDensityMatContract(unittest.TestCase):
 
         self.assertIn("hipDensityMatChannel_t", header)
         self.assertIn("kraus_matrices_host", header)
+        self.assertIn("num_targets", header)
+        self.assertIn("target_qubits_host", header)
         self.assertIn("hipDensityMatSample", header)
         self.assertIn("rocdmChannel_t", public_header)
+        self.assertIn("target_qubits_host", public_header)
         self.assertIn("rocdmSample", public_header)
         self.assertIn("hipDensityMatSample", compat)
 
@@ -66,8 +69,11 @@ class TestDensityMatContract(unittest.TestCase):
             source = f.read()
 
         self.assertIn("apply_kraus_channel", source)
+        self.assertIn("apply_multi_qubit_kraus_kernel", source)
+        self.assertIn("apply_multi_qubit_kraus_channel", source)
         self.assertIn("hipDensityMatApplyChannel", source)
         self.assertIn("const hipDensityMatChannel_t* channel", source)
+        self.assertIn("channel->target_qubits_host", source)
         self.assertNotIn("return HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED;\n}", source.split("hipDensityMatApplyChannel", 1)[1])
         self.assertGreaterEqual(source.count("return apply_kraus_channel"), 5)
 
@@ -89,6 +95,8 @@ class TestDensityMatContract(unittest.TestCase):
             bindings = f.read()
 
         self.assertIn('.def("apply_channel"', bindings)
+        self.assertIn("2**len(target_qubits)", bindings)
+        self.assertIn("target_qubit.cast<std::vector<int>>()", bindings)
         self.assertIn('.def("apply_phase_flip_channel"', bindings)
         self.assertIn('.def("apply_amplitude_damping_channel"', bindings)
         self.assertIn('.def("sample"', bindings)

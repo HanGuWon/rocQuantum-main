@@ -104,30 +104,52 @@ PYBIND11_MODULE(rocq_hip, m) {
         .def("apply_amplitude_damping_channel", [](hipDensityMatState* state, int target_qubit, double gamma) {
             HIPDENSITYMAT_CHECK(hipDensityMatApplyAmplitudeDampingChannel(state, target_qubit, gamma));
         }, py::arg("target_qubit"), py::arg("gamma"), "Apply an amplitude damping noise channel.")
-        .def("apply_channel", [](hipDensityMatState* state, int target_qubit, py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> kraus_matrices) {
-            if (kraus_matrices.ndim() != 3 || kraus_matrices.shape(1) != 2 || kraus_matrices.shape(2) != 2) {
-                throw std::invalid_argument("Kraus matrices must have shape (num_kraus, 2, 2).");
+        .def("apply_channel", [](hipDensityMatState* state, py::object target_qubit, py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> kraus_matrices) {
+            std::vector<int> targets;
+            if (py::isinstance<py::int_>(target_qubit)) {
+                targets.push_back(target_qubit.cast<int>());
+            } else {
+                targets = target_qubit.cast<std::vector<int>>();
+            }
+            if (targets.empty()) {
+                throw std::invalid_argument("Kraus channel must target at least one qubit.");
+            }
+            if (targets.size() > 20) {
+                throw std::invalid_argument("Kraus channel target count is too large.");
+            }
+
+            const int matrix_dim = 1 << static_cast<int>(targets.size());
+            if (kraus_matrices.ndim() != 3 ||
+                kraus_matrices.shape(1) != matrix_dim ||
+                kraus_matrices.shape(2) != matrix_dim) {
+                throw std::invalid_argument(
+                    "Kraus matrices must have shape (num_kraus, 2**len(target_qubits), 2**len(target_qubits)).");
             }
             const int num_kraus = static_cast<int>(kraus_matrices.shape(0));
             if (num_kraus <= 0) {
-                throw std::invalid_argument("Kraus channel must include at least one 2x2 matrix.");
+                throw std::invalid_argument("Kraus channel must include at least one matrix.");
             }
 
             auto matrices = kraus_matrices.unchecked<3>();
-            std::vector<hipComplex> kraus_host(static_cast<size_t>(num_kraus) * 4);
+            const size_t matrix_elements = static_cast<size_t>(matrix_dim) * static_cast<size_t>(matrix_dim);
+            std::vector<hipComplex> kraus_host(static_cast<size_t>(num_kraus) * matrix_elements);
             for (int k = 0; k < num_kraus; ++k) {
-                for (int row = 0; row < 2; ++row) {
-                    for (int col = 0; col < 2; ++col) {
+                for (int row = 0; row < matrix_dim; ++row) {
+                    for (int col = 0; col < matrix_dim; ++col) {
                         const std::complex<float> value = matrices(k, row, col);
-                        kraus_host[static_cast<size_t>(k) * 4 + row * 2 + col] =
+                        kraus_host[static_cast<size_t>(k) * matrix_elements + row * matrix_dim + col] =
                             make_hipFloatComplex(value.real(), value.imag());
                     }
                 }
             }
 
-            hipDensityMatChannel_t channel{num_kraus, kraus_host.data()};
-            HIPDENSITYMAT_CHECK(hipDensityMatApplyChannel(state, target_qubit, &channel));
-        }, py::arg("target_qubit"), py::arg("kraus_matrices"), "Apply a generic single-qubit Kraus channel.")
+            hipDensityMatChannel_t channel{
+                num_kraus,
+                kraus_host.data(),
+                static_cast<int>(targets.size()),
+                targets.data()};
+            HIPDENSITYMAT_CHECK(hipDensityMatApplyChannel(state, targets[0], &channel));
+        }, py::arg("target_qubit"), py::arg("kraus_matrices"), "Apply a generic Kraus channel to one or more qubits.")
         .def("sample", [](hipDensityMatState* state, std::vector<int> measured_qubits, int num_shots) {
             if (num_shots < 0) {
                 throw std::invalid_argument("num_shots must be non-negative.");

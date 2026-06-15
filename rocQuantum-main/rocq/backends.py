@@ -264,6 +264,98 @@ def _density_matrix_sparse_hamiltonian_expectation(density_matrix, data, indices
     return total
 
 
+def _normalize_channel_targets(targets, num_qubits: int) -> List[int]:
+    if isinstance(targets, (int, np.integer)):
+        normalized = [int(targets)]
+    else:
+        normalized = [int(target) for target in targets]
+
+    if not normalized:
+        raise ValueError("Kraus channel must target at least one qubit.")
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("Kraus channel targets must be unique.")
+    if any(target < 0 or target >= int(num_qubits) for target in normalized):
+        raise ValueError("Kraus channel target is out of range for the backend.")
+    return normalized
+
+
+def _normalize_kraus_matrices(kraus_matrices, targets: Sequence[int]) -> np.ndarray:
+    matrices = np.asarray(kraus_matrices, dtype=np.complex64, order="C")
+    target_dim = 1 << len(targets)
+
+    if matrices.ndim == 2:
+        matrices = matrices.reshape(1, matrices.shape[0], matrices.shape[1])
+    if matrices.ndim != 3:
+        raise ValueError("Kraus matrices must have shape (num_kraus, dim, dim).")
+    if matrices.shape[0] <= 0:
+        raise ValueError("Kraus channel must include at least one matrix.")
+    if matrices.shape[1:] != (target_dim, target_dim):
+        raise ValueError(
+            "Kraus matrix dimensions must equal 2**len(targets) for the selected channel targets."
+        )
+    return np.ascontiguousarray(matrices, dtype=np.complex64)
+
+
+def _probability_mixed_kraus_matrices(kraus_matrices, targets: Sequence[int], probability: float) -> np.ndarray:
+    if kraus_matrices is None:
+        raise ValueError("Kraus noise channels require kraus_matrices.")
+    matrices = _normalize_kraus_matrices(kraus_matrices, targets)
+    prob = float(probability)
+    if prob < 0.0 or prob > 1.0:
+        raise ValueError("Kraus channel probability must be between 0 and 1.")
+    if prob == 1.0:
+        return matrices
+
+    target_dim = 1 << len(targets)
+    identity = math.sqrt(1.0 - prob) * np.eye(target_dim, dtype=np.complex64)
+    scaled = math.sqrt(prob) * matrices
+    return np.ascontiguousarray(np.concatenate([identity.reshape(1, target_dim, target_dim), scaled], axis=0))
+
+
+def _basis_parts(index: int, targets: Sequence[int]) -> Tuple[int, int]:
+    base_index = int(index)
+    target_index = 0
+    for bit, qubit in enumerate(targets):
+        mask = 1 << int(qubit)
+        if index & mask:
+            target_index |= 1 << bit
+        base_index &= ~mask
+    return base_index, target_index
+
+
+def _embed_target_bits(base_index: int, target_index: int, targets: Sequence[int]) -> int:
+    result = int(base_index)
+    for bit, qubit in enumerate(targets):
+        if (int(target_index) >> bit) & 1:
+            result |= 1 << int(qubit)
+    return result
+
+
+def _apply_density_kraus_host(density_matrix, targets: Sequence[int], kraus_matrices) -> np.ndarray:
+    density = np.asarray(density_matrix, dtype=np.complex128)
+    dim = density.shape[0]
+    target_dim = 1 << len(targets)
+    output = np.zeros_like(density, dtype=np.complex128)
+    matrices = np.asarray(kraus_matrices, dtype=np.complex128)
+
+    for matrix in matrices:
+        for row in range(dim):
+            row_base, row_target = _basis_parts(row, targets)
+            for col in range(dim):
+                col_base, col_target = _basis_parts(col, targets)
+                total = 0.0 + 0.0j
+                for local_row in range(target_dim):
+                    source_row = _embed_target_bits(row_base, local_row, targets)
+                    left = matrix[row_target, local_row]
+                    if left == 0:
+                        continue
+                    for local_col in range(target_dim):
+                        source_col = _embed_target_bits(col_base, local_col, targets)
+                        total += left * density[source_row, source_col] * np.conj(matrix[col_target, local_col])
+                output[row, col] += total
+    return output.astype(np.complex64)
+
+
 def _statevector_sparse_hamiltonian_moments(statevector, data, indices, indptr):
     state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
     h_state = np.zeros_like(state)
@@ -327,6 +419,7 @@ class _MockStateVectorState:
 
 class _MockDensityMatrixState:
     def __init__(self, n_qubits: int):
+        self._num_qubits = int(n_qubits)
         dim = 1 << n_qubits
         self._density = np.zeros((dim, dim), dtype=np.complex64)
         self._density[0, 0] = 1.0 + 0.0j
@@ -352,7 +445,10 @@ class _MockDensityMatrixState:
     def apply_amplitude_damping_channel(self, target: int, prob: float):
         return None
 
-    def apply_channel(self, target: int, kraus_matrices: np.ndarray):
+    def apply_channel(self, targets, kraus_matrices: np.ndarray):
+        normalized_targets = _normalize_channel_targets(targets, self._num_qubits)
+        matrices = _normalize_kraus_matrices(kraus_matrices, normalized_targets)
+        self._density = _apply_density_kraus_host(self._density, normalized_targets, matrices)
         return None
 
     def compute_expectation(self, pauli, target: int):
@@ -661,8 +757,8 @@ class _HipDensityMatrixState:
     def apply_amplitude_damping_channel(self, target: int, prob: float):
         return self._state.apply_amplitude_damping_channel(target, prob)
 
-    def apply_channel(self, target: int, kraus_matrices: np.ndarray):
-        return self._state.apply_channel(target, _coerce_complex64_matrix(kraus_matrices))
+    def apply_channel(self, targets, kraus_matrices: np.ndarray):
+        return self._state.apply_channel(targets, _coerce_complex64_matrix(kraus_matrices))
 
     def compute_expectation(self, pauli, target: int):
         return self._state.compute_expectation(pauli, target)
@@ -695,7 +791,7 @@ class _BaseBackend:
     def expectation(self, operator):
         raise NotImplementedError
 
-    def apply_noise(self, channel: str, targets: List[int], prob: float):
+    def apply_noise(self, channel: str, targets: List[int], prob: float, kraus_matrices=None):
         raise NotImplementedError
 
 
@@ -794,7 +890,7 @@ class StateVectorBackend(_BaseBackend):
             self._apply_op(ops[index])
             index += 1
 
-    def apply_noise(self, channel: str, targets: List[int], prob: float):
+    def apply_noise(self, channel: str, targets: List[int], prob: float, kraus_matrices=None):
         raise NotImplementedError("Noise models are only supported by the 'density_matrix' backend.")
 
     def get_state(self):
@@ -900,10 +996,21 @@ class DensityMatrixBackend(_BaseBackend):
             self._apply_op(op)
             for channel in self._iter_noise_channels(noise_model, op):
                 targets = channel["qubits"] if channel["qubits"] else op.targets
-                self.apply_noise(channel["type"], list(targets), float(channel["prob"]))
+                self.apply_noise(
+                    channel["type"],
+                    list(targets),
+                    float(channel["prob"]),
+                    channel.get("kraus_matrices"),
+                )
 
-    def apply_noise(self, channel_type: str, targets: List[int], prob: float):
+    def apply_noise(self, channel_type: str, targets: List[int], prob: float, kraus_matrices=None):
         channel_lower = channel_type.lower()
+        if channel_lower == "kraus":
+            normalized_targets = _normalize_channel_targets(targets, self.num_qubits)
+            matrices = _probability_mixed_kraus_matrices(kraus_matrices, normalized_targets, prob)
+            self._state.apply_channel(normalized_targets, matrices)
+            return
+
         for target in targets:
             if channel_lower == "depolarizing":
                 self._state.apply_depolarizing_channel(target, prob)

@@ -11,7 +11,7 @@ Audit date: 2026-04-05
 5. Packaging and build surfaces are closer but still not one releasable product: root CMake now activates the `_rocq_hip_backend` owner in `python/rocq`, while `pyproject.toml`, compatibility `setup.py` files, and the canonical/legacy Python surfaces still need consolidation.
 6. Gate fusion exists in C++ and is used by the canonical `rocq` backend and legacy `python/rocq` flush path for narrow CNOT-adjacent spans; unsupported fusion inputs now fail rather than being silently dropped, but broader fusion patterns are still unfused.
 7. `hipTensorNet` has real core functionality and now exposes optimizer/dtype/slicing capabilities, but METIS/KAHYPAR pathfinders and runtime slicing remain unsupported unless compiled in.
-8. `hipDensityMat` is real but narrow; single-qubit Kraus channels and host-side density sampling now exist, while multi-qubit channels, GPU-fast sampling, and richer observable support are still missing.
+8. `hipDensityMat` is real but narrow; single- and multi-qubit Kraus channels and host-side density sampling now exist, while GPU-fast sampling, GPU-resident channel planning, and richer observable support are still missing.
 9. Framework integrations now cover native sampling, native selected-qubit probability vectors, native Pauli-observable paths, native sparse moments for PennyLane SparseHamiltonian, default multi-control gate dispatch, and selected sparse-observable correctness fallbacks for PennyLane/Qiskit more directly, but still rely on mock-heavy tests rather than strong native ROCm end-to-end proof.
 10. Higher-level CUDA-QX-style libraries now have an experimental VQE/QAOA/repetition-code subset, but this is still far from a serious supported CUDA-QX analogue.
 
