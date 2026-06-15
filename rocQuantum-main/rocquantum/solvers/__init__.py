@@ -19,6 +19,7 @@ _SOLVER_SUPPORTED_FEATURES = (
     "MaxCut QAOA H/CNOT/RZ/RX ansatz construction",
     "weighted MaxCut cost operator construction",
     "MaxCut solve wrapper that maximizes cut value through a negated VQE objective",
+    "QAOA edge-list and edge-weight mapping normalization",
     "finite-real parameter, energy, backend, gradient-method, optimizer-result, optimizer-interface, and optimizer-option validation",
 )
 

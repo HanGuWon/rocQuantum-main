@@ -35,6 +35,10 @@ class TestVqeSolverContract(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
+            "QAOA edge-list and edge-weight mapping normalization",
+            capability_data["supported_features"],
+        )
+        self.assertIn(
             "GPU-resident native adjoint differentiation",
             capability_data["unsupported_features"],
         )
@@ -675,6 +679,47 @@ class TestQaoaHelpers(unittest.TestCase):
             ],
         )
 
+    def test_maxcut_qaoa_accepts_edge_weight_mappings(self):
+        from rocq.operator import iter_pauli_terms
+        from rocquantum.solvers import solve_maxcut_qaoa
+        from rocquantum.solvers.qaoa import make_maxcut_qaoa_kernel, maxcut_cost_operator
+        from rocquantum.solvers.vqe_solver import Optimizer
+
+        class RecordingOptimizer(Optimizer):
+            def __init__(self):
+                self.x0 = None
+
+            def minimize(self, fun, x0, args=()):
+                self.x0 = np.asarray(x0, dtype=float).copy()
+                return types.SimpleNamespace(fun=-2.0, x=self.x0)
+
+        edges = {(0, 1): 2.0, (1, 0): 1.0}
+        kernel = make_maxcut_qaoa_kernel(2, edges, layers=1)
+        ops = kernel.build(np.array([0.3, 0.4])).ops
+        rz_ops = [op for op in ops if op.name == "rz"]
+        self.assertEqual(len(rz_ops), 1)
+        self.assertAlmostEqual(rz_ops[0].params["phi"], -0.9)
+
+        operator = maxcut_cost_operator(2, edges)
+        self.assertEqual(
+            iter_pauli_terms(operator),
+            [
+                (1.5 + 0j, []),
+                (-1.5 + 0j, [("Z", 0), ("Z", 1)]),
+            ],
+        )
+
+        optimizer = RecordingOptimizer()
+        result = solve_maxcut_qaoa(
+            2,
+            edges,
+            initial_params=[0.3, 0.4],
+            optimizer=optimizer,
+        )
+        self.assertEqual(result["normalized_edges"], [(0, 1, 3.0)])
+        self.assertEqual(result["optimal_cut_value"], 2.0)
+        np.testing.assert_allclose(optimizer.x0, np.array([0.3, 0.4]))
+
     def test_maxcut_qaoa_validates_problem_inputs(self):
         from rocquantum.solvers.qaoa import make_maxcut_qaoa_kernel, maxcut_cost_operator, solve_maxcut_qaoa
 
@@ -690,6 +735,8 @@ class TestQaoaHelpers(unittest.TestCase):
             maxcut_cost_operator(2, [None])
         with self.assertRaisesRegex(ValueError, "QAOA edges must be"):
             maxcut_cost_operator(2, [(0, 1, 2.0, 3.0)])
+        with self.assertRaisesRegex(ValueError, "edge-weight mapping keys"):
+            maxcut_cost_operator(2, {(0, 1, 2): 1.0})
         with self.assertRaisesRegex(ValueError, "integer qubit index"):
             maxcut_cost_operator(2, [(0.5, 1)])
         with self.assertRaisesRegex(ValueError, "integer qubit index"):

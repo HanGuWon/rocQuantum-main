@@ -30,12 +30,14 @@ Current supported subset:
   RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.
 - `maxcut_cost_operator()` builds the weighted MaxCut cost operator as
-  `0.5 * w * (I - Zi Zj)` for each edge, aggregating duplicate or reversed
-  undirected edges before emitting ansatz cost phases or cost terms. MaxCut
-  helpers reject non-integer endpoints, non-positive `num_qubits` / `layers`,
-  non-iterable edge containers or malformed edge entries, self-loops,
-  out-of-range endpoints, and non-finite or non-real weights instead of
-  silently truncating or propagating invalid problem data. QAOA
+  `0.5 * w * (I - Zi Zj)` for each edge, accepting either `(u, v, weight)`
+  edge entries or `{(u, v): weight}` mappings and aggregating duplicate or
+  reversed undirected edges before emitting ansatz cost phases or cost terms.
+  MaxCut helpers reject non-integer endpoints, non-positive `num_qubits` /
+  `layers`, non-iterable edge containers, malformed edge entries, malformed
+  edge-weight mapping keys, self-loops, out-of-range endpoints, and non-finite
+  or non-real weights instead of silently truncating or propagating invalid
+  problem data. QAOA
   ansatz runtime parameters and `solve_maxcut_qaoa()` initial parameters must
   also be finite real values.
 - `solve_maxcut_qaoa()` wires that ansatz into `VQE_Solver` by minimizing the

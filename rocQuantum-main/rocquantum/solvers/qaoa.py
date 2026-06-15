@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable as IterableABC
+from collections.abc import Iterable as IterableABC, Mapping
 from numbers import Real
 from typing import Iterable, Sequence, Tuple
 
@@ -70,11 +70,25 @@ def _validate_parameter_vector(
     return params
 
 
+def _edge_entry_from_mapping(edge_key, weight):
+    if isinstance(edge_key, (str, bytes)) or not isinstance(edge_key, IterableABC):
+        raise ValueError("QAOA edge-weight mapping keys must be (u, v) pairs.")
+    edge_tuple = tuple(edge_key)
+    if len(edge_tuple) != 2:
+        raise ValueError("QAOA edge-weight mapping keys must be (u, v) pairs.")
+    return edge_tuple[0], edge_tuple[1], weight
+
+
 def _normalize_edges(edges: Iterable[Sequence[float]]) -> list[WeightedEdge]:
     if isinstance(edges, (str, bytes)) or not isinstance(edges, IterableABC):
         raise ValueError("QAOA edges must be an iterable of (u, v) or (u, v, weight).")
     normalized: list[WeightedEdge] = []
-    for edge in edges:
+    edge_entries = (
+        (_edge_entry_from_mapping(edge_key, weight) for edge_key, weight in edges.items())
+        if isinstance(edges, Mapping)
+        else edges
+    )
+    for edge in edge_entries:
         if isinstance(edge, (str, bytes)) or not isinstance(edge, IterableABC):
             raise ValueError("QAOA edges must be (u, v) or (u, v, weight).")
         edge_tuple = tuple(edge)
