@@ -3845,6 +3845,331 @@ inline rocqStatus_t distributed_expectation_matrix_rccl(rocsvInternalHandle* han
     return status;
 }
 
+inline bool build_local_csr_slice(const std::vector<rocComplex>& data,
+                                  const std::vector<size_t>& indices,
+                                  const std::vector<size_t>& indptr,
+                                  size_t row_start,
+                                  size_t local_rows,
+                                  std::vector<rocComplex>* local_data,
+                                  std::vector<size_t>* local_indices,
+                                  std::vector<size_t>* local_indptr) {
+    if (!local_data || !local_indices || !local_indptr || indptr.size() < row_start + local_rows + 1) {
+        return false;
+    }
+
+    local_data->clear();
+    local_indices->clear();
+    local_indptr->assign(local_rows + 1, 0);
+    const size_t row_end = row_start + local_rows;
+
+    for (size_t local_row = 0; local_row < local_rows; ++local_row) {
+        const size_t global_row = row_start + local_row;
+        const size_t row_begin = indptr[global_row];
+        const size_t row_limit = indptr[global_row + 1];
+        if (row_begin > row_limit || row_limit > data.size() || row_limit > indices.size()) {
+            return false;
+        }
+        for (size_t offset = row_begin; offset < row_limit; ++offset) {
+            const size_t global_col = indices[offset];
+            if (global_col < row_start || global_col >= row_end) {
+                return false;
+            }
+            local_data->push_back(data[offset]);
+            local_indices->push_back(global_col - row_start);
+        }
+        (*local_indptr)[local_row + 1] = local_data->size();
+    }
+    return true;
+}
+
+inline rocqStatus_t distributed_sparse_matrix_moments_rccl(rocsvInternalHandle* handle,
+                                                           unsigned numQubits,
+                                                           const rocComplex* d_data,
+                                                           const size_t* d_indices,
+                                                           const size_t* d_indptr,
+                                                           size_t rows,
+                                                           size_t cols,
+                                                           size_t nnz,
+                                                           rocComplex* mean,
+                                                           rocComplex* secondMoment) {
+    if (!handle || !mean || !secondMoment || !d_indptr) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (!distributed_rccl_ready(handle)) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+    if (numQubits != handle->globalNumQubits || rows != cols) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    const size_t local_rows = handle->localSliceElements;
+    if (local_rows == 0 || rows != local_rows * static_cast<size_t>(handle->distributedGpuCount)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    int original_device = 0;
+    if (hipGetDevice(&original_device) != hipSuccess) {
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    auto restore_device = [&]() {
+        (void)hipSetDevice(original_device);
+    };
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        restore_device();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+
+    std::vector<rocComplex> data;
+    std::vector<size_t> indices;
+    std::vector<size_t> indptr;
+    rocqStatus_t status = copy_sparse_matrix_from_device(d_data,
+                                                         d_indices,
+                                                         d_indptr,
+                                                         rows,
+                                                         nnz,
+                                                         handle->distributedStreams[0],
+                                                         &data,
+                                                         &indices,
+                                                         &indptr);
+    restore_device();
+    if (status != ROCQ_STATUS_SUCCESS) {
+        return status;
+    }
+
+    const int ranks = handle->distributedGpuCount;
+    const size_t rank_count = static_cast<size_t>(ranks);
+    std::vector<rocComplex*> rank_data(rank_count, nullptr);
+    std::vector<size_t*> rank_indices(rank_count, nullptr);
+    std::vector<size_t*> rank_indptr(rank_count, nullptr);
+    std::vector<rocComplex*> rank_mean_blocks(rank_count, nullptr);
+    std::vector<rocComplex*> rank_second_blocks(rank_count, nullptr);
+    std::vector<double*> rank_mean_pairs(rank_count, nullptr);
+    std::vector<double*> rank_second_pairs(rank_count, nullptr);
+
+    auto cleanup = [&]() {
+        for (int rank = 0; rank < ranks; ++rank) {
+            const size_t idx = static_cast<size_t>(rank);
+            if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+                continue;
+            }
+            if (rank_second_pairs[idx]) {
+                (void)device_free(handle, rank_second_pairs[idx]);
+            }
+            if (rank_mean_pairs[idx]) {
+                (void)device_free(handle, rank_mean_pairs[idx]);
+            }
+            if (rank_second_blocks[idx]) {
+                (void)device_free(handle, rank_second_blocks[idx]);
+            }
+            if (rank_mean_blocks[idx]) {
+                (void)device_free(handle, rank_mean_blocks[idx]);
+            }
+            if (rank_indptr[idx]) {
+                (void)device_free(handle, rank_indptr[idx]);
+            }
+            if (rank_indices[idx]) {
+                (void)device_free(handle, rank_indices[idx]);
+            }
+            if (rank_data[idx]) {
+                (void)device_free(handle, rank_data[idx]);
+            }
+        }
+        restore_device();
+    };
+
+    constexpr int threads_per_block = 256;
+    const int blocks = compute_reduction_blocks(local_rows, threads_per_block);
+    for (int rank = 0; rank < ranks; ++rank) {
+        const size_t idx = static_cast<size_t>(rank);
+        const size_t row_start = idx * local_rows;
+        std::vector<rocComplex> local_data;
+        std::vector<size_t> local_indices;
+        std::vector<size_t> local_indptr;
+        if (!build_local_csr_slice(data,
+                                   indices,
+                                   indptr,
+                                   row_start,
+                                   local_rows,
+                                   &local_data,
+                                   &local_indices,
+                                   &local_indptr)) {
+            cleanup();
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+
+        if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+            cleanup();
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+        hipStream_t stream = handle->distributedStreams[idx];
+
+        void* ptr = nullptr;
+        if (!local_data.empty()) {
+            status = device_malloc(handle, &ptr, local_data.size() * sizeof(rocComplex));
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+            rank_data[idx] = static_cast<rocComplex*>(ptr);
+            status = copy_host_to_device(rank_data[idx],
+                                         local_data.data(),
+                                         local_data.size() * sizeof(rocComplex),
+                                         stream);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+
+            ptr = nullptr;
+            status = device_malloc(handle, &ptr, local_indices.size() * sizeof(size_t));
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+            rank_indices[idx] = static_cast<size_t*>(ptr);
+            status = copy_host_to_device(rank_indices[idx],
+                                         local_indices.data(),
+                                         local_indices.size() * sizeof(size_t),
+                                         stream);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                cleanup();
+                return status;
+            }
+        }
+
+        ptr = nullptr;
+        status = device_malloc(handle, &ptr, local_indptr.size() * sizeof(size_t));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_indptr[idx] = static_cast<size_t*>(ptr);
+        status = copy_host_to_device(rank_indptr[idx],
+                                     local_indptr.data(),
+                                     local_indptr.size() * sizeof(size_t),
+                                     stream);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+
+        ptr = nullptr;
+        status = device_malloc(handle, &ptr, static_cast<size_t>(blocks) * sizeof(rocComplex));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_mean_blocks[idx] = static_cast<rocComplex*>(ptr);
+
+        ptr = nullptr;
+        status = device_malloc(handle, &ptr, static_cast<size_t>(blocks) * sizeof(rocComplex));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_second_blocks[idx] = static_cast<rocComplex*>(ptr);
+
+        hipLaunchKernelGGL(reduce_sparse_matrix_moments_kernel,
+                           dim3(blocks),
+                           dim3(threads_per_block),
+                           4 * threads_per_block * sizeof(double),
+                           stream,
+                           handle->distributedSlices[idx],
+                           rank_data[idx],
+                           rank_indices[idx],
+                           rank_indptr[idx],
+                           local_rows,
+                           rank_mean_blocks[idx],
+                           rank_second_blocks[idx]);
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+
+        ptr = nullptr;
+        status = device_malloc(handle, &ptr, 2 * sizeof(double));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_mean_pairs[idx] = static_cast<double*>(ptr);
+        hipLaunchKernelGGL(reduce_complex_block_sums_to_double_pair_kernel,
+                           dim3(1),
+                           dim3(threads_per_block),
+                           2 * threads_per_block * sizeof(double),
+                           stream,
+                           rank_mean_blocks[idx],
+                           static_cast<size_t>(blocks),
+                           rank_mean_pairs[idx]);
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+
+        ptr = nullptr;
+        status = device_malloc(handle, &ptr, 2 * sizeof(double));
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+        rank_second_pairs[idx] = static_cast<double*>(ptr);
+        hipLaunchKernelGGL(reduce_complex_block_sums_to_double_pair_kernel,
+                           dim3(1),
+                           dim3(threads_per_block),
+                           2 * threads_per_block * sizeof(double),
+                           stream,
+                           rank_second_blocks[idx],
+                           static_cast<size_t>(blocks),
+                           rank_second_pairs[idx]);
+        status = check_last_hip_error();
+        if (status != ROCQ_STATUS_SUCCESS) {
+            cleanup();
+            return status;
+        }
+    }
+
+    status = rccl_allreduce_double_sum_inplace(handle, rank_mean_pairs, 2);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+    status = rccl_allreduce_double_sum_inplace(handle, rank_second_pairs, 2);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+    status = sync_distributed_streams(handle);
+    if (status != ROCQ_STATUS_SUCCESS) {
+        cleanup();
+        return status;
+    }
+
+    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+        cleanup();
+        return ROCQ_STATUS_HIP_ERROR;
+    }
+    double mean_pair[2] = {0.0, 0.0};
+    double second_pair[2] = {0.0, 0.0};
+    status = copy_device_to_host(mean_pair,
+                                 rank_mean_pairs[0],
+                                 2 * sizeof(double),
+                                 handle->distributedStreams[0]);
+    if (status == ROCQ_STATUS_SUCCESS) {
+        status = copy_device_to_host(second_pair,
+                                     rank_second_pairs[0],
+                                     2 * sizeof(double),
+                                     handle->distributedStreams[0]);
+    }
+    if (status == ROCQ_STATUS_SUCCESS) {
+        *mean = make_complex(mean_pair[0], mean_pair[1]);
+        *secondMoment = make_complex(second_pair[0], second_pair[1]);
+    }
+    cleanup();
+    return status;
+}
+
 inline rocqStatus_t host_pauli_expectation(const std::vector<rocComplex>& host_state,
                                            unsigned numQubits,
                                            const std::vector<unsigned>& targets,
@@ -7869,6 +8194,19 @@ rocqStatus_t rocsvGetSparseMatrixMoments(rocsvHandle_t handle,
     }
 
     if (uses_distributed_state(handle, d_state)) {
+        rocqStatus_t rccl_status = distributed_sparse_matrix_moments_rccl(handle,
+                                                                          numQubits,
+                                                                          d_data,
+                                                                          d_indices,
+                                                                          d_indptr,
+                                                                          rows,
+                                                                          cols,
+                                                                          nnz,
+                                                                          mean,
+                                                                          secondMoment);
+        if (rccl_status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+            return rccl_status;
+        }
         return sparse_matrix_moments_distributed_host_fallback(handle,
                                                                numQubits,
                                                                d_data,

@@ -96,7 +96,10 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("ncclGroupEnd", source)
         self.assertIn("distributed_expectation_rccl", source)
         self.assertIn("distributed_expectation_matrix_rccl", source)
+        self.assertIn("distributed_sparse_matrix_moments_rccl", source)
+        self.assertIn("build_local_csr_slice", source)
         self.assertIn("reduce_complex_block_sums_to_double_pair_kernel", source)
+        self.assertIn("reduce_sparse_matrix_moments_kernel", source)
         self.assertIn("distributed_expectation_host_fallback", source)
         self.assertIn("distributed_expectation_with_fallback", source)
         self.assertIn("distributed_sample_rccl", source)
@@ -107,6 +110,8 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("distributed_all_qubits_local(handle, targets)", source)
         self.assertIn("distributed_all_qubits_local(handle, measured)", source)
         self.assertIn("rccl_allreduce_double_sum_inplace(handle, rank_pairs, 2)", source)
+        self.assertIn("rccl_allreduce_double_sum_inplace(handle, rank_mean_pairs, 2)", source)
+        self.assertIn("rccl_allreduce_double_sum_inplace(handle, rank_second_pairs, 2)", source)
 
         matrix_block = source.split("rocqStatus_t rocsvGetExpectationMatrix", 1)[1].split(
             "rocqStatus_t rocsvGetExpectationMatrixBatch", 1
@@ -114,6 +119,13 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("status = distributed_expectation_matrix_rccl", matrix_block)
         self.assertIn("if (status != ROCQ_STATUS_NOT_IMPLEMENTED)", matrix_block)
         self.assertIn("return expectation_matrix_distributed_host_fallback", matrix_block)
+
+        sparse_block = source.split("rocqStatus_t rocsvGetSparseMatrixMoments(", 1)[1].split(
+            "rocqStatus_t rocsvGetSparseMatrixMomentsBatch", 1
+        )[0]
+        self.assertIn("rocqStatus_t rccl_status = distributed_sparse_matrix_moments_rccl", sparse_block)
+        self.assertIn("if (rccl_status != ROCQ_STATUS_NOT_IMPLEMENTED)", sparse_block)
+        self.assertIn("return sparse_matrix_moments_distributed_host_fallback", sparse_block)
 
     def test_nonlocal_swap_remap_uses_rccl_send_recv_before_host_fallback(self):
         with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
