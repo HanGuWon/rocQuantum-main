@@ -12,7 +12,7 @@ on a "Circuit Fragmentation" strategy.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Callable, Any, Optional
+from typing import List, Dict, Callable, Any, Optional, Tuple
 
 # --- rocQuantum Imports ---
 try:
@@ -108,15 +108,134 @@ class QEC_Experiment:
         }
 
 
-def _most_likely_syndrome(counts: Dict[str, int]) -> List[int]:
-    if not counts:
-        raise ValueError("No syndrome samples were produced.")
-    bitstring = max(counts.items(), key=lambda item: item[1])[0]
+def _validate_repetition_bits(initial_bits: Optional[List[int]]) -> List[int]:
+    bits = list(initial_bits or [0, 0, 0])
+    if len(bits) != 3 or any(bit not in (0, 1) for bit in bits):
+        raise ValueError("initial_bits must be a length-3 list containing only 0 or 1.")
+    return bits
+
+
+def _validate_error_qubit(error_qubit: Optional[int]) -> None:
+    if error_qubit is not None and error_qubit not in (0, 1, 2):
+        raise ValueError("error_qubit must be one of 0, 1, 2, or None.")
+
+
+def _syndrome_from_bitstring(bitstring: str) -> List[int]:
     if len(bitstring) < 2:
         bitstring = bitstring.zfill(2)
     # rocq packs measured qubits in request order, then formats the integer as
     # a big-endian bitstring. For qubits [3, 4], q3 is the rightmost bit.
     return [int(bitstring[-1]), int(bitstring[-2])]
+
+
+def _syndrome_key(syndrome: List[int]) -> str:
+    return f"{syndrome[0]}{syndrome[1]}"
+
+
+def _correction_qubit_for_syndrome(syndrome: List[int]) -> Optional[int]:
+    lookup: Dict[Tuple[int, int], Optional[int]] = {
+        (0, 0): None,
+        (1, 0): 0,
+        (1, 1): 1,
+        (0, 1): 2,
+    }
+    return lookup.get((syndrome[0], syndrome[1]))
+
+
+def _apply_known_bit_flip(bits: List[int], qubit: Optional[int]) -> List[int]:
+    corrected = list(bits)
+    if qubit is not None:
+        corrected[qubit] ^= 1
+    return corrected
+
+
+def repetition_syndrome_histogram(counts: Dict[str, int]) -> Dict[str, int]:
+    """Aggregate raw ancilla bitstring counts into repetition-code syndromes."""
+    if not counts:
+        raise ValueError("No syndrome samples were produced.")
+
+    histogram = {"00": 0, "10": 0, "11": 0, "01": 0}
+    for bitstring, count in counts.items():
+        if not isinstance(bitstring, str) or any(bit not in "01" for bit in bitstring):
+            raise ValueError("counts keys must be binary strings.")
+        if not isinstance(count, int) or count < 0:
+            raise ValueError("counts values must be non-negative integers.")
+        syndrome = _syndrome_from_bitstring(bitstring)
+        histogram[_syndrome_key(syndrome)] += count
+    return histogram
+
+
+def _most_likely_syndrome(counts: Dict[str, int]) -> List[int]:
+    histogram = repetition_syndrome_histogram(counts)
+    syndrome_key = max(histogram.items(), key=lambda item: item[1])[0]
+    return [int(syndrome_key[0]), int(syndrome_key[1])]
+
+
+def analyze_repetition_code_counts(
+    counts: Dict[str, int],
+    initial_bits: Optional[List[int]] = None,
+    error_qubit: Optional[int] = None,
+    expected_logical_bit: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Decode sampled repetition-code syndromes and summarize correction quality."""
+    bits = _validate_repetition_bits(initial_bits)
+    _validate_error_qubit(error_qubit)
+    if expected_logical_bit is not None and expected_logical_bit not in (0, 1):
+        raise ValueError("expected_logical_bit must be 0, 1, or None.")
+
+    encoded_logical_bit = bits[0] if bits.count(bits[0]) == 3 else None
+    if expected_logical_bit is None:
+        expected_logical_bit = encoded_logical_bit
+
+    observed_bits = _apply_known_bit_flip(bits, error_qubit)
+    histogram = repetition_syndrome_histogram(counts)
+    total_shots = sum(histogram.values())
+    if total_shots <= 0:
+        raise ValueError("Syndrome sample counts must contain at least one shot.")
+
+    decoded_outcomes = []
+    successful_shots = 0
+    for syndrome_key, count in histogram.items():
+        syndrome = [int(syndrome_key[0]), int(syndrome_key[1])]
+        correction_qubit = _correction_qubit_for_syndrome(syndrome)
+        corrected_bits = _apply_known_bit_flip(observed_bits, correction_qubit)
+        success = None
+        if expected_logical_bit is not None:
+            success = corrected_bits == [expected_logical_bit] * 3
+            if success:
+                successful_shots += count
+        decoded_outcomes.append(
+            {
+                "syndrome": syndrome,
+                "count": count,
+                "correction_qubit": correction_qubit,
+                "corrected_data_bits": corrected_bits,
+                "logical_success": success,
+            }
+        )
+
+    most_likely_syndrome = _most_likely_syndrome(counts)
+    most_likely = next(
+        outcome
+        for outcome in decoded_outcomes
+        if outcome["syndrome"] == most_likely_syndrome
+    )
+    logical_success_rate = None
+    if expected_logical_bit is not None:
+        logical_success_rate = successful_shots / total_shots
+
+    return {
+        "syndrome_histogram": histogram,
+        "total_shots": total_shots,
+        "initial_data_bits": bits,
+        "observed_data_bits": observed_bits,
+        "expected_logical_bit": expected_logical_bit,
+        "decoded_outcomes": decoded_outcomes,
+        "most_likely_syndrome": most_likely_syndrome,
+        "most_likely_correction_qubit": most_likely["correction_qubit"],
+        "most_likely_corrected_data_bits": most_likely["corrected_data_bits"],
+        "logical_success_rate": logical_success_rate,
+    }
 
 
 def run_repetition_code_single_round(
@@ -139,11 +258,8 @@ def run_repetition_code_single_round(
     if shots <= 0:
         raise ValueError("shots must be positive.")
 
-    bits = list(initial_bits or [0, 0, 0])
-    if len(bits) != 3 or any(bit not in (0, 1) for bit in bits):
-        raise ValueError("initial_bits must be a length-3 list containing only 0 or 1.")
-    if error_qubit is not None and error_qubit not in (0, 1, 2):
-        raise ValueError("error_qubit must be one of 0, 1, 2, or None.")
+    bits = _validate_repetition_bits(initial_bits)
+    _validate_error_qubit(error_qubit)
 
     @rocq.kernel
     def repetition_round():
@@ -161,6 +277,7 @@ def run_repetition_code_single_round(
 
     counts = rocq.sample(repetition_round, shots, backend=backend, qubits=[3, 4])
     syndrome = _most_likely_syndrome(counts)
+    analysis = analyze_repetition_code_counts(counts, bits, error_qubit=error_qubit)
 
     from rocquantum.qec.decoders.repetition_decoder import RepetitionCodeDecoder
 
@@ -170,5 +287,8 @@ def run_repetition_code_single_round(
         "counts": counts,
         "correction": correction,
         "correction_applied": correction.to_string(),
+        "analysis": analysis,
+        "logical_success_rate": analysis["logical_success_rate"],
+        "most_likely_corrected_data_bits": analysis["most_likely_corrected_data_bits"],
         "experimental_supported_subset": "three_qubit_repetition_single_round",
     }

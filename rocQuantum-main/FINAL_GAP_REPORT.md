@@ -41,7 +41,7 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | Packaging / install / export | PARTIAL | Native build exists, but releasable packaging is not coherent |
 | Python surfaces | PARTIAL | Two divergent stacks exist, one with mock fallbacks |
 | Integrations | PARTIAL | Thin adapters exist, but PennyLane/Cirq/Qiskit sampling now prefers native `measure()` where available; Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, loop-local `break_loop` / `continue_loop`, and `switch_case` sampling can use state-collapsing `measure_qubit()` trajectories; Qiskit/PennyLane Pauli-observable paths avoid mandatory statevector readback; PennyLane `qml.Hermitian` and supported Qiskit dense `Operator` observables can use native dense-matrix single/batch expectation paths for supported targets; default multi-control gates route to native `MCX` / `CSWAP`; PennyLane `SparseHamiltonian` can use native CSR moments, including local batch readouts, with a correctness-first CSR statevector fallback |
-| Higher-level libraries | PARTIAL | Experimental VQE/QAOA/repetition-code helpers exist, but they are not robust CUDA-QX analogues |
+| Higher-level libraries | PARTIAL | Experimental VQE/QAOA/repetition-code helpers exist, including single-round repetition-code syndrome/correction analysis, but they are not robust CUDA-QX analogues |
 
 ## ROCm Integration Maturity
 
@@ -101,10 +101,10 @@ Compared with the official CUDA-QX baseline (`https://github.com/NVIDIA/cudaqx`)
 
 Current state:
 
-- QEC is limited to a 3-qubit repetition-code single-round helper
+- QEC is limited to a 3-qubit repetition-code single-round helper with sampled syndrome/correction analysis
 - VQE is limited to Pauli-observable objectives through `rocq.observe()` plus numerical gradient helpers
 - QAOA is limited to a MaxCut-style ansatz/cost helper
-- no robust decoder, solver, or hybrid-library stack was found
+- no repeated-round/noise-aware decoder, robust solver, or hybrid-library stack was found
 
 This is a P2 area. It should not be used to market parity while P0 and P1 remain open.
 

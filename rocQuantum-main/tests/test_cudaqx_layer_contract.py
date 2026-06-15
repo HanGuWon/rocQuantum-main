@@ -315,6 +315,32 @@ class TestQaoaHelpers(unittest.TestCase):
 
 
 class TestQecHelpers(unittest.TestCase):
+    def test_repetition_code_counts_analysis_reports_success_rate(self):
+        from rocquantum.qec import analyze_repetition_code_counts
+
+        analysis = analyze_repetition_code_counts(
+            {"11": 7, "00": 1},
+            initial_bits=[0, 0, 0],
+            error_qubit=1,
+        )
+
+        self.assertEqual(
+            analysis["syndrome_histogram"],
+            {"00": 1, "10": 0, "11": 7, "01": 0},
+        )
+        self.assertEqual(analysis["most_likely_syndrome"], [1, 1])
+        self.assertEqual(analysis["most_likely_correction_qubit"], 1)
+        self.assertEqual(analysis["most_likely_corrected_data_bits"], [0, 0, 0])
+        self.assertAlmostEqual(analysis["logical_success_rate"], 7 / 8)
+
+    def test_repetition_code_counts_analysis_validates_inputs(self):
+        from rocquantum.qec import analyze_repetition_code_counts
+
+        with self.assertRaisesRegex(ValueError, "binary strings"):
+            analyze_repetition_code_counts({"2": 1})
+        with self.assertRaisesRegex(ValueError, "non-negative integers"):
+            analyze_repetition_code_counts({"00": -1})
+
     def test_repetition_code_single_round_uses_canonical_sample(self):
         from rocquantum.qec.framework import run_repetition_code_single_round
 
@@ -323,6 +349,9 @@ class TestQecHelpers(unittest.TestCase):
 
         self.assertEqual(result["syndrome"], [1, 0])
         self.assertIn("X0", result["correction_applied"])
+        self.assertEqual(result["analysis"]["syndrome_histogram"], {"00": 0, "10": 5, "11": 0, "01": 0})
+        self.assertEqual(result["most_likely_corrected_data_bits"], [0, 0, 0])
+        self.assertEqual(result["logical_success_rate"], 1.0)
         patched_sample.assert_called_once()
         _, args, kwargs = patched_sample.mock_calls[0]
         self.assertEqual(kwargs["qubits"], [3, 4])
