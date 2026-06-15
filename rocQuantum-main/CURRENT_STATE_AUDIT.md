@@ -114,7 +114,7 @@ What is not real today:
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is only an MVP subset executor, not a CUDA-Q-style full compiler runtime.
 - Distributed multi-GPU is only partially implemented and was overclaimed in docs.
 - High-level expectation-value workflows are split across canonical runtime APIs and legacy Python bindings.
-- Packaging is CMake-first and now exports package config files, but the release artifact story remains split across canonical `rocq`, legacy `python/rocq`, framework plugins, and ROCm CI validation.
+- Packaging is CMake-first and now exports package config files with Python/CMake package-version alignment, but the release artifact story remains split across canonical `rocq`, legacy `python/rocq`, framework plugins, and ROCm CI validation.
 
 ## Code Surface Inventory
 

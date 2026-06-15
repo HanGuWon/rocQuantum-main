@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "rocquantum"
-version = "1.0.0-dev"
+version = "0.1.0"
 description = "A hardware-agnostic quantum computing framework for AMD GPUs"
 readme = "README.md"
 license = {text = "MIT"}

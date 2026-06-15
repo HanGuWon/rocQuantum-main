@@ -7,6 +7,7 @@ Validate canonical imports, legacy shim, and pyproject.toml existence.
 """
 
 import os
+import re
 import sys
 import unittest
 import warnings
@@ -21,6 +22,7 @@ _INSTALL_CONSUMER_MAIN = os.path.join(_PROJECT_ROOT, "cmake", "install_consumer_
 _INSTALL_CONSUMER_SCRIPT = os.path.join(_PROJECT_ROOT, "scripts", "validate_cmake_install_consumer.sh")
 _ROCM_LINUX_WORKFLOW = os.path.join(_REPO_ROOT, ".github", "workflows", "rocm-linux-build.yml")
 _README = os.path.join(_PROJECT_ROOT, "README.md")
+_ROOT_CMAKE = os.path.join(_PROJECT_ROOT, "CMakeLists.txt")
 
 
 class TestCanonicalImports(unittest.TestCase):
@@ -114,6 +116,20 @@ class TestPyprojectExists(unittest.TestCase):
         with open(path, "rb") as f:
             data = tomllib.load(f)
         self.assertEqual(data["project"]["name"], "rocquantum")
+
+    def test_pyproject_version_matches_cmake_package_version(self):
+        import tomllib
+        path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        with open(_ROOT_CMAKE, "r", encoding="utf-8") as f:
+            cmake = f.read()
+
+        match = re.search(r"project\(rocQuantum\s+VERSION\s+([0-9]+(?:\.[0-9]+){2})", cmake)
+        self.assertIsNotNone(match, "CMake project version must be explicit for install package config.")
+        self.assertEqual(data["project"]["version"], match.group(1))
+        self.assertIn("write_basic_package_version_file", cmake)
+        self.assertIn("VERSION ${PROJECT_VERSION}", cmake)
 
     def test_pyproject_uses_scikit_build_core(self):
         import tomllib
