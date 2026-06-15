@@ -104,7 +104,7 @@ Current state:
 
 - QEC is limited to a 3-qubit repetition-code helper with single-round sampling and sequential repeated-round syndrome/correction aggregation
 - VQE is limited to Pauli-observable objectives through `rocq.observe()` plus numerical gradient helpers
-- QAOA is limited to a MaxCut-style ansatz/cost helper
+- QAOA is limited to a MaxCut-style kernel/cost/solve helper over the experimental VQE path
 - no noise-aware or fault-tolerant decoder, robust solver, or production hybrid-library stack was found
 
 This is a P2 area. It should not be used to market parity while P0 and P1 remain open.

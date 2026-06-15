@@ -313,6 +313,48 @@ class TestQaoaHelpers(unittest.TestCase):
             ],
         )
 
+    def test_solve_maxcut_qaoa_wraps_vqe_solver(self):
+        from rocquantum.solvers import solve_maxcut_qaoa
+        from rocquantum.solvers.vqe_solver import Optimizer
+
+        class RecordingOptimizer(Optimizer):
+            def __init__(self):
+                self.x0 = None
+                self.args = None
+
+            def minimize(self, fun, x0, args=()):
+                self.x0 = np.asarray(x0, dtype=float).copy()
+                self.args = args
+                return types.SimpleNamespace(fun=-1.25, x=self.x0 + 0.1)
+
+        optimizer = RecordingOptimizer()
+        edges = ((u, v, weight) for u, v, weight in [(0, 1, 1.0), (1, 0, 2.0)])
+        result = solve_maxcut_qaoa(
+            2,
+            edges,
+            layers=1,
+            initial_params=[0.3, 0.4],
+            optimizer=optimizer,
+            backend="density_matrix",
+        )
+
+        np.testing.assert_allclose(optimizer.x0, np.array([0.3, 0.4]))
+        np.testing.assert_allclose(result["optimal_parameters"], np.array([0.4, 0.5]))
+        self.assertEqual(result["optimal_energy"], -1.25)
+        self.assertEqual(result["normalized_edges"], [(0, 1, 3.0)])
+        self.assertEqual(result["layers"], 1)
+        self.assertEqual(result["num_qubits"], 2)
+        self.assertEqual(result["backend"], "density_matrix")
+        self.assertIs(optimizer.args[0], result["cost_operator"])
+        self.assertIs(optimizer.args[1], result["ansatz"])
+        self.assertEqual(optimizer.args[2], 2)
+
+    def test_solve_maxcut_qaoa_validates_initial_parameter_count(self):
+        from rocquantum.solvers.qaoa import solve_maxcut_qaoa
+
+        with self.assertRaisesRegex(ValueError, "initial_params"):
+            solve_maxcut_qaoa(2, [(0, 1)], layers=2, initial_params=[0.1])
+
 
 class TestQecHelpers(unittest.TestCase):
     def test_repetition_code_counts_analysis_reports_success_rate(self):

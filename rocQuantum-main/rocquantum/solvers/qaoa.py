@@ -100,3 +100,49 @@ def maxcut_cost_operator(num_qubits: int, edges: Iterable[Sequence[float]]):
     if operator is None:
         return PauliOperator("I", coefficient=0.0)
     return operator
+
+
+def solve_maxcut_qaoa(
+    num_qubits: int,
+    edges: Iterable[Sequence[float]],
+    layers: int = 1,
+    initial_params=None,
+    optimizer=None,
+    backend: str = "state_vector",
+):
+    """Run the experimental MaxCut QAOA helper through ``VQE_Solver``."""
+    if num_qubits <= 0:
+        raise ValueError("num_qubits must be positive.")
+    if layers <= 0:
+        raise ValueError("layers must be positive.")
+
+    edge_list = list(edges)
+    normalized_edges = _canonical_maxcut_edges(num_qubits, edge_list)
+    expected_params = 2 * layers
+    if initial_params is None:
+        params = np.zeros(expected_params, dtype=float)
+    else:
+        params = np.asarray(initial_params, dtype=float).reshape(-1)
+    if params.size != expected_params:
+        raise ValueError(
+            f"initial_params must contain {expected_params} values for {layers} QAOA layer(s)."
+        )
+
+    ansatz = make_maxcut_qaoa_kernel(num_qubits, normalized_edges, layers=layers)
+    cost_operator = maxcut_cost_operator(num_qubits, normalized_edges)
+
+    from .vqe_solver import VQE_Solver
+
+    solver = VQE_Solver(optimizer=optimizer, backend=backend)
+    result = solver.solve(cost_operator, ansatz, num_qubits, initial_params=params)
+    result.update(
+        {
+            "ansatz": ansatz,
+            "cost_operator": cost_operator,
+            "normalized_edges": normalized_edges,
+            "layers": layers,
+            "num_qubits": num_qubits,
+            "backend": backend,
+        }
+    )
+    return result

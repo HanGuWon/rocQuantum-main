@@ -122,7 +122,7 @@ What is not real today:
 | `python/rocq/*` | Separate legacy-ish Python surface with top-level CMake-built `_rocq_hip_backend` bindings; Pauli expectation paths now use native helpers, but broader runtime behavior remains split |
 | `integrations/*` | Thin framework adapters with mixed native and host-side behavior |
 | `rocquantum/backends/*` | Mixed remote-provider clients, local mocks, and skeleton placeholders |
-| `rocquantum/qec`, `rocquantum/solvers` | Experimental VQE/QAOA/repetition-code helpers, including repeated-round repetition-code aggregation, not production-ready CUDA-QX analogs |
+| `rocquantum/qec`, `rocquantum/solvers` | Experimental VQE/QAOA/repetition-code helpers, including a VQE-backed MaxCut QAOA solve wrapper and repeated-round repetition-code aggregation, not production-ready CUDA-QX analogs |
 
 ## What Works Today
 
@@ -178,8 +178,8 @@ What is not real today:
 - The canonical top-level `rocq.operator.get_expectation_value()` delegates to `rocq.observe()` for supported Pauli operators, `HermitianOperator` dense matrices, and full-state `SparseHamiltonianOperator` CSR observables; the state-vector backend combines duplicate Pauli terms before native expectation calls, including Pauli terms embedded inside mixed SumOperator observables, reuses duplicate dense-Hermitian/CSR sum readouts across scalar coefficients within one mixed SumOperator expectation, elides zero-coefficient matrix/sparse sum terms, prefers the low-level `get_expectation_matrix` / `rocsvGetExpectationMatrix` and `get_sparse_matrix_moments` / `rocsvGetSparseMatrixMoments` hooks when available, the density-matrix backend now evaluates dense Hermitian and full-state CSR observables plus scalar-mixed sums through host correctness fallback, and the legacy `_rocq_hip_backend` binding also exposes `get_expectation_pauli_string_batch` / `rocsvGetExpectationPauliStringBatch` plus `get_expectation_matrix_batch` / `rocsvGetExpectationMatrixBatch` for local batched readouts.
 - Canonical `SumOperator` addition preserves scalar coefficients on nested sums, so VQE/QAOA-style composite observables such as `2 * (X0 + Y1) + Z0` no longer lose the outer sum weight during Pauli-term expansion.
 - Canonical `QuantumOperator` supports subtraction/negation, scalar division, and numeric identity constants such as `0.5 + X0` / `1.0 - Z0`; CUDA-Q-style `rocq.spin.x/y/z/i` factories build canonical Pauli operators; and Pauli-only sum/product expressions such as `(0.5 + Z0) * Z1` now distribute to Pauli terms with same-qubit phase rules preserved. The experimental MaxCut QAOA cost helper now includes the weighted identity offset in each `0.5 * w * (I - Zi Zj)` edge term instead of returning only the `-0.5 * w * ZiZj` component.
-- The experimental MaxCut QAOA ansatz now uses `-gamma * w` for the CNOT-RZ-CNOT cost-phase angle, matching that cost Hamiltonian up to the expected global phase; duplicate or reversed undirected edges are aggregated before emitting cost-phase blocks and cost-operator terms.
-- `rocquantum.solvers.VQE_Solver` now passes arrays as one argument to single vector-style ansatz parameters, including one-element vectors, allowing the experimental MaxCut QAOA helper and vector-parameter ansatzes to run through the same VQE objective path instead of failing on scalar argument splatting.
+- The experimental MaxCut QAOA ansatz now uses `-gamma * w` for the CNOT-RZ-CNOT cost-phase angle, matching that cost Hamiltonian up to the expected global phase; duplicate or reversed undirected edges are aggregated before emitting cost-phase blocks and cost-operator terms, and `solve_maxcut_qaoa()` wires the normalized ansatz/cost pair through `VQE_Solver`.
+- `rocquantum.solvers.VQE_Solver` now passes arrays as one argument to single vector-style ansatz parameters, including one-element vectors, allowing the experimental MaxCut QAOA solve helper and vector-parameter ansatzes to run through the same VQE objective path instead of failing on scalar argument splatting.
 - `rocquantum.solvers.VQE_Solver.estimate_gradient()` and `solve()` normalize scalar single-parameter inputs to one-element vectors before shifting or invoking optimizers.
 - `python/rocq/api.py::Circuit.expval()` now uses native backend Pauli expectation helpers, matching `get_expval()` for supported Pauli terms.
 
@@ -201,7 +201,7 @@ What is not real today:
 - Density-matrix multi-qubit/gpu-resident generic channel planning is absent.
 - Density-matrix sampling now extracts only the density diagonal on device before host-side shot drawing, reducing transfer from full density matrix to probability-vector scale, but it is still not a fully GPU-resident sampling path.
 - Stabilizer/tableau/Pauli-propagation backends were not found.
-- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, CUDA-Q-style spin factories, VQE-compatible MaxCut-style QAOA helper, and a 3-qubit repetition-code syndrome subset with single/repeated-round aggregation.
+- CUDA-QX-style higher-level solver/QEC libraries are limited to experimental VQE objective/gradient over the supported canonical observable subset, CUDA-Q-style spin factories, VQE-compatible MaxCut-style QAOA kernel/cost/solve helper, and a 3-qubit repetition-code syndrome subset with single/repeated-round aggregation.
 
 ## Highest-Risk Overclaims Before This Audit
 
