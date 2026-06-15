@@ -466,6 +466,24 @@ def _as_real_probability_array(values: object, label: str) -> np.ndarray:
     return np.asarray(normalized, dtype=float).reshape(raw.shape)
 
 
+def normalize_real_result_vector(
+    values: object,
+    label: str,
+    expected_count: int | None = None,
+) -> np.ndarray:
+    normalized = _as_real_probability_array(values, label).reshape(-1)
+    if expected_count is not None:
+        normalized_count = normalize_positive_integer(expected_count, f"{label} count")
+        if normalized.size != normalized_count:
+            raise ValueError(f"{label} count must match the expected result size.")
+    return np.ascontiguousarray(normalized)
+
+
+def normalize_real_result_scalar(value: object, label: str) -> float:
+    normalized = normalize_real_result_vector(value, label, expected_count=1)
+    return float(normalized[0])
+
+
 def normalize_probability_vector(probabilities: Sequence[float], label: str = "Probability vector") -> np.ndarray:
     probabilities = _as_real_probability_array(probabilities, label).reshape(-1)
     if probabilities.size == 0:
@@ -1296,11 +1314,17 @@ class RocQuantumRuntime:
         )
         native = getattr(self.simulator, "expectation_value", None)
         if callable(native):
-            return float(native(normalized_pauli, normalized_targets[0]))
+            return normalize_real_result_scalar(
+                native(normalized_pauli, normalized_targets[0]),
+                "Pauli expectation value",
+            )
 
         legacy = getattr(self.simulator, "GetExpectationValue", None)
         if callable(legacy):
-            return float(legacy(normalized_pauli, normalized_targets[0]))
+            return normalize_real_result_scalar(
+                legacy(normalized_pauli, normalized_targets[0]),
+                "Pauli expectation value",
+            )
 
         return self.expectation_pauli_string(normalized_pauli, normalized_targets)
 
@@ -1313,11 +1337,17 @@ class RocQuantumRuntime:
 
         native = getattr(self.simulator, "expectation_pauli_string", None)
         if callable(native):
-            return float(native(normalized_pauli, normalized_targets))
+            return normalize_real_result_scalar(
+                native(normalized_pauli, normalized_targets),
+                "Pauli expectation value",
+            )
 
         legacy = getattr(self.simulator, "GetExpectationPauliString", None)
         if callable(legacy):
-            return float(legacy(normalized_pauli, normalized_targets))
+            return normalize_real_result_scalar(
+                legacy(normalized_pauli, normalized_targets),
+                "Pauli expectation value",
+            )
 
         return expectation_from_statevector(self.statevector(), normalized_pauli, normalized_targets)
 
@@ -1335,7 +1365,11 @@ class RocQuantumRuntime:
         native = getattr(self.simulator, "expectation_pauli_string_batch", None)
         if callable(native):
             try:
-                return np.asarray(native(normalized_pauli, normalized_targets), dtype=float).reshape(self.batch_size())
+                return normalize_real_result_vector(
+                    native(normalized_pauli, normalized_targets),
+                    "Batched Pauli expectation values",
+                    expected_count=self.batch_size(),
+                )
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
                     raise
@@ -1343,7 +1377,11 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "GetExpectationPauliStringBatch", None)
         if callable(legacy):
             try:
-                return np.asarray(legacy(normalized_pauli, normalized_targets), dtype=float).reshape(self.batch_size())
+                return normalize_real_result_vector(
+                    legacy(normalized_pauli, normalized_targets),
+                    "Batched Pauli expectation values",
+                    expected_count=self.batch_size(),
+                )
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
                     raise

@@ -996,6 +996,88 @@ def test_framework_runtime_revalidates_pauli_expectation_payloads_before_native_
     assert batch_sim.batch_expectations == []
 
 
+def test_framework_runtime_revalidates_native_pauli_expectation_results():
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        normalize_real_result_scalar,
+        normalize_real_result_vector,
+    )
+
+    invalid_scalars = (
+        True,
+        np.bool_(False),
+        "0.5",
+        b"0.5",
+        np.nan,
+        np.inf,
+        -np.inf,
+        0.5 + 0.0j,
+        [0.5, 0.25],
+    )
+    for value in invalid_scalars:
+        with pytest.raises(ValueError, match="Pauli expectation"):
+            normalize_real_result_scalar(value, "Pauli expectation value")
+
+    invalid_vectors = (
+        [0.5, True],
+        [0.5, "0.25"],
+        [0.5, np.nan],
+        [0.5],
+        [0.5, 0.25, 0.0],
+    )
+    for values in invalid_vectors:
+        with pytest.raises(ValueError, match="Batched Pauli"):
+            normalize_real_result_vector(values, "Batched Pauli expectation values", expected_count=2)
+
+    class _BadNativePauliExpectationSimulator:
+        def __init__(self, value):
+            self.value = value
+            self.value_calls = []
+            self.string_calls = []
+
+        def num_qubits(self):
+            return 1
+
+        def expectation_value(self, pauli, target):
+            self.value_calls.append((pauli, int(target)))
+            return self.value
+
+        def expectation_pauli_string(self, pauli_string, targets):
+            self.string_calls.append((pauli_string, tuple(targets)))
+            return self.value
+
+    for value in invalid_scalars:
+        sim = _BadNativePauliExpectationSimulator(value)
+        runtime = RocQuantumRuntime(sim)
+        with pytest.raises(ValueError, match="Pauli expectation"):
+            runtime.expectation_value("Z", 0)
+        with pytest.raises(ValueError, match="Pauli expectation"):
+            runtime.expectation_pauli_string("Z", [0])
+        assert sim.value_calls == [("Z", 0)]
+        assert sim.string_calls == [("Z", (0,))]
+
+    class _BadNativeBatchPauliExpectationSimulator:
+        def __init__(self, values):
+            self.values = values
+            self.calls = []
+
+        def num_qubits(self):
+            return 1
+
+        def batch_size(self):
+            return 2
+
+        def expectation_pauli_string_batch(self, pauli_string, targets):
+            self.calls.append((pauli_string, tuple(targets)))
+            return self.values
+
+    for values in invalid_vectors:
+        sim = _BadNativeBatchPauliExpectationSimulator(values)
+        with pytest.raises(ValueError, match="Batched Pauli"):
+            RocQuantumRuntime(sim).expectation_pauli_string_batch("Z", [0])
+        assert sim.calls == [("Z", (0,))]
+
+
 def test_framework_runtime_rejects_nonfinite_probability_payloads():
     from rocquantum.framework_runtime import (
         RocQuantumRuntime,
