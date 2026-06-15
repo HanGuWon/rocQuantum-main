@@ -45,6 +45,46 @@ std::string rocq_status_name(rocqStatus_t status) {
     }
 }
 
+rocComplex make_rocq_complex(double real, double imag) {
+#ifdef ROCQ_PRECISION_DOUBLE
+    return rocComplex{real, imag};
+#else
+    return rocComplex{static_cast<float>(real), static_cast<float>(imag)};
+#endif
+}
+
+std::vector<rocComplex> dense_row_major_to_column_major(const rocComplex* matrix,
+                                                        size_t matrix_dim) {
+    std::vector<rocComplex> out(matrix_dim * matrix_dim);
+    for (size_t row = 0; row < matrix_dim; ++row) {
+        for (size_t col = 0; col < matrix_dim; ++col) {
+            out[row + col * matrix_dim] = matrix[row * matrix_dim + col];
+        }
+    }
+    return out;
+}
+
+std::vector<rocComplex> square_dense_matrix_row_major(const rocComplex* matrix,
+                                                      size_t matrix_dim) {
+    std::vector<rocComplex> out(matrix_dim * matrix_dim);
+    for (size_t row = 0; row < matrix_dim; ++row) {
+        for (size_t col = 0; col < matrix_dim; ++col) {
+            double value_re = 0.0;
+            double value_im = 0.0;
+            for (size_t inner = 0; inner < matrix_dim; ++inner) {
+                const rocComplex lhs = matrix[row * matrix_dim + inner];
+                const rocComplex rhs = matrix[inner * matrix_dim + col];
+                value_re += static_cast<double>(lhs.x) * static_cast<double>(rhs.x) -
+                            static_cast<double>(lhs.y) * static_cast<double>(rhs.y);
+                value_im += static_cast<double>(lhs.x) * static_cast<double>(rhs.y) +
+                            static_cast<double>(lhs.y) * static_cast<double>(rhs.x);
+            }
+            out[row * matrix_dim + col] = make_rocq_complex(value_re, value_im);
+        }
+    }
+    return out;
+}
+
 std::string tensornet_pathfinder_name(rocPathfinderAlgorithm_t algorithm) {
     switch (algorithm) {
         case ROCTN_PATHFINDER_ALGO_GREEDY:
@@ -794,6 +834,148 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             return result;
         }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
            "Calculates <psi|M|psi> for each local batch state.");
+
+    m.def("get_expectation_matrix_moments",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::vector<unsigned>& targetQubits_vec,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> matrix) {
+            if (targetQubits_vec.empty()) {
+                throw std::runtime_error("target_qubits must not be empty for get_expectation_matrix_moments.");
+            }
+            if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                throw std::runtime_error("matrix must be a square 2D array for get_expectation_matrix_moments.");
+            }
+
+            const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
+            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
+                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+                throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
+            }
+
+            const rocComplex* matrix_row_major = matrix.data();
+            const std::vector<rocComplex> squared_matrix_row_major =
+                square_dense_matrix_row_major(matrix_row_major, matrix_dim);
+            const std::vector<rocComplex> matrix_col_major =
+                dense_row_major_to_column_major(matrix_row_major, matrix_dim);
+            const std::vector<rocComplex> squared_matrix_col_major =
+                dense_row_major_to_column_major(squared_matrix_row_major.data(), matrix_dim);
+
+            DeviceBuffer matrix_device(matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(matrix_device.get_ptr<rocComplex>(),
+                          matrix_col_major.data(),
+                          matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy expectation matrix moments matrix to device");
+            }
+
+            DeviceBuffer squared_matrix_device(squared_matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(squared_matrix_device.get_ptr<rocComplex>(),
+                          squared_matrix_col_major.data(),
+                          squared_matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy expectation matrix moments squared matrix to device");
+            }
+
+            rocComplex mean{};
+            rocComplex second_moment{};
+            rocqStatus_t status = rocsvGetExpectationMatrixMoments(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                targetQubits_vec.data(),
+                static_cast<unsigned>(targetQubits_vec.size()),
+                matrix_device.get_ptr<rocComplex>(),
+                squared_matrix_device.get_ptr<rocComplex>(),
+                matrix_dim,
+                &mean,
+                &second_moment);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetExpectationMatrixMoments failed: " + std::to_string(status));
+            }
+            return py::make_tuple(
+                std::complex<double>(static_cast<double>(mean.x), static_cast<double>(mean.y)),
+                std::complex<double>(static_cast<double>(second_moment.x),
+                                     static_cast<double>(second_moment.y)));
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
+           "Calculates dense matrix <psi|M|psi> and <psi|M^2|psi> moments.");
+
+    m.def("get_expectation_matrix_moments_batch",
+        [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,
+           const std::vector<unsigned>& targetQubits_vec,
+           py::array_t<rocComplex, py::array::c_style | py::array::forcecast> matrix) {
+            if (targetQubits_vec.empty()) {
+                throw std::runtime_error("target_qubits must not be empty for get_expectation_matrix_moments_batch.");
+            }
+            if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
+                throw std::runtime_error("matrix must be a square 2D array for get_expectation_matrix_moments_batch.");
+            }
+
+            const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
+            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
+                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+                throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
+            }
+
+            const rocComplex* matrix_row_major = matrix.data();
+            const std::vector<rocComplex> squared_matrix_row_major =
+                square_dense_matrix_row_major(matrix_row_major, matrix_dim);
+            const std::vector<rocComplex> matrix_col_major =
+                dense_row_major_to_column_major(matrix_row_major, matrix_dim);
+            const std::vector<rocComplex> squared_matrix_col_major =
+                dense_row_major_to_column_major(squared_matrix_row_major.data(), matrix_dim);
+
+            DeviceBuffer matrix_device(matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(matrix_device.get_ptr<rocComplex>(),
+                          matrix_col_major.data(),
+                          matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy batch expectation matrix moments matrix to device");
+            }
+
+            DeviceBuffer squared_matrix_device(squared_matrix_col_major.size(), sizeof(rocComplex));
+            if (hipMemcpy(squared_matrix_device.get_ptr<rocComplex>(),
+                          squared_matrix_col_major.data(),
+                          squared_matrix_col_major.size() * sizeof(rocComplex),
+                          hipMemcpyHostToDevice) != hipSuccess) {
+                throw std::runtime_error("Failed to copy batch expectation matrix moments squared matrix to device");
+            }
+
+            size_t batch_size = infer_batch_size_from_state_buffer(
+                d_state_buffer,
+                numQubits,
+                "get_expectation_matrix_moments_batch");
+            std::vector<rocComplex> raw_means(batch_size);
+            std::vector<rocComplex> raw_second_moments(batch_size);
+            rocqStatus_t status = rocsvGetExpectationMatrixMomentsBatch(
+                handle_wrapper.get(),
+                d_state_buffer.get_ptr<rocComplex>(),
+                numQubits,
+                targetQubits_vec.data(),
+                static_cast<unsigned>(targetQubits_vec.size()),
+                matrix_device.get_ptr<rocComplex>(),
+                squared_matrix_device.get_ptr<rocComplex>(),
+                matrix_dim,
+                raw_means.data(),
+                raw_second_moments.data());
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetExpectationMatrixMomentsBatch failed: " + std::to_string(status));
+            }
+
+            py::array_t<std::complex<double>> means(batch_size);
+            py::array_t<std::complex<double>> second_moments(batch_size);
+            auto mutable_means = means.mutable_unchecked<1>();
+            auto mutable_second = second_moments.mutable_unchecked<1>();
+            for (size_t idx = 0; idx < batch_size; ++idx) {
+                mutable_means(static_cast<py::ssize_t>(idx)) =
+                    std::complex<double>(static_cast<double>(raw_means[idx].x),
+                                         static_cast<double>(raw_means[idx].y));
+                mutable_second(static_cast<py::ssize_t>(idx)) =
+                    std::complex<double>(static_cast<double>(raw_second_moments[idx].x),
+                                         static_cast<double>(raw_second_moments[idx].y));
+            }
+            return py::make_tuple(means, second_moments);
+        }, py::arg("handle"), py::arg("d_state"), py::arg("num_qubits"), py::arg("target_qubits"), py::arg("matrix"),
+           "Calculates batch dense matrix <psi|M|psi> and <psi|M^2|psi> moments.");
 
     m.def("get_sparse_matrix_moments",
         [](const RocsvHandleWrapper& handle_wrapper, DeviceBuffer& d_state_buffer, unsigned numQubits,

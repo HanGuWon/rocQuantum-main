@@ -702,6 +702,58 @@ rocqStatus_t rocsvGetExpectationMatrixBatch(rocsvHandle_t handle,
                                             rocComplex* results);
 
 /**
+ * @brief Computes <psi|M|psi> and <psi|M^2|psi> for a dense matrix acting on target qubits.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector.
+ * @param[in] numQubits Total number of qubits.
+ * @param[in] targetQubits Array of target qubit indices.
+ * @param[in] numTargetQubits Number of target qubits.
+ * @param[in] d_matrix Device pointer to the dense matrix in column-major order.
+ * @param[in] d_squaredMatrix Device pointer to M^2 in column-major order.
+ * @param[in] matrixDim Matrix dimension. Must equal 2^numTargetQubits.
+ * @param[out] mean Host pointer to store <psi|M|psi>.
+ * @param[out] secondMoment Host pointer to store <psi|M^2|psi>.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetExpectationMatrixMoments(rocsvHandle_t handle,
+                                              rocComplex* d_state,
+                                              unsigned numQubits,
+                                              const unsigned* targetQubits,
+                                              unsigned numTargetQubits,
+                                              const rocComplex* d_matrix,
+                                              const rocComplex* d_squaredMatrix,
+                                              size_t matrixDim,
+                                              rocComplex* mean,
+                                              rocComplex* secondMoment);
+
+/**
+ * @brief Computes dense matrix moments for every local batch state.
+ *
+ * @param[in] handle The hipStateVec handle.
+ * @param[in] d_state Pointer to the device state vector batch.
+ * @param[in] numQubits Total number of qubits per state.
+ * @param[in] targetQubits Array of target qubit indices.
+ * @param[in] numTargetQubits Number of target qubits.
+ * @param[in] d_matrix Device pointer to the dense matrix in column-major order.
+ * @param[in] d_squaredMatrix Device pointer to M^2 in column-major order.
+ * @param[in] matrixDim Matrix dimension. Must equal 2^numTargetQubits.
+ * @param[out] means Host pointer to batchSize <psi|M|psi> values.
+ * @param[out] secondMoments Host pointer to batchSize <psi|M^2|psi> values.
+ * @return rocqStatus_t Status.
+ */
+rocqStatus_t rocsvGetExpectationMatrixMomentsBatch(rocsvHandle_t handle,
+                                                   rocComplex* d_state,
+                                                   unsigned numQubits,
+                                                   const unsigned* targetQubits,
+                                                   unsigned numTargetQubits,
+                                                   const rocComplex* d_matrix,
+                                                   const rocComplex* d_squaredMatrix,
+                                                   size_t matrixDim,
+                                                   rocComplex* means,
+                                                   rocComplex* secondMoments);
+
+/**
  * @brief Computes <psi|H|psi> and <psi|H^2|psi> for a CSR sparse matrix over the full state.
  *
  * @param[in] handle The hipStateVec handle.

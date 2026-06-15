@@ -163,6 +163,26 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("localize_distributed_qubits_for_operation(handle, touched", source)
         self.assertIn("apply_multi_controlled_single_qubit_matrix_kernel", source)
 
+    def test_dense_matrix_moments_have_fused_reduction(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("reduce_expectation_matrix_moments_kernel", source)
+        self.assertIn("rocsvGetExpectationMatrixMoments", source)
+        self.assertIn("rocsvGetExpectationMatrixMomentsBatch", source)
+        self.assertIn("4 * threads_per_block * sizeof(double)", source)
+        single_block = source.split("rocqStatus_t rocsvGetExpectationMatrixMoments", 1)[1].split(
+            "rocqStatus_t rocsvGetExpectationMatrixMomentsBatch", 1
+        )[0]
+        batch_block = source.split("rocqStatus_t rocsvGetExpectationMatrixMomentsBatch", 1)[1].split(
+            "rocqStatus_t rocsvGetSparseMatrixMoments", 1
+        )[0]
+        self.assertIn("reduce_expectation_matrix_moments_kernel", single_block)
+        self.assertIn("expectation_matrix_host_fallback", single_block)
+        self.assertIn("reduce_expectation_matrix_moments_kernel", batch_block)
+        self.assertIn("expectation_matrix_batch_host_fallback", batch_block)
+        self.assertIn("dim3(blocks, static_cast<unsigned>(batch_size))", batch_block)
+
     def test_nonlocal_distributed_generic_matrix_localizes_with_swaps(self):
         with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
             source = f.read()

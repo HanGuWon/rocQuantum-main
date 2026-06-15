@@ -394,6 +394,11 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("rocsvGetExpectationMatrix", implementation)
         self.assertIn("rocsvGetExpectationMatrixBatch", implementation)
         self.assertIn("rocsvGetExpectationMatrixBatch", hip_header)
+        self.assertIn("rocsvGetExpectationMatrixMoments", implementation)
+        self.assertIn("rocsvGetExpectationMatrixMomentsBatch", implementation)
+        self.assertIn("rocsvGetExpectationMatrixMoments", hip_header)
+        self.assertIn("rocsvGetExpectationMatrixMomentsBatch", hip_header)
+        self.assertIn("reduce_expectation_matrix_moments_kernel", hipstatevec)
         self.assertIn("matrix_expectation_host_fallback_allowed", implementation)
         self.assertIn("targets.size() > 4 && !matrix_expectation_host_fallback_allowed()", implementation)
         self.assertIn("expectation_matrix_host_fallback", hipstatevec)
@@ -416,6 +421,21 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("hipMemcpyHostToDevice", sparse_body)
         self.assertNotIn("get_statevector()", sparse_body)
         self.assertNotIn("h_state", sparse_body)
+        dense_moments_body = implementation.split("QuantumSimulator::expectation_matrix_moments", 1)[1].split(
+            "std::vector<std::complex<double>> QuantumSimulator::expectation_matrix_batch", 1
+        )[0]
+        dense_moments_batch_body = implementation.split(
+            "QuantumSimulator::expectation_matrix_moments_batch", 1
+        )[1].split(
+            "std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::sparse_hamiltonian_moments",
+            1,
+        )[0]
+        self.assertIn("rocsvGetExpectationMatrixMoments", dense_moments_body)
+        self.assertIn("status == ROCQ_STATUS_NOT_IMPLEMENTED", dense_moments_body)
+        self.assertIn("expectation_matrix(squared_matrix, targets)", dense_moments_body)
+        self.assertIn("rocsvGetExpectationMatrixMomentsBatch", dense_moments_batch_body)
+        self.assertIn("status == ROCQ_STATUS_NOT_IMPLEMENTED", dense_moments_batch_body)
+        self.assertIn("expectation_matrix_batch(squared_matrix, targets)", dense_moments_batch_body)
         self.assertIn(".def(\"expectation_matrix\"", bindings)
         self.assertIn(".def(\"ExpectationMatrix\"", bindings)
         self.assertIn(".def(\"expectation_matrix_moments\"", bindings)
@@ -429,6 +449,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("rocsvGetExpectationPauliStringBatch", low_level_bindings)
         self.assertIn("m.def(\"get_expectation_matrix_batch\"", low_level_bindings)
         self.assertIn("rocsvGetExpectationMatrixBatch", low_level_bindings)
+        self.assertIn("m.def(\"get_expectation_matrix_moments\"", low_level_bindings)
+        self.assertIn("rocsvGetExpectationMatrixMoments", low_level_bindings)
+        self.assertIn("m.def(\"get_expectation_matrix_moments_batch\"", low_level_bindings)
+        self.assertIn("rocsvGetExpectationMatrixMomentsBatch", low_level_bindings)
         self.assertIn("m.def(\"get_sparse_matrix_moments_batch\"", low_level_bindings)
         self.assertIn("rocsvGetSparseMatrixMomentsBatch", low_level_bindings)
         self.assertIn(".def(\"expectation_pauli_string_batch\"", bindings)

@@ -92,6 +92,7 @@ Compared with the official cuQuantum baseline (`https://docs.nvidia.com/cuda/cuq
 - `hipDensityMat` exists, and now has single-qubit Kraus channels plus host-side density sampling, but GPU-fast sampling, multi-qubit channels, and broader observable coverage lag behind cuDensityMat expectations
 
 For state-vector matrix application, unsupported cases now fail clearly unless `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` is set for explicit slow/debug fallback.
+Dense matrix moments now have local single-state and batched fused HIP reductions, so supported Hermitian variance paths no longer need to scan the state once for `<M>` and again for `<M^2>`.
 
 The main difference is not just feature count; it is product completeness and test-backed breadth.
 

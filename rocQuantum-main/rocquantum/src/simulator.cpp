@@ -1109,8 +1109,19 @@ std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::expectat
     if (targets.empty()) {
         throw std::invalid_argument("expectation_matrix_moments requires at least one target qubit.");
     }
+    if (targets.size() > 4 && !matrix_expectation_host_fallback_allowed()) {
+        throw std::runtime_error("expectation_matrix_moments currently supports at most 4 target qubits.");
+    }
     if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
         throw std::invalid_argument("Too many target qubits for expectation_matrix_moments.");
+    }
+
+    std::unordered_set<unsigned> unique_targets;
+    for (unsigned target : targets) {
+        ensure_valid_qubit(target);
+        if (!unique_targets.insert(target).second) {
+            throw std::invalid_argument("expectation_matrix_moments target qubits must be unique.");
+        }
     }
 
     const std::size_t matrix_dim = std::size_t{1} << targets.size();
@@ -1119,9 +1130,60 @@ std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::expectat
     }
 
     const auto squared_matrix = square_matrix_row_major(matrix, matrix_dim);
+    const std::vector<rocComplex> matrix_col_major = row_major_to_column_major(matrix, matrix_dim);
+    const std::vector<rocComplex> squared_matrix_col_major = row_major_to_column_major(squared_matrix, matrix_dim);
+    rocComplex* d_matrix = nullptr;
+    rocComplex* d_squared_matrix = nullptr;
+    check_hip(hipMalloc(&d_matrix, matrix_col_major.size() * sizeof(rocComplex)),
+              "expectation matrix moments allocation");
+
+    rocComplex raw_mean = to_roc_complex(std::complex<double>{0.0, 0.0});
+    rocComplex raw_second = to_roc_complex(std::complex<double>{0.0, 0.0});
+    rocqStatus_t status = ROCQ_STATUS_SUCCESS;
+    try {
+        check_hip(hipMalloc(&d_squared_matrix, squared_matrix_col_major.size() * sizeof(rocComplex)),
+                  "expectation squared matrix moments allocation");
+        check_hip(hipMemcpy(d_matrix,
+                            matrix_col_major.data(),
+                            matrix_col_major.size() * sizeof(rocComplex),
+                            hipMemcpyHostToDevice),
+                  "expectation matrix moments upload");
+        check_hip(hipMemcpy(d_squared_matrix,
+                            squared_matrix_col_major.data(),
+                            squared_matrix_col_major.size() * sizeof(rocComplex),
+                            hipMemcpyHostToDevice),
+                  "expectation squared matrix moments upload");
+        status = rocsvGetExpectationMatrixMoments(sim_handle_,
+                                                  device_state_vector_,
+                                                  num_qubits_,
+                                                  targets.data(),
+                                                  static_cast<unsigned>(targets.size()),
+                                                  d_matrix,
+                                                  d_squared_matrix,
+                                                  matrix_dim,
+                                                  &raw_mean,
+                                                  &raw_second);
+    } catch (...) {
+        if (d_squared_matrix) {
+            hipFree(d_squared_matrix);
+        }
+        hipFree(d_matrix);
+        throw;
+    }
+    check_hip(hipFree(d_squared_matrix), "expectation squared matrix moments free");
+    check_hip(hipFree(d_matrix), "expectation matrix moments free");
+
+    if (status == ROCQ_STATUS_NOT_IMPLEMENTED) {
+        return {
+            expectation_matrix(matrix, targets),
+            expectation_matrix(squared_matrix, targets),
+        };
+    }
+    check_status(status, "matrix expectation moments");
+
     return {
-        expectation_matrix(matrix, targets),
-        expectation_matrix(squared_matrix, targets),
+        {static_cast<double>(raw_mean.x), static_cast<double>(raw_mean.y)},
+        {static_cast<double>(raw_second.x), static_cast<double>(raw_second.y)},
     };
 }
 
@@ -1189,8 +1251,19 @@ QuantumSimulator::expectation_matrix_moments_batch(
     if (targets.empty()) {
         throw std::invalid_argument("expectation_matrix_moments_batch requires at least one target qubit.");
     }
+    if (targets.size() > 4 && !matrix_expectation_host_fallback_allowed()) {
+        throw std::runtime_error("expectation_matrix_moments_batch currently supports at most 4 target qubits.");
+    }
     if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
         throw std::invalid_argument("Too many target qubits for expectation_matrix_moments_batch.");
+    }
+
+    std::unordered_set<unsigned> unique_targets;
+    for (unsigned target : targets) {
+        ensure_valid_qubit(target);
+        if (!unique_targets.insert(target).second) {
+            throw std::invalid_argument("expectation_matrix_moments_batch target qubits must be unique.");
+        }
     }
 
     const std::size_t matrix_dim = std::size_t{1} << targets.size();
@@ -1199,10 +1272,64 @@ QuantumSimulator::expectation_matrix_moments_batch(
     }
 
     const auto squared_matrix = square_matrix_row_major(matrix, matrix_dim);
-    return {
-        expectation_matrix_batch(matrix, targets),
-        expectation_matrix_batch(squared_matrix, targets),
-    };
+    const std::vector<rocComplex> matrix_col_major = row_major_to_column_major(matrix, matrix_dim);
+    const std::vector<rocComplex> squared_matrix_col_major = row_major_to_column_major(squared_matrix, matrix_dim);
+    rocComplex* d_matrix = nullptr;
+    rocComplex* d_squared_matrix = nullptr;
+    check_hip(hipMalloc(&d_matrix, matrix_col_major.size() * sizeof(rocComplex)),
+              "batched expectation matrix moments allocation");
+
+    std::vector<rocComplex> raw_means(batch_size_, to_roc_complex(std::complex<double>{0.0, 0.0}));
+    std::vector<rocComplex> raw_seconds(batch_size_, to_roc_complex(std::complex<double>{0.0, 0.0}));
+    rocqStatus_t status = ROCQ_STATUS_SUCCESS;
+    try {
+        check_hip(hipMalloc(&d_squared_matrix, squared_matrix_col_major.size() * sizeof(rocComplex)),
+                  "batched expectation squared matrix moments allocation");
+        check_hip(hipMemcpy(d_matrix,
+                            matrix_col_major.data(),
+                            matrix_col_major.size() * sizeof(rocComplex),
+                            hipMemcpyHostToDevice),
+                  "batched expectation matrix moments upload");
+        check_hip(hipMemcpy(d_squared_matrix,
+                            squared_matrix_col_major.data(),
+                            squared_matrix_col_major.size() * sizeof(rocComplex),
+                            hipMemcpyHostToDevice),
+                  "batched expectation squared matrix moments upload");
+        status = rocsvGetExpectationMatrixMomentsBatch(sim_handle_,
+                                                       device_state_vector_,
+                                                       num_qubits_,
+                                                       targets.data(),
+                                                       static_cast<unsigned>(targets.size()),
+                                                       d_matrix,
+                                                       d_squared_matrix,
+                                                       matrix_dim,
+                                                       raw_means.data(),
+                                                       raw_seconds.data());
+    } catch (...) {
+        if (d_squared_matrix) {
+            hipFree(d_squared_matrix);
+        }
+        hipFree(d_matrix);
+        throw;
+    }
+    check_hip(hipFree(d_squared_matrix), "batched expectation squared matrix moments free");
+    check_hip(hipFree(d_matrix), "batched expectation matrix moments free");
+
+    if (status == ROCQ_STATUS_NOT_IMPLEMENTED) {
+        return {
+            expectation_matrix_batch(matrix, targets),
+            expectation_matrix_batch(squared_matrix, targets),
+        };
+    }
+    check_status(status, "batched matrix expectation moments");
+
+    std::vector<std::complex<double>> means(raw_means.size());
+    std::vector<std::complex<double>> seconds(raw_seconds.size());
+    for (std::size_t idx = 0; idx < raw_means.size(); ++idx) {
+        means[idx] = {static_cast<double>(raw_means[idx].x), static_cast<double>(raw_means[idx].y)};
+        seconds[idx] = {static_cast<double>(raw_seconds[idx].x), static_cast<double>(raw_seconds[idx].y)};
+    }
+    return {means, seconds};
 }
 
 std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::sparse_hamiltonian_moments(
