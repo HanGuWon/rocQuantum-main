@@ -214,11 +214,11 @@
                                        "rocQuantum-main/rocquantum/backends/iqm.py:5"
                                    ],
                       "notes":  "Prevents user-facing exposure of placeholder backends as stable features.",
-                      "status":  "Blocked",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
                       "commit_link":  "unknown",
                       "evidence_link":  "rocQuantum-main/rocquantum/core.py:21",
-                      "verification_path":  "Land backend-status policy changes in rocquantum/core.py; run python-tests job and provider contract tests with credentials."
+                      "verification_path":  "Run tests/test_provider_backend_contract.py plus the full Python test suite; provider credential lanes remain required for real non-skeleton backends."
                   },
                   {
                       "id":  "P1-STATEVEC-003",

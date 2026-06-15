@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from unittest import mock
 
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -13,6 +14,47 @@ if _PROJECT_ROOT not in sys.path:
 
 
 class TestUnsupportedProviderBackends(unittest.TestCase):
+    def test_list_backends_hides_skeleton_providers_by_default(self):
+        from rocquantum.core import list_backends
+
+        backends = list_backends()
+
+        self.assertIn("ionq", backends)
+        self.assertIn("rigetti", backends)
+        self.assertNotIn("iqm", backends)
+        self.assertNotIn("alice_bob", backends)
+        self.assertFalse(any(info["requires_experimental_opt_in"] for info in backends.values()))
+
+    def test_list_backends_can_include_skeleton_provider_metadata(self):
+        from rocquantum.core import list_backends
+
+        backends = list_backends(include_experimental=True)
+
+        self.assertEqual(backends["iqm"]["status"], "unsupported_stub")
+        self.assertTrue(backends["iqm"]["requires_experimental_opt_in"])
+        self.assertIn("rocquantum.backends.iqm.IQMBackend", backends["iqm"]["import_path"])
+
+    def test_set_target_blocks_skeleton_provider_by_default(self):
+        from rocquantum.core import set_target
+
+        with self.assertRaisesRegex(ValueError, "unsupported skeleton provider"):
+            set_target("iqm")
+
+    def test_set_target_allows_explicit_skeleton_provider_opt_in(self):
+        from rocquantum.backends.base import UnsupportedBackendError
+        from rocquantum.core import set_target
+
+        with self.assertRaises(UnsupportedBackendError):
+            set_target("iqm", allow_experimental=True)
+
+    def test_set_target_allows_environment_skeleton_provider_opt_in(self):
+        from rocquantum.backends.base import UnsupportedBackendError
+        from rocquantum.core import set_target
+
+        with mock.patch.dict(os.environ, {"ROCQ_ENABLE_EXPERIMENTAL_PROVIDERS": "1"}):
+            with self.assertRaises(UnsupportedBackendError):
+                set_target("iqm")
+
     def test_skeleton_provider_backends_fail_explicitly(self):
         from rocquantum.backends.alice_bob import AliceBobBackend
         from rocquantum.backends.base import UnsupportedBackendError
