@@ -830,6 +830,9 @@ rocqStatus_t rocsvProbabilitiesBatch(rocsvHandle_t handle,
 /**
  * @brief Applies a general matrix to target qubits, controlled by multiple control qubits.
  *
+ * Multi-controlled single-target 2x2 matrices use a native GPU fast path. Broader
+ * controlled dense matrices remain limited to explicit fallback/unsupported paths.
+ *
  * @param[in] handle The hipStateVec handle.
  * @param[in] d_state Pointer to the device state vector.
  * @param[in] numQubits Total number of qubits.

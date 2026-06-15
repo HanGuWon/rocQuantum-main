@@ -143,6 +143,26 @@ class TestStateVecFastPathContract(unittest.TestCase):
             ),
         )
 
+    def test_multi_controlled_single_target_matrix_has_native_fast_path(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("apply_multi_controlled_single_qubit_matrix_kernel", source)
+        self.assertIn("launch_multi_controlled_single_qubit_matrix", source)
+        self.assertIn("controlQubits.size() > 63", source)
+        controlled_block = source.split("rocqStatus_t rocsvApplyControlledMatrix", 1)[1].split(
+            "rocqStatus_t rocsvApplyMatrixAndMeasure", 1
+        )[0]
+        self.assertIn("numControls > 1 && numTargets == 1", controlled_block)
+        self.assertIn("return launch_multi_controlled_single_qubit_matrix", controlled_block)
+        self.assertLess(
+            controlled_block.find("numControls > 1 && numTargets == 1"),
+            controlled_block.find("if (!allow_host_matrix_fallback())"),
+            "Multi-control single-target matrices should try the native fast path before host fallback.",
+        )
+        self.assertIn("localize_distributed_qubits_for_operation(handle, touched", source)
+        self.assertIn("apply_multi_controlled_single_qubit_matrix_kernel", source)
+
     def test_nonlocal_distributed_generic_matrix_localizes_with_swaps(self):
         with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
             source = f.read()
