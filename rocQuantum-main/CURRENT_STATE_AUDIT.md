@@ -24,7 +24,7 @@ Runtime update note (2026-04-06):
 - Canonical mock state-vector fallback now performs CPU statevector semantics for named-gate contract tests, including phase, controlled phase/rotation, Toffoli, and CSWAP cases; this remains local correctness smoke coverage rather than native ROCm performance proof.
 - Canonical noise models now reject non-finite probabilities, invalid channel names, invalid `after_op` names, and non-integral or duplicate channel targets before density-matrix backend dispatch; direct Kraus backend calls share the stricter target normalization, and valid channel registration is quiet by default.
 - Canonical top-level `rocq` now exports the recorded phase-gate aliases (`tdg`/`tdag`, `p`/`phase`, `cp`/`cphase`) instead of requiring users to reach into `rocq.gates`.
-- Canonical `rocq.runtime_capabilities()` exposes the primary runtime entry points, supported backends, state-vector `enable_fusion` option, environment switches, legacy `python/rocq` compatibility note, and unsupported native-HIP-stream / multi-QPU / unified-compiler boundaries without requiring a ROCm device.
+- Canonical `rocq.runtime_capabilities()` exposes the primary runtime entry points, supported backends, backend-name validation, state-vector `enable_fusion` option, environment switches, legacy `python/rocq` compatibility note, and unsupported native-HIP-stream / multi-QPU / unified-compiler boundaries without requiring a ROCm device.
 - Packaging has moved to a CMake-first `scikit-build-core` path.
 
 Audit refresh note (2026-06-10):

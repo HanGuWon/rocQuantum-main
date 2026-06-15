@@ -100,6 +100,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "canonical backend-name validation",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "positive-integer direct backend size validation",
             capabilities["supported_features"],
         )
@@ -520,6 +524,18 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                             StateVectorBackend(num_qubits)
 
         self.assertEqual(get_backend("stabilizer", np.int64(2)).num_qubits, 2)
+
+    def test_backend_factory_validates_backend_name_before_dispatch(self):
+        from rocq.backends import get_backend
+
+        invalid_backend_names = (None, True, ["state_vector"], b"state_vector")
+        for backend_name in invalid_backend_names:
+            with self.subTest(backend_name=backend_name):
+                with self.assertRaisesRegex(ValueError, "backend_name must be one of"):
+                    get_backend(backend_name, 1)
+
+        with self.assertRaisesRegex(ValueError, "Unsupported backend 'gpu'"):
+            get_backend("gpu", 1)
 
     def test_get_state_alias_uses_execute_backend_contract(self):
         @kernel

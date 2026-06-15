@@ -150,6 +150,14 @@ def _validate_optional_boolean_option(value, name: str) -> Optional[bool]:
     return value
 
 
+def _validate_backend_name(backend_name, supported: Dict[str, type]) -> str:
+    if not isinstance(backend_name, str):
+        raise ValueError(f"backend_name must be one of: {list(supported.keys())}.")
+    if backend_name not in supported:
+        raise ValueError(f"Unsupported backend '{backend_name}'. Supported backends are: {list(supported.keys())}")
+    return backend_name
+
+
 def _validate_gate_angle(op_name: str, angle) -> float:
     if isinstance(angle, bool) or not isinstance(angle, Real):
         raise ValueError(f"Gate '{op_name}' angle must be a finite real number.")
@@ -1895,8 +1903,7 @@ def get_backend(backend_name: str, num_qubits: int, *, enable_fusion: Optional[b
         "tableau": StabilizerBackend,
         "clifford": StabilizerBackend,
     }
-    if backend_name not in supported:
-        raise ValueError(f"Unsupported backend '{backend_name}'. Supported backends are: {list(supported.keys())}")
+    backend_name = _validate_backend_name(backend_name, supported)
     enable_fusion = _validate_optional_boolean_option(enable_fusion, "enable_fusion")
     if backend_name == "state_vector":
         return StateVectorBackend(num_qubits, enable_fusion=enable_fusion)
