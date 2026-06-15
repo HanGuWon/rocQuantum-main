@@ -372,6 +372,24 @@ class TestQaoaHelpers(unittest.TestCase):
             ],
         )
 
+    def test_maxcut_qaoa_validates_problem_inputs(self):
+        from rocquantum.solvers.qaoa import make_maxcut_qaoa_kernel, maxcut_cost_operator, solve_maxcut_qaoa
+
+        with self.assertRaisesRegex(ValueError, "num_qubits must be a positive integer"):
+            make_maxcut_qaoa_kernel(2.5, [(0, 1)])
+        with self.assertRaisesRegex(ValueError, "layers must be a positive integer"):
+            make_maxcut_qaoa_kernel(2, [(0, 1)], layers=1.5)
+        with self.assertRaisesRegex(ValueError, "integer qubit index"):
+            maxcut_cost_operator(2, [(0.5, 1)])
+        with self.assertRaisesRegex(ValueError, "integer qubit index"):
+            maxcut_cost_operator(2, [(False, 1)])
+        with self.assertRaisesRegex(ValueError, "finite"):
+            maxcut_cost_operator(2, [(0, 1, np.nan)])
+        with self.assertRaisesRegex(ValueError, "distinct valid"):
+            maxcut_cost_operator(2, [(1, 1)])
+        with self.assertRaisesRegex(ValueError, "distinct valid"):
+            solve_maxcut_qaoa(2, [(0, 2)])
+
     def test_solve_maxcut_qaoa_wraps_vqe_solver(self):
         from rocq.operator import iter_pauli_terms
         from rocquantum.solvers import solve_maxcut_qaoa

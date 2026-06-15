@@ -15,21 +15,51 @@ except ImportError:  # pragma: no cover - import contract is tested without nati
 WeightedEdge = Tuple[int, int, float]
 
 
+def _validate_positive_integer(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise ValueError(f"{name} must be a positive integer.")
+    value = int(value)
+    if value <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return value
+
+
+def _validate_qubit_index(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise ValueError(f"QAOA edge {name} endpoint must be an integer qubit index.")
+    return int(value)
+
+
+def _validate_finite_weight(value) -> float:
+    weight = float(value)
+    if not np.isfinite(weight):
+        raise ValueError("QAOA edge weights must be finite.")
+    return weight
+
+
 def _normalize_edges(edges: Iterable[Sequence[float]]) -> list[WeightedEdge]:
     normalized: list[WeightedEdge] = []
     for edge in edges:
-        if len(edge) == 2:
-            u, v = edge
+        edge_tuple = tuple(edge)
+        if len(edge_tuple) == 2:
+            u, v = edge_tuple
             weight = 1.0
-        elif len(edge) == 3:
-            u, v, weight = edge
+        elif len(edge_tuple) == 3:
+            u, v, weight = edge_tuple
         else:
             raise ValueError("QAOA edges must be (u, v) or (u, v, weight).")
-        normalized.append((int(u), int(v), float(weight)))
+        normalized.append(
+            (
+                _validate_qubit_index(u, "source"),
+                _validate_qubit_index(v, "target"),
+                _validate_finite_weight(weight),
+            )
+        )
     return normalized
 
 
 def _canonical_maxcut_edges(num_qubits: int, edges: Iterable[Sequence[float]]) -> list[WeightedEdge]:
+    num_qubits = _validate_positive_integer(num_qubits, "num_qubits")
     combined: dict[tuple[int, int], float] = {}
     for u, v, weight in _normalize_edges(edges):
         if u < 0 or v < 0 or u >= num_qubits or v >= num_qubits or u == v:
@@ -52,10 +82,8 @@ def make_maxcut_qaoa_kernel(num_qubits: int, edges: Iterable[Sequence[float]], l
     """
     if rocq is None:
         raise RuntimeError("Canonical 'rocq' package is required to build QAOA kernels.")
-    if num_qubits <= 0:
-        raise ValueError("num_qubits must be positive.")
-    if layers <= 0:
-        raise ValueError("layers must be positive.")
+    num_qubits = _validate_positive_integer(num_qubits, "num_qubits")
+    layers = _validate_positive_integer(layers, "layers")
 
     normalized_edges = _canonical_maxcut_edges(num_qubits, edges)
 
@@ -111,10 +139,8 @@ def solve_maxcut_qaoa(
     backend: str = "state_vector",
 ):
     """Run the experimental MaxCut QAOA helper through ``VQE_Solver``."""
-    if num_qubits <= 0:
-        raise ValueError("num_qubits must be positive.")
-    if layers <= 0:
-        raise ValueError("layers must be positive.")
+    num_qubits = _validate_positive_integer(num_qubits, "num_qubits")
+    layers = _validate_positive_integer(layers, "layers")
 
     edge_list = list(edges)
     normalized_edges = _canonical_maxcut_edges(num_qubits, edge_list)

@@ -17,7 +17,10 @@ Current supported subset:
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.
 - `maxcut_cost_operator()` builds the weighted MaxCut cost operator as
   `0.5 * w * (I - Zi Zj)` for each edge, aggregating duplicate or reversed
-  undirected edges before emitting ansatz cost phases or cost terms.
+  undirected edges before emitting ansatz cost phases or cost terms. MaxCut
+  helpers reject non-integer endpoints, non-positive `num_qubits` / `layers`,
+  self-loops, out-of-range endpoints, and non-finite weights instead of
+  silently truncating or propagating invalid problem data.
 - `solve_maxcut_qaoa()` wires that ansatz into `VQE_Solver` by minimizing the
   negated cost operator, so the reported `optimal_cut_value` maximizes the
   weighted MaxCut objective while preserving the positive `cost_operator` for
