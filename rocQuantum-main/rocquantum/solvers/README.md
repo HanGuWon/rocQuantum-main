@@ -20,6 +20,7 @@ Current supported subset:
   string parameters are rejected instead of being coerced to numeric values.
   Observed energies and optimizer result energies/parameters must also be finite
   real values; finite-difference steps must be positive finite real values.
+  Custom optimizer objects must expose a callable `minimize()` method.
   `SciPyOptimizer` options must be a string-keyed mapping and are copied at
   construction so later caller-side mutation cannot silently change solver
   configuration.

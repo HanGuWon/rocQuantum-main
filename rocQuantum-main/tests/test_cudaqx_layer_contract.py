@@ -31,6 +31,10 @@ class TestVqeSolverContract(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
+            "finite-real parameter, energy, optimizer-result, optimizer-interface, and optimizer-option validation",
+            capability_data["supported_features"],
+        )
+        self.assertIn(
             "GPU-resident native adjoint differentiation",
             capability_data["unsupported_features"],
         )
@@ -361,6 +365,19 @@ class TestVqeSolverContract(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "option keys must be strings"):
             SciPyOptimizer(options={1: "COBYLA"})
+
+    def test_vqe_solver_rejects_invalid_optimizer_object(self):
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        invalid_optimizers = (
+            object(),
+            types.SimpleNamespace(minimize=None),
+            "COBYLA",
+        )
+        for optimizer in invalid_optimizers:
+            with self.subTest(optimizer=optimizer):
+                with self.assertRaisesRegex(ValueError, "callable minimize"):
+                    VQE_Solver(optimizer=optimizer)
 
     def test_solve_is_quiet_by_default_with_verbose_opt_in(self):
         from rocq.operator import PauliOperator

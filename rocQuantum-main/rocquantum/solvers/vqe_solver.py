@@ -235,7 +235,13 @@ class VQE_Solver:
                 adheres to the Optimizer interface. If None, a default
                 `SciPyOptimizer` is used.
         """
-        self.optimizer = optimizer if optimizer is not None else SciPyOptimizer()
+        if optimizer is None:
+            self.optimizer = SciPyOptimizer()
+        else:
+            minimize_fn = getattr(optimizer, "minimize", None)
+            if not callable(minimize_fn):
+                raise ValueError("optimizer must define a callable minimize method.")
+            self.optimizer = optimizer
         self.backend = backend
         self.verbose = bool(verbose)
 
