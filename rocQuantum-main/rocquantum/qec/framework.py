@@ -30,6 +30,13 @@ except ImportError:
 AnsatzKernel = Callable[..., None]
 
 _REPETITION_SYNDROME_KEYS = ("00", "10", "11", "01")
+_FALLBACK_SUPPORTED_BACKENDS = (
+    "state_vector",
+    "density_matrix",
+    "stabilizer",
+    "tableau",
+    "clifford",
+)
 
 
 def _validate_binary_count_key(bitstring: str, label: str) -> str:
@@ -78,6 +85,20 @@ def _validate_optional_measurement_error_probability(
     if not math.isfinite(probability) or probability < 0.0 or probability >= 0.5:
         raise ValueError(message)
     return probability
+
+
+def _supported_backend_names() -> Tuple[str, ...]:
+    if rocq is None or not hasattr(rocq, "runtime_capabilities"):
+        return _FALLBACK_SUPPORTED_BACKENDS
+    capabilities = rocq.runtime_capabilities()
+    return tuple(capabilities.get("supported_backends", _FALLBACK_SUPPORTED_BACKENDS))
+
+
+def _validate_backend_name(backend: str) -> str:
+    supported = _supported_backend_names()
+    if not isinstance(backend, str) or backend not in supported:
+        raise ValueError(f"backend must be one of: {list(supported)}.")
+    return backend
 
 
 class QuantumErrorCode(ABC):
@@ -158,7 +179,7 @@ class QEC_Experiment:
                 "Canonical 'rocq' package is not available. Install the Python package "
                 "before running QEC experiments."
             )
-        self.backend = backend
+        self.backend = _validate_backend_name(backend)
         self.verbose = bool(verbose)
 
     def _log(self, message: str) -> None:
@@ -594,6 +615,7 @@ def run_repetition_code_single_round(
             "Canonical 'rocq' package is not available. Install the Python package "
             "before running QEC experiments."
         )
+    backend = _validate_backend_name(backend)
     shots = _validate_positive_integer(shots, "shots")
     measurement_error_probability = _validate_optional_measurement_error_probability(
         measurement_error_probability
@@ -653,6 +675,7 @@ def run_repetition_code_rounds(
     measurement_error_probability: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Run repeated experimental 3-qubit repetition-code syndrome rounds."""
+    backend = _validate_backend_name(backend)
     rounds = _validate_repetition_rounds(rounds)
     shots = _validate_positive_integer(shots, "shots")
     measurement_error_probability = _validate_optional_measurement_error_probability(

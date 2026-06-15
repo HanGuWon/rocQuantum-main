@@ -792,7 +792,7 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "positive-integer shot/round/num_qubits, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
+            "positive-integer shot/round/num_qubits, backend, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -912,6 +912,15 @@ class TestQecHelpers(unittest.TestCase):
         self.assertEqual(_validate_positive_integer(np.int64(2), "shots"), 2)
 
         experiment = QEC_Experiment()
+        for backend in ("state_vector", "density_matrix", "stabilizer", "tableau", "clifford"):
+            with self.subTest(backend=backend):
+                self.assertEqual(QEC_Experiment(backend=backend).backend, backend)
+        with self.assertRaisesRegex(ValueError, "backend must be one of"):
+            QEC_Experiment(backend="gpu")
+        with self.assertRaisesRegex(ValueError, "backend must be one of"):
+            run_repetition_code_single_round(backend=True)
+        with self.assertRaisesRegex(ValueError, "backend must be one of"):
+            run_repetition_code_rounds(backend="")
         with self.assertRaisesRegex(ValueError, "shots must be a positive integer"):
             experiment.run_single_round(None, None, None, 0, [], shots=1.5)
         with self.assertRaisesRegex(ValueError, "num_qubits must be a positive integer"):
