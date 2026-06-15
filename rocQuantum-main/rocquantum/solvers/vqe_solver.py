@@ -148,6 +148,14 @@ def _optimizer_result_attribute(result, attribute: str):
         raise ValueError(f"optimizer result must provide '{attribute}'.") from exc
 
 
+def _validate_hamiltonian(hamiltonian):
+    if QuantumOperator is None:
+        return hamiltonian
+    if not isinstance(hamiltonian, QuantumOperator):
+        raise ValueError("hamiltonian must be a rocq.operator.QuantumOperator.")
+    return hamiltonian
+
+
 def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
     params = _parameter_vector(params)
     underlying = getattr(ansatz_kernel, "_func", ansatz_kernel)
@@ -330,6 +338,7 @@ class VQE_Solver:
                 "Canonical 'rocq' package is not available. Install the Python package "
                 "and retry."
             )
+        hamiltonian = _validate_hamiltonian(hamiltonian)
         energy = observe(
             ansatz_kernel,
             hamiltonian,
@@ -391,6 +400,7 @@ class VQE_Solver:
         else:
             raise ValueError("method must be 'parameter_shift' or 'finite_diff'.")
 
+        hamiltonian = _validate_hamiltonian(hamiltonian)
         for idx in range(params.size):
             plus = params.copy()
             minus = params.copy()
@@ -429,6 +439,7 @@ class VQE_Solver:
         self._intermediate_results = []
         initial_parameter_vector = _parameter_vector(initial_params, label="initial_params")
         expected_parameter_count = initial_parameter_vector.size
+        hamiltonian = _validate_hamiltonian(hamiltonian)
 
         result = self.optimizer.minimize(
             fun=self._objective_function,

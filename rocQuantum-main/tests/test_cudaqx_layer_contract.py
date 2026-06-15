@@ -31,7 +31,7 @@ class TestVqeSolverContract(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "finite-real parameter, energy, backend, gradient-method, optimizer-result, optimizer-interface, and optimizer-option validation",
+            "QuantumOperator objective, finite-real parameter, energy, backend, gradient-method, optimizer-result, optimizer-interface, and optimizer-option validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -306,6 +306,55 @@ class TestVqeSolverContract(unittest.TestCase):
         with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
             with self.assertRaisesRegex(ValueError, "num_qubits"):
                 solver._objective_function(np.array([0.25]), hamiltonian, ansatz, 0)
+        patched_observe.assert_not_called()
+
+    def test_vqe_rejects_non_operator_hamiltonian_before_backend_or_optimizer_use(self):
+        from rocquantum.solvers.vqe_solver import Optimizer, VQE_Solver
+
+        class RecordingOptimizer(Optimizer):
+            def __init__(self):
+                self.called = False
+
+            def minimize(self, fun, x0, args=()):
+                self.called = True
+                return types.SimpleNamespace(fun=-0.25, x=np.asarray(x0, dtype=float))
+
+        def ansatz(theta):
+            return None
+
+        solver = VQE_Solver()
+        invalid_hamiltonians = ("Z0", None, object(), 1.0)
+        for hamiltonian in invalid_hamiltonians:
+            with self.subTest(hamiltonian=hamiltonian):
+                with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+                    with self.assertRaisesRegex(ValueError, "rocq.operator.QuantumOperator"):
+                        solver.evaluate_energy(
+                            hamiltonian,
+                            ansatz,
+                            1,
+                            parameters=[0.25],
+                        )
+                patched_observe.assert_not_called()
+
+        optimizer = RecordingOptimizer()
+        with self.assertRaisesRegex(ValueError, "rocq.operator.QuantumOperator"):
+            VQE_Solver(optimizer=optimizer).solve(
+                "Z0",
+                ansatz,
+                1,
+                initial_params=[0.25],
+            )
+        self.assertFalse(optimizer.called)
+
+        with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+            with self.assertRaisesRegex(ValueError, "rocq.operator.QuantumOperator"):
+                solver.estimate_gradient(
+                    np.array([0.25]),
+                    "Z0",
+                    ansatz,
+                    1,
+                    method="parameter_shift",
+                )
         patched_observe.assert_not_called()
 
     def test_vqe_rejects_non_real_or_nonfinite_energy_results(self):

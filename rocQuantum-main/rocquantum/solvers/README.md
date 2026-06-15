@@ -9,7 +9,7 @@ Current supported subset:
   `capabilities()` alias expose the experimental supported/unsupported solver
   contract, entry points, optional SciPy dependency, docs path, and ROCm
   validation limit for CUDA-QX comparisons.
-- `VQE_Solver.evaluate_energy()` and `VQE_Solver.solve()` evaluate canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, scaled/divided composite sums, and full-state CSR sparse observables on the state-vector backend or density-matrix correctness fallback.
+- `VQE_Solver.evaluate_energy()` and `VQE_Solver.solve()` evaluate canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, scaled/divided composite sums, and full-state CSR sparse observables on the state-vector backend or density-matrix correctness fallback. Hamiltonians must be canonical `QuantumOperator` instances and are rejected before backend or optimizer use.
 - `VQE_Solver.solve()` is quiet by default for library and batch use; pass
   `verbose=True` to print start/finish progress messages.
 - `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`;
