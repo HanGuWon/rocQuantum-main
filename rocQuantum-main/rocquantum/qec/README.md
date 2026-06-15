@@ -10,7 +10,8 @@ Current supported subset:
   points, code-family scope, measurement-error model, docs path, and ROCm
   validation limit for CUDA-QX comparisons.
 - 3 data qubits plus 2 ancilla qubits; concrete repetition-code circuit
-  generation requires a positive integer `num_qubits >= 5`.
+  generation requires a positive integer `num_qubits >= 5` and an
+  `initial_state_kernel` that is callable or `None`.
 - One bit-flip repetition-code syndrome round plus sequential repeated-round
   aggregation over the same 3-qubit code.
 - End-of-circuit ancilla sampling through `rocq.sample()`.

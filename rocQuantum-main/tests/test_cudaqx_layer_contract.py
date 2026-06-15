@@ -792,6 +792,10 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
+            "positive-integer shot/round/num_qubits, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
+            capability_data["supported_features"],
+        )
+        self.assertIn(
             "mid-circuit measurement and classical feedback",
             capability_data["unsupported_features"],
         )
@@ -875,6 +879,10 @@ class TestQecHelpers(unittest.TestCase):
                     code.generate_stabilizer_circuits(None, num_qubits)
         with self.assertRaisesRegex(ValueError, "at least 5 qubits"):
             code.generate_stabilizer_circuits(None, 4)
+        for initial_state_kernel in ("prepare", object(), True):
+            with self.subTest(initial_state_kernel=initial_state_kernel):
+                with self.assertRaisesRegex(ValueError, "initial_state_kernel must be callable"):
+                    code.generate_stabilizer_circuits(initial_state_kernel, 5)
 
     def test_qec_experiment_validates_ancilla_sample_counts(self):
         from rocquantum.qec.framework import _most_likely_single_bit

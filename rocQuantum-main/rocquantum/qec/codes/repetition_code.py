@@ -33,6 +33,8 @@ class ThreeQubitRepetitionCode(QuantumErrorCode):
         num_qubits = _validate_positive_integer(num_qubits, "num_qubits")
         if num_qubits < 5:
             raise ValueError("ThreeQubitRepetitionCode requires at least 5 qubits.")
+        if initial_state_kernel is not None and not callable(initial_state_kernel):
+            raise ValueError("initial_state_kernel must be callable or None.")
 
         def apply_initial_state(q):
             if initial_state_kernel is not None:
