@@ -20,7 +20,8 @@ Current supported subset:
   undirected edges before emitting ansatz cost phases or cost terms. MaxCut
   helpers reject non-integer endpoints, non-positive `num_qubits` / `layers`,
   self-loops, out-of-range endpoints, and non-finite weights instead of
-  silently truncating or propagating invalid problem data.
+  silently truncating or propagating invalid problem data. QAOA ansatz runtime
+  parameters and `solve_maxcut_qaoa()` initial parameters must also be finite.
 - `solve_maxcut_qaoa()` wires that ansatz into `VQE_Solver` by minimizing the
   negated cost operator, so the reported `optimal_cut_value` maximizes the
   weighted MaxCut objective while preserving the positive `cost_operator` for

@@ -389,6 +389,12 @@ class TestQaoaHelpers(unittest.TestCase):
             maxcut_cost_operator(2, [(1, 1)])
         with self.assertRaisesRegex(ValueError, "distinct valid"):
             solve_maxcut_qaoa(2, [(0, 2)])
+        with self.assertRaisesRegex(ValueError, "initial_params must be finite"):
+            solve_maxcut_qaoa(2, [(0, 1)], initial_params=[np.nan, 0.1])
+
+        kernel = make_maxcut_qaoa_kernel(2, [(0, 1)], layers=1)
+        with self.assertRaisesRegex(ValueError, "QAOA must be finite"):
+            kernel.build(np.array([np.inf, 0.1]))
 
     def test_solve_maxcut_qaoa_wraps_vqe_solver(self):
         from rocq.operator import iter_pauli_terms

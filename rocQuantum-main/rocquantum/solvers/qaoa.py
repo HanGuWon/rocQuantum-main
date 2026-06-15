@@ -37,6 +37,24 @@ def _validate_finite_weight(value) -> float:
     return weight
 
 
+def _validate_parameter_vector(
+    parameters,
+    expected_params: int,
+    layers: int,
+    label: str = "QAOA",
+) -> np.ndarray:
+    params = np.asarray(parameters, dtype=float).reshape(-1)
+    if params.size != expected_params:
+        if label == "initial_params":
+            raise ValueError(
+                f"initial_params must contain {expected_params} values for {layers} QAOA layer(s)."
+            )
+        raise ValueError(f"QAOA expects {expected_params} parameters for {layers} layer(s).")
+    if not np.all(np.isfinite(params)):
+        raise ValueError(f"{label} must be finite.")
+    return params
+
+
 def _normalize_edges(edges: Iterable[Sequence[float]]) -> list[WeightedEdge]:
     normalized: list[WeightedEdge] = []
     for edge in edges:
@@ -89,9 +107,7 @@ def make_maxcut_qaoa_kernel(num_qubits: int, edges: Iterable[Sequence[float]], l
 
     @rocq.kernel
     def qaoa_ansatz(parameters):
-        params = np.asarray(parameters, dtype=float)
-        if params.size != 2 * layers:
-            raise ValueError(f"QAOA expects {2 * layers} parameters for {layers} layer(s).")
+        params = _validate_parameter_vector(parameters, 2 * layers, layers)
 
         q = rocq.qvec(num_qubits)
         for qubit in range(num_qubits):
@@ -148,10 +164,11 @@ def solve_maxcut_qaoa(
     if initial_params is None:
         params = np.zeros(expected_params, dtype=float)
     else:
-        params = np.asarray(initial_params, dtype=float).reshape(-1)
-    if params.size != expected_params:
-        raise ValueError(
-            f"initial_params must contain {expected_params} values for {layers} QAOA layer(s)."
+        params = _validate_parameter_vector(
+            initial_params,
+            expected_params,
+            layers,
+            label="initial_params",
         )
 
     ansatz = make_maxcut_qaoa_kernel(num_qubits, normalized_edges, layers=layers)
