@@ -34,7 +34,7 @@ from rocq.operator import (
     SumOperator,
     get_expectation_value,
 )
-from rocq.kernel import QuantumKernel, execute, kernel, observe, sample
+from rocq.kernel import QuantumKernel, compile_and_execute, execute, kernel, observe, sample
 from rocq.qvec import qvec
 from rocq.noise import NoiseModel
 from rocq.gates import (

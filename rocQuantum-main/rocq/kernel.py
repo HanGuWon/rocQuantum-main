@@ -12,9 +12,9 @@ except ImportError:
     rocquantum_bind = None
 
 _COMPILER_BINDING_MISSING_MESSAGE = (
-    "rocquantum_bind is required to emit QIR. Build rocQuantum with "
+    "rocquantum_bind is required for compiler execution. Build rocQuantum with "
     "ROCQUANTUM_BUILD_BINDINGS=ON on a ROCm host, then retry. The Python "
-    "QIR path is partial and covers only the canonical core-gate MLIR subset."
+    "compiler path is partial and covers only the canonical core-gate MLIR subset."
 )
 _COMPILER_SUPPORTED_MLIR_SUBSET = (
     "Supported canonical MLIR gates: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, "
@@ -225,6 +225,26 @@ class QuantumKernel:
             )
         return qir
 
+    def compile_and_execute(
+        self,
+        *args,
+        compiler_backend: str = "hip_statevec",
+        strict: bool = True,
+        **kwargs,
+    ):
+        """Compile the supported MLIR subset and execute it through the native compiler binding."""
+        if rocquantum_bind is None:
+            raise RuntimeError(_COMPILER_BINDING_MISSING_MESSAGE)
+        mlir_code = self.mlir(*args, **kwargs)
+        compiler = rocquantum_bind.MLIRCompiler(self.num_qubits, compiler_backend)
+        try:
+            return compiler.compile_and_execute(mlir_code, {"strict": bool(strict)})
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "compile_and_execute() failed through rocquantum_bind.MLIRCompiler. "
+                f"{_COMPILER_SUPPORTED_MLIR_SUBSET} Original error: {exc}"
+            ) from exc
+
     def execute(self, *args, backend: str = "state_vector", noise_model=None, **kwargs):
         ctx, backend_impl = self._prepare_backend(backend, *args, **kwargs)
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
@@ -254,6 +274,23 @@ def execute(kernel_obj: QuantumKernel, *args, backend: str = "state_vector", noi
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("execute() expects a QuantumKernel instance.")
     return kernel_obj.execute(*args, backend=backend, noise_model=noise_model, **kwargs)
+
+
+def compile_and_execute(
+    kernel_obj: QuantumKernel,
+    *args,
+    compiler_backend: str = "hip_statevec",
+    strict: bool = True,
+    **kwargs,
+):
+    if not isinstance(kernel_obj, QuantumKernel):
+        raise TypeError("compile_and_execute() expects a QuantumKernel instance.")
+    return kernel_obj.compile_and_execute(
+        *args,
+        compiler_backend=compiler_backend,
+        strict=strict,
+        **kwargs,
+    )
 
 
 def sample(kernel_obj: QuantumKernel, shots: int, *args, backend: str = "state_vector", qubits=None, noise_model=None, **kwargs):

@@ -48,6 +48,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
     def test_observe_and_sample_exports_exist(self):
         self.assertTrue(callable(rocq.observe))
         self.assertTrue(callable(rocq.sample))
+        self.assertTrue(callable(rocq.compile_and_execute))
 
     def test_get_expectation_value_delegates_to_observe(self):
         @kernel
@@ -138,6 +139,54 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         with mock.patch.object(rocq_kernel_module, "rocquantum_bind", fake_binding):
             with self.assertRaisesRegex(RuntimeError, "Supported canonical MLIR gates"):
                 prep_state.qir()
+
+    def test_compile_and_execute_uses_native_compiler_binding(self):
+        @kernel
+        def bell():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+            rocq.cnot(q[0], q[1])
+
+        calls = []
+
+        class _FakeCompiler:
+            def __init__(self, num_qubits, backend):
+                calls.append(("init", num_qubits, backend))
+
+            def compile_and_execute(self, mlir, options):
+                calls.append(("compile_and_execute", mlir, dict(options)))
+                return [1.0, 0.0, 0.0, 0.0]
+
+        fake_binding = mock.Mock()
+        fake_binding.MLIRCompiler = _FakeCompiler
+
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", fake_binding):
+            result = rocq.compile_and_execute(bell, strict=False)
+
+        self.assertEqual(result, [1.0, 0.0, 0.0, 0.0])
+        self.assertEqual(calls[0], ("init", 2, "hip_statevec"))
+        self.assertEqual(calls[1][2], {"strict": False})
+        self.assertIn('"quantum.cnot"', calls[1][1])
+
+    def test_compile_and_execute_augments_compiler_failures(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        class _FakeCompiler:
+            def __init__(self, num_qubits, backend):
+                pass
+
+            def compile_and_execute(self, mlir, options):
+                raise RuntimeError("backend refused MLIR")
+
+        fake_binding = mock.Mock()
+        fake_binding.MLIRCompiler = _FakeCompiler
+
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", fake_binding):
+            with self.assertRaisesRegex(RuntimeError, "Supported canonical MLIR gates"):
+                rocq.compile_and_execute(prep_state)
 
     def test_mock_statevector_backend_evaluates_hermitian_operator(self):
         from rocq.backends import StateVectorBackend

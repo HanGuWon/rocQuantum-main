@@ -85,7 +85,7 @@ Use those files as the authoritative capability summary for the current codebase
 
 ## Important Limitations
 
-- `rocqCompiler::MLIRCompiler::compile_and_execute()` executes only the current MVP subset: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP. Unsupported compiler ops raise diagnostics.
+- `rocqCompiler::MLIRCompiler::compile_and_execute()` executes only the current MVP subset: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP. The canonical Python API exposes this MVP through `rocq.compile_and_execute()` / `QuantumKernel.compile_and_execute()`, and unsupported compiler ops raise diagnostics.
 - Canonical `rocq.QuantumKernel.qir()` requires `rocquantum_bind`; if the binding is missing or `emit_qir()` returns a compiler error sentinel, the Python API raises an actionable `RuntimeError` instead of returning an `"Error:"` string as if it were QIR.
 - Legacy `python/rocq.build()` emits conceptual MLIR for inspection, but simulator-backed execution replays the Python circuit API rather than calling `MLIRCompiler.compile_and_execute()`; `QuantumProgram.execution_mode`, `compiler_execution_supported`, and `execution_notes` expose that contract.
 - `multi_gpu=True` should be treated as experimental partial support, not full distributed execution; legacy `Circuit(..., multi_gpu=True)` emits an `ExperimentalMultiGpuWarning` and stores the same note on `Circuit.execution_notes`.

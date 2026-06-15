@@ -2,7 +2,7 @@
 
 from .noise import NoiseModel
 from . import spin
-from .kernel import QuantumKernel, execute, kernel, observe, sample
+from .kernel import QuantumKernel, compile_and_execute, execute, kernel, observe, sample
 from .operator import (
     HermitianOperator,
     PauliOperator,
@@ -47,6 +47,7 @@ __all__ = [
     "SparseHamiltonianOperator",
     "SumOperator",
     "kernel",
+    "compile_and_execute",
     "execute",
     "sample",
     "observe",

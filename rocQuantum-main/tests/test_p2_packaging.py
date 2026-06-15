@@ -62,8 +62,9 @@ class TestLegacyShim(unittest.TestCase):
         self.assertIsNotNone(PauliOperator)
 
     def test_exports_kernel(self):
-        from rocq.legacy import kernel, execute
+        from rocq.legacy import compile_and_execute, execute, kernel
         self.assertIsNotNone(kernel)
+        self.assertIsNotNone(compile_and_execute)
 
 
 class TestVqeImports(unittest.TestCase):
