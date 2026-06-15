@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from numbers import Number
+from numbers import Integral, Number
 from typing import TYPE_CHECKING, Iterable, List, Sequence, Tuple
 
 if TYPE_CHECKING:
@@ -10,6 +10,24 @@ if TYPE_CHECKING:
 
 
 _PAULI_TOKEN_RE = re.compile(r"([IXYZixyz])(\d+)")
+
+
+def _validate_positive_integer(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a positive integer.")
+    index = int(value)
+    if index <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return index
+
+
+def _validate_nonnegative_integer(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a non-negative integer.")
+    index = int(value)
+    if index < 0:
+        raise ValueError(f"{name} must be non-negative.")
+    return index
 
 
 class QuantumOperator(ABC):
@@ -105,7 +123,11 @@ class HermitianOperator(QuantumOperator):
     def __init__(self, matrix, coefficient: Number = 1.0, targets=None):
         super().__init__(coefficient)
         self.matrix = matrix
-        self.targets = None if targets is None else [int(target) for target in targets]
+        self.targets = (
+            None
+            if targets is None
+            else [_validate_nonnegative_integer(target, "HermitianOperator target") for target in targets]
+        )
 
     def to_string(self) -> str:
         return f"{self.coefficient} * Hermitian(matrix)"
@@ -121,7 +143,10 @@ class SparseHamiltonianOperator(QuantumOperator):
         self.indptr = indptr
         if len(shape) != 2:
             raise ValueError("SparseHamiltonianOperator shape must have two dimensions.")
-        self.shape = (int(shape[0]), int(shape[1]))
+        self.shape = (
+            _validate_positive_integer(shape[0], "SparseHamiltonianOperator shape dimension"),
+            _validate_positive_integer(shape[1], "SparseHamiltonianOperator shape dimension"),
+        )
 
     def to_string(self) -> str:
         return f"{self.coefficient} * SparseHamiltonian(CSR, shape={self.shape})"

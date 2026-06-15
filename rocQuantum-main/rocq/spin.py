@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from .operator import PauliOperator
+from .operator import PauliOperator, _validate_nonnegative_integer
 
 
 def _target_index(target: int) -> int:
-    index = int(target)
-    if index < 0:
-        raise ValueError("Spin-operator target must be non-negative.")
-    return index
+    return _validate_nonnegative_integer(target, "Spin-operator target")
 
 
 def i(target: int | None = None) -> PauliOperator:

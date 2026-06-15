@@ -10,6 +10,7 @@ Runtime update note (2026-04-06):
 - Canonical `qvec` allocation now rejects bool, non-integral, and non-positive register sizes while accepting integral NumPy scalars through explicit normalization.
 - Canonical sampling now rejects non-positive or non-integral shots and invalid selected-qubit lists before native backend dispatch; direct canonical backends share the same positive-integer shot and qubit-list validation.
 - Canonical kernel recording now rejects non-integer or out-of-range gate targets and non-finite gate parameters before native backend dispatch.
+- Canonical spin factories, dense-observable targets, and sparse-observable shapes now reject bool/non-integral inputs instead of truncating them through Python `int()`.
 - Canonical top-level `rocq` now exports the recorded phase-gate aliases (`tdg`/`tdag`, `p`/`phase`, `cp`/`cphase`) instead of requiring users to reach into `rocq.gates`.
 - Packaging has moved to a CMake-first `scikit-build-core` path.
 

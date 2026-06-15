@@ -109,6 +109,39 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(len(register), 2)
         self.assertEqual(register.qubits, [0, 1])
 
+    def test_spin_factories_require_nonnegative_integer_targets(self):
+        for factory in (rocq.spin.i, rocq.spin.x, rocq.spin.y, rocq.spin.z):
+            for target in (-1, 0.5, True, "0"):
+                with self.subTest(factory=factory.__name__, target=target):
+                    with self.assertRaisesRegex(ValueError, "target"):
+                        factory(target)
+
+        self.assertEqual(rocq.spin.x(np.int64(2)).pauli_string, "X2")
+        self.assertEqual(rocq.spin.i().pauli_string, "I")
+
+    def test_observable_targets_and_sparse_shape_require_integer_inputs(self):
+        matrix = np.eye(2)
+        for targets in ([-1], [0.5], [True], ["0"]):
+            with self.subTest(targets=targets):
+                with self.assertRaisesRegex(ValueError, "HermitianOperator target"):
+                    HermitianOperator(matrix, targets=targets)
+
+        operator = HermitianOperator(matrix, targets=[np.int64(0)])
+        self.assertEqual(operator.targets, [0])
+
+        data = np.array([1.0 + 0.0j])
+        indices = np.array([0])
+        indptr = np.array([0, 1])
+        for shape in ((0, 2), (-2, 2), (2.5, 2), (True, 2), ("2", 2)):
+            with self.subTest(shape=shape):
+                with self.assertRaisesRegex(ValueError, "SparseHamiltonianOperator shape dimension"):
+                    SparseHamiltonianOperator(data, indices, indptr, shape=shape)
+        with self.assertRaisesRegex(ValueError, "two dimensions"):
+            SparseHamiltonianOperator(data, indices, indptr, shape=(2,))
+
+        sparse = SparseHamiltonianOperator(data, indices, indptr, shape=(np.int64(2), np.int64(2)))
+        self.assertEqual(sparse.shape, (2, 2))
+
     def test_get_expectation_value_delegates_to_observe(self):
         @kernel
         def prep_state():
