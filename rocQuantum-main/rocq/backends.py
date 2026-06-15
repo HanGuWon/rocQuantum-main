@@ -150,6 +150,15 @@ def _validate_optional_boolean_option(value, name: str) -> Optional[bool]:
     return value
 
 
+def _validate_gate_angle(op_name: str, angle) -> float:
+    if isinstance(angle, bool) or not isinstance(angle, Real):
+        raise ValueError(f"Gate '{op_name}' angle must be a finite real number.")
+    value = float(angle)
+    if not math.isfinite(value):
+        raise ValueError(f"Gate '{op_name}' angle must be finite.")
+    return value
+
+
 def _validate_probability(value, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, Real):
         raise ValueError(f"{name} must be between 0 and 1.")
@@ -564,12 +573,7 @@ class _MockStateVectorState:
             angle = None
         if angle is None:
             raise ValueError(f"Gate '{op_name}' requires a rotation angle.")
-        if isinstance(angle, bool) or not isinstance(angle, Real):
-            raise ValueError(f"Gate '{op_name}' angle must be a finite real number.")
-        value = float(angle)
-        if not math.isfinite(value):
-            raise ValueError(f"Gate '{op_name}' angle must be finite.")
-        return value
+        return _validate_gate_angle(op_name, angle)
 
     def _single_qubit_matrix(self, op_name: str, params: Optional[Dict[str, float]]) -> np.ndarray:
         op = op_name.lower()
@@ -933,7 +937,7 @@ class _HipStateVectorState:
             angle = None
         if angle is None:
             raise ValueError(f"Gate '{op_name}' requires a rotation angle.")
-        return float(angle)
+        return _validate_gate_angle(op_name, angle)
 
     def apply_named_gate(self, op_name: str, targets: List[int], params: Optional[Dict[str, float]] = None):
         params = params or {}
@@ -1661,14 +1665,14 @@ class DensityMatrixBackend(_BaseBackend):
             return np.array([[c - 1j * s, 0], [0, c + 1j * s]], dtype=np.complex64)
         raise ValueError(f"Gate '{op}' is not supported by the density matrix backend.")
 
-    def _angle(self, params: Optional[Dict[str, float]]) -> Optional[float]:
+    def _angle(self, op_name: str, params: Optional[Dict[str, float]]) -> Optional[float]:
         if isinstance(params, dict):
             value = params.get("theta", params.get("phi"))
         elif isinstance(params, (list, tuple)) and params:
             value = params[0]
         else:
             value = None
-        return None if value is None else float(value)
+        return None if value is None else _validate_gate_angle(op_name, value)
 
     def _apply_single_qubit_gate_matrix(self, gate_name: str, target: int) -> None:
         self._state.apply_gate_matrix(self._gate_matrix(gate_name), target)
@@ -1737,11 +1741,11 @@ class DensityMatrixBackend(_BaseBackend):
             return
         if name in {"cz", "crx", "cry", "crz", "cp"}:
             controlled_name = "z" if name == "cz" else name[1:]
-            matrix = self._gate_matrix(controlled_name, self._angle(params))
+            matrix = self._gate_matrix(controlled_name, self._angle(name, params))
             self._state.apply_controlled_gate(matrix, op.targets[0], op.targets[1])
             return
 
-        matrix = self._gate_matrix(name, self._angle(params))
+        matrix = self._gate_matrix(name, self._angle(name, params))
         self._state.apply_gate_matrix(matrix, op.targets[0])
 
     def _iter_noise_channels(self, noise_model, op):
