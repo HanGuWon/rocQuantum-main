@@ -20,8 +20,9 @@ Current supported subset:
   measurement hooks are unavailable. Custom code and decoder objects must expose
   callable `generate_stabilizer_circuits()`, `define_logical_operators()`, and
   `decode()` methods, and generated stabilizer fragments must be returned as a
-  non-string sequence or iterable. Decoder results must be canonical
-  `rocq.operator.PauliOperator` corrections.
+  non-string sequence or iterable. Logical operators must be returned as a
+  string-keyed mapping of canonical `rocq.operator.PauliOperator` values, and
+  decoder results must be canonical `rocq.operator.PauliOperator` corrections.
 - Lookup-table correction through `RepetitionCodeDecoder`.
 - Syndrome histogram, repeated-round correction summary, and correction-success
   analysis for sampled counts.

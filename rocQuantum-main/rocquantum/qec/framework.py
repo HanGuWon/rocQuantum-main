@@ -12,6 +12,7 @@ on a "Circuit Fragmentation" strategy.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 import math
 from numbers import Integral, Real
 from typing import List, Dict, Callable, Any, Optional, Tuple
@@ -127,6 +128,23 @@ def _validate_decoder_correction(correction_operator):
     raise ValueError("decoder.decode must return a rocq.operator.PauliOperator correction.")
 
 
+def _validate_logical_operators(logical_operators) -> Dict[str, Any]:
+    if not isinstance(logical_operators, Mapping):
+        raise ValueError(
+            "define_logical_operators must return a mapping of names to "
+            "rocq.operator.PauliOperator values."
+        )
+
+    validated = {}
+    for name, operator in logical_operators.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("logical operator names must be non-empty strings.")
+        if PauliOperator is None or not isinstance(operator, PauliOperator):
+            raise ValueError("logical operator values must be rocq.operator.PauliOperator instances.")
+        validated[name] = operator
+    return validated
+
+
 class QuantumErrorCode(ABC):
     """Abstract base class for defining a quantum error-correcting code."""
     @abstractmethod
@@ -240,6 +258,7 @@ class QEC_Experiment:
                 "Number of ancilla_qubit_indices must match the number of generated "
                 "stabilizer circuits."
             )
+        logical_operators = _validate_logical_operators(code.define_logical_operators())
 
         self._log("Step 2: Measuring syndrome by executing each fragment...")
         syndrome = []
@@ -269,7 +288,7 @@ class QEC_Experiment:
         return {
             "syndrome": syndrome,
             "correction_applied": correction_text,
-            "logical_operators": code.define_logical_operators(),
+            "logical_operators": logical_operators,
             "shots": shots,
         }
 

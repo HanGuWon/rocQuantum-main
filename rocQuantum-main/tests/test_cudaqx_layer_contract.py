@@ -855,7 +855,7 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "positive-integer shot/round/num_qubits, backend, code/decoder interface, stabilizer-fragment sequence, decoder-correction result, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
+            "positive-integer shot/round/num_qubits, backend, code/decoder interface, stabilizer-fragment sequence, logical-operator result, decoder-correction result, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -1113,6 +1113,48 @@ class TestQecHelpers(unittest.TestCase):
                             [3],
                             shots=1,
                         )
+
+    def test_qec_experiment_validates_logical_operator_results(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.qec.framework import QEC_Experiment
+
+        class FragmentCode:
+            def __init__(self, logical_operators):
+                self.logical_operators = logical_operators
+
+            def generate_stabilizer_circuits(self, initial_state_kernel, num_qubits, backend="state_vector"):
+                return ["fragment"]
+
+            def define_logical_operators(self):
+                return self.logical_operators
+
+        class Decoder:
+            def decode(self, syndrome):
+                return PauliOperator("I")
+
+        bad_logical_operator_payloads = (
+            None,
+            [],
+            {"": PauliOperator("Z0")},
+            {1: PauliOperator("Z0")},
+            {"logical_Z": "Z0"},
+            {"logical_Z": object()},
+        )
+
+        experiment = QEC_Experiment()
+        for logical_operators in bad_logical_operator_payloads:
+            with self.subTest(logical_operators=logical_operators):
+                with mock.patch("rocquantum.qec.framework.rocq.sample") as patched_sample:
+                    with self.assertRaisesRegex(ValueError, "logical operator|define_logical_operators"):
+                        experiment.run_single_round(
+                            FragmentCode(logical_operators),
+                            Decoder(),
+                            None,
+                            5,
+                            [3],
+                            shots=1,
+                        )
+                patched_sample.assert_not_called()
 
     def test_repetition_code_counts_analysis_reports_success_rate(self):
         from rocquantum.qec import analyze_repetition_code_counts
