@@ -208,6 +208,7 @@ jobs:
           python3 benchmarks/run_release_benchmarks.py \
             --build-dir build-rocm-ci \
             --output-dir "${ARTIFACT_DIR}/benchmark-artifacts" \
+            --fail-on-error \
             2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" ]; then
             cat "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" >> "${GITHUB_STEP_SUMMARY}"

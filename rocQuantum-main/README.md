@@ -135,8 +135,9 @@ including dense expectation, sparse moments, and generic matrix paths, TensorNet
 DensityMat channel/observable/sampling timing. The runner
 emits one JSON file per benchmark plus `benchmark-summary.json` and `benchmark-summary.md`;
 distributed RCCL-vs-host artifacts include host-fallback-over-RCCL speedup ratios when both cases
-run. If a native binary or ROCm device is unavailable, it writes an explicit skipped artifact
-instead of pretending a result exists.
+run, and configured minimum speedups fail the benchmark job through `--fail-on-error`. If a native
+binary or ROCm device is unavailable, it writes an explicit skipped artifact instead of pretending
+a result exists.
 
 ```bash
 python3 benchmarks/run_release_benchmarks.py \

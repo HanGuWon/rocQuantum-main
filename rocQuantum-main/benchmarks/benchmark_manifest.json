@@ -24,6 +24,12 @@
       "output": "distributed-reductions.json",
       "args": ["--qubits", "24", "--trials", "20", "--shots", "4096", "--output", "{output}"],
       "requires_rocm_device": true,
+      "speedup_thresholds": {
+        "expectation_ms": 1.0,
+        "dense_expectation_ms": 1.0,
+        "sparse_moments_ms": 1.0,
+        "generic_matrix_ms": 1.0
+      },
       "covers": [
         "distributed_rccl_vs_host_fallback",
         "distributed_sampling_observe",

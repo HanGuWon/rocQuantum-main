@@ -38,11 +38,21 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
             manifest = json.load(f)
 
         ids = {entry["id"] for entry in manifest["benchmarks"]}
+        by_id = {entry["id"]: entry for entry in manifest["benchmarks"]}
         self.assertEqual(manifest["schema_version"], 1)
         self.assertIn("statevec_core_paths", ids)
         self.assertIn("distributed_reduction_rccl_vs_host", ids)
         self.assertIn("tensornet_contraction", ids)
         self.assertIn("densitymat_channel_sampling", ids)
+        self.assertEqual(
+            by_id["distributed_reduction_rccl_vs_host"]["speedup_thresholds"],
+            {
+                "expectation_ms": 1.0,
+                "dense_expectation_ms": 1.0,
+                "sparse_moments_ms": 1.0,
+                "generic_matrix_ms": 1.0,
+            },
+        )
 
         covered = {cover for entry in manifest["benchmarks"] for cover in entry["covers"]}
         for required in {
@@ -116,16 +126,20 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                         "sampling_ms": 8.0,
                     },
                 ]
-            }
+            },
+            thresholds={"expectation_ms": 3.0, "sampling_ms": 1.0},
         )
 
         by_metric = {entry["metric"]: entry for entry in speedups}
         self.assertEqual(by_metric["expectation_ms"]["baseline_case"], "host_fallback")
         self.assertEqual(by_metric["expectation_ms"]["optimized_case"], "rccl")
         self.assertAlmostEqual(by_metric["expectation_ms"]["speedup"], 4.0)
+        self.assertEqual(by_metric["expectation_ms"]["minimum_speedup"], 3.0)
+        self.assertTrue(by_metric["expectation_ms"]["passes_threshold"])
         self.assertAlmostEqual(by_metric["dense_expectation_ms"]["speedup"], 5.0)
         self.assertAlmostEqual(by_metric["sparse_moments_ms"]["speedup"], 5.0)
         self.assertFalse(by_metric["sampling_ms"]["faster_than_baseline"])
+        self.assertFalse(by_metric["sampling_ms"]["passes_threshold"])
 
     def test_release_runner_adds_speedups_to_summary_when_output_has_cases(self):
         runner = _load_runner_module()
@@ -180,6 +194,54 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("`expectation_ms`: 5.000x", markdown)
         self.assertIn("`sparse_moments_ms`: 3.000x", markdown)
 
+    def test_release_runner_fails_configured_speedup_thresholds(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "payload = {'cases': [\n"
+                "    {'name': 'rccl', 'status': 0, 'expectation_ms': 5.0},\n"
+                "    {'name': 'host_fallback', 'status': 0, 'expectation_ms': 6.0},\n"
+                "]}\n"
+                "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                "    json.dump(payload, f)\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_distributed",
+                                "category": "distributed",
+                                "executable": sys.executable,
+                                "output": "fake-distributed.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": False,
+                                "speedup_thresholds": {"expectation_ms": 2.0},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = runner.run(
+                manifest_path=manifest_path,
+                build_dir=tmp_path / "build",
+                output_dir=tmp_path / "artifacts",
+            )
+
+        result = summary["results"][0]
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_reason"], "one or more configured speedup thresholds were not met")
+        self.assertEqual(result["threshold_failures"][0]["metric"], "expectation_ms")
+        self.assertFalse(result["threshold_failures"][0]["passes_threshold"])
+
     def test_cmake_exposes_release_benchmark_targets(self):
         statevec_cmake = os.path.join(PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "CMakeLists.txt")
         tensornet_cmake = os.path.join(PROJECT_ROOT, "rocquantum", "src", "hipTensorNet", "CMakeLists.txt")
@@ -226,6 +288,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmark-artifacts", combined)
         self.assertIn("benchmark-summary.md", combined)
         self.assertIn("GITHUB_STEP_SUMMARY", combined)
+        self.assertIn("--fail-on-error", combined)
         self.assertIn("actions/upload-artifact@v4", combined)
 
     def test_readme_describes_release_benchmark_registry(self):

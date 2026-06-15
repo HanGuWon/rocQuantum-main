@@ -52,8 +52,23 @@ def _markdown_bool(value: bool) -> str:
     return "yes" if value else "no"
 
 
-def extract_case_speedups(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _speedup_thresholds(entry: dict[str, Any]) -> dict[str, float]:
+    raw = entry.get("speedup_thresholds")
+    if not isinstance(raw, dict):
+        return {}
+    thresholds: dict[str, float] = {}
+    for metric, value in raw.items():
+        if isinstance(metric, str) and isinstance(value, (int, float)) and value > 0:
+            thresholds[metric] = float(value)
+    return thresholds
+
+
+def extract_case_speedups(
+    payload: dict[str, Any],
+    thresholds: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
     """Extract host-fallback-over-RCCL speedups from benchmark case timings."""
+    thresholds = thresholds or {}
     cases = payload.get("cases")
     if not isinstance(cases, list):
         return []
@@ -80,18 +95,32 @@ def extract_case_speedups(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if optimized_ms <= 0.0 or baseline_ms <= 0.0:
             continue
         speedup = baseline_ms / optimized_ms
-        speedups.append(
-            {
-                "metric": metric,
-                "optimized_case": "rccl",
-                "baseline_case": "host_fallback",
-                "optimized_ms": optimized_ms,
-                "baseline_ms": baseline_ms,
-                "speedup": speedup,
-                "faster_than_baseline": speedup >= 1.0,
-            }
-        )
+        entry = {
+            "metric": metric,
+            "optimized_case": "rccl",
+            "baseline_case": "host_fallback",
+            "optimized_ms": optimized_ms,
+            "baseline_ms": baseline_ms,
+            "speedup": speedup,
+            "faster_than_baseline": speedup >= 1.0,
+        }
+        if metric in thresholds:
+            minimum = thresholds[metric]
+            entry["minimum_speedup"] = minimum
+            entry["passes_threshold"] = speedup >= minimum
+        speedups.append(entry)
     return speedups
+
+
+def _format_speedup_entry(entry: dict[str, Any]) -> str:
+    text = (
+        f"`{entry['metric']}`: {entry['speedup']:.3f}x "
+        f"({entry['baseline_case']} / {entry['optimized_case']})"
+    )
+    if "minimum_speedup" in entry:
+        status = "pass" if entry.get("passes_threshold") else "fail"
+        text += f" threshold {entry['minimum_speedup']:.3f}x={status}"
+    return text
 
 
 def format_benchmark_summary_markdown(summary: dict[str, Any]) -> str:
@@ -110,8 +139,7 @@ def format_benchmark_summary_markdown(summary: dict[str, Any]) -> str:
         speedups = result.get("speedups")
         if isinstance(speedups, list) and speedups:
             speedup_text = "<br>".join(
-                f"`{entry['metric']}`: {entry['speedup']:.3f}x "
-                f"({entry['baseline_case']} / {entry['optimized_case']})"
+                _format_speedup_entry(entry)
                 for entry in speedups
                 if isinstance(entry, dict)
                 and {"metric", "speedup", "baseline_case", "optimized_case"}.issubset(entry)
@@ -193,9 +221,18 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
     }
     try:
         payload = json.loads(output_path.read_text(encoding="utf-8"))
-        speedups = extract_case_speedups(payload)
+        speedups = extract_case_speedups(payload, thresholds=_speedup_thresholds(entry))
         if speedups:
             result["speedups"] = speedups
+            threshold_failures = [
+                speedup
+                for speedup in speedups
+                if speedup.get("passes_threshold") is False
+            ]
+            if threshold_failures:
+                result["status"] = "failed"
+                result["threshold_failures"] = threshold_failures
+                result["failure_reason"] = "one or more configured speedup thresholds were not met"
     except (OSError, json.JSONDecodeError) as exc:
         result["analysis_warning"] = f"could not analyze benchmark output: {exc}"
     return result
