@@ -508,17 +508,43 @@ class TestVqeSolverContract(unittest.TestCase):
     def test_scipy_optimizer_validates_option_mapping(self):
         from rocquantum.solvers.vqe_solver import SciPyOptimizer
 
-        source_options = {"method": "COBYLA", "tol": 1.0e-4}
+        source_options = {
+            "method": "COBYLA",
+            "tol": 1.0e-4,
+            "options": {"maxiter": np.int64(10), "disp": True},
+        }
         optimizer = SciPyOptimizer(options=source_options)
         source_options["method"] = "BFGS"
+        source_options["options"]["maxiter"] = 20
 
-        self.assertEqual(optimizer.options, {"method": "COBYLA", "tol": 1.0e-4})
+        self.assertEqual(
+            optimizer.options,
+            {"method": "COBYLA", "tol": 1.0e-4, "options": {"maxiter": 10, "disp": True}},
+        )
 
         with self.assertRaisesRegex(ValueError, "options must be a mapping"):
             SciPyOptimizer(options=[("method", "COBYLA")])
 
         with self.assertRaisesRegex(ValueError, "option keys must be strings"):
             SciPyOptimizer(options={1: "COBYLA"})
+
+        invalid_options = (
+            ({"method": True}, "method option"),
+            ({"method": ""}, "method option"),
+            ({"tol": True}, "tol option"),
+            ({"tol": np.nan}, "tol option"),
+            ({"callback": object()}, "callback option"),
+            ({"options": [("maxiter", 10)]}, "'options' must be a mapping"),
+            ({"options": {1: 10}}, "'options' keys"),
+            ({"options": {"maxiter": True}}, "maxiter"),
+            ({"options": {"maxiter": 0}}, "maxiter"),
+            ({"options": {"ftol": True}}, "ftol"),
+            ({"options": {"ftol": np.inf}}, "ftol"),
+        )
+        for options, message in invalid_options:
+            with self.subTest(options=options):
+                with self.assertRaisesRegex(ValueError, message):
+                    SciPyOptimizer(options=options)
 
     def test_vqe_solver_rejects_invalid_optimizer_object(self):
         from rocquantum.solvers.vqe_solver import VQE_Solver

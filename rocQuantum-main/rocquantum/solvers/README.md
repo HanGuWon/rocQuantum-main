@@ -28,7 +28,10 @@ Current supported subset:
   Custom optimizer objects must expose a callable `minimize()` method.
   `SciPyOptimizer` options must be a string-keyed mapping and are copied at
   construction so later caller-side mutation cannot silently change solver
-  configuration.
+  configuration. SciPy `method`, `tol`, `callback`, and nested `options`
+  payloads are validated before `scipy.optimize.minimize()` is invoked,
+  including positive numeric checks for common tolerance and iteration-limit
+  fields.
 - `make_maxcut_qaoa_kernel()` builds a MaxCut-style QAOA ansatz using H, CNOT,
   RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.

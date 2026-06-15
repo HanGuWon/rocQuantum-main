@@ -60,6 +60,29 @@ _VECTOR_PARAMETER_NAMES = {
     "values",
 }
 
+_SCIPY_POSITIVE_INTEGER_OPTIONS = {
+    "maxiter",
+    "maxfev",
+    "maxfun",
+    "maxls",
+    "maxcg",
+    "maxcor",
+    "maxcv",
+}
+_SCIPY_POSITIVE_REAL_OPTIONS = {
+    "tol",
+    "ftol",
+    "gtol",
+    "xtol",
+    "xatol",
+    "fatol",
+    "eps",
+    "rhobeg",
+    "catol",
+    "initial_tr_radius",
+    "final_tr_radius",
+}
+
 
 def _parameter_prefers_vector(parameter: inspect.Parameter) -> bool:
     if parameter.name.lower() in _VECTOR_PARAMETER_NAMES:
@@ -125,6 +148,74 @@ def _finite_real_scalar(value, label: str) -> float:
     if not np.isfinite(real_value):
         raise ValueError(f"{label} must be finite.")
     return real_value
+
+
+def _positive_integer_option(value, label: str) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+        raise ValueError(f"{label} must be a positive integer.")
+    integer = int(value)
+    if integer <= 0:
+        raise ValueError(f"{label} must be positive.")
+    return integer
+
+
+def _positive_real_option(value, label: str) -> float:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+        raise ValueError(f"{label} must be a positive finite real number.")
+    real_value = float(value)
+    if not np.isfinite(real_value) or real_value <= 0.0:
+        raise ValueError(f"{label} must be positive and finite.")
+    return real_value
+
+
+def _validate_scipy_nested_options(options) -> dict:
+    if not isinstance(options, Mapping):
+        raise ValueError("SciPyOptimizer 'options' must be a mapping.")
+
+    normalized = {}
+    for key, value in options.items():
+        if not isinstance(key, str):
+            raise ValueError("SciPyOptimizer 'options' keys must be strings.")
+        if key in _SCIPY_POSITIVE_INTEGER_OPTIONS:
+            normalized[key] = _positive_integer_option(
+                value,
+                f"SciPyOptimizer options['{key}']",
+            )
+        elif key in _SCIPY_POSITIVE_REAL_OPTIONS:
+            normalized[key] = _positive_real_option(
+                value,
+                f"SciPyOptimizer options['{key}']",
+            )
+        else:
+            normalized[key] = value
+    return normalized
+
+
+def _validate_scipy_minimize_kwargs(options) -> dict:
+    if not isinstance(options, Mapping):
+        raise ValueError("SciPyOptimizer options must be a mapping.")
+
+    normalized = {}
+    for key, value in options.items():
+        if not isinstance(key, str):
+            raise ValueError("SciPyOptimizer option keys must be strings.")
+        if key == "method":
+            if not isinstance(value, str) and not callable(value):
+                raise ValueError("SciPyOptimizer method option must be a string or callable.")
+            if isinstance(value, str) and not value:
+                raise ValueError("SciPyOptimizer method option must be non-empty.")
+            normalized[key] = value
+        elif key == "tol":
+            normalized[key] = _positive_real_option(value, "SciPyOptimizer tol option")
+        elif key == "callback":
+            if value is not None and not callable(value):
+                raise ValueError("SciPyOptimizer callback option must be callable or None.")
+            normalized[key] = value
+        elif key == "options":
+            normalized[key] = _validate_scipy_nested_options(value)
+        else:
+            normalized[key] = value
+    return normalized
 
 
 def _supported_backend_names() -> tuple[str, ...]:
@@ -277,11 +368,7 @@ class SciPyOptimizer(Optimizer):
         if options is None:
             self.options = {'method': 'COBYLA', 'tol': 1e-6}
         else:
-            if not isinstance(options, Mapping):
-                raise ValueError("SciPyOptimizer options must be a mapping.")
-            if any(not isinstance(key, str) for key in options):
-                raise ValueError("SciPyOptimizer option keys must be strings.")
-            self.options = dict(options)
+            self.options = _validate_scipy_minimize_kwargs(options)
 
     def minimize(
         self,
