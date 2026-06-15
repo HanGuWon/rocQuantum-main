@@ -152,8 +152,8 @@ emits one JSON file per benchmark plus `benchmark-summary.json` and `benchmark-s
 distributed RCCL-vs-host artifacts include host-fallback-over-RCCL speedup ratios when both cases
 run, and configured minimum speedups or missing configured speedup metrics fail the benchmark job
 through `--fail-on-error`. Each result and summary also records whether it is native performance
-evidence, so skipped, CPU-only, mock, or fake benchmark runs cannot be mistaken for ROCm timing
-proof. If a native binary or ROCm device is unavailable, it writes an explicit skipped artifact
+evidence, including the actual `/dev/kfd` device probe, so skipped, CPU-only, mock, fake, or
+assumed-device benchmark runs cannot be mistaken for ROCm timing proof. If a native binary or ROCm device is unavailable, it writes an explicit skipped artifact
 instead of pretending a result exists. If a benchmark executable runs but fails to write valid JSON,
 the runner marks that benchmark failed so `--fail-on-error` cannot publish an empty performance
 proof. Passing `--require-native-performance-evidence` makes self-hosted ROCm jobs fail unless at

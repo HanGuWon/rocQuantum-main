@@ -93,6 +93,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                 summary = json.load(f)
 
             self.assertEqual(summary["schema_version"], 1)
+            self.assertEqual(summary["device_probe"], "missing_dev_kfd")
             self.assertFalse(summary["has_native_performance_evidence"])
             self.assertEqual(summary["native_performance_evidence_count"], 0)
             self.assertTrue(summary["results"])
@@ -111,6 +112,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                 markdown = f.read()
             self.assertIn("# Release Benchmark Summary", markdown)
             self.assertIn("ROCm device detected", markdown)
+            self.assertIn("ROCm device probe: `missing_dev_kfd`", markdown)
             self.assertIn("Native performance evidence: no", markdown)
             self.assertIn("skipped", markdown)
 
@@ -142,6 +144,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                 markdown = f.read()
 
         self.assertTrue(summary["native_performance_evidence_required"])
+        self.assertEqual(summary["device_probe"], "missing_dev_kfd")
         self.assertFalse(summary["has_native_performance_evidence"])
         self.assertEqual(summary["native_performance_evidence_count"], 0)
         self.assertEqual(
@@ -244,7 +247,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("`expectation_ms`: 5.000x", markdown)
         self.assertIn("`sparse_moments_ms`: 3.000x", markdown)
 
-    def test_release_runner_marks_passed_rocm_required_runs_as_performance_evidence(self):
+    def test_release_runner_does_not_treat_assumed_rocm_device_as_performance_evidence(self):
         runner = _load_runner_module()
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -290,13 +293,77 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
 
         result = summary["results"][0]
         self.assertEqual(result["status"], "passed")
+        self.assertFalse(result["performance_evidence"])
+        self.assertEqual(result["evidence_kind"], "assumed_rocm_device")
+        self.assertFalse(summary["has_native_performance_evidence"])
+        self.assertEqual(summary["native_performance_evidence_count"], 0)
+        self.assertTrue(summary["native_performance_evidence_required"])
+        self.assertEqual(summary["device_probe"], "assumed_rocm_device")
+        self.assertIn("native_performance_evidence_failure", summary)
+        self.assertIn("Native performance evidence: no", markdown)
+        self.assertIn("ROCm device probe: `assumed_rocm_device`", markdown)
+        self.assertIn("Native performance evidence gate: failed", markdown)
+        self.assertIn("Native performance evidence required: yes", markdown)
+
+    def test_release_runner_marks_passed_actual_rocm_required_runs_as_performance_evidence(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "payload = {'cases': [\n"
+                "    {'name': 'rccl', 'status': 0, 'expectation_ms': 2.0},\n"
+                "    {'name': 'host_fallback', 'status': 0, 'expectation_ms': 8.0},\n"
+                "]}\n"
+                "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                "    json.dump(payload, f)\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_rocm_required",
+                                "category": "statevec",
+                                "executable": sys.executable,
+                                "output": "fake-rocm-required.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": True,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                runner,
+                "_rocm_device_probe",
+                return_value={"has_rocm_device": True, "device_probe": "actual_dev_kfd"},
+            ):
+                summary = runner.run(
+                    manifest_path=manifest_path,
+                    build_dir=tmp_path / "build",
+                    output_dir=tmp_path / "artifacts",
+                    require_native_performance_evidence=True,
+                )
+            markdown = (tmp_path / "artifacts" / "benchmark-summary.md").read_text(encoding="utf-8")
+
+        result = summary["results"][0]
+        self.assertEqual(result["status"], "passed")
         self.assertTrue(result["performance_evidence"])
         self.assertEqual(result["evidence_kind"], "native_rocm")
         self.assertTrue(summary["has_native_performance_evidence"])
         self.assertEqual(summary["native_performance_evidence_count"], 1)
         self.assertTrue(summary["native_performance_evidence_required"])
+        self.assertEqual(summary["device_probe"], "actual_dev_kfd")
         self.assertNotIn("native_performance_evidence_failure", summary)
         self.assertIn("Native performance evidence: yes", markdown)
+        self.assertIn("ROCm device probe: `actual_dev_kfd`", markdown)
         self.assertIn("Native performance evidence required: yes", markdown)
 
     def test_release_runner_fails_missing_declared_json_output(self):
@@ -630,6 +697,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertEqual(history["schema_version"], 1)
         self.assertEqual(history["history_limit"], 2)
         self.assertEqual(len(history["runs"]), 2)
+        self.assertEqual(history["runs"][1]["device_probe"], "missing_dev_kfd")
         first_retained = history["runs"][0]["results"][0]["speedups"][0]
         latest = history["runs"][1]["results"][0]["speedups"][0]
         self.assertAlmostEqual(first_retained["speedup"], 4.0)
@@ -705,6 +773,8 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmark-history.json", readme)
         self.assertIn("speedup ratios", readme)
         self.assertIn("native performance", readme)
+        self.assertIn("actual `/dev/kfd` device probe", readme)
+        self.assertIn("assumed-device benchmark runs", readme)
         self.assertIn("ROCm timing", readme)
         self.assertIn("--require-native-performance-evidence", readme)
         self.assertIn("--baseline-summary", readme)

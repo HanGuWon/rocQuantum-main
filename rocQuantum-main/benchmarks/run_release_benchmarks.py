@@ -30,12 +30,16 @@ def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _has_rocm_device() -> bool:
+def _rocm_device_probe() -> dict[str, Any]:
+    if os.name != "nt" and Path("/dev/kfd").exists():
+        return {"has_rocm_device": True, "device_probe": "actual_dev_kfd"}
     if _env_truthy("ROCQ_BENCHMARK_ASSUME_ROCM_DEVICE"):
-        return True
-    if os.name == "nt":
-        return False
-    return Path("/dev/kfd").exists()
+        return {"has_rocm_device": True, "device_probe": "assumed_rocm_device"}
+    return {"has_rocm_device": False, "device_probe": "missing_dev_kfd"}
+
+
+def _has_rocm_device() -> bool:
+    return bool(_rocm_device_probe()["has_rocm_device"])
 
 
 def _resolve_executable(build_dir: Path, executable: str) -> Path:
@@ -111,6 +115,7 @@ def _history_run_entry(summary: dict[str, Any]) -> dict[str, Any]:
         "build_dir": summary.get("build_dir"),
         "output_dir": summary.get("output_dir"),
         "has_rocm_device": summary.get("has_rocm_device"),
+        "device_probe": summary.get("device_probe"),
         "has_native_performance_evidence": summary.get("has_native_performance_evidence"),
         "native_performance_evidence_count": summary.get("native_performance_evidence_count"),
         "native_performance_evidence_required": summary.get("native_performance_evidence_required"),
@@ -293,13 +298,14 @@ def format_benchmark_summary_markdown(summary: dict[str, Any]) -> str:
         "# Release Benchmark Summary",
         "",
         f"- ROCm device detected: {_markdown_bool(bool(summary.get('has_rocm_device')))}",
+        f"- ROCm device probe: `{summary.get('device_probe', '')}`",
         f"- Native performance evidence: {_markdown_bool(bool(summary.get('has_native_performance_evidence')))}",
         f"- Output directory: `{summary.get('output_dir', '')}`",
     ]
     if summary.get("native_performance_evidence_required"):
-        lines.insert(4, "- Native performance evidence required: yes")
+        lines.insert(5, "- Native performance evidence required: yes")
     if summary.get("native_performance_evidence_failure"):
-        lines.insert(5, f"- Native performance evidence gate: failed ({summary['native_performance_evidence_failure']})")
+        lines.insert(6, f"- Native performance evidence gate: failed ({summary['native_performance_evidence_failure']})")
     if summary.get("history"):
         lines.append(f"- History entries: {summary.get('history_entries', 0)} (`{summary.get('history')}`)")
     lines.extend(
@@ -354,7 +360,13 @@ def _skip_result(entry: dict[str, Any], output_path: Path, reason: str, executab
     }
 
 
-def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_device: bool) -> dict[str, Any]:
+def _run_entry(
+    entry: dict[str, Any],
+    build_dir: Path,
+    output_dir: Path,
+    has_device: bool,
+    device_probe: str,
+) -> dict[str, Any]:
     output_path = output_dir / entry["output"]
     executable = _resolve_executable(build_dir, entry["executable"])
 
@@ -390,16 +402,16 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
         )
         status = "failed"
 
+    evidence_kind = "non_rocm_or_mock"
+    if entry.get("requires_rocm_device", False) and has_device:
+        evidence_kind = "native_rocm" if device_probe == "actual_dev_kfd" else "assumed_rocm_device"
+
     result = {
         "id": entry["id"],
         "category": entry.get("category"),
         "status": status,
         "performance_evidence": False,
-        "evidence_kind": (
-            "native_rocm"
-            if entry.get("requires_rocm_device", False) and has_device
-            else "non_rocm_or_mock"
-        ),
+        "evidence_kind": evidence_kind,
         "returncode": completed.returncode,
         "output": str(output_path),
         "stdout": str(stdout_path),
@@ -465,9 +477,16 @@ def run(
 ) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     output_dir.mkdir(parents=True, exist_ok=True)
-    has_device = _has_rocm_device()
+    device_probe = _rocm_device_probe()
+    has_device = bool(device_probe["has_rocm_device"])
     results = [
-        _run_entry(entry, build_dir=build_dir, output_dir=output_dir, has_device=has_device)
+        _run_entry(
+            entry,
+            build_dir=build_dir,
+            output_dir=output_dir,
+            has_device=has_device,
+            device_probe=str(device_probe["device_probe"]),
+        )
         for entry in manifest["benchmarks"]
     ]
     summary = {
@@ -483,6 +502,7 @@ def run(
         "build_dir": str(build_dir),
         "output_dir": str(output_dir),
         "has_rocm_device": has_device,
+        "device_probe": device_probe["device_probe"],
         "has_native_performance_evidence": False,
         "native_performance_evidence_count": 0,
         "native_performance_evidence_required": require_native_performance_evidence,
