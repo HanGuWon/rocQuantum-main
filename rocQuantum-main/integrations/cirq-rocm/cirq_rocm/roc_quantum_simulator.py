@@ -9,18 +9,6 @@ try:
 except ImportError:
     rocquantum_bind = None
 
-CIRQ_TO_ROCQ_GATES = {
-    type(cirq.X): "X",
-    type(cirq.Y): "Y",
-    type(cirq.Z): "Z",
-    type(cirq.H): "H",
-    type(cirq.S): "S",
-    type(cirq.T): "T",
-    type(cirq.CNOT): "CNOT",
-    type(cirq.CZ): "CZ",
-}
-
-
 def _rotation_gate_name(gate):
     if isinstance(gate, cirq.Rx):
         return "RX"
@@ -39,6 +27,28 @@ def _rotation_angle(gate):
     if exponent is None:
         raise TypeError(f"Unable to extract a rotation angle from {gate!r}.")
     return float(exponent) * np.pi
+
+
+def _fixed_gate_name(gate):
+    fixed_gates = (
+        (cirq.X, "X"),
+        (cirq.Y, "Y"),
+        (cirq.Z, "Z"),
+        (cirq.H, "H"),
+        (cirq.S, "S"),
+        (cirq.S**-1, "SDG"),
+        (cirq.T, "T"),
+        (cirq.T**-1, "TDG"),
+        (cirq.CNOT, "CNOT"),
+        (cirq.CZ, "CZ"),
+        (cirq.SWAP, "SWAP"),
+        (cirq.TOFFOLI, "TOFFOLI"),
+        (cirq.FREDKIN, "CSWAP"),
+    )
+    for cirq_gate, rocq_name in fixed_gates:
+        if gate == cirq_gate:
+            return rocq_name
+    return None
 
 
 def _samples_to_bits(raw_samples, width):
@@ -87,10 +97,10 @@ class RocQuantumSimulator(cirq.SimulatesFinalState, cirq.SimulatesSamples):
         for op in circuit.all_operations():
             if isinstance(op.gate, cirq.MeasurementGate):
                 continue
-            gate_type = type(op.gate)
             indices = [q_map[q] for q in op.qubits]
-            if gate_type in CIRQ_TO_ROCQ_GATES:
-                runtime.apply_operation(CIRQ_TO_ROCQ_GATES[gate_type], indices)
+            fixed_gate = _fixed_gate_name(op.gate)
+            if fixed_gate is not None:
+                runtime.apply_operation(fixed_gate, indices)
             elif _rotation_gate_name(op.gate) is not None:
                 try:
                     runtime.apply_operation(_rotation_gate_name(op.gate), indices, [_rotation_angle(op.gate)])
