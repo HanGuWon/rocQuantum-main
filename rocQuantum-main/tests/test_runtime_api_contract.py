@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+import importlib
 from unittest import mock
 
 import numpy as np
@@ -16,6 +17,8 @@ if _PROJECT_ROOT not in sys.path:
 import rocq
 from rocq.kernel import kernel
 from rocq.operator import HermitianOperator, PauliOperator, SparseHamiltonianOperator, get_expectation_value
+
+rocq_kernel_module = importlib.import_module("rocq.kernel")
 
 
 class _FakeBackend:
@@ -104,6 +107,37 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(result, 1.25)
         self.assertIs(fake_backend.operator, operator)
         self.assertEqual([op.name.lower() for op in fake_backend.ops], ["h"])
+
+    def test_qir_missing_binding_error_is_actionable(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None):
+            with self.assertRaisesRegex(RuntimeError, "ROCQUANTUM_BUILD_BINDINGS=ON"):
+                prep_state.qir()
+
+    def test_qir_error_string_is_not_returned_as_qir(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        class _FakeCompiler:
+            def __init__(self, num_qubits, backend):
+                self.num_qubits = num_qubits
+                self.backend = backend
+
+            def emit_qir(self, mlir):
+                return "Error: lowering failed"
+
+        fake_binding = mock.Mock()
+        fake_binding.MLIRCompiler = _FakeCompiler
+
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", fake_binding):
+            with self.assertRaisesRegex(RuntimeError, "Supported canonical MLIR gates"):
+                prep_state.qir()
 
     def test_mock_statevector_backend_evaluates_hermitian_operator(self):
         from rocq.backends import StateVectorBackend

@@ -11,6 +11,16 @@ try:
 except ImportError:
     rocquantum_bind = None
 
+_COMPILER_BINDING_MISSING_MESSAGE = (
+    "rocquantum_bind is required to emit QIR. Build rocQuantum with "
+    "ROCQUANTUM_BUILD_BINDINGS=ON on a ROCm host, then retry. The Python "
+    "QIR path is partial and covers only the canonical core-gate MLIR subset."
+)
+_COMPILER_SUPPORTED_MLIR_SUBSET = (
+    "Supported canonical MLIR gates: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, "
+    "CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, and CRX/CRY/CRZ/CP."
+)
+
 
 @dataclass(frozen=True)
 class GateOp:
@@ -204,10 +214,16 @@ class QuantumKernel:
 
     def qir(self, *args, **kwargs) -> str:
         if rocquantum_bind is None:
-            raise RuntimeError("rocquantum_bind is required to emit QIR.")
+            raise RuntimeError(_COMPILER_BINDING_MISSING_MESSAGE)
         mlir_code = self.mlir(*args, **kwargs)
         compiler = rocquantum_bind.MLIRCompiler(self.num_qubits, "hip_statevec")
-        return compiler.emit_qir(mlir_code)
+        qir = compiler.emit_qir(mlir_code)
+        if isinstance(qir, str) and qir.startswith("Error:"):
+            raise RuntimeError(
+                "QIR emission failed in rocquantum_bind.MLIRCompiler.emit_qir(): "
+                f"{qir} {_COMPILER_SUPPORTED_MLIR_SUBSET}"
+            )
+        return qir
 
     def execute(self, *args, backend: str = "state_vector", noise_model=None, **kwargs):
         ctx, backend_impl = self._prepare_backend(backend, *args, **kwargs)
