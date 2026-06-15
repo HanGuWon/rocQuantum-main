@@ -114,6 +114,43 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
             self.assertIn("Native performance evidence: no", markdown)
             self.assertIn("skipped", markdown)
 
+    def test_release_runner_can_require_native_performance_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build_dir = os.path.join(tmp, "missing-build")
+            output_dir = os.path.join(tmp, "artifacts")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    RUNNER,
+                    "--build-dir",
+                    build_dir,
+                    "--output-dir",
+                    output_dir,
+                    "--require-native-performance-evidence",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 1, completed.stdout)
+            summary_path = os.path.join(output_dir, "benchmark-summary.json")
+            self.assertTrue(os.path.exists(summary_path))
+            with open(summary_path, "r", encoding="utf-8") as f:
+                summary = json.load(f)
+            with open(os.path.join(output_dir, "benchmark-summary.md"), "r", encoding="utf-8") as f:
+                markdown = f.read()
+
+        self.assertTrue(summary["native_performance_evidence_required"])
+        self.assertFalse(summary["has_native_performance_evidence"])
+        self.assertEqual(summary["native_performance_evidence_count"], 0)
+        self.assertEqual(
+            summary["native_performance_evidence_failure"],
+            "no passed native ROCm benchmark results were produced",
+        )
+        self.assertIn("Native performance evidence required: yes", markdown)
+        self.assertIn("Native performance evidence gate: failed", markdown)
+
     def test_release_runner_extracts_distributed_speedup_metrics(self):
         runner = _load_runner_module()
         speedups = runner.extract_case_speedups(
@@ -247,6 +284,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                     manifest_path=manifest_path,
                     build_dir=tmp_path / "build",
                     output_dir=tmp_path / "artifacts",
+                    require_native_performance_evidence=True,
                 )
             markdown = (tmp_path / "artifacts" / "benchmark-summary.md").read_text(encoding="utf-8")
 
@@ -256,7 +294,10 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertEqual(result["evidence_kind"], "native_rocm")
         self.assertTrue(summary["has_native_performance_evidence"])
         self.assertEqual(summary["native_performance_evidence_count"], 1)
+        self.assertTrue(summary["native_performance_evidence_required"])
+        self.assertNotIn("native_performance_evidence_failure", summary)
         self.assertIn("Native performance evidence: yes", markdown)
+        self.assertIn("Native performance evidence required: yes", markdown)
 
     def test_release_runner_fails_missing_declared_json_output(self):
         runner = _load_runner_module()
@@ -643,6 +684,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmark-history.json", combined)
         self.assertIn("GITHUB_STEP_SUMMARY", combined)
         self.assertIn("--fail-on-error", combined)
+        self.assertGreaterEqual(combined.count("--require-native-performance-evidence"), 2)
         self.assertIn("--history-path", combined)
         self.assertGreaterEqual(combined.count("set -o pipefail"), 3)
         self.assertIn("actions/cache/restore@v4", combined)
@@ -664,6 +706,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("speedup ratios", readme)
         self.assertIn("native performance", readme)
         self.assertIn("ROCm timing", readme)
+        self.assertIn("--require-native-performance-evidence", readme)
         self.assertIn("--baseline-summary", readme)
         self.assertIn("self-hosted ROCm workflows restore the previous benchmark summary and bounded history", readme)
         self.assertIn("dense expectation, sparse moments, and generic matrix", readme)

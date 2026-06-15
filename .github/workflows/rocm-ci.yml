@@ -275,6 +275,7 @@ jobs:
             "${BASELINE_ARGS[@]}" \
             --history-path "${HISTORY_PATH}" \
             --fail-on-error \
+            --require-native-performance-evidence \
             2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" ]; then
             cat "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" >> "${GITHUB_STEP_SUMMARY}"

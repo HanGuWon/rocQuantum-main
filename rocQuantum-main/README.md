@@ -156,8 +156,9 @@ evidence, so skipped, CPU-only, mock, or fake benchmark runs cannot be mistaken 
 proof. If a native binary or ROCm device is unavailable, it writes an explicit skipped artifact
 instead of pretending a result exists. If a benchmark executable runs but fails to write valid JSON,
 the runner marks that benchmark failed so `--fail-on-error` cannot publish an empty performance
-proof. Passing `--history-path` also updates a bounded `benchmark-history.json` so CI artifacts can
-retain recent speedup/status trends.
+proof. Passing `--require-native-performance-evidence` makes self-hosted ROCm jobs fail unless at
+least one benchmark produces a passed native ROCm timing result. Passing `--history-path` also
+updates a bounded `benchmark-history.json` so CI artifacts can retain recent speedup/status trends.
 
 ```bash
 python3 benchmarks/run_release_benchmarks.py \
@@ -174,12 +175,13 @@ python3 benchmarks/run_release_benchmarks.py \
   --baseline-summary previous-benchmark-artifacts/benchmark-summary.json \
   --history-path previous-benchmark-artifacts/benchmark-history.json \
   --max-speedup-regression 0.20 \
+  --require-native-performance-evidence \
   --fail-on-error
 ```
 
 The self-hosted ROCm workflows restore the previous benchmark summary and bounded history from the
-GitHub Actions cache, pass the summary as a baseline automatically when one is available, and save
-the current summary/history back to the cache for the next run.
+GitHub Actions cache, pass the summary as a baseline automatically when one is available, require
+native performance evidence, and save the current summary/history back to the cache for the next run.
 
 `benchmarks/run_benchmark.py` provides a smaller QFT comparison through the PennyLane and Qiskit
 adapters. It uses the current `lightning.rocq` PennyLane entry point, falls back from `qiskit-aer`
