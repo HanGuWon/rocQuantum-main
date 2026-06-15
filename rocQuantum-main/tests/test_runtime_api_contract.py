@@ -142,6 +142,46 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         sparse = SparseHamiltonianOperator(data, indices, indptr, shape=(np.int64(2), np.int64(2)))
         self.assertEqual(sparse.shape, (2, 2))
 
+    def test_noise_model_validates_probability_targets_and_names(self):
+        invalid_probabilities = (-0.1, 1.1, np.nan, np.inf, True, "0.1")
+        for probability in invalid_probabilities:
+            with self.subTest(probability=probability):
+                noise = rocq.NoiseModel()
+                with self.assertRaisesRegex(ValueError, "Probability"):
+                    noise.add_channel("bit_flip", probability)
+
+        invalid_qubits = (0.5, True, "0", [], [0.5], [True], ["0"], [0, 0], [-1])
+        for on_qubits in invalid_qubits:
+            with self.subTest(on_qubits=on_qubits):
+                noise = rocq.NoiseModel()
+                with self.assertRaises((TypeError, ValueError)):
+                    noise.add_channel("bit_flip", 0.1, on_qubits=on_qubits)
+
+        for channel_type in ("", None):
+            with self.subTest(channel_type=channel_type):
+                noise = rocq.NoiseModel()
+                with self.assertRaisesRegex(ValueError, "channel_type"):
+                    noise.add_channel(channel_type, 0.1)
+
+        for after_op in ("", 7):
+            with self.subTest(after_op=after_op):
+                noise = rocq.NoiseModel()
+                with self.assertRaisesRegex(ValueError, "after_op"):
+                    noise.add_channel("bit_flip", 0.1, after_op=after_op)
+
+        noise = rocq.NoiseModel()
+        noise.add_channel("bit_flip", np.float64(0.25), on_qubits=np.int64(1), after_op="X")
+        self.assertEqual(
+            noise.get_channels()[0],
+            {
+                "type": "bit_flip",
+                "prob": 0.25,
+                "qubits": [1],
+                "op": "x",
+                "kraus_matrices": None,
+            },
+        )
+
     def test_get_expectation_value_delegates_to_observe(self):
         @kernel
         def prep_state():
@@ -814,6 +854,16 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             np.array([0.75, 0.0, 0.0, 0.25], dtype=np.float32),
             atol=1e-7,
         )
+
+    def test_mock_density_backend_rejects_invalid_direct_noise_targets(self):
+        backend = self._make_mock_density_backend(1)
+        kraus = np.eye(2, dtype=np.complex64).reshape(1, 2, 2)
+
+        invalid_targets = (0.5, True, "0", [], [0.5], [True], ["0"], [0, 0], [-1], [1])
+        for targets in invalid_targets:
+            with self.subTest(targets=targets):
+                with self.assertRaises((TypeError, ValueError)):
+                    backend.apply_noise("kraus", targets, 0.25, kraus_matrices=kraus)
 
     def test_framework_runtime_exposes_native_adjoint_jacobian_hook(self):
         from rocquantum.framework_runtime import RocQuantumRuntime

@@ -356,13 +356,24 @@ def _density_matrix_sparse_hamiltonian_expectation(density_matrix, data, indices
 
 
 def _normalize_channel_targets(targets, num_qubits: int) -> List[int]:
-    if isinstance(targets, (int, np.integer)):
-        normalized = [int(targets)]
+    if isinstance(targets, bool) or isinstance(targets, (str, bytes)):
+        raise TypeError("Kraus channel targets must be integer indices.")
+    if isinstance(targets, Integral):
+        raw_targets = [targets]
     else:
-        normalized = [int(target) for target in targets]
+        try:
+            raw_targets = list(targets)
+        except TypeError as exc:
+            raise TypeError("Kraus channel targets must be integer indices.") from exc
 
-    if not normalized:
+    if not raw_targets:
         raise ValueError("Kraus channel must target at least one qubit.")
+
+    normalized = []
+    for target in raw_targets:
+        if isinstance(target, bool) or not isinstance(target, Integral):
+            raise ValueError("Kraus channel targets must be integer indices.")
+        normalized.append(int(target))
     if len(set(normalized)) != len(normalized):
         raise ValueError("Kraus channel targets must be unique.")
     if any(target < 0 or target >= int(num_qubits) for target in normalized):
