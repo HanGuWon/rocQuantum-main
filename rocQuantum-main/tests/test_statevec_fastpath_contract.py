@@ -107,6 +107,42 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("return launch_controlled_single_qubit_matrix_distributed_localized", source)
         self.assertIn("return launch_controlled_single_qubit_matrix(handle", source)
 
+    def test_common_multi_control_distributed_gates_localize_with_swaps(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("localize_distributed_qubits_for_operation", source)
+        self.assertIn("std::vector<unsigned> touched = controls;", source)
+        self.assertIn("touched.push_back(targetQubit);", source)
+        self.assertIn("apply_multi_controlled_x_kernel", source)
+        self.assertIn("std::vector<unsigned> touched = {controlQubit, targetQubit1, targetQubit2};", source)
+        self.assertIn("apply_CSWAP_kernel", source)
+        self.assertIn("handle->numLocalQubitsPerGpu", source)
+        mcx_block = source.split("rocqStatus_t rocsvApplyMultiControlledX", 1)[1].split(
+            "rocqStatus_t rocsvApplyCSWAP", 1
+        )[0]
+        cswap_block = source.split("rocqStatus_t rocsvApplyCSWAP", 1)[1].split(
+            "// --- State-vector readback helpers", 1
+        )[0]
+        self.assertNotRegex(
+            mcx_block,
+            re.compile(
+                r"if \(uses_distributed_state\(handle, d_state\)\) \{\s*"
+                r"return ROCQ_STATUS_NOT_IMPLEMENTED;\s*"
+                r"\}",
+                re.MULTILINE,
+            ),
+        )
+        self.assertNotRegex(
+            cswap_block,
+            re.compile(
+                r"if \(uses_distributed_state\(handle, d_state\)\) \{\s*"
+                r"return ROCQ_STATUS_NOT_IMPLEMENTED;\s*"
+                r"\}",
+                re.MULTILINE,
+            ),
+        )
+
     def test_multi_gpu_guide_matches_distributed_contract(self):
         with open(_MULTI_GPU_GUIDE, "r", encoding="utf-8") as f:
             guide = f.read()

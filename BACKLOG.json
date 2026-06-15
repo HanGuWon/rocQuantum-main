@@ -255,15 +255,20 @@
                                     "Stress tests for control-target locality permutations"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3688",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3725"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:930",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:977",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:5592",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:5665",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:7676",
+                                       "rocQuantum-main/tests/test_statevec_fastpath_contract.py:109",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:16"
                                    ],
-                      "notes":  "Depends on P0 comm abstraction and localization helpers.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Common non-local distributed multi-control paths now use swap-localization: controlled single-qubit/controlled-matrix 1x1, MCX, and CSWAP localize touched qubits, run existing local kernels, and restore layout. Broader high-arity generic controlled matrices remain bounded by explicit host fallback or future device kernels.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3688",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:5592",
+                      "verification_path":  "Run rocQuantum-main/tests/test_statevec_fastpath_contract.py locally; run 2-rank non-local controlled-matrix, MCX, and CSWAP parity tests on a ROCm multi-GPU runner."
                   },
                   {
                       "id":  "P1-COMMS-002",

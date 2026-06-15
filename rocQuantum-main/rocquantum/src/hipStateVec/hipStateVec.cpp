@@ -942,6 +942,53 @@ inline bool choose_distributed_local_slot(const rocsvInternalHandle* handle,
     return false;
 }
 
+inline rocqStatus_t localize_distributed_qubits_for_operation(
+    rocsvInternalHandle* handle,
+    const std::vector<unsigned>& qubits,
+    std::vector<unsigned>* localized_qubits,
+    std::vector<std::pair<unsigned, unsigned>>* applied_swaps) {
+    if (!handle || !localized_qubits || !applied_swaps) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    localized_qubits->clear();
+    applied_swaps->clear();
+    localized_qubits->reserve(qubits.size());
+
+    std::vector<unsigned> reserved;
+    reserved.reserve(qubits.size());
+    for (unsigned q : qubits) {
+        if (distributed_qubit_local(handle, q)) {
+            localized_qubits->push_back(q);
+            if (std::find(reserved.begin(), reserved.end(), q) == reserved.end()) {
+                reserved.push_back(q);
+            }
+            continue;
+        }
+
+        unsigned local_slot = 0;
+        if (!choose_distributed_local_slot(handle, reserved, &local_slot)) {
+            (void)restore_distributed_qubit_swaps(handle, *applied_swaps);
+            localized_qubits->clear();
+            applied_swaps->clear();
+            return ROCQ_STATUS_NOT_IMPLEMENTED;
+        }
+
+        rocqStatus_t status = rocsvSwapIndexBits(handle, q, local_slot);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            (void)restore_distributed_qubit_swaps(handle, *applied_swaps);
+            localized_qubits->clear();
+            applied_swaps->clear();
+            return status;
+        }
+        applied_swaps->emplace_back(q, local_slot);
+        reserved.push_back(local_slot);
+        localized_qubits->push_back(local_slot);
+    }
+
+    return ROCQ_STATUS_SUCCESS;
+}
+
 inline rocqStatus_t launch_single_qubit_matrix_distributed_localized(
     rocsvInternalHandle* handle,
     rocComplex* state,
@@ -5586,20 +5633,82 @@ rocqStatus_t rocsvApplyMultiControlledX(rocsvHandle_t handle,
     if (!validate_qubit_index(targetQubit, numQubits)) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
-    }
     if (numControlQubits > 63) {
         return ROCQ_STATUS_NOT_IMPLEMENTED; // Needs 64-bit mask extension.
     }
 
+    std::vector<unsigned> controls;
+    controls.reserve(numControlQubits);
     unsigned long long mask = 0ULL;
     for (unsigned i = 0; i < numControlQubits; ++i) {
         unsigned ctrl = controlQubits[i];
         if (!validate_qubit_index(ctrl, numQubits) || ctrl == targetQubit) {
             return ROCQ_STATUS_INVALID_VALUE;
         }
+        if (ctrl > 63) {
+            return ROCQ_STATUS_NOT_IMPLEMENTED; // Needs wider control-mask support.
+        }
+        if (std::find(controls.begin(), controls.end(), ctrl) != controls.end()) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        controls.push_back(ctrl);
         mask |= (1ULL << ctrl);
+    }
+
+    if (uses_distributed_state(handle, d_state)) {
+        if (numQubits != handle->globalNumQubits) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+
+        std::vector<unsigned> touched = controls;
+        touched.push_back(targetQubit);
+        std::vector<unsigned> localized;
+        std::vector<std::pair<unsigned, unsigned>> swaps;
+        rocqStatus_t status =
+            localize_distributed_qubits_for_operation(handle, touched, &localized, &swaps);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+
+        unsigned long long local_mask = 0ULL;
+        for (unsigned i = 0; i < numControlQubits; ++i) {
+            if (localized[i] > 63) {
+                rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+                return restore_status != ROCQ_STATUS_SUCCESS ? restore_status : ROCQ_STATUS_NOT_IMPLEMENTED;
+            }
+            local_mask |= (1ULL << localized[i]);
+        }
+        const unsigned local_target = localized[numControlQubits];
+
+        status = ROCQ_STATUS_SUCCESS;
+        if (handle->localSliceElements >= 2) {
+            constexpr int threads_per_block = 256;
+            const int blocks = static_cast<int>(
+                (handle->localSliceElements + threads_per_block - 1) / threads_per_block);
+            for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+                const size_t idx = static_cast<size_t>(rank);
+                if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+                    status = ROCQ_STATUS_HIP_ERROR;
+                    break;
+                }
+                hipLaunchKernelGGL(apply_multi_controlled_x_kernel,
+                                   dim3(blocks > 0 ? blocks : 1),
+                                   dim3(threads_per_block),
+                                   0,
+                                   handle->distributedStreams[idx],
+                                   handle->distributedSlices[idx],
+                                   handle->numLocalQubitsPerGpu,
+                                   local_mask,
+                                   local_target,
+                                   1);
+                status = check_last_hip_error();
+                if (status != ROCQ_STATUS_SUCCESS) {
+                    break;
+                }
+            }
+        }
+        rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+        return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
     }
 
     const size_t elements_per_state = 1ULL << numQubits;
@@ -5642,7 +5751,48 @@ rocqStatus_t rocsvApplyCSWAP(rocsvHandle_t handle,
         return ROCQ_STATUS_INVALID_VALUE;
     }
     if (uses_distributed_state(handle, d_state)) {
-        return ROCQ_STATUS_NOT_IMPLEMENTED;
+        if (numQubits != handle->globalNumQubits) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        std::vector<unsigned> touched = {controlQubit, targetQubit1, targetQubit2};
+        std::vector<unsigned> localized;
+        std::vector<std::pair<unsigned, unsigned>> swaps;
+        rocqStatus_t status =
+            localize_distributed_qubits_for_operation(handle, touched, &localized, &swaps);
+        if (status != ROCQ_STATUS_SUCCESS) {
+            return status;
+        }
+
+        status = ROCQ_STATUS_SUCCESS;
+        if (handle->localSliceElements >= 8) {
+            constexpr int threads_per_block = 256;
+            const int blocks = static_cast<int>(
+                (handle->localSliceElements + threads_per_block - 1) / threads_per_block);
+            for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+                const size_t idx = static_cast<size_t>(rank);
+                if (hipSetDevice(handle->distributedDeviceIds[idx]) != hipSuccess) {
+                    status = ROCQ_STATUS_HIP_ERROR;
+                    break;
+                }
+                hipLaunchKernelGGL(apply_CSWAP_kernel,
+                                   dim3(blocks > 0 ? blocks : 1),
+                                   dim3(threads_per_block),
+                                   0,
+                                   handle->distributedStreams[idx],
+                                   handle->distributedSlices[idx],
+                                   handle->numLocalQubitsPerGpu,
+                                   localized[0],
+                                   localized[1],
+                                   localized[2],
+                                   1);
+                status = check_last_hip_error();
+                if (status != ROCQ_STATUS_SUCCESS) {
+                    break;
+                }
+            }
+        }
+        rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+        return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
     }
 
     const size_t elements_per_state = 1ULL << numQubits;
