@@ -7,6 +7,7 @@ Runtime update note (2026-04-06):
 - Canonical `rocq.execute()`, `rocq.sample()`, and `rocq.observe()` now route through a unified backend contract.
 - `rocq.operator.get_expectation_value()` now delegates to `rocq.observe()`.
 - Native state-vector sampling and Pauli expectation paths are wired into the canonical `rocq` surface.
+- Canonical sampling now rejects non-positive or non-integral shots and invalid selected-qubit lists before native backend dispatch; direct canonical backends share the same positive-integer shot and qubit-list validation.
 - Packaging has moved to a CMake-first `scikit-build-core` path.
 
 Audit refresh note (2026-06-10):

@@ -144,7 +144,9 @@ class TestDensityMatContract(unittest.TestCase):
 
         self.assertIn("def sample(self, measured_qubits: Sequence[int], num_shots: int)", backend)
         self.assertIn("return self._state.sample(list(measured_qubits), int(num_shots))", backend)
-        self.assertIn("raw_results = self._state.sample(measured_qubits, int(shots))", backend)
+        self.assertIn('shots = _validate_positive_integer(shots, "shots")', backend)
+        self.assertIn("measured_qubits = _normalize_sample_qubits(qubits, self.num_qubits)", backend)
+        self.assertIn("raw_results = self._state.sample(measured_qubits, shots)", backend)
         self.assertIn("apply_phase_flip_channel", backend)
         self.assertIn("apply_amplitude_damping_channel", backend)
         self.assertNotIn("does not expose a native sampling path yet", backend)

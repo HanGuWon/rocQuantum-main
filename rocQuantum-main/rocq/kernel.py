@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from .backends import get_backend
+from .backends import get_backend, _normalize_sample_qubits, _validate_positive_integer
 from .qvec import qvec
 
 try:
@@ -257,12 +257,14 @@ class QuantumKernel:
         return backend_impl.get_state()
 
     def sample(self, shots: int, *args, backend: str = "state_vector", qubits=None, noise_model=None, **kwargs):
-        if shots <= 0:
-            raise ValueError("shots must be positive.")
-        ctx, backend_impl = self._prepare_backend(backend, *args, **kwargs)
+        shots = _validate_positive_integer(shots, "shots")
+        ctx = self.build(*args, **kwargs)
+        if ctx._next_qubit_index == 0:
+            raise ValueError("Kernel did not allocate any qubits.")
+        sample_qubits = _normalize_sample_qubits(qubits, ctx._next_qubit_index)
+        backend_impl = get_backend(backend, ctx._next_qubit_index)
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
-        sample_qubits = list(range(ctx._next_qubit_index)) if qubits is None else [int(q) for q in qubits]
-        return backend_impl.sample(int(shots), qubits=sample_qubits)
+        return backend_impl.sample(shots, qubits=sample_qubits)
 
     def observe(self, operator, *args, backend: str = "state_vector", noise_model=None, **kwargs):
         if operator is None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import warnings
+from numbers import Integral
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -82,6 +83,43 @@ def _format_sample_counts(raw_results: Iterable[int], width: int) -> Dict[str, i
         bitstring = format(int(outcome), f"0{width}b")
         counts[bitstring] = counts.get(bitstring, 0) + 1
     return counts
+
+
+def _validate_positive_integer(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a positive integer.")
+    normalized = int(value)
+    if normalized <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return normalized
+
+
+def _normalize_sample_qubits(qubits, num_qubits: int) -> List[int]:
+    if qubits is None:
+        return list(range(int(num_qubits)))
+    if isinstance(qubits, (str, bytes)):
+        raise TypeError("sample qubits must be a sequence of integer indices.")
+
+    try:
+        raw_qubits = list(qubits)
+    except TypeError as exc:
+        raise TypeError("sample qubits must be a sequence of integer indices.") from exc
+
+    if not raw_qubits:
+        raise ValueError("sample qubits must include at least one qubit.")
+
+    normalized = []
+    for qubit in raw_qubits:
+        if isinstance(qubit, bool) or not isinstance(qubit, Integral):
+            raise ValueError("sample qubits must be integer indices.")
+        index = int(qubit)
+        if index < 0 or index >= int(num_qubits):
+            raise ValueError(f"Sample qubit index {index} is out of range for {num_qubits} qubits.")
+        normalized.append(index)
+
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("sample qubits must be unique.")
+    return normalized
 
 
 def _finalize_expectation(value: complex):
@@ -1060,9 +1098,8 @@ class StabilizerBackend(_BaseBackend):
         return self._state.copy()
 
     def sample(self, shots: int, qubits: Optional[Sequence[int]] = None):
-        if shots <= 0:
-            raise ValueError("shots must be positive.")
-        measured_qubits = list(range(self.num_qubits)) if qubits is None else [self._validate_qubit(q) for q in qubits]
+        shots = _validate_positive_integer(shots, "shots")
+        measured_qubits = _normalize_sample_qubits(qubits, self.num_qubits)
         probs = np.zeros(1 << len(measured_qubits), dtype=np.float64)
         for basis, amplitude in enumerate(self._state):
             outcome = 0
@@ -1074,7 +1111,7 @@ class StabilizerBackend(_BaseBackend):
         if total <= 0.0:
             raise RuntimeError("Stabilizer state has no probability mass.")
         probs /= total
-        raw_results = np.random.choice(len(probs), size=int(shots), p=probs).astype(np.uint64)
+        raw_results = np.random.choice(len(probs), size=shots, p=probs).astype(np.uint64)
         return _format_sample_counts(raw_results, len(measured_qubits))
 
     def _stabilizer_group(self) -> dict[tuple[str, ...], complex]:
@@ -1222,10 +1259,9 @@ class StateVectorBackend(_BaseBackend):
         return self._state.get_state_vector()
 
     def sample(self, shots: int, qubits: Optional[Sequence[int]] = None):
-        if shots <= 0:
-            raise ValueError("shots must be positive.")
-        measured_qubits = list(range(self.num_qubits)) if qubits is None else [int(q) for q in qubits]
-        raw_results = self._state.sample(measured_qubits, int(shots))
+        shots = _validate_positive_integer(shots, "shots")
+        measured_qubits = _normalize_sample_qubits(qubits, self.num_qubits)
+        raw_results = self._state.sample(measured_qubits, shots)
         return _format_sample_counts(raw_results, len(measured_qubits))
 
     def expectation(self, operator):
@@ -1405,10 +1441,9 @@ class DensityMatrixBackend(_BaseBackend):
         return self._state.get_density_matrix()
 
     def sample(self, shots: int, qubits: Optional[Sequence[int]] = None):
-        if shots <= 0:
-            raise ValueError("shots must be positive.")
-        measured_qubits = list(range(self.num_qubits)) if qubits is None else [int(q) for q in qubits]
-        raw_results = self._state.sample(measured_qubits, int(shots))
+        shots = _validate_positive_integer(shots, "shots")
+        measured_qubits = _normalize_sample_qubits(qubits, self.num_qubits)
+        raw_results = self._state.sample(measured_qubits, shots)
         return _format_sample_counts(raw_results, len(measured_qubits))
 
     def expectation(self, operator):

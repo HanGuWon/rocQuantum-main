@@ -110,6 +110,33 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(fake_backend.sample_args, (32, [0]))
         self.assertEqual([op.name.lower() for op in fake_backend.ops], ["h", "cnot"])
 
+    def test_sample_requires_positive_integer_shots_before_backend_dispatch(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        for invalid_shots in (0, -1, 2.5, True, "4"):
+            with self.subTest(shots=invalid_shots):
+                with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+                    with self.assertRaisesRegex(ValueError, "shots must be"):
+                        rocq.sample(prep_state, invalid_shots, backend="state_vector")
+                patched_get_backend.assert_not_called()
+
+    def test_sample_validates_qubits_before_backend_dispatch(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+
+        invalid_qubits = ([2], [-1], [0, 0], [True], [1.5], [], "01")
+        for qubits in invalid_qubits:
+            with self.subTest(qubits=qubits):
+                with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+                    with self.assertRaises((TypeError, ValueError)):
+                        rocq.sample(prep_state, 8, backend="state_vector", qubits=qubits)
+                patched_get_backend.assert_not_called()
+
     def test_observe_uses_backend_expectation(self):
         @kernel
         def prep_state():
