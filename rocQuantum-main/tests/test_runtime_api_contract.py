@@ -132,6 +132,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "density-matrix Kraus channel payload validation before native device upload",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "native HIP-stream futures",
             capabilities["unsupported_features"],
         )
@@ -1695,6 +1699,50 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             backend.apply_noise("", [0], 0.25)
         with self.assertRaisesRegex(ValueError, "kraus_matrices"):
             backend.apply_noise("bit_flip", [0], 0.25, kraus_matrices=kraus)
+
+    def test_density_backend_rejects_invalid_kraus_payloads_before_native_dispatch(self):
+        from rocq.backends import DensityMatrixBackend
+
+        class _FakeDensityState:
+            instances = []
+
+            def __init__(self, num_qubits):
+                self.num_qubits = int(num_qubits)
+                self.channels = []
+                _FakeDensityState.instances.append(self)
+
+            def apply_channel(self, targets, kraus_matrices):
+                self.channels.append(
+                    (
+                        list(targets),
+                        np.asarray(kraus_matrices).dtype,
+                        np.asarray(kraus_matrices).shape,
+                    )
+                )
+
+        class _FakeDensityModule:
+            DensityMatrixState = _FakeDensityState
+
+        with mock.patch("rocq.backends.dm_backend", _FakeDensityModule):
+            backend = DensityMatrixBackend(1)
+            valid_kraus = np.eye(2, dtype=np.complex128).reshape(1, 2, 2)
+            backend.apply_noise("kraus", [0], 1.0, kraus_matrices=valid_kraus)
+
+            invalid_kraus_payloads = (
+                [[[True, 0.0], [0.0, 1.0]]],
+                [[["1.0", 0.0], [0.0, 1.0]]],
+                [[[np.nan, 0.0], [0.0, 1.0]]],
+                [[[np.inf, 0.0], [0.0, 1.0]]],
+            )
+            for kraus in invalid_kraus_payloads:
+                with self.subTest(kraus=kraus):
+                    with self.assertRaisesRegex(ValueError, "Kraus matrices"):
+                        backend.apply_noise("kraus", [0], 1.0, kraus_matrices=kraus)
+
+        self.assertEqual(
+            _FakeDensityState.instances[-1].channels,
+            [([0], np.dtype(np.complex64), (1, 2, 2))],
+        )
 
     def test_framework_runtime_exposes_native_adjoint_jacobian_hook(self):
         from rocquantum.framework_runtime import RocQuantumRuntime

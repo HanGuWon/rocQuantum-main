@@ -587,19 +587,34 @@ def _normalize_channel_targets(targets, num_qubits: int) -> List[int]:
 
 
 def _normalize_kraus_matrices(kraus_matrices, targets: Sequence[int]) -> np.ndarray:
-    matrices = np.asarray(kraus_matrices, dtype=np.complex64, order="C")
+    try:
+        raw_matrices = np.asarray(kraus_matrices, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Kraus matrices must contain finite numeric values.") from exc
+
     target_dim = 1 << len(targets)
 
-    if matrices.ndim == 2:
-        matrices = matrices.reshape(1, matrices.shape[0], matrices.shape[1])
-    if matrices.ndim != 3:
+    if raw_matrices.ndim == 2:
+        raw_matrices = raw_matrices.reshape(1, raw_matrices.shape[0], raw_matrices.shape[1])
+    if raw_matrices.ndim != 3:
         raise ValueError("Kraus matrices must have shape (num_kraus, dim, dim).")
-    if matrices.shape[0] <= 0:
+    if raw_matrices.shape[0] <= 0:
         raise ValueError("Kraus channel must include at least one matrix.")
-    if matrices.shape[1:] != (target_dim, target_dim):
+    if raw_matrices.shape[1:] != (target_dim, target_dim):
         raise ValueError(
             "Kraus matrix dimensions must equal 2**len(targets) for the selected channel targets."
         )
+
+    normalized = []
+    for value in raw_matrices.reshape(-1):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError("Kraus matrices must contain finite numeric values.")
+        scalar = complex(value)
+        if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+            raise ValueError("Kraus matrices must contain finite numeric values.")
+        normalized.append(scalar)
+
+    matrices = np.asarray(normalized, dtype=np.complex64).reshape(raw_matrices.shape)
     return np.ascontiguousarray(matrices, dtype=np.complex64)
 
 
@@ -1324,6 +1339,7 @@ class _HipDensityMatrixState:
     def __init__(self, n_qubits: int):
         if dm_backend is None:
             raise _native_backend_error("rocq_hip", "density_matrix")
+        self._num_qubits = int(n_qubits)
         self._state = dm_backend.DensityMatrixState(n_qubits)
 
     def apply_gate_matrix(self, matrix: np.ndarray, target: int, adjoint: bool = False):
@@ -1348,7 +1364,9 @@ class _HipDensityMatrixState:
         return self._state.apply_amplitude_damping_channel(target, prob)
 
     def apply_channel(self, targets, kraus_matrices: np.ndarray):
-        return self._state.apply_channel(targets, _coerce_complex64_matrix(kraus_matrices))
+        normalized_targets = _normalize_channel_targets(targets, self._num_qubits)
+        matrices = _normalize_kraus_matrices(kraus_matrices, normalized_targets)
+        return self._state.apply_channel(normalized_targets, matrices)
 
     def compute_expectation(self, pauli, target: int):
         return self._state.compute_expectation(pauli, target)
