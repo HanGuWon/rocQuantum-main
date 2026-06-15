@@ -21,6 +21,9 @@ class TestUnsupportedProviderBackends(unittest.TestCase):
 
         self.assertIn("ionq", backends)
         self.assertIn("rigetti", backends)
+        self.assertEqual(backends["qristal"]["status"], "local_cli_client")
+        self.assertTrue(backends["qristal"]["requires_local_runtime"])
+        self.assertEqual(backends["qristal"]["runtime"], "Qristal SDK CLI")
         self.assertNotIn("iqm", backends)
         self.assertNotIn("alice_bob", backends)
         self.assertFalse(any(info["requires_experimental_opt_in"] for info in backends.values()))
@@ -54,6 +57,75 @@ class TestUnsupportedProviderBackends(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ROCQ_ENABLE_EXPERIMENTAL_PROVIDERS": "1"}):
             with self.assertRaises(UnsupportedBackendError):
                 set_target("iqm")
+
+    def test_qristal_authenticate_requires_real_cli(self):
+        from rocquantum.backends.base import BackendAuthenticationError
+        from rocquantum.backends.qristal import QuantumBrillianceBackend
+
+        backend = QuantumBrillianceBackend()
+
+        with mock.patch("rocquantum.backends.qristal.shutil.which", return_value=None):
+            with self.assertRaisesRegex(BackendAuthenticationError, "Qristal SDK CLI"):
+                backend.authenticate()
+
+    def test_qristal_submit_job_invokes_cli_and_parses_histogram(self):
+        from rocquantum.backends.qristal import QuantumBrillianceBackend
+        from rocquantum.circuit import QuantumCircuit
+
+        backend = QuantumBrillianceBackend()
+        circuit = QuantumCircuit(2)
+        circuit.h(0)
+        circuit.cx(0, 1)
+        completed = mock.Mock(stdout='Execution complete\nHistogram: {"00": 3, "11": 2}\n', stderr="")
+
+        with mock.patch("rocquantum.backends.qristal.shutil.which", return_value="qristal"):
+            backend.authenticate()
+            with mock.patch("rocquantum.backends.qristal.subprocess.run", return_value=completed) as run:
+                job_id = backend.submit_job(circuit, shots=5)
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], "qristal")
+        self.assertEqual(command[-2:], ["--shots", "5"])
+        self.assertFalse(os.path.exists(command[2]))
+        self.assertEqual(backend.get_job_status(job_id), "completed")
+        self.assertEqual(backend.get_job_result(job_id), {"00": 3, "11": 2})
+
+    def test_qristal_submit_job_reports_missing_cli(self):
+        from rocquantum.backends.base import JobSubmissionError
+        from rocquantum.backends.qristal import QuantumBrillianceBackend
+        from rocquantum.circuit import QuantumCircuit
+
+        backend = QuantumBrillianceBackend()
+
+        with mock.patch("rocquantum.backends.qristal.shutil.which", return_value=None):
+            with self.assertRaisesRegex(JobSubmissionError, "Qristal SDK CLI"):
+                backend.submit_job(QuantumCircuit(1), shots=1)
+
+    def test_qristal_submit_job_reports_cli_failure(self):
+        import subprocess
+
+        from rocquantum.backends.base import JobSubmissionError
+        from rocquantum.backends.qristal import QuantumBrillianceBackend
+        from rocquantum.circuit import QuantumCircuit
+
+        backend = QuantumBrillianceBackend()
+        error = subprocess.CalledProcessError(2, ["qristal"], stderr="bad qasm")
+
+        with mock.patch("rocquantum.backends.qristal.shutil.which", return_value="qristal"):
+            backend.authenticate()
+            with mock.patch("rocquantum.backends.qristal.subprocess.run", side_effect=error):
+                with self.assertRaisesRegex(JobSubmissionError, "bad qasm"):
+                    backend.submit_job(QuantumCircuit(1), shots=1)
+
+    def test_qristal_rejects_nonpositive_shots(self):
+        from rocquantum.backends.base import JobSubmissionError
+        from rocquantum.backends.qristal import QuantumBrillianceBackend
+        from rocquantum.circuit import QuantumCircuit
+
+        backend = QuantumBrillianceBackend()
+
+        with self.assertRaisesRegex(JobSubmissionError, "positive integer"):
+            backend.submit_job(QuantumCircuit(1), shots=0)
 
     def test_skeleton_provider_backends_fail_explicitly(self):
         from rocquantum.backends.alice_bob import AliceBobBackend

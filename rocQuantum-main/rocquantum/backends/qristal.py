@@ -9,14 +9,21 @@ tool. It demonstrates a synchronous, file-based execution model, contrasting
 with the API-based Type A backends.
 """
 
+import json
+import os
+import shutil
 import subprocess
 import tempfile
 import uuid
-import json
-from typing import Dict, Any
+from contextlib import suppress
+from typing import Any, Dict, Optional
 
-from .base import RocqBackend, JobSubmissionError, ResultRetrievalError
+from .base import BackendAuthenticationError, RocqBackend, JobSubmissionError, ResultRetrievalError
 from rocquantum.circuit import QuantumCircuit
+
+_QRISTAL_CLI_ENV_VAR = "ROCQ_QRISTAL_CLI"
+_DEFAULT_QRISTAL_CLI = "qristal"
+
 
 class QuantumBrillianceBackend(RocqBackend):
     """
@@ -26,15 +33,32 @@ class QuantumBrillianceBackend(RocqBackend):
     subprocess, making it a Type B backend.
     """
 
-    def __init__(self, backend_name: str = "qristal", api_endpoint: str = "local"):
+    def __init__(
+        self,
+        backend_name: str = "qristal",
+        api_endpoint: str = "local",
+        cli_executable: Optional[str] = None,
+    ):
         """Initializes the Qristal local backend."""
         super().__init__(backend_name=backend_name, api_endpoint=api_endpoint)
-        self._local_results: Dict[str, Dict] = {}
+        self.cli_executable = cli_executable or os.getenv(_QRISTAL_CLI_ENV_VAR, _DEFAULT_QRISTAL_CLI)
+        self._cli_path = None
+        self._local_results: Dict[str, Dict[str, str]] = {}
+
+    def _resolve_cli(self) -> str:
+        resolved = shutil.which(self.cli_executable)
+        if resolved is None:
+            raise BackendAuthenticationError(
+                f"Qristal SDK CLI '{self.cli_executable}' was not found. "
+                f"Install the Qristal SDK or set {_QRISTAL_CLI_ENV_VAR} to the CLI path before "
+                "selecting the qristal backend."
+            )
+        self._cli_path = resolved
+        return resolved
 
     def authenticate(self) -> None:
-        """Authentication is not required for a local SDK."""
-        print("Qristal is a local backend; no authentication needed.")
-        pass
+        """Validate that the local Qristal CLI is available."""
+        self._resolve_cli()
 
     def _get_auth_headers(self) -> Dict[str, str]:
         """Not applicable for a local backend."""
@@ -60,36 +84,38 @@ class QuantumBrillianceBackend(RocqBackend):
         """
         if not isinstance(circuit, QuantumCircuit):
             raise JobSubmissionError("Qristal backend requires a QuantumCircuit object, not a QASM string.")
+        if not isinstance(shots, int) or shots <= 0:
+            raise JobSubmissionError("Qristal backend requires shots to be a positive integer.")
 
+        try:
+            cli_path = self._cli_path or self._resolve_cli()
+        except BackendAuthenticationError as e:
+            raise JobSubmissionError(str(e)) from e
         qasm_string = circuit.to_qasm()
+        tmp_filepath = None
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.qasm', delete=False) as tmp_file:
             tmp_file.write(qasm_string)
             tmp_filepath = tmp_file.name
 
-        command = ["qristal", "--run", tmp_filepath, "--shots", str(shots)]
+        command = [cli_path, "--run", tmp_filepath, "--shots", str(shots)]
         
         try:
-            print(f"Executing command: {" ".join(command)}")
-            # In a real scenario, this would execute the Qristal CLI.
-            # For this simulation, we will mock the output.
-            # result = subprocess.run(command, capture_output=True, text=True, check=True)
-            # stdout = result.stdout
-            
-            # Mocked stdout for demonstration purposes
-            mock_histogram = {'00': shots // 2, '11': shots // 2}
-            stdout = f"Execution complete.\nHistogram: {json.dumps(mock_histogram)}"
-            print(f"Mocked stdout: {stdout}")
-
+            result = subprocess.run(command, capture_output=True, text=True, check=True)
+            stdout = result.stdout
         except FileNotFoundError:
             raise JobSubmissionError(
-                "Job submission failed: 'qristal' command not found. "
-                "Is the Qristal SDK installed and in your system's PATH?"
+                f"Job submission failed: Qristal CLI '{cli_path}' was not found. "
+                f"Set {_QRISTAL_CLI_ENV_VAR} or install the Qristal SDK."
             )
         except subprocess.CalledProcessError as e:
             raise JobSubmissionError(
-                f"Job execution failed with error: {e.stderr}"
+                f"Qristal job execution failed with exit code {e.returncode}: {e.stderr or e.stdout}"
             )
+        finally:
+            if tmp_filepath is not None:
+                with suppress(OSError):
+                    os.unlink(tmp_filepath)
 
         job_id = f"local-run-{uuid.uuid4()}"
         self._local_results[job_id] = {"stdout": stdout}
@@ -111,13 +137,17 @@ class QuantumBrillianceBackend(RocqBackend):
         stdout = self._local_results[job_id]["stdout"]
         
         try:
-            # Assume the output contains a line like "Histogram: {'00': 50, ...}"
-            histogram_line = next(line for line in stdout.splitlines() if "Histogram:" in line)
-            json_str = histogram_line.split("Histogram:")[1].strip()
-            histogram = json.loads(json_str)
-            return histogram
-        except (StopIteration, json.JSONDecodeError, IndexError) as e:
+            return self._parse_histogram(stdout)
+        except (ValueError, StopIteration, json.JSONDecodeError, IndexError) as e:
             raise ResultRetrievalError(
                 f"Failed to parse histogram from Qristal output. Error: {e}. "
                 f"Full output:\n{stdout}"
             )
+
+    def _parse_histogram(self, stdout: str) -> Dict[str, int]:
+        histogram_line = next(line for line in stdout.splitlines() if "Histogram:" in line)
+        json_str = histogram_line.split("Histogram:", 1)[1].strip()
+        histogram = json.loads(json_str)
+        if not isinstance(histogram, dict):
+            raise ValueError("Qristal histogram payload is not a JSON object.")
+        return {str(bitstring): int(count) for bitstring, count in histogram.items()}

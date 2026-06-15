@@ -32,6 +32,14 @@ _SKELETON_BACKENDS: Dict[str, str] = {
     "alice_bob": "rocquantum.backends.alice_bob.AliceBobBackend",
 }
 
+_BACKEND_METADATA: Dict[str, Dict[str, object]] = {
+    "qristal": {
+        "status": "local_cli_client",
+        "requires_local_runtime": True,
+        "runtime": "Qristal SDK CLI",
+    },
+}
+
 _AVAILABLE_BACKENDS: Dict[str, str] = {**_CONCRETE_BACKENDS, **_SKELETON_BACKENDS}
 _ACTIVE_BACKEND: Optional[RocqBackend] = None
 
@@ -53,11 +61,13 @@ def list_backends(include_experimental: bool = False) -> Dict[str, Dict[str, obj
         is_skeleton = name in _SKELETON_BACKENDS
         if is_skeleton and not include_experimental:
             continue
-        result[name] = {
+        entry = {
             "import_path": _AVAILABLE_BACKENDS[name],
             "status": "unsupported_stub" if is_skeleton else "client",
             "requires_experimental_opt_in": is_skeleton,
         }
+        entry.update(_BACKEND_METADATA.get(name, {}))
+        result[name] = entry
     return result
 
 

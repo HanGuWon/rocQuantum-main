@@ -114,6 +114,7 @@ Use those files as the authoritative capability summary for the current codebase
 - Qiskit, PennyLane, and Cirq adapters now prefer `QuantumSimulator.measure()` for sampling, but still keep host-side fallback paths where needed for older bindings that do not expose `measure`.
 - Qiskit direct `prepare_state()` and untouched-qubit `initialize()` are mapped to matrix state-preparation fallback; `reset` after prior operations is supported only in `backend.run(..., sampling=True)` through shot-by-shot `QuantumSimulator.reset_qubit()` trajectories. Later `initialize()`, statevector/estimator output for runtime-reset circuits, classically conditioned operations, and Qiskit control-flow ops remain explicit unsupported boundaries.
 - `rocquantum.core.list_backends()` hides unsupported skeleton providers by default, while `list_backends(include_experimental=True)` reports their `unsupported_stub` status. `set_target()` blocks those skeleton providers unless `allow_experimental=True` or `ROCQ_ENABLE_EXPERIMENTAL_PROVIDERS=1` is set for contract tests or integration development.
+- The Qristal bridge now checks for the real local Qristal SDK CLI (`qristal`, or `ROCQ_QRISTAL_CLI`) and invokes it through `subprocess.run()` instead of returning a mocked local histogram; missing SDK/CLI and failed executions raise explicit backend errors.
 - Several non-skeleton provider backends remain thin clients and require provider credentials for real validation.
 
 ## Build
