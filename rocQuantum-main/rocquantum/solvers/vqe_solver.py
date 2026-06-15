@@ -44,6 +44,13 @@ except ImportError:  # pragma: no cover - exercised in minimal CI environments.
 
 # --- Type Hinting Placeholders ---
 AnsatzKernel = Callable[..., None]  # An ansatz is a kernel function
+_FALLBACK_SUPPORTED_BACKENDS = (
+    "state_vector",
+    "density_matrix",
+    "stabilizer",
+    "tableau",
+    "clifford",
+)
 
 _VECTOR_PARAMETER_NAMES = {
     "params",
@@ -118,6 +125,20 @@ def _finite_real_scalar(value, label: str) -> float:
     if not np.isfinite(real_value):
         raise ValueError(f"{label} must be finite.")
     return real_value
+
+
+def _supported_backend_names() -> tuple[str, ...]:
+    if rocq is None or not hasattr(rocq, "runtime_capabilities"):
+        return _FALLBACK_SUPPORTED_BACKENDS
+    capabilities = rocq.runtime_capabilities()
+    return tuple(capabilities.get("supported_backends", _FALLBACK_SUPPORTED_BACKENDS))
+
+
+def _validate_backend_name(backend: str) -> str:
+    supported = _supported_backend_names()
+    if not isinstance(backend, str) or backend not in supported:
+        raise ValueError(f"backend must be one of: {list(supported)}.")
+    return backend
 
 
 def _ansatz_parameter_args(params: np.ndarray, ansatz_kernel: AnsatzKernel):
@@ -242,7 +263,7 @@ class VQE_Solver:
             if not callable(minimize_fn):
                 raise ValueError("optimizer must define a callable minimize method.")
             self.optimizer = optimizer
-        self.backend = backend
+        self.backend = _validate_backend_name(backend)
         self.verbose = bool(verbose)
 
         self._intermediate_results = []

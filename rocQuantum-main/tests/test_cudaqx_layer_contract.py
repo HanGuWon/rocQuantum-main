@@ -31,7 +31,7 @@ class TestVqeSolverContract(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "finite-real parameter, energy, optimizer-result, optimizer-interface, and optimizer-option validation",
+            "finite-real parameter, energy, backend, optimizer-result, optimizer-interface, and optimizer-option validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -378,6 +378,19 @@ class TestVqeSolverContract(unittest.TestCase):
             with self.subTest(optimizer=optimizer):
                 with self.assertRaisesRegex(ValueError, "callable minimize"):
                     VQE_Solver(optimizer=optimizer)
+
+    def test_vqe_solver_validates_backend_name_at_construction(self):
+        from rocquantum.solvers.vqe_solver import VQE_Solver
+
+        for backend in ("state_vector", "density_matrix", "stabilizer", "tableau", "clifford"):
+            with self.subTest(backend=backend):
+                self.assertEqual(VQE_Solver(backend=backend).backend, backend)
+
+        invalid_backends = ("gpu", "", None, True)
+        for backend in invalid_backends:
+            with self.subTest(backend=backend):
+                with self.assertRaisesRegex(ValueError, "backend must be one of"):
+                    VQE_Solver(backend=backend)
 
     def test_solve_is_quiet_by_default_with_verbose_opt_in(self):
         from rocq.operator import PauliOperator
