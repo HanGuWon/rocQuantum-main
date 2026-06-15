@@ -98,6 +98,27 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("distributed_all_qubits_local(handle, targets)", source)
         self.assertIn("distributed_all_qubits_local(handle, measured)", source)
 
+    def test_sampling_and_expectation_host_fallbacks_are_explicit(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("distributed_expectation_host_fallback", source)
+        self.assertIn("host_pauli_expectation", source)
+        self.assertIn("return host_pauli_expectation(host_full, numQubits, targets, pauli, result)", source)
+        self.assertIn("distributed_sample_host_fallback", source)
+        self.assertIn("host_sample_state", source)
+        self.assertIn("return host_sample_state(handle, host_full, numQubits, measured, numShots, h_results)", source)
+        self.assertGreaterEqual(
+            source.count("if (!distributed_host_fallback_enabled())"),
+            6,
+            "Every distributed host fallback should require an explicit fallback switch.",
+        )
+        self.assertIn("rocqStatus_t status = distributed_expectation_rccl", source)
+        self.assertIn("return distributed_expectation_host_fallback", source)
+        self.assertIn("rocqStatus_t status = distributed_sample_rccl", source)
+        self.assertIn("return distributed_sample_host_fallback", source)
+        self.assertGreaterEqual(source.count("gather_distributed_state_to_host(handle, &host_full)"), 6)
+
     def test_sparse_apply_supports_local_distributed_slices(self):
         with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
             source = f.read()

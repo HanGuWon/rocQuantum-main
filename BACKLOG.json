@@ -131,19 +131,21 @@
                                     "Sampling distribution sanity checks"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3128",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3181",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3234",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3292",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3377",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3498"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3213",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3266",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3286",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3589",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3631",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3651",
+                                       "rocQuantum-main/tests/test_rccl_distributed_contract.py:90",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:21"
                                    ],
-                      "notes":  "Leverages existing gather helpers for correctness until collective path matures.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Distributed expectation and shot sampling now route through RCCL first, then an explicit opt-in host fallback that gathers the distributed state and computes host Pauli expectations or host shot samples. This is correctness/debug only; runtime parity still needs ROCm multi-GPU artifacts.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3128",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3266",
+                      "verification_path":  "Run rocQuantum-main/tests/test_rccl_distributed_contract.py locally; run distributed expectation and rocsvSample host-fallback smoke tests on a ROCm multi-GPU runner for hardware evidence."
                   },
                   {
                       "id":  "P0-DOCS-001",
