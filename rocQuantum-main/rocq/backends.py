@@ -1501,6 +1501,27 @@ class StateVectorBackend(_BaseBackend):
             and op.targets[0] in cnot_op.targets
         )
 
+    def _single_qubit_fusion_span(self, ops, index: int):
+        current = ops[index]
+        if current.name.lower() not in _FUSABLE_SINGLE_QUBIT_GATES or len(current.targets) != 1:
+            return None
+
+        target = current.targets[0]
+        end = index + 1
+        while end < len(ops):
+            candidate = ops[end]
+            if (
+                candidate.name.lower() not in _FUSABLE_SINGLE_QUBIT_GATES
+                or len(candidate.targets) != 1
+                or candidate.targets[0] != target
+            ):
+                break
+            end += 1
+
+        if end - index < 2:
+            return None
+        return ops[index:end]
+
     def _to_fusion_gate(self, op):
         gate = hip_backend.GateOp()
         gate.params = []
@@ -1534,12 +1555,17 @@ class StateVectorBackend(_BaseBackend):
             return 0
 
         current = ops[index]
-        queue = None
+        queue = self._single_qubit_fusion_span(ops, index)
 
-        if self._is_cnot(current):
+        if queue is None and self._is_cnot(current):
             if index + 1 < len(ops) and self._is_fusable_neighbor(ops[index + 1], current):
                 queue = [current, ops[index + 1]]
-        elif index + 1 < len(ops) and self._is_fusable_neighbor(current, ops[index + 1]) and self._is_cnot(ops[index + 1]):
+        elif (
+            queue is None
+            and index + 1 < len(ops)
+            and self._is_fusable_neighbor(current, ops[index + 1])
+            and self._is_cnot(ops[index + 1])
+        ):
             queue = [current, ops[index + 1]]
             if index + 2 < len(ops) and self._is_fusable_neighbor(ops[index + 2], ops[index + 1]):
                 queue.append(ops[index + 2])

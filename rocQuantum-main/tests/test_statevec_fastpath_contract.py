@@ -66,6 +66,9 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("processed[i-1] = true;", source)
         self.assertIn("processed[i+1] = true;", source)
         self.assertIn("if (queue[i].name != \"CNOT\")", source)
+        self.assertIn("fuseAndApplySingleQubitGates(queue)", source)
+        self.assertIn("matmul_2x2(updated, op_matrix, fused_matrix)", source)
+        self.assertIn("return rocsvApplyFusedSingleQubitMatrix", source)
         self.assertIn("queue[i + 1].name == \"CNOT\"", source)
         self.assertIn("get_gate_matrix_2x2(queue[i], single_matrix)", source)
 

@@ -220,8 +220,29 @@ class Circuit:
             return False
         return op.targets[0] in {cnot_op.controls[0], cnot_op.targets[0]}
 
+    def _single_qubit_fusion_span_from(self, index: int):
+        current = self._gate_queue[index]
+        if not self._is_fusable_single_qubit_gate(current):
+            return []
+
+        target = current.targets[0]
+        end = index + 1
+        while end < len(self._gate_queue):
+            candidate = self._gate_queue[end]
+            if not self._is_fusable_single_qubit_gate(candidate) or candidate.targets[0] != target:
+                break
+            end += 1
+
+        if end - index < 2:
+            return []
+        return self._gate_queue[index:end]
+
     def _fusion_span_from(self, index: int):
         current = self._gate_queue[index]
+
+        single_span = self._single_qubit_fusion_span_from(index)
+        if single_span:
+            return single_span
 
         if self._is_cnot_gate(current):
             if (

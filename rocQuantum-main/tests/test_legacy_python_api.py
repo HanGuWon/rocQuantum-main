@@ -166,6 +166,32 @@ class TestLegacyCircuitGateFusion(unittest.TestCase):
         self.assertFalse(circuit._is_dirty)
         self.assertEqual(circuit._gate_queue, [])
 
+    def test_flush_uses_native_gate_fusion_for_same_target_single_qubit_span(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        circuit = _make_circuit(module)
+
+        circuit.h(0)
+        circuit.rz(0.25, 0)
+        circuit.x(1)
+        circuit.flush()
+
+        calls_by_name = [name for name, _ in backend.calls]
+        self.assertIn("fusion", calls_by_name)
+        self.assertNotIn("apply_h", calls_by_name)
+        self.assertNotIn("apply_rz", calls_by_name)
+        self.assertIn("apply_x", calls_by_name)
+        fusion_payload = next(payload for name, payload in backend.calls if name == "fusion")
+        self.assertEqual(
+            fusion_payload,
+            (
+                ("H", (), (0,), ()),
+                ("RZ", (), (0,), (0.25,)),
+            ),
+        )
+        self.assertFalse(circuit._is_dirty)
+        self.assertEqual(circuit._gate_queue, [])
+
     def test_flush_replays_gates_when_fusion_is_disabled(self):
         backend = _fake_backend()
         module = _load_legacy_api(backend)

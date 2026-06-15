@@ -102,6 +102,58 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertIn("MULTI_GPU_GUIDE.md", capabilities["guide"])
         self.assertIn("self-hosted ROCm CI", capabilities["performance_note"])
 
+    def test_statevector_backend_fuses_same_target_single_qubit_spans(self):
+        from rocq.backends import StateVectorBackend
+
+        fusion_calls = []
+        replay_calls = []
+
+        class _Status:
+            SUCCESS = 0
+
+        class _GateOp:
+            pass
+
+        class _FakeHipBackend:
+            GateOp = _GateOp
+            rocqStatus = _Status
+
+        class _FakeFusion:
+            def process_queue(self, queue):
+                fusion_calls.append(
+                    tuple(
+                        (op.name, tuple(op.controls), tuple(op.targets), tuple(op.params))
+                        for op in queue
+                    )
+                )
+                return _Status.SUCCESS
+
+        class _FakeState:
+            def fusion_engine(self):
+                return _FakeFusion()
+
+            def apply_named_gate(self, name, targets, params):
+                replay_calls.append((name, list(targets), dict(params)))
+
+        backend = StateVectorBackend.__new__(StateVectorBackend)
+        backend.num_qubits = 2
+        backend._uses_mock = False
+        backend._state = _FakeState()
+
+        ops = [
+            GateOp("h", [0], {}),
+            GateOp("rz", [0], {"phi": 0.25}),
+            GateOp("x", [1], {}),
+        ]
+        with mock.patch("rocq.backends.hip_backend", _FakeHipBackend):
+            backend.run_ops(ops)
+
+        self.assertEqual(
+            fusion_calls,
+            [(("H", (), (0,), ()), ("RZ", (), (0,), (0.25,)))],
+        )
+        self.assertEqual(replay_calls, [("x", [1], {})])
+
     def test_top_level_phase_gate_exports_record_canonical_ops(self):
         for name in ("tdg", "tdag", "p", "phase", "cp", "cphase"):
             with self.subTest(name=name):
