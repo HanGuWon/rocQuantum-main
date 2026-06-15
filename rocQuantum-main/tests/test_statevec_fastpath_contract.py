@@ -143,6 +143,26 @@ class TestStateVecFastPathContract(unittest.TestCase):
             ),
         )
 
+    def test_nonlocal_distributed_generic_matrix_localizes_with_swaps(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("apply_matrix_distributed_local_targets", source)
+        self.assertIn("localize_distributed_qubits_for_operation(", source)
+        self.assertIn("localized_targets", source)
+        self.assertIn("restore_distributed_qubit_swaps(handle, swaps)", source)
+        self.assertIn("return apply_matrix_distributed_local_targets(handle, numQubits, targets, matrix_host)", source)
+        matrix_block = source.split("rocqStatus_t rocsvApplyMatrix", 1)[1].split(
+            "rocqStatus_t rocsvApplySWAP", 1
+        )[0]
+        self.assertIn("status = apply_matrix_distributed_local_targets", matrix_block)
+        self.assertIn("return apply_matrix_distributed_host_fallback", matrix_block)
+        self.assertLess(
+            matrix_block.find("localize_distributed_qubits_for_operation("),
+            matrix_block.find("return apply_matrix_distributed_host_fallback"),
+            "Distributed generic matrix paths should attempt swap-localization before host fallback.",
+        )
+
     def test_multi_gpu_guide_matches_distributed_contract(self):
         with open(_MULTI_GPU_GUIDE, "r", encoding="utf-8") as f:
             guide = f.read()

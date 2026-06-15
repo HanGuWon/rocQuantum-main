@@ -4671,6 +4671,111 @@ inline rocqStatus_t compute_distributed_sample_probabilities(rocsvInternalHandle
     return normalize_host_probabilities(h_probabilities, num_outcomes);
 }
 
+inline rocqStatus_t apply_matrix_distributed_local_targets(rocsvInternalHandle* handle,
+                                                           unsigned numQubits,
+                                                           const std::vector<unsigned>& targets,
+                                                           const std::vector<rocComplex>& matrix_host) {
+    if (!handle || !handle->distributedMode || targets.empty()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (numQubits != handle->globalNumQubits ||
+        !distributed_all_qubits_local(handle, targets)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    const unsigned numTargetQubits = static_cast<unsigned>(targets.size());
+    size_t matrix_dim = 0;
+    if (!compute_power_of_two(numTargetQubits, &matrix_dim) ||
+        matrix_host.size() != matrix_dim * matrix_dim) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    if (numTargetQubits == 1) {
+        return launch_single_qubit_matrix(handle,
+                                          handle->d_state,
+                                          numQubits,
+                                          targets[0],
+                                          matrix_host[0],
+                                          matrix_host[1],
+                                          matrix_host[2],
+                                          matrix_host[3]);
+    }
+
+    if (numTargetQubits < 2 || numTargetQubits > kMaxDistributedMatrixTargetQubits) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
+    }
+
+    constexpr int threads_per_block = 256;
+    const size_t groups_per_slice = handle->localSliceElements >> numTargetQubits;
+    const int blocks = compute_reduction_blocks(groups_per_slice, threads_per_block);
+    for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
+        const size_t rank_idx = static_cast<size_t>(rank);
+        if (hipSetDevice(handle->distributedDeviceIds[rank_idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+
+        unsigned* d_targets_local = handle->distributedTargetScratch[rank_idx];
+        rocComplex* d_matrix_local = handle->distributedMatrixScratch[rank_idx];
+        if (!d_targets_local || !d_matrix_local) {
+            return ROCQ_STATUS_ALLOCATION_FAILED;
+        }
+
+        if (hipMemcpyAsync(d_targets_local,
+                           targets.data(),
+                           numTargetQubits * sizeof(unsigned),
+                           hipMemcpyHostToDevice,
+                           handle->distributedStreams[rank_idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+
+        if (hipMemcpyAsync(d_matrix_local,
+                           matrix_host.data(),
+                           matrix_host.size() * sizeof(rocComplex),
+                           hipMemcpyHostToDevice,
+                           handle->distributedStreams[rank_idx]) != hipSuccess) {
+            return ROCQ_STATUS_HIP_ERROR;
+        }
+
+        if (numTargetQubits == 2) {
+            hipLaunchKernelGGL(apply_two_qubit_generic_matrix_kernel,
+                               dim3(blocks),
+                               dim3(threads_per_block),
+                               0,
+                               handle->distributedStreams[rank_idx],
+                               handle->distributedSlices[rank_idx],
+                               handle->numLocalQubitsPerGpu,
+                               d_targets_local,
+                               d_matrix_local);
+        } else if (numTargetQubits == 3) {
+            hipLaunchKernelGGL(apply_three_qubit_generic_matrix_kernel,
+                               dim3(blocks),
+                               dim3(threads_per_block),
+                               0,
+                               handle->distributedStreams[rank_idx],
+                               handle->distributedSlices[rank_idx],
+                               handle->numLocalQubitsPerGpu,
+                               d_targets_local,
+                               d_matrix_local);
+        } else {
+            hipLaunchKernelGGL(apply_four_qubit_generic_matrix_kernel,
+                               dim3(blocks),
+                               dim3(threads_per_block),
+                               0,
+                               handle->distributedStreams[rank_idx],
+                               handle->distributedSlices[rank_idx],
+                               handle->numLocalQubitsPerGpu,
+                               d_targets_local,
+                               d_matrix_local);
+        }
+
+        rocqStatus_t launch_status = check_last_hip_error();
+        if (launch_status != ROCQ_STATUS_SUCCESS) {
+            return launch_status;
+        }
+    }
+    return ROCQ_STATUS_SUCCESS;
+}
+
 inline rocqStatus_t apply_sparse_matrix_distributed_local(rocsvInternalHandle* handle,
                                                           unsigned numQubits,
                                                           const std::vector<unsigned>& targets,
@@ -6435,6 +6540,37 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
             return ROCQ_STATUS_INVALID_VALUE;
         }
         if (!distributed_all_qubits_local(handle, targets)) {
+            if (numTargetQubits <= kMaxDistributedMatrixTargetQubits) {
+                std::vector<unsigned> localized_targets;
+                std::vector<std::pair<unsigned, unsigned>> swaps;
+                status = localize_distributed_qubits_for_operation(
+                    handle, targets, &localized_targets, &swaps);
+                if (status == ROCQ_STATUS_SUCCESS) {
+                    if (hipSetDevice(handle->distributedDeviceIds[0]) != hipSuccess) {
+                        (void)restore_distributed_qubit_swaps(handle, swaps);
+                        return ROCQ_STATUS_HIP_ERROR;
+                    }
+                    std::vector<rocComplex> matrix_host;
+                    status = copy_matrix_from_device(matrixDevice,
+                                                     matrix_elements,
+                                                     handle->streams[0],
+                                                     &matrix_host);
+                    if (status == ROCQ_STATUS_SUCCESS) {
+                        status = apply_matrix_distributed_local_targets(handle,
+                                                                        numQubits,
+                                                                        localized_targets,
+                                                                        matrix_host);
+                    }
+                    rocqStatus_t restore_status = restore_distributed_qubit_swaps(handle, swaps);
+                    if (status != ROCQ_STATUS_SUCCESS) {
+                        return status;
+                    }
+                    return restore_status;
+                }
+                if (status != ROCQ_STATUS_NOT_IMPLEMENTED) {
+                    return status;
+                }
+            }
             if (!distributed_host_fallback_enabled()) {
                 return ROCQ_STATUS_NOT_IMPLEMENTED;
             }
@@ -6459,23 +6595,7 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
             return ROCQ_STATUS_HIP_ERROR;
         }
 
-        if (numTargetQubits == 1) {
-            std::vector<rocComplex> matrix_host;
-            status = copy_matrix_from_device(matrixDevice, 4, handle->streams[0], &matrix_host);
-            if (status != ROCQ_STATUS_SUCCESS) {
-                return status;
-            }
-            return launch_single_qubit_matrix(handle,
-                                              handle->d_state,
-                                              numQubits,
-                                              targets[0],
-                                              matrix_host[0],
-                                              matrix_host[1],
-                                              matrix_host[2],
-                                              matrix_host[3]);
-        }
-
-        if (numTargetQubits >= 2 && numTargetQubits <= 4) {
+        if (numTargetQubits <= kMaxDistributedMatrixTargetQubits) {
             std::vector<rocComplex> matrix_host;
             status = copy_matrix_from_device(matrixDevice,
                                              matrix_elements,
@@ -6484,76 +6604,7 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
             if (status != ROCQ_STATUS_SUCCESS) {
                 return status;
             }
-
-            constexpr int threads_per_block = 256;
-            const size_t groups_per_slice = handle->localSliceElements >> numTargetQubits;
-            const int blocks = compute_reduction_blocks(groups_per_slice, threads_per_block);
-            for (int rank = 0; rank < handle->distributedGpuCount; ++rank) {
-                const size_t rank_idx = static_cast<size_t>(rank);
-                if (hipSetDevice(handle->distributedDeviceIds[rank_idx]) != hipSuccess) {
-                    return ROCQ_STATUS_HIP_ERROR;
-                }
-
-                unsigned* d_targets_local = handle->distributedTargetScratch[rank_idx];
-                rocComplex* d_matrix_local = handle->distributedMatrixScratch[rank_idx];
-                if (!d_targets_local || !d_matrix_local) {
-                    return ROCQ_STATUS_ALLOCATION_FAILED;
-                }
-
-                if (hipMemcpyAsync(d_targets_local,
-                                   targets.data(),
-                                   numTargetQubits * sizeof(unsigned),
-                                   hipMemcpyHostToDevice,
-                                   handle->distributedStreams[rank_idx]) != hipSuccess) {
-                    return ROCQ_STATUS_HIP_ERROR;
-                }
-
-                if (hipMemcpyAsync(d_matrix_local,
-                                   matrix_host.data(),
-                                   matrix_elements * sizeof(rocComplex),
-                                   hipMemcpyHostToDevice,
-                                   handle->distributedStreams[rank_idx]) != hipSuccess) {
-                    return ROCQ_STATUS_HIP_ERROR;
-                }
-
-                if (numTargetQubits == 2) {
-                    hipLaunchKernelGGL(apply_two_qubit_generic_matrix_kernel,
-                                       dim3(blocks),
-                                       dim3(threads_per_block),
-                                       0,
-                                       handle->distributedStreams[rank_idx],
-                                       handle->distributedSlices[rank_idx],
-                                       handle->numLocalQubitsPerGpu,
-                                       d_targets_local,
-                                       d_matrix_local);
-                } else if (numTargetQubits == 3) {
-                    hipLaunchKernelGGL(apply_three_qubit_generic_matrix_kernel,
-                                       dim3(blocks),
-                                       dim3(threads_per_block),
-                                       0,
-                                       handle->distributedStreams[rank_idx],
-                                       handle->distributedSlices[rank_idx],
-                                       handle->numLocalQubitsPerGpu,
-                                       d_targets_local,
-                                       d_matrix_local);
-                } else {
-                    hipLaunchKernelGGL(apply_four_qubit_generic_matrix_kernel,
-                                       dim3(blocks),
-                                       dim3(threads_per_block),
-                                       0,
-                                       handle->distributedStreams[rank_idx],
-                                       handle->distributedSlices[rank_idx],
-                                       handle->numLocalQubitsPerGpu,
-                                       d_targets_local,
-                                       d_matrix_local);
-                }
-
-                rocqStatus_t launch_status = check_last_hip_error();
-                if (launch_status != ROCQ_STATUS_SUCCESS) {
-                    return launch_status;
-                }
-            }
-            return ROCQ_STATUS_SUCCESS;
+            return apply_matrix_distributed_local_targets(handle, numQubits, targets, matrix_host);
         }
 
         return ROCQ_STATUS_NOT_IMPLEMENTED;
