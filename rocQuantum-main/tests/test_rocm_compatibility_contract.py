@@ -63,6 +63,8 @@ class TestRocmCompatibilityContract(unittest.TestCase):
 
         self.assertIn("find_dependency(hip CONFIG REQUIRED)", package_config)
         self.assertNotIn("find_dependency(HIP REQUIRED)", package_config)
+        self.assertIn("find_package(rccl QUIET)", package_config)
+        self.assertNotIn("find_dependency(rccl", package_config)
 
     def test_component_cmake_uses_official_rocm_imported_targets(self):
         combined = "\n".join(_read(path) for path in COMPONENT_CMAKES)
