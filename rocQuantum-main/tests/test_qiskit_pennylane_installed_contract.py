@@ -1152,6 +1152,82 @@ def test_framework_runtime_rejects_ambiguous_shots_before_native_dispatch(monkey
     assert batch_sim.probability_requests == []
 
 
+def test_framework_runtime_revalidates_native_sample_payloads(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        normalize_sample_indices,
+        qiskit_memory_from_samples,
+        samples_to_binary_rows,
+    )
+
+    invalid_samples = (
+        [True],
+        [np.bool_(False)],
+        [0.5],
+        ["1"],
+        [b"1"],
+        [1.0 + 0.0j],
+        [-1],
+        [2],
+    )
+
+    for raw_samples in invalid_samples:
+        with pytest.raises(ValueError, match="samples"):
+            normalize_sample_indices(raw_samples, 1)
+        with pytest.raises(ValueError, match="samples"):
+            samples_to_binary_rows(raw_samples, 1)
+        with pytest.raises(ValueError, match="samples"):
+            qiskit_memory_from_samples(raw_samples, [(0, 0)], 1)
+
+    with pytest.raises(ValueError, match="count"):
+        normalize_sample_indices([0], 1, expected_count=2)
+    with pytest.raises(ValueError, match="offsets"):
+        qiskit_memory_from_samples([0], [(0, 0)], 1, sample_offsets=[True])
+    with pytest.raises(ValueError, match="offsets"):
+        qiskit_memory_from_samples([0], [(0, 0)], 1, sample_offsets=[])
+
+    class _BadNativeMeasureSimulator:
+        def __init__(self, samples):
+            self.samples = samples
+            self.calls = []
+
+        def measure(self, qubits, shots):
+            self.calls.append((tuple(qubits), int(shots)))
+            return self.samples
+
+    for raw_samples, shots in tuple((samples, 1) for samples in invalid_samples) + (([0], 2),):
+        sim = _BadNativeMeasureSimulator(raw_samples)
+        with pytest.raises(ValueError):
+            RocQuantumRuntime(sim).measure([0], shots)
+        assert sim.calls == [((0,), shots)]
+
+    class _BadNativeBatchMeasureSimulator:
+        def __init__(self, samples):
+            self.samples = samples
+            self.calls = []
+
+        def batch_size(self):
+            return 2
+
+        def measure_batch(self, qubits, shots):
+            self.calls.append((tuple(qubits), int(shots)))
+            return self.samples
+
+    invalid_batch_samples = (
+        [[0, 1], [1, 2]],
+        [[0, 1], [True, 0]],
+        [[0, 1], [1]],
+        [0, 1, 1],
+    )
+    for raw_samples in invalid_batch_samples:
+        sim = _BadNativeBatchMeasureSimulator(raw_samples)
+        with pytest.raises(ValueError):
+            RocQuantumRuntime(sim).measure_batch([0], 2)
+        assert sim.calls == [((0,), 2)]
+
+
 def test_framework_runtime_rejects_ambiguous_binding_dimensions(monkeypatch):
     _install_fake_binding(monkeypatch)
 

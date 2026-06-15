@@ -328,6 +328,49 @@ def _reverse_bits(value: int, width: int) -> int:
     return out
 
 
+def _normalize_sample_width(num_wires: object, label: str) -> int:
+    if isinstance(num_wires, (bool, np.bool_)) or not isinstance(num_wires, Integral):
+        raise ValueError(f"{label} wire count must be a non-negative integer.")
+    normalized = int(num_wires)
+    if normalized < 0:
+        raise ValueError(f"{label} wire count must be non-negative.")
+    return normalized
+
+
+def normalize_sample_indices(
+    raw_samples: Sequence[int],
+    num_wires: int,
+    label: str = "Measurement samples",
+    expected_count: int | None = None,
+) -> np.ndarray:
+    num_wires = _normalize_sample_width(num_wires, label)
+    if isinstance(raw_samples, (str, bytes)):
+        raise ValueError(f"{label} must contain integer sample indices.")
+    try:
+        raw = np.asarray(raw_samples, dtype=object).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must contain integer sample indices.") from exc
+
+    if expected_count is not None:
+        normalized_count = normalize_positive_integer(expected_count, f"{label} count")
+        if raw.size != normalized_count:
+            raise ValueError(f"{label} count must match requested shots.")
+
+    sample_limit = 1 << num_wires
+    int64_limit = np.iinfo(np.int64).max
+    normalized = []
+    for sample in raw:
+        if isinstance(sample, (bool, np.bool_)) or not isinstance(sample, Integral):
+            raise ValueError(f"{label} must contain integer sample indices.")
+        sample_index = int(sample)
+        if sample_index < 0 or sample_index >= sample_limit:
+            raise ValueError(f"{label} must be in the sampled qubit range.")
+        if sample_index > int64_limit:
+            raise ValueError(f"{label} must fit in signed 64-bit sample indices.")
+        normalized.append(sample_index)
+    return np.ascontiguousarray(np.asarray(normalized, dtype=np.int64))
+
+
 def matrix_to_little_endian_wires(matrix: object) -> np.ndarray:
     """Convert a wire-ordered matrix to rocQuantum's local little-endian basis."""
     normalized = as_complex_matrix(matrix)
@@ -381,8 +424,10 @@ def statevector_to_little_endian_wires(statevector: object) -> np.ndarray:
 
 
 def samples_to_binary_rows(raw_samples: Sequence[int], num_wires: int) -> np.ndarray:
+    num_wires = _normalize_sample_width(num_wires, "Measurement samples")
+    samples = normalize_sample_indices(raw_samples, num_wires)
     return np.array(
-        [[(int(sample) >> bit) & 1 for bit in range(num_wires)] for sample in raw_samples],
+        [[(int(sample) >> bit) & 1 for bit in range(num_wires)] for sample in samples],
         dtype=int,
     )
 
@@ -508,11 +553,27 @@ def qiskit_memory_from_samples(
         memory_width = len(measured_items)
     if sample_offsets is None:
         sample_offsets = list(range(len(measured_items)))
+    if isinstance(sample_offsets, (str, bytes)):
+        raise ValueError("Qiskit sample offsets must be non-negative integer bit offsets.")
+
+    normalized_offsets = []
+    for offset in sample_offsets:
+        if isinstance(offset, (bool, np.bool_)) or not isinstance(offset, Integral):
+            raise ValueError("Qiskit sample offsets must be non-negative integer bit offsets.")
+        normalized_offset = int(offset)
+        if normalized_offset < 0:
+            raise ValueError("Qiskit sample offsets must be non-negative.")
+        normalized_offsets.append(normalized_offset)
+    if len(normalized_offsets) != len(measured_items):
+        raise ValueError("Qiskit sample offsets must match measured item count.")
+
+    sample_width = max(normalized_offsets, default=-1) + 1
+    samples = normalize_sample_indices(raw_samples, sample_width, "Qiskit memory samples")
 
     memory = []
-    for sample in raw_samples:
+    for sample in samples:
         bits = ["0"] * memory_width
-        for packed_bit, (classical_bit, _) in zip(sample_offsets, measured_items):
+        for packed_bit, (classical_bit, _) in zip(normalized_offsets, measured_items):
             output_index = memory_width - 1 - int(classical_bit)
             if 0 <= output_index < memory_width:
                 bits[output_index] = "1" if ((int(sample) >> packed_bit) & 1) else "0"
@@ -1126,10 +1187,16 @@ class RocQuantumRuntime:
 
     def measure(self, qubits: Iterable[int], shots: int) -> list[int]:
         shots = normalize_shots(shots)
+        normalized_qubits = normalize_targets(qubits)
         measure = getattr(self.simulator, "measure", None)
         if not callable(measure):
             raise NotImplementedError("The active rocQuantum binding does not expose native sampling.")
-        return [int(sample) for sample in measure(normalize_targets(qubits), shots)]
+        samples = normalize_sample_indices(
+            measure(normalized_qubits, shots),
+            len(normalized_qubits),
+            expected_count=shots,
+        )
+        return [int(sample) for sample in samples]
 
     def measure_batch(self, qubits: Iterable[int], shots: int) -> np.ndarray:
         normalized_qubits = normalize_targets(qubits)
@@ -1139,7 +1206,12 @@ class RocQuantumRuntime:
         if not callable(native):
             native = getattr(self.simulator, "MeasureBatch", None)
         if callable(native):
-            samples = np.asarray(native(normalized_qubits, shots), dtype=np.int64)
+            samples = normalize_sample_indices(
+                native(normalized_qubits, shots),
+                len(normalized_qubits),
+                "Batched measurement samples",
+                expected_count=self.batch_size() * shots,
+            )
             return samples.reshape(self.batch_size(), shots)
 
         if self.batch_size() == 1:
