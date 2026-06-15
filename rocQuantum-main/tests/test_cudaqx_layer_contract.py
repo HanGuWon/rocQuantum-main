@@ -514,6 +514,35 @@ class TestQaoaHelpers(unittest.TestCase):
             ],
         )
 
+    def test_observable_arithmetic_rejects_unsupported_operands(self):
+        from rocq.operator import PauliOperator
+
+        class UnsupportedOperand:
+            def __add__(self, other):
+                return NotImplemented
+
+            def __sub__(self, other):
+                return NotImplemented
+
+        operator = PauliOperator("Z0")
+        summed = operator + PauliOperator("Z1")
+        unsupported = UnsupportedOperand()
+
+        unsupported_cases = (
+            lambda: operator * unsupported,
+            lambda: operator / unsupported,
+            lambda: operator + unsupported,
+            lambda: unsupported + operator,
+            lambda: operator - unsupported,
+            lambda: unsupported - operator,
+            lambda: summed + unsupported,
+        )
+
+        for expression in unsupported_cases:
+            with self.subTest(expression=expression):
+                with self.assertRaisesRegex(TypeError, "Cannot"):
+                    expression()
+
     def test_maxcut_qaoa_kernel_emits_supported_ops(self):
         from rocquantum.solvers.qaoa import make_maxcut_qaoa_kernel, maxcut_cost_operator
         from rocq.operator import iter_pauli_terms

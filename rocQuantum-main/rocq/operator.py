@@ -194,7 +194,7 @@ class QuantumOperator(ABC):
             return new_op
         if isinstance(other, QuantumOperator):
             return _multiply_operator_pauli_terms(self, other)
-        raise NotImplementedError(f"Cannot multiply QuantumOperator by {type(other)}")
+        raise TypeError(f"Cannot multiply QuantumOperator by {type(other).__name__}.")
 
     def __rmul__(self, other):
         return self.__mul__(other)
@@ -205,7 +205,7 @@ class QuantumOperator(ABC):
             if scalar == 0:
                 raise ValueError("divisor must be non-zero.")
             return self * (1 / scalar)
-        raise NotImplementedError(f"Cannot divide QuantumOperator by {type(other)}")
+        raise TypeError(f"Cannot divide QuantumOperator by {type(other).__name__}.")
 
     def __add__(self, other):
         if isinstance(other, QuantumOperator):
@@ -215,7 +215,7 @@ class QuantumOperator(ABC):
             if scalar == 0:
                 return self
             return SumOperator([self, _identity_operator(scalar)])
-        raise NotImplementedError(f"Cannot add QuantumOperator to {type(other)}")
+        raise TypeError(f"Cannot add QuantumOperator to {type(other).__name__}.")
 
     def __radd__(self, other):
         if isinstance(other, Number):
@@ -223,7 +223,7 @@ class QuantumOperator(ABC):
             if scalar == 0:
                 return self
             return SumOperator([_identity_operator(scalar), self])
-        raise NotImplementedError(f"Cannot add {type(other)} to QuantumOperator")
+        raise TypeError(f"Cannot add {type(other).__name__} to QuantumOperator.")
 
     def __neg__(self):
         return -1 * self
@@ -236,12 +236,12 @@ class QuantumOperator(ABC):
             if scalar == 0:
                 return self
             return self + _identity_operator(-scalar)
-        raise NotImplementedError(f"Cannot subtract {type(other)} from QuantumOperator")
+        raise TypeError(f"Cannot subtract {type(other).__name__} from QuantumOperator.")
 
     def __rsub__(self, other):
         if isinstance(other, Number):
             return _identity_operator(_normalize_coefficient(other, "scalar")) + (-self)
-        raise NotImplementedError(f"Cannot subtract QuantumOperator from {type(other)}")
+        raise TypeError(f"Cannot subtract QuantumOperator from {type(other).__name__}.")
 
     @abstractmethod
     def to_string(self) -> str:
@@ -320,10 +320,11 @@ class SumOperator(QuantumOperator):
         if isinstance(other, QuantumOperator):
             return SumOperator(self._add_terms() + [other])
         if isinstance(other, Number):
-            if other == 0:
+            scalar = _normalize_coefficient(other, "scalar")
+            if scalar == 0:
                 return self
-            return SumOperator(self._add_terms() + [_identity_operator(other)])
-        raise NotImplementedError
+            return SumOperator(self._add_terms() + [_identity_operator(scalar)])
+        raise TypeError(f"Cannot add SumOperator to {type(other).__name__}.")
 
     def to_string(self) -> str:
         joined_terms = " + ".join(f"({term.to_string()})" for term in self.terms)
