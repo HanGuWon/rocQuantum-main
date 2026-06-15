@@ -339,17 +339,19 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
     stderr_path.write_text(completed.stderr, encoding="utf-8")
 
     status = "passed" if completed.returncode == 0 else "failed"
-    if not output_path.exists():
+    output_missing = not output_path.exists()
+    if output_missing:
         _write_json(
             output_path,
             {
                 "benchmark": entry["id"],
-                "status": status,
+                "status": "failed",
                 "returncode": completed.returncode,
                 "reason": "benchmark did not write its declared JSON output",
                 "created_at_utc": _utc_now(),
             },
         )
+        status = "failed"
 
     result = {
         "id": entry["id"],
@@ -362,8 +364,10 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
         "executable": str(executable),
         "duration_seconds": duration,
     }
+    if output_missing:
+        result["failure_reason"] = "benchmark did not write its declared JSON output"
     try:
-        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        payload = _read_json_object(output_path)
         speedups = extract_case_speedups(payload, thresholds=_speedup_thresholds(entry))
         if speedups:
             result["speedups"] = speedups
@@ -376,8 +380,13 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
                 result["status"] = "failed"
                 result["threshold_failures"] = threshold_failures
                 result["failure_reason"] = "one or more configured speedup thresholds were not met"
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         result["analysis_warning"] = f"could not analyze benchmark output: {exc}"
+        result["status"] = "failed"
+        if result.get("failure_reason"):
+            result["failure_reason"] = f"{result['failure_reason']}; could not analyze benchmark output"
+        else:
+            result["failure_reason"] = "could not analyze benchmark output"
     return result
 
 

@@ -203,7 +203,7 @@ What is not real today:
 ### Packaging and CI
 
 - Native CMake build exists and now follows the ROCm HIP-language floor of CMake `3.21` plus official config-package targets such as `hip` / `hip::host`, `roc::rocblas`, and `roc::rocsolver`. The install package config uses the same ROCm package naming, and the root build activates `python/rocq` for `_rocq_hip_backend`; Python packaging is still split between canonical and legacy surfaces.
-- CI covers Python import/package contracts, one GPU runtime regression, and a release benchmark artifact registry. The registry records statevec, distributed reduction, TensorNet, and DensityMat benchmark JSON when native ROCm binaries are available, or explicit skipped JSON when they are not.
+- CI covers Python import/package contracts, one GPU runtime regression, and a release benchmark artifact registry. The registry records statevec, distributed reduction, TensorNet, and DensityMat benchmark JSON when native ROCm binaries are available, emits explicit skipped JSON when they are not, and now fails the benchmark result when a runnable benchmark omits or corrupts its declared JSON output.
 
 ## What Is Stubbed Or Absent
 

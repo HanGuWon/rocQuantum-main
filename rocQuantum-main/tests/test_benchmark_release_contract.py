@@ -194,6 +194,102 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("`expectation_ms`: 5.000x", markdown)
         self.assertIn("`sparse_moments_ms`: 3.000x", markdown)
 
+    def test_release_runner_fails_missing_declared_json_output(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text("import sys\nraise SystemExit(0)\n", encoding="utf-8")
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_missing_output",
+                                "category": "statevec",
+                                "executable": sys.executable,
+                                "output": "missing.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = runner.run(
+                manifest_path=manifest_path,
+                build_dir=tmp_path / "build",
+                output_dir=tmp_path / "artifacts",
+            )
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    RUNNER,
+                    "--manifest",
+                    str(manifest_path),
+                    "--build-dir",
+                    str(tmp_path / "build"),
+                    "--output-dir",
+                    str(tmp_path / "artifacts-cli"),
+                    "--fail-on-error",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        result = summary["results"][0]
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_reason"], "benchmark did not write its declared JSON output")
+        self.assertEqual(completed.returncode, 1, completed.stdout)
+
+    def test_release_runner_fails_unanalyzable_json_output(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text(
+                "import sys\n"
+                "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                "    f.write('not json')\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_bad_json",
+                                "category": "statevec",
+                                "executable": sys.executable,
+                                "output": "bad.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = runner.run(
+                manifest_path=manifest_path,
+                build_dir=tmp_path / "build",
+                output_dir=tmp_path / "artifacts",
+            )
+
+        result = summary["results"][0]
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_reason"], "could not analyze benchmark output")
+        self.assertIn("could not analyze benchmark output", result["analysis_warning"])
+
     def test_release_runner_fails_configured_speedup_thresholds(self):
         runner = _load_runner_module()
         with tempfile.TemporaryDirectory() as tmp:
