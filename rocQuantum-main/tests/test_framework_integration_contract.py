@@ -777,9 +777,10 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
             source = f.read()
 
         self.assertIn("def _execute_circuit", source)
-        self.assertIn("measure = getattr(sim, \"measure\", None)", source)
-        self.assertIn("raw_samples = measure(indices, repetitions)", source)
+        self.assertIn("RocQuantumRuntime.from_bindings", source)
+        self.assertIn("runtime.measure(indices, repetitions)", source)
         self.assertIn("_samples_to_bits", source)
+        self.assertIn("runtime.statevector()", source)
         self.assertIn("np.random.choice", source, "legacy fallback should remain explicit")
 
     def test_qiskit_counts_are_fixed_width_bitstrings(self):

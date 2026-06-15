@@ -2,6 +2,8 @@
 import cirq
 import numpy as np
 
+from rocquantum.framework_runtime import RocQuantumRuntime, matrix_to_little_endian_wires
+
 try:
     import rocquantum_bind
 except ImportError:
@@ -37,7 +39,7 @@ class RocQuantumSimulator(cirq.SimulatesFinalState, cirq.SimulatesSamples):
 
     def _run(self, circuit, param_resolver, repetitions):
         qubit_order = sorted(circuit.all_qubits())
-        sim, q_map = self._execute_circuit(circuit, qubit_order)
+        runtime, q_map = self._execute_circuit(circuit, qubit_order)
         state_vector = None
         full_outcomes = None
         measurements = {}
@@ -46,13 +48,12 @@ class RocQuantumSimulator(cirq.SimulatesFinalState, cirq.SimulatesSamples):
             if isinstance(op.gate, cirq.MeasurementGate):
                 key = op.gate.key
                 indices = [q_map[q] for q in op.qubits]
-                measure = getattr(sim, "measure", None)
-                if callable(measure):
-                    raw_samples = measure(indices, repetitions)
+                try:
+                    raw_samples = runtime.measure(indices, repetitions)
                     values = _samples_to_bits(raw_samples, len(indices))
-                else:
+                except NotImplementedError:
                     if state_vector is None:
-                        state_vector = sim.GetStateVector()
+                        state_vector = runtime.statevector()
                         probs = np.abs(state_vector) ** 2
                         full_outcomes = np.random.choice(len(probs), size=repetitions, p=probs)
                     values = (full_outcomes[:, np.newaxis] >> indices) & 1
@@ -62,25 +63,27 @@ class RocQuantumSimulator(cirq.SimulatesFinalState, cirq.SimulatesSamples):
     def _execute_circuit(self, circuit, qubit_order):
         binding = self._require_binding()
         q_map = {q: i for i, q in enumerate(qubit_order)}
-        sim = binding.QSim(num_qubits=len(q_map))
+        runtime = RocQuantumRuntime.from_bindings(len(q_map), binding_module=binding)
         for op in circuit.all_operations():
             if isinstance(op.gate, cirq.MeasurementGate):
                 continue
             gate_type = type(op.gate)
+            indices = [q_map[q] for q in op.qubits]
             if gate_type in CIRQ_TO_ROCQ_GATES:
-                indices = [q_map[q] for q in op.qubits]
-                sim.ApplyGate(CIRQ_TO_ROCQ_GATES[gate_type], *indices)
+                runtime.apply_operation(CIRQ_TO_ROCQ_GATES[gate_type], indices)
             elif isinstance(op.gate, (cirq.MatrixGate, cirq.Rx, cirq.Ry, cirq.Rz)):
-                matrix = cirq.unitary(op)
-                sim.ApplyGate(matrix, q_map[op.qubits[0]])
+                matrix = matrix_to_little_endian_wires(cirq.unitary(op))
+                runtime.apply_matrix(matrix, indices)
             else:
                 raise TypeError(f"Unsupported gate: {op.gate}")
-        sim.Execute()
-        return sim, q_map
+        execute = getattr(runtime.simulator, "Execute", None)
+        if callable(execute):
+            execute()
+        return runtime, q_map
 
     def _get_final_statevector(self, circuit, qubit_order):
-        sim, _ = self._execute_circuit(circuit, qubit_order)
-        return sim.GetStateVector()
+        runtime, _ = self._execute_circuit(circuit, qubit_order)
+        return runtime.statevector()
 
     def _perform_final_state_simulation(self, circuit, qubit_order, initial_state):
         if not np.allclose(initial_state[0], 1):
