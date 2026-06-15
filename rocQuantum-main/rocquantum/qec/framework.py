@@ -121,6 +121,12 @@ def _validate_stabilizer_circuits(stabilizer_circuits) -> List[Any]:
         ) from exc
 
 
+def _validate_decoder_correction(correction_operator):
+    if PauliOperator is not None and isinstance(correction_operator, PauliOperator):
+        return correction_operator
+    raise ValueError("decoder.decode must return a rocq.operator.PauliOperator correction.")
+
+
 class QuantumErrorCode(ABC):
     """Abstract base class for defining a quantum error-correcting code."""
     @abstractmethod
@@ -253,13 +259,9 @@ class QEC_Experiment:
             syndrome.append(outcome)
 
         self._log(f"\nStep 3: Decoding syndrome {syndrome}...")
-        correction_operator = decoder.decode(syndrome)
+        correction_operator = _validate_decoder_correction(decoder.decode(syndrome))
         self._log(f"  - Decoder determined correction: {correction_operator}")
-        correction_text = (
-            correction_operator.to_string()
-            if hasattr(correction_operator, "to_string")
-            else str(correction_operator)
-        )
+        correction_text = correction_operator.to_string()
 
         # Note: Final state calculation can be added here if needed.
         # For now, the primary goal is verifying the syndrome and correction.

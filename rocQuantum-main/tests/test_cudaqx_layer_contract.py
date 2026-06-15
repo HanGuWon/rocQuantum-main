@@ -855,7 +855,7 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "positive-integer shot/round/num_qubits, backend, code/decoder interface, stabilizer-fragment sequence, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
+            "positive-integer shot/round/num_qubits, backend, code/decoder interface, stabilizer-fragment sequence, decoder-correction result, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -1081,6 +1081,38 @@ class TestQecHelpers(unittest.TestCase):
         self.assertEqual(result["syndrome"], [0, 1])
         self.assertEqual(generator_decoder.syndrome, [0, 1])
         self.assertEqual(patched_sample.call_count, 2)
+
+    def test_qec_experiment_validates_decoder_correction_result(self):
+        from rocq.operator import PauliOperator
+        from rocquantum.qec.framework import QEC_Experiment
+
+        class FragmentCode:
+            def generate_stabilizer_circuits(self, initial_state_kernel, num_qubits, backend="state_vector"):
+                return ["fragment"]
+
+            def define_logical_operators(self):
+                return {"logical_Z": PauliOperator("Z0")}
+
+        class BadDecoder:
+            def __init__(self, correction):
+                self.correction = correction
+
+            def decode(self, syndrome):
+                return self.correction
+
+        experiment = QEC_Experiment()
+        for correction in (None, "X0", object()):
+            with self.subTest(correction=correction):
+                with mock.patch("rocquantum.qec.framework.rocq.sample", return_value={"0": 1}):
+                    with self.assertRaisesRegex(ValueError, "decoder.decode must return"):
+                        experiment.run_single_round(
+                            FragmentCode(),
+                            BadDecoder(correction),
+                            None,
+                            5,
+                            [3],
+                            shots=1,
+                        )
 
     def test_repetition_code_counts_analysis_reports_success_rate(self):
         from rocquantum.qec import analyze_repetition_code_counts
