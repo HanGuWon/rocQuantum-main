@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
@@ -100,15 +104,52 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("RocQuantumProvider", smoke)
         self.assertIn("smoke_cirq", smoke)
         self.assertIn("RocQuantumSimulator", smoke)
+        self.assertIn("--json-output", smoke)
+        self.assertIn("native_framework_smoke", smoke)
+        self.assertIn("\"schema_version\": 1", smoke)
+        self.assertIn("allow-missing-device-skip", smoke)
         self.assertIn("Build native Python bindings for framework smoke", workflow)
         self.assertIn("ROCQUANTUM_BUILD_BINDINGS=ON", workflow)
         self.assertIn("python3 -m pybind11 --cmakedir", workflow)
         self.assertIn("Run native framework integration smoke", workflow)
         self.assertIn("scripts/native_framework_smoke.py", workflow)
         self.assertIn("native-framework-smoke.log", workflow)
+        self.assertIn("native-framework-smoke.json", workflow)
         self.assertIn("pennylane>=0.35", workflow)
         self.assertIn("qiskit>=0.45", workflow)
         self.assertIn("cirq-core>=1.0", workflow)
+
+    def test_native_rocm_framework_smoke_can_emit_explicit_local_skip_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = os.path.join(tmp, "native-framework-smoke.json")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    _NATIVE_FRAMEWORK_SMOKE,
+                    "--allow-missing-device-skip",
+                    "--json-output",
+                    output_path,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(os.path.exists(output_path))
+            with open(output_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["suite"], "native_framework_smoke")
+        assume_rocm_device = os.environ.get("ROCQ_NATIVE_SMOKE_ASSUME_ROCM_DEVICE", "").strip().lower()
+        if os.path.exists("/dev/kfd") or assume_rocm_device in {"1", "true", "yes", "on"}:
+            self.assertIn(payload["status"], {"passed", "failed"})
+            self.assertTrue(payload["results"])
+        else:
+            self.assertEqual(payload["status"], "skipped")
+            self.assertEqual(payload["results"], [])
+            self.assertIn("/dev/kfd", payload["reason"])
 
     def test_shared_runtime_exposes_controlled_rotation_aliases(self):
         with open(_FRAMEWORK_RUNTIME, "r", encoding="utf-8") as f:

@@ -3,10 +3,15 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib
+import json
 import os
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable
 
 import numpy as np
 
@@ -90,13 +95,89 @@ def smoke_cirq() -> None:
     print("Cirq smoke: ok")
 
 
-def main() -> int:
-    _require_rocm_device()
-    smoke_native_binding()
-    smoke_pennylane()
-    smoke_qiskit()
-    smoke_cirq()
-    return 0
+def _write_report(report: dict[str, Any], output_path: Path | None) -> None:
+    if output_path is None:
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"native framework smoke JSON: {output_path}")
+
+
+def _run_step(name: str, callback: Callable[[], None]) -> dict[str, Any]:
+    start = time.perf_counter()
+    try:
+        callback()
+    except Exception as exc:  # noqa: BLE001 - top-level smoke report boundary
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        print(f"{name} smoke: failed: {exc}", file=sys.stderr)
+        return {
+            "name": name,
+            "status": "failed",
+            "elapsed_ms": round(elapsed_ms, 3),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    return {
+        "name": name,
+        "status": "passed",
+        "elapsed_ms": round(elapsed_ms, 3),
+    }
+
+
+def _make_report(status: str, results: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+    report = {
+        "schema_version": 1,
+        "suite": "native_framework_smoke",
+        "status": status,
+        "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "requires_rocm_device": True,
+        "results": results,
+    }
+    report.update(extra)
+    return report
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=None,
+        help="Optional path for a machine-readable native smoke report.",
+    )
+    parser.add_argument(
+        "--allow-missing-device-skip",
+        action="store_true",
+        help="Return success with a skipped report when /dev/kfd is unavailable.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        _require_rocm_device()
+    except RuntimeError as exc:
+        status = "skipped" if args.allow_missing_device_skip else "failed"
+        report = _make_report(status, [], reason=str(exc))
+        _write_report(report, args.json_output)
+        if args.allow_missing_device_skip:
+            print(f"native framework smoke: skipped: {exc}")
+            return 0
+        print(f"native framework smoke: failed: {exc}", file=sys.stderr)
+        return 1
+
+    steps = [
+        ("native_binding", smoke_native_binding),
+        ("pennylane", smoke_pennylane),
+        ("qiskit", smoke_qiskit),
+        ("cirq", smoke_cirq),
+    ]
+    results = [_run_step(name, callback) for name, callback in steps]
+    status = "passed" if all(result["status"] == "passed" for result in results) else "failed"
+    report = _make_report(status, results)
+    _write_report(report, args.json_output)
+    return 0 if status == "passed" else 1
 
 
 if __name__ == "__main__":
