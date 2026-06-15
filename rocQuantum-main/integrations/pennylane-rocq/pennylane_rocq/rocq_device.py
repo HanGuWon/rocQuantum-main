@@ -4107,7 +4107,11 @@ class RocQDevice(QubitDevice):
                 except NotImplementedError:
                     pass
                 else:
-                    return self._adjoint_jacobian_processing(np.asarray(jac, dtype=float))
+                    jac = np.asarray(jac, dtype=float)
+                    result_specs = getattr(self, "_native_adjoint_result_specs", None)
+                    if result_specs is not None:
+                        return self._process_native_adjoint_jacobian(jac, result_specs)
+                    return self._adjoint_jacobian_processing(jac)
 
         fallback_use_device_state = use_device_state and self._pre_rotated_state is not None
         if starting_state is None and not fallback_use_device_state:
@@ -4125,33 +4129,127 @@ class RocQDevice(QubitDevice):
         )
 
     def _native_adjoint_payload(self, tape):
+        self._native_adjoint_result_specs = None
         if getattr(tape, "batch_size", None) is not None:
             return None
         if self.shots is not None or self.shot_vector is not None:
             return None
 
-        trainable_params = self._native_adjoint_trainable_params(tape)
-        if trainable_params is None:
+        native_param_specs = self._native_adjoint_trainable_param_specs(tape)
+        if native_param_specs is None:
             return None
-        trainable_param_set = set(trainable_params)
-        operations = self._native_adjoint_operation_payloads(tape, trainable_param_set)
+        original_trainable_params = [spec["param_index"] for spec in native_param_specs]
+        trainable_params = [
+            column
+            for spec in native_param_specs
+            for column in spec["columns"]
+        ]
+        expanded_param_columns = {
+            spec["param_index"]: list(spec["columns"])
+            for spec in native_param_specs
+            if len(spec["columns"]) != 1 or tuple(spec["shape"]) != ()
+        }
+        trainable_param_set = set(original_trainable_params)
+        operations = self._native_adjoint_operation_payloads(
+            tape,
+            trainable_param_set,
+            expanded_param_columns,
+        )
         observables = self._native_adjoint_observable_payloads(tape)
         if operations is None or observables is None:
             return None
+        if any(tuple(spec["shape"]) != () for spec in native_param_specs):
+            self._native_adjoint_result_specs = native_param_specs
         return operations, observables, trainable_params
 
-    def _native_adjoint_operation_payloads(self, tape, trainable_param_set):
+    @staticmethod
+    def _native_adjoint_synthetic_param_index(param_index, element_index):
+        return -((int(param_index) + 1) * 1_000_000_000 + int(element_index))
+
+    def _native_adjoint_trainable_param_specs(self, tape):
+        specs = []
+        for param_index in tape.trainable_params:
+            info = tape.par_info[param_index]
+            op = tape[info["op_idx"]]
+            if isinstance(op, MeasurementProcess):
+                return None
+
+            param_index = int(param_index)
+            shape = ()
+            columns = [param_index]
+            if getattr(op, "name", None) == "SelectPauliRot":
+                params = list(getattr(op, "parameters", ()))
+                p_idx = int(info["p_idx"])
+                if p_idx >= len(params):
+                    return None
+                angle_array = np.asarray(params[p_idx], dtype=float)
+                if angle_array.ndim > 0:
+                    shape = tuple(int(dim) for dim in angle_array.shape)
+                    columns = [
+                        self._native_adjoint_synthetic_param_index(param_index, element_index)
+                        for element_index in range(int(angle_array.size))
+                    ]
+
+            specs.append(
+                {
+                    "param_index": param_index,
+                    "columns": columns,
+                    "shape": shape,
+                }
+            )
+        return specs
+
+    @staticmethod
+    def _process_native_adjoint_jacobian(jac, result_specs):
+        jac = np.asarray(jac, dtype=float)
+        expected_columns = sum(len(spec["columns"]) for spec in result_specs)
+        if jac.ndim == 0:
+            jac = jac.reshape(1, 1)
+        elif jac.ndim == 1:
+            if jac.shape[0] == expected_columns:
+                jac = jac.reshape(1, expected_columns)
+            else:
+                jac = jac.reshape(-1, expected_columns)
+
+        per_observable = []
+        for row in jac:
+            entries = []
+            column_offset = 0
+            for spec in result_specs:
+                columns = list(spec["columns"])
+                width = len(columns)
+                values = row[column_offset:column_offset + width]
+                column_offset += width
+                shape = tuple(spec["shape"])
+                if shape:
+                    entries.append(np.asarray(values, dtype=float).reshape(shape))
+                else:
+                    entries.append(np.asarray(values[0], dtype=float))
+            if len(entries) == 1:
+                per_observable.append(entries[0])
+            else:
+                per_observable.append(tuple(entries))
+
+        if len(per_observable) == 1:
+            return per_observable[0]
+        return tuple(per_observable)
+
+    def _native_adjoint_operation_payloads(self, tape, trainable_param_set, expanded_param_columns=None):
         payloads = []
         parameter_index = 0
+        expanded_param_columns = expanded_param_columns or {}
+        native_trainable_param_set = set()
+        for param_index in trainable_param_set:
+            native_trainable_param_set.update(expanded_param_columns.get(param_index, [param_index]))
 
         def append_payload(name, rocq_name, wire_indices, params, param_indices, param_derivative_scales=None):
             trainable_param_indices = [
-                param_index for param_index in param_indices if param_index in trainable_param_set
+                param_index for param_index in param_indices if param_index in native_trainable_param_set
             ]
             trainable_param_positions = [
                 position
                 for position, param_index in enumerate(param_indices)
-                if param_index in trainable_param_set
+                if param_index in native_trainable_param_set
             ]
             payload = {
                 "name": name,
@@ -4260,19 +4358,43 @@ class RocQDevice(QubitDevice):
                         return False
             return True
 
-        def append_uniform_rz(control_indices, target, angles):
+        def append_uniform_rz(control_indices, target, angles, param_indices=None):
             thetas = _uniform_rz_thetas(angles)
             tolerance = np.finfo(np.asarray(thetas).dtype).eps
-            if not np.any(np.abs(thetas) > tolerance):
+            param_indices = list(param_indices or [])
+            if not np.any(np.abs(thetas) > tolerance) and not param_indices:
                 return True
+            coefficient_columns = None
+            if param_indices:
+                basis = np.eye(len(param_indices), dtype=float)
+                coefficient_columns = _uniform_rz_thetas(basis)
             if not control_indices:
-                append_fixed("RZ", "RZ", [target], [float(thetas[0])])
+                if param_indices:
+                    append_payload(
+                        "RZ",
+                        "RZ",
+                        [target],
+                        [float(thetas[0])],
+                        param_indices,
+                        [float(scale) for scale in coefficient_columns[:, 0]],
+                    )
+                else:
+                    append_fixed("RZ", "RZ", [target], [float(thetas[0])])
                 return True
 
             code = _gray_code(len(control_indices))
             control_indexes = np.log2(code ^ np.roll(code, -1)).astype(int)
-            for theta, control_index in zip(thetas, control_indexes):
-                if abs(theta) > tolerance:
+            for theta_index, (theta, control_index) in enumerate(zip(thetas, control_indexes)):
+                if param_indices:
+                    append_payload(
+                        "RZ",
+                        "RZ",
+                        [target],
+                        [float(theta)],
+                        param_indices,
+                        [float(scale) for scale in coefficient_columns[:, theta_index]],
+                    )
+                elif abs(theta) > tolerance:
                     append_fixed("RZ", "RZ", [target], [float(theta)])
                 append_fixed("CNOT", "CNOT", [control_indices[int(control_index)], target])
             return True
@@ -4293,7 +4415,7 @@ class RocQDevice(QubitDevice):
                 diffs,
             )
 
-        def append_select_pauli_rot(wire_indices, angles, rot_axis):
+        def append_select_pauli_rot(wire_indices, angles, rot_axis, param_indices=None):
             if len(wire_indices) < 2:
                 return False
             control_indices = wire_indices[:-1]
@@ -4304,20 +4426,20 @@ class RocQDevice(QubitDevice):
 
             if rot_axis == "X":
                 append_fixed("Hadamard", "H", [target])
-                if not append_uniform_rz(control_indices, target, angle_array):
+                if not append_uniform_rz(control_indices, target, angle_array, param_indices):
                     return False
                 append_fixed("Hadamard", "H", [target])
                 return True
             if rot_axis == "Y":
                 append_fixed("Sdg", "SDG", [target])
                 append_fixed("Hadamard", "H", [target])
-                if not append_uniform_rz(control_indices, target, angle_array):
+                if not append_uniform_rz(control_indices, target, angle_array, param_indices):
                     return False
                 append_fixed("Hadamard", "H", [target])
                 append_fixed("S", "S", [target])
                 return True
             if rot_axis == "Z":
-                return append_uniform_rz(control_indices, target, angle_array)
+                return append_uniform_rz(control_indices, target, angle_array, param_indices)
             return False
 
         def append_qft(wire_indices):
@@ -5190,11 +5312,19 @@ class RocQDevice(QubitDevice):
                 continue
 
             if op.name == "SelectPauliRot":
-                if len(raw_params) != 1 or any(
+                if len(raw_params) != 1:
+                    return None
+                param_columns = expanded_param_columns.get(raw_param_indices[0])
+                if param_columns is None and any(
                     param_index in trainable_param_set for param_index in raw_param_indices
                 ):
                     return None
-                if not append_select_pauli_rot(wire_indices, raw_params[0], _select_pauli_rot_axis(op)):
+                if not append_select_pauli_rot(
+                    wire_indices,
+                    raw_params[0],
+                    _select_pauli_rot_axis(op),
+                    param_columns,
+                ):
                     return None
                 continue
 
@@ -5493,13 +5623,10 @@ class RocQDevice(QubitDevice):
         return payloads
 
     def _native_adjoint_trainable_params(self, tape):
-        trainable_params = []
-        for param_index in tape.trainable_params:
-            info = tape.par_info[param_index]
-            if isinstance(tape[info["op_idx"]], MeasurementProcess):
-                return None
-            trainable_params.append(int(param_index))
-        return trainable_params
+        specs = self._native_adjoint_trainable_param_specs(tape)
+        if specs is None:
+            return None
+        return [spec["param_index"] for spec in specs]
 
     def execute(self, circuit, **kwargs):
         skip_rotations = self._analytic_measurements_use_native_pauli(circuit)

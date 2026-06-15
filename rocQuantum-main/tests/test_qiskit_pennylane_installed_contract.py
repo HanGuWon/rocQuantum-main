@@ -11412,7 +11412,7 @@ def test_pennylane_native_adjoint_lowers_fixed_select_pauli_rot_payloads(monkeyp
     assert operations[-1]["trainable_param_indices"] == [3]
 
 
-def test_pennylane_native_adjoint_rejects_trainable_select_pauli_rot_angles(monkeypatch):
+def test_pennylane_native_adjoint_lowers_trainable_select_pauli_rot_angles(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)
     for name in list(sys.modules):
@@ -11431,7 +11431,81 @@ def test_pennylane_native_adjoint_rejects_trainable_select_pauli_rot_angles(monk
     )
     tape.trainable_params = [0, 1]
 
-    assert dev._native_adjoint_payload(tape) is None
+    operations, observables, trainable_params = dev._native_adjoint_payload(tape)
+
+    select_columns = trainable_params[:2]
+    assert trainable_params[2] == 1
+    assert all(column < 0 for column in select_columns)
+    assert len(set(select_columns)) == 2
+    assert observables == [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert [(op["rocq_name"], op["wires"]) for op in operations] == [
+        ("RZ", [1]),
+        ("CNOT", [0, 1]),
+        ("RZ", [1]),
+        ("CNOT", [0, 1]),
+        ("RY", [0]),
+    ]
+    np.testing.assert_allclose(
+        [operations[index]["params"][0] for index in (0, 2, 4)],
+        [0.75, -0.5, 0.321],
+    )
+    assert operations[0]["param_indices"] == select_columns
+    assert operations[0]["trainable_param_indices"] == select_columns
+    assert operations[0]["trainable_param_positions"] == [0, 1]
+    np.testing.assert_allclose(operations[0]["param_derivative_scales"], [0.5, 0.5])
+    assert operations[2]["param_indices"] == select_columns
+    assert operations[2]["trainable_param_indices"] == select_columns
+    assert operations[2]["trainable_param_positions"] == [0, 1]
+    np.testing.assert_allclose(operations[2]["param_derivative_scales"], [0.5, -0.5])
+    assert operations[-1]["param_indices"] == [1]
+    assert operations[-1]["trainable_param_indices"] == [1]
+
+
+def test_pennylane_native_adjoint_reshapes_trainable_select_pauli_rot_jacobian(monkeypatch):
+    pytest.importorskip("pennylane")
+
+    class _SelectPauliRotNativeAdjointSimulator(_FakeQuantumSimulator):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.native_adjoint_calls = []
+
+        def adjoint_jacobian(self, operations, observables, trainable_params):
+            self.native_adjoint_calls.append(
+                {
+                    "operations": operations,
+                    "observables": observables,
+                    "trainable_params": trainable_params,
+                }
+            )
+            return np.array([[0.11, 0.22, 0.33]], dtype=float)
+
+    fake = _install_fake_binding(monkeypatch)
+    fake.QuantumSimulator = _SelectPauliRotNativeAdjointSimulator
+    fake.QSim = _SelectPauliRotNativeAdjointSimulator
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    dev = qml.device("lightning.rocq", wires=2)
+    tape = qml.tape.QuantumScript(
+        [
+            qml.SelectPauliRot(np.array([0.25, 1.25]), control_wires=[0], target_wire=1, rot_axis="Z"),
+            qml.RY(0.321, wires=0),
+        ],
+        [qml.expval(qml.PauliZ(0))],
+    )
+    tape.trainable_params = [0, 1]
+
+    jacobian = dev.adjoint_jacobian(tape)
+
+    assert isinstance(jacobian, tuple)
+    np.testing.assert_allclose(jacobian[0], [0.11, 0.22])
+    assert jacobian[1] == pytest.approx(0.33)
+    native_call = _FakeQuantumSimulator.instances[-1].native_adjoint_calls[0]
+    assert native_call["trainable_params"][:2] == native_call["operations"][0]["param_indices"]
+    assert native_call["trainable_params"][2] == 1
 
 
 def test_pennylane_native_adjoint_lowers_fixed_controlled_sequence_payloads(monkeypatch):
