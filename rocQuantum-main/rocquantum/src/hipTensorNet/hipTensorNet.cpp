@@ -451,7 +451,9 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
                                                                    result_a_modes_order,
                                                                    result_b_modes_order,
                                                                    blas_handle,
-                                                                   stream);
+                                                                   stream,
+                                                                   config->memory_limit_bytes,
+                                                                   config->num_slices);
         if (status != ROCQ_STATUS_SUCCESS) {
             util::rocTensorFree(&contracted);
             return status;
@@ -517,7 +519,7 @@ rocqStatus_t rocTensorNetworkGetCapabilities(hipTensorNetCapabilities_t* capabil
     capabilities->supports_pathfinder_metis = 0;
 #endif
     capabilities->supports_memory_limit_planning = 1;
-    capabilities->supports_runtime_slicing = 0;
+    capabilities->supports_runtime_slicing = 1;
     return ROCQ_STATUS_SUCCESS;
 }
 

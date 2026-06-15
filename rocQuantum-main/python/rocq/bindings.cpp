@@ -94,8 +94,9 @@ std::string tensornet_contract_status_message(
     message += std::string(" pathfinder_algorithm=") +
                tensornet_pathfinder_name(config.pathfinder_algorithm) + ".";
     if (status == ROCQ_STATUS_NOT_IMPLEMENTED) {
-        message += " Runtime slicing is not implemented, or the requested TensorNet functionality is unavailable; "
-                   "memory_limit_bytes and num_slices only influence planning cost.";
+        message += " The requested TensorNet functionality is unavailable in this build or layout; "
+                   "memory_limit_bytes and num_slices support limited runtime K-sliced GEMM execution "
+                   "but do not provide full cuTensorNet-style open-index slicing.";
     }
     if (status == ROCQ_STATUS_INVALID_VALUE && config.num_slices < 0) {
         message += " num_slices must be non-negative.";
@@ -127,16 +128,17 @@ void warn_tensornet_pathfinder_fallback(const hipTensorNetContractionOptimizerCo
     }
 }
 
-void warn_tensornet_planning_only_slicing(const hipTensorNetContractionOptimizerConfig_t& config) {
+void warn_tensornet_limited_runtime_slicing(const hipTensorNetContractionOptimizerConfig_t& config) {
     if (config.memory_limit_bytes == 0 && config.num_slices <= 0) {
         return;
     }
 
     const std::string message =
-        "TensorNet memory_limit_bytes and num_slices currently influence "
-        "contraction planning cost only; runtime sliced execution is not "
-        "implemented. Check get_tensornet_capabilities()['supports_runtime_slicing'] "
-        "before relying on cuTensorNet-style sliced execution.";
+        "TensorNet memory_limit_bytes and num_slices enable limited runtime "
+        "K-sliced GEMM execution for pair contractions; this is not full "
+        "cuTensorNet-style open-index slicing. Check "
+        "get_tensornet_capabilities()['supports_runtime_slicing'] before relying "
+        "on broader sliced-execution parity.";
     if (PyErr_WarnEx(PyExc_RuntimeWarning, message.c_str(), 1) != 0) {
         throw py::error_already_set();
     }
@@ -1227,7 +1229,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             }
 
             warn_tensornet_pathfinder_fallback(config);
-            warn_tensornet_planning_only_slicing(config);
+            warn_tensornet_limited_runtime_slicing(config);
 
             // TODO: The rocblas_handle and hipStream_t should be retrieved from the simulator handle.
             // The current structure of RocsvHandleWrapper makes this difficult without modifying it.

@@ -323,7 +323,9 @@ rocqStatus_t rocTensorContractPair_internal(
     const std::vector<int>& result_A_modes_order, // Order of tensorA's uncontracted modes in result
     const std::vector<int>& result_B_modes_order, // Order of tensorB's uncontracted modes in result
     rocblas_handle blas_handle,
-    hipStream_t stream);
+    hipStream_t stream,
+    size_t memory_limit_bytes = 0,
+    int num_slices = 0);
 
 
 } // namespace util

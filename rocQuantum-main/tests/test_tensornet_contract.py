@@ -43,6 +43,8 @@ _TENSORNET_CMAKE = os.path.join(
     "CMakeLists.txt",
 )
 _BINDINGS_SOURCE = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
+_README = os.path.join(_PROJECT_ROOT, "README.md")
+_FEATURE_TRUTH_MATRIX = os.path.join(_PROJECT_ROOT, "FEATURE_TRUTH_MATRIX.md")
 
 
 class TestTensorNetContract(unittest.TestCase):
@@ -83,6 +85,8 @@ class TestTensorNetContract(unittest.TestCase):
     def test_optimizer_and_memory_limit_are_not_silent(self):
         with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
             source = f.read()
+        with open(_TENSOR_UTIL_SOURCE, "r", encoding="utf-8") as f:
+            tensor_util_source = f.read()
 
         self.assertIn("validate_optimizer_config", source)
         self.assertIn("pathfinder_algorithm_available", source)
@@ -94,7 +98,13 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("memory_limit_bytes", source)
         self.assertIn("num_slices", source)
         self.assertIn("supports_memory_limit_planning = 1", source)
-        self.assertIn("supports_runtime_slicing = 0", source)
+        self.assertIn("supports_runtime_slicing = 1", source)
+        self.assertIn("config->memory_limit_bytes", source)
+        self.assertIn("config->num_slices", source)
+        self.assertIn("runtime_slices", tensor_util_source)
+        self.assertIn("beta_accumulate", tensor_util_source)
+        self.assertIn("gemm_K_slice", tensor_util_source)
+        self.assertIn("pair_bytes", tensor_util_source)
         self.assertNotIn("if (!pathfinder_algorithm_available(config.pathfinder_algorithm))", source)
 
     def test_optional_metis_build_guard_and_runtime_partitioning(self):
@@ -141,22 +151,36 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("tensornet_pathfinder_supported", source)
         self.assertIn("falling back to greedy", source)
         self.assertIn("METIS/KAHYPAR parity", source)
-        self.assertIn("Runtime slicing is not implemented", source)
+        self.assertIn("limited runtime K-sliced GEMM execution", source)
+        self.assertIn("cuTensorNet-style open-index slicing", source)
         self.assertIn("num_slices must be non-negative", source)
         self.assertNotIn(
             'rocTensorNetworkContract failed: " + std::to_string(status)',
             source,
         )
 
-    def test_python_binding_warns_when_slicing_knobs_are_planning_only(self):
+    def test_python_binding_warns_when_slicing_knobs_use_limited_runtime_slicing(self):
         with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
             source = f.read()
 
-        self.assertIn("warn_tensornet_planning_only_slicing", source)
+        self.assertIn("warn_tensornet_limited_runtime_slicing", source)
         self.assertIn("PyErr_WarnEx(PyExc_RuntimeWarning", source)
-        self.assertIn("contraction planning cost only", source)
+        self.assertIn("limited runtime", source)
+        self.assertIn("K-sliced GEMM execution", source)
         self.assertIn("supports_runtime_slicing", source)
-        self.assertIn("warn_tensornet_planning_only_slicing(config)", source)
+        self.assertIn("warn_tensornet_limited_runtime_slicing(config)", source)
+
+    def test_docs_describe_limited_slicing_and_mixed_precision_boundary(self):
+        with open(_README, "r", encoding="utf-8") as f:
+            readme = f.read()
+        with open(_FEATURE_TRUTH_MATRIX, "r", encoding="utf-8") as f:
+            matrix = f.read()
+
+        self.assertIn("deterministic runtime K-sliced GEMM accumulation", readme)
+        self.assertIn("mixed precision remains a documented future lane", readme)
+        self.assertIn("not full cuTensorNet-style open-index slicing", matrix)
+        self.assertIn("mixed precision remains a documented future lane", matrix)
+        self.assertIn("No simultaneous runtime C64/C128 support", matrix)
 
 
 if __name__ == "__main__":

@@ -487,15 +487,18 @@
                                     "Numerical stability checks across precisions"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet_api.h:35",
-                                       "rocQuantum-main/rocquantum/src/Pathfinder.cpp:331"
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/rocTensorUtil.cpp:151",
+                                       "rocQuantum-main/rocquantum/src/hipTensorNet/hipTensorNet.cpp:447",
+                                       "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet_api.h:28",
+                                       "rocQuantum-main/tests/test_tensornet_contract.py:83",
+                                       "rocQuantum-main/README.md:95"
                                    ],
-                      "notes":  "Requires stabilized P1 optimizer dispatch and dtype support.",
-                      "status":  "Needs ROCm CI",
-                      "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/include/rocquantum/hipTensorNet_api.h:35",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "notes":  "TensorNet pair contractions now pass memory_limit_bytes/num_slices into rocTensorContractPair_internal, which deterministically splits the contracted GEMM K dimension and accumulates slices. Capability metadata reports this limited runtime slicing support. The mixed-precision lane remains explicitly documented as build-scoped C64/C128 today with future conversion/accumulation policy required before simultaneous runtime mixed precision.",
+                      "status":  "Implemented",
+                      "pr_link":  "integration/rocm-validation-handoff",
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipTensorNet/rocTensorUtil.cpp:151",
+                      "verification_path":  "Run rocQuantum-main/tests/test_tensornet_contract.py locally; run TensorNet contraction regression plus SlicingLogicTest in C64 and ROCQ_PRECISION_DOUBLE C128 builds on a ROCm runner for numerical stability evidence."
                   }
               ]
 }
