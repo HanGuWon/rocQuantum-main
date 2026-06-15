@@ -77,10 +77,16 @@ def normalize_params(params: Iterable[object] | None) -> list[float]:
     return normalized
 
 
-def as_complex_matrix(matrix: object) -> np.ndarray:
+def validate_finite_complex_array(values: object, label: str) -> None:
+    if not np.all(np.isfinite(values)):
+        raise ValueError(f"{label} must contain finite values.")
+
+
+def as_complex_matrix(matrix: object, label: str = "Operation matrix") -> np.ndarray:
     out = np.asarray(matrix, dtype=np.complex128)
     if out.ndim != 2 or out.shape[0] != out.shape[1]:
-        raise ValueError("Operation matrix must be square.")
+        raise ValueError(f"{label} must be square.")
+    validate_finite_complex_array(out, label)
     return np.ascontiguousarray(out)
 
 
@@ -115,6 +121,7 @@ def sparse_matrix_to_little_endian_wires(sparse_matrix: object):
     normalized = sparse_matrix.tocsr()
     if normalized.ndim != 2 or normalized.shape[0] != normalized.shape[1]:
         raise ValueError("Sparse operation matrix must be square.")
+    validate_finite_complex_array(np.asarray(normalized.data, dtype=np.complex128), "Sparse operation CSR data")
 
     dimension = int(normalized.shape[0])
     if dimension == 0 or dimension & (dimension - 1):
@@ -336,6 +343,7 @@ def expectation_matrix_from_statevector(
     dimension = 1 << len(normalized_targets)
     if normalized_matrix.shape != (dimension, dimension):
         raise ValueError("Dense expectation matrix dimension must be 2^len(targets).")
+    validate_finite_complex_array(normalized_matrix, "Dense expectation matrix")
 
     result = 0.0 + 0.0j
     for row_index, amplitude in enumerate(state):
@@ -375,6 +383,7 @@ def sparse_hamiltonian_moments_from_statevector(
         raise ValueError("Sparse Hamiltonian CSR data and indices lengths must match.")
     if normalized_indptr[0] != 0 or normalized_indptr[-1] != normalized_data.size:
         raise ValueError("Sparse Hamiltonian CSR indptr must start at 0 and end at nnz.")
+    validate_finite_complex_array(normalized_data, "Sparse Hamiltonian CSR data")
 
     h_state = np.zeros_like(state)
     for row in range(rows):
@@ -426,6 +435,7 @@ def apply_sparse_matrix_to_statevector(
         raise ValueError("Sparse operation CSR data and indices lengths must match.")
     if normalized_indptr[0] != 0 or normalized_indptr[-1] != normalized_data.size:
         raise ValueError("Sparse operation CSR indptr must start at 0 and end at nnz.")
+    validate_finite_complex_array(normalized_data, "Sparse operation CSR data")
 
     out = np.zeros_like(state)
     for row_index in range(dimension):
@@ -611,7 +621,7 @@ class RocQuantumRuntime:
 
     def apply_matrix(self, matrix: object, targets: Iterable[int]) -> None:
         normalized_targets = normalize_targets(targets)
-        normalized_matrix = as_complex_matrix(matrix)
+        normalized_matrix = as_complex_matrix(matrix, "Operation matrix")
         apply_matrix = getattr(self.simulator, "apply_matrix", None)
         if callable(apply_matrix):
             apply_matrix(normalized_matrix, normalized_targets)
@@ -632,7 +642,7 @@ class RocQuantumRuntime:
     ) -> None:
         normalized_controls = normalize_targets(controls)
         normalized_targets = normalize_targets(targets)
-        normalized_matrix = as_complex_matrix(matrix)
+        normalized_matrix = as_complex_matrix(matrix, "Controlled operation matrix")
 
         native = getattr(self.simulator, "apply_controlled_matrix", None)
         if callable(native):
@@ -659,6 +669,7 @@ class RocQuantumRuntime:
         normalized_indices = np.ascontiguousarray(np.asarray(indices, dtype=np.int64).reshape(-1))
         normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
         normalized_shape = tuple(int(dim) for dim in shape)
+        validate_finite_complex_array(normalized_data, "Sparse operation CSR data")
 
         native = getattr(self.simulator, "apply_sparse_matrix", None)
         if callable(native):
@@ -986,7 +997,7 @@ class RocQuantumRuntime:
 
     def expectation_matrix(self, matrix: object, targets: Iterable[int]) -> complex:
         normalized_targets = normalize_targets(targets)
-        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+        normalized_matrix = as_complex_matrix(matrix, "Dense expectation matrix")
 
         native_result = self._native_expectation_matrix(normalized_matrix, normalized_targets)
         if native_result is not None:
@@ -999,7 +1010,7 @@ class RocQuantumRuntime:
 
     def expectation_matrix_moments(self, matrix: object, targets: Iterable[int]) -> tuple[complex, complex]:
         normalized_targets = normalize_targets(targets)
-        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+        normalized_matrix = as_complex_matrix(matrix, "Dense expectation matrix")
 
         native_moments = self._native_expectation_matrix_moments(normalized_matrix, normalized_targets)
         if native_moments is not None:
@@ -1051,7 +1062,7 @@ class RocQuantumRuntime:
 
     def expectation_matrix_batch(self, matrix: object, targets: Iterable[int]) -> np.ndarray:
         normalized_targets = normalize_targets(targets)
-        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+        normalized_matrix = as_complex_matrix(matrix, "Dense expectation matrix")
 
         native_result = self._native_expectation_matrix_batch(normalized_matrix, normalized_targets)
         if native_result is not None:
@@ -1070,7 +1081,7 @@ class RocQuantumRuntime:
 
     def expectation_matrix_moments_batch(self, matrix: object, targets: Iterable[int]) -> tuple[np.ndarray, np.ndarray]:
         normalized_targets = normalize_targets(targets)
-        normalized_matrix = np.ascontiguousarray(np.asarray(matrix, dtype=np.complex128))
+        normalized_matrix = as_complex_matrix(matrix, "Dense expectation matrix")
 
         def _native_expectation_unavailable(exc: Exception) -> bool:
             message = str(exc)
@@ -1142,6 +1153,7 @@ class RocQuantumRuntime:
         normalized_indices = np.ascontiguousarray(np.asarray(indices, dtype=np.int64).reshape(-1))
         normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
         normalized_shape = tuple(int(dim) for dim in shape)
+        validate_finite_complex_array(normalized_data, "Sparse Hamiltonian CSR data")
 
         def _native_sparse_unavailable(exc: Exception) -> bool:
             message = str(exc)
@@ -1197,6 +1209,7 @@ class RocQuantumRuntime:
         normalized_indices = np.ascontiguousarray(np.asarray(indices, dtype=np.int64).reshape(-1))
         normalized_indptr = np.ascontiguousarray(np.asarray(indptr, dtype=np.int64).reshape(-1))
         normalized_shape = tuple(int(dim) for dim in shape)
+        validate_finite_complex_array(normalized_data, "Sparse Hamiltonian CSR data")
 
         def _native_sparse_unavailable(exc: Exception) -> bool:
             message = str(exc)

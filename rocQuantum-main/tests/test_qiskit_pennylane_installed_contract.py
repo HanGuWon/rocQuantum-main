@@ -776,6 +776,55 @@ def test_framework_runtime_rejects_nonfinite_statevector_uploads(monkeypatch):
     assert batch_sim.statevectors == []
 
 
+def test_framework_runtime_rejects_nonfinite_matrix_and_sparse_payloads(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import RocQuantumRuntime, matrix_to_little_endian_wires
+
+    invalid_matrix = np.array([[1.0, np.nan], [0.0, 1.0]], dtype=np.complex128)
+    with pytest.raises(ValueError, match="Operation matrix"):
+        matrix_to_little_endian_wires(invalid_matrix)
+
+    runtime = RocQuantumRuntime.from_bindings(2)
+    sim = _FakeQuantumSimulator.instances[-1]
+    with pytest.raises(ValueError, match="Operation matrix"):
+        runtime.apply_matrix(invalid_matrix, [0])
+    assert sim.matrices == []
+
+    with pytest.raises(ValueError, match="Controlled operation matrix"):
+        runtime.apply_controlled_matrix(invalid_matrix, [0], [1])
+    assert sim.controlled_matrices == []
+
+    _FakeQuantumSimulator.enable_matrix_expectation = True
+    with pytest.raises(ValueError, match="Dense expectation matrix"):
+        runtime.expectation_matrix(invalid_matrix, [0])
+    with pytest.raises(ValueError, match="Dense expectation matrix"):
+        runtime.expectation_matrix_batch(invalid_matrix, [0])
+    assert sim.matrix_expectations == []
+    assert sim.matrix_batch_expectations == []
+
+    with pytest.raises(ValueError, match="Sparse operation CSR data"):
+        runtime.apply_sparse_matrix(
+            np.array([np.nan], dtype=np.complex128),
+            np.array([0], dtype=np.int64),
+            np.array([0, 1, 1], dtype=np.int64),
+            (2, 2),
+            [0],
+        )
+    assert sim.statevector_reads == 0
+    assert sim.statevectors == []
+
+    _FakeQuantumSimulator.enable_sparse_moments = True
+    with pytest.raises(ValueError, match="Sparse Hamiltonian CSR data"):
+        runtime.sparse_hamiltonian_moments(
+            np.array([np.inf], dtype=np.complex128),
+            np.array([0], dtype=np.int64),
+            np.array([0, 1, 1, 1, 1], dtype=np.int64),
+            (4, 4),
+        )
+    assert sim.sparse_moments == []
+
+
 def test_framework_runtime_rejects_ambiguous_gate_parameters(monkeypatch):
     _install_fake_binding(monkeypatch)
 
