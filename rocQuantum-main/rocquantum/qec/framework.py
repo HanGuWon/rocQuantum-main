@@ -108,6 +108,12 @@ def _validate_initial_state_kernel(initial_state_kernel):
     return initial_state_kernel
 
 
+def _validate_boolean_option(value, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean.")
+    return value
+
+
 def _validate_code_and_decoder(code, decoder) -> None:
     if not callable(getattr(code, "generate_stabilizer_circuits", None)):
         raise ValueError("code must define a callable generate_stabilizer_circuits method.")
@@ -233,7 +239,7 @@ class QEC_Experiment:
                 "before running QEC experiments."
             )
         self.backend = _validate_backend_name(backend)
-        self.verbose = bool(verbose)
+        self.verbose = _validate_boolean_option(verbose, "verbose")
 
     def _log(self, message: str) -> None:
         if self.verbose:

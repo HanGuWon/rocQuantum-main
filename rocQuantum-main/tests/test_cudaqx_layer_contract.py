@@ -1061,7 +1061,7 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "positive-integer shot/round/num_qubits, backend, code/decoder interface, non-empty non-mapping stabilizer-fragment sequence, logical-operator result, decoder-correction result, ancilla-index, callable-or-None initial-state, syndrome, and bool-safe count/bit validation",
+            "positive-integer shot/round/num_qubits, backend, verbose-option, code/decoder interface, non-empty non-mapping stabilizer-fragment sequence, logical-operator result, decoder-correction result, ancilla-index, callable-or-None initial-state, syndrome, and bool-safe count/bit validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -1184,6 +1184,10 @@ class TestQecHelpers(unittest.TestCase):
         for backend in ("state_vector", "density_matrix", "stabilizer", "tableau", "clifford"):
             with self.subTest(backend=backend):
                 self.assertEqual(QEC_Experiment(backend=backend).backend, backend)
+        for verbose in (1, "true", None):
+            with self.subTest(verbose=verbose):
+                with self.assertRaisesRegex(ValueError, "verbose must be a boolean"):
+                    QEC_Experiment(verbose=verbose)
         with self.assertRaisesRegex(ValueError, "backend must be one of"):
             QEC_Experiment(backend="gpu")
         with self.assertRaisesRegex(ValueError, "backend must be one of"):
