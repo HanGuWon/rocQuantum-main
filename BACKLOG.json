@@ -194,15 +194,20 @@
                                     "Integration test with forced host fallback"
                                 ],
                       "evidence":  [
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:584",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/CMakeLists.txt:41"
+                                       "rocQuantum-main/rocquantum/include/rocquantum/hipStateVec.h:49",
+                                       "rocQuantum-main/rocquantum/include/rocquantum/hipStateVec.h:123",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:609",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:4383",
+                                       "rocQuantum-main/python/rocq/bindings.cpp:271",
+                                       "rocQuantum-main/tests/test_rccl_distributed_contract.py:51",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:40"
                                    ],
-                      "notes":  "Enables RCCL backend rollout without breaking call sites.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Runtime now exposes distributed backend introspection (`none`, `host_fallback`, `rccl`) while keeping existing explicit host fallback and optional RCCL paths unchanged. Real multi-GPU behavior still needs ROCm runner evidence.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:584",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/include/rocquantum/hipStateVec.h:49",
+                      "verification_path":  "Run rocQuantum-main/tests/test_rccl_distributed_contract.py locally; run distributed backend introspection plus host/RCCL A/B smoke tests on a ROCm multi-GPU runner."
                   },
                   {
                       "id":  "P0-PYAPI-001",

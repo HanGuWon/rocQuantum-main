@@ -6,6 +6,7 @@ This document describes the current implementation status, not the eventual desi
 
 - Multi-GPU support is experimental and single-node only.
 - Distributed handles, state-allocation helpers, local-domain operations, explicit slow/debug host fallback paths, and RCCL reduction fast paths exist.
+- `rocsvGetDistributedBackend` reports `rccl`, `host_fallback`, or `none` for the current distributed handle state.
 - Unsupported distributed code paths return `ROCQ_STATUS_NOT_IMPLEMENTED` unless an explicit fallback mode covers the operation.
 - There is no release-grade multi-GPU CI coverage in this repo today.
 
@@ -34,6 +35,16 @@ This document describes the current implementation status, not the eventual desi
 | `ROCQ_DISTRIBUTED_COMM` | `host` or `none` | Disables RCCL so host-fallback behavior can be tested explicitly |
 | `ROCQ_REQUIRE_RCCL` | truthy flag | Requires RCCL even when `ROCQ_DISTRIBUTED_COMM` is unset |
 | `ROCQ_DISABLE_RCCL` | truthy flag | Forces non-RCCL behavior for A/B testing |
+
+## Backend Introspection
+
+`rocsvGetDistributedBackend` is an observation API. It returns:
+
+| Value | Meaning |
+| --- | --- |
+| `rccl` | The handle is distributed and RCCL communicators are initialized for reduction-capable paths |
+| `host_fallback` | The handle is distributed, RCCL is not active, and explicit slow/debug host fallback mode is enabled |
+| `none` | The handle is not distributed, or distributed execution has no active RCCL or host-fallback backend |
 
 ## Known Limitations
 

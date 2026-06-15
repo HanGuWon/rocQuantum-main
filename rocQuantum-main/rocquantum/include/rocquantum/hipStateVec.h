@@ -50,6 +50,12 @@ typedef struct {
     size_t local_slice_elements;
 } rocsvDistributedInfo_t;
 
+typedef enum {
+    ROCSV_DISTRIBUTED_BACKEND_NONE = 0,
+    ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK = 1,
+    ROCSV_DISTRIBUTED_BACKEND_RCCL = 2
+} rocsvDistributedBackend_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -104,6 +110,19 @@ rocqStatus_t rocsvGetNumGpus(rocsvHandle_t handle, int* num_gpus);
  * @brief Retrieves distributed state metadata for the current handle.
  */
 rocqStatus_t rocsvGetDistributedInfo(rocsvHandle_t handle, rocsvDistributedInfo_t* info);
+
+/**
+ * @brief Reports the active distributed communication/fallback backend.
+ *
+ * Returns NONE when the handle is not in distributed mode, or when no RCCL
+ * communicator or explicit host-fallback mode is active.
+ */
+rocqStatus_t rocsvGetDistributedBackend(rocsvHandle_t handle, rocsvDistributedBackend_t* backend);
+
+/**
+ * @brief Converts a distributed backend enum to a stable lowercase name.
+ */
+const char* rocsvDistributedBackendName(rocsvDistributedBackend_t backend);
 
 /**
  * @brief Explicit synchronization point for work enqueued by hipStateVec APIs.

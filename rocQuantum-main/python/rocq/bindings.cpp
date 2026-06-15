@@ -264,6 +264,12 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         .value("NOT_IMPLEMENTED", ROCQ_STATUS_NOT_IMPLEMENTED)
         .export_values();
 
+    py::enum_<rocsvDistributedBackend_t>(m, "DistributedBackend")
+        .value("NONE", ROCSV_DISTRIBUTED_BACKEND_NONE)
+        .value("HOST_FALLBACK", ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK)
+        .value("RCCL", ROCSV_DISTRIBUTED_BACKEND_RCCL)
+        .export_values();
+
     // DeviceBuffer class for managing device memory from Python
     py::class_<DeviceBuffer>(m, "DeviceBuffer")
         .def(py::init<>()) // Default constructor
@@ -284,6 +290,14 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                 throw std::runtime_error("rocsvGetNumGpus failed: " + std::to_string(status));
             }
             return count;
+        })
+        .def("get_distributed_backend", [](const RocsvHandleWrapper& self) {
+            rocsvDistributedBackend_t backend = ROCSV_DISTRIBUTED_BACKEND_NONE;
+            rocqStatus_t status = rocsvGetDistributedBackend(self.get(), &backend);
+            if (status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error("rocsvGetDistributedBackend failed: " + std::to_string(status));
+            }
+            return std::string(rocsvDistributedBackendName(backend));
         });
         // The handle itself is mostly opaque to Python users of this direct binding layer.
         // Higher-level Python classes (Simulator) will use it.

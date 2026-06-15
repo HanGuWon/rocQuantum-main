@@ -14,6 +14,13 @@ _STATEVEC_SOURCE = os.path.join(
     "hipStateVec",
     "hipStateVec.cpp",
 )
+_STATEVEC_HEADER = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "include",
+    "rocquantum",
+    "hipStateVec.h",
+)
 _STATEVEC_CMAKE = os.path.join(
     _PROJECT_ROOT,
     "rocquantum",
@@ -21,6 +28,7 @@ _STATEVEC_CMAKE = os.path.join(
     "hipStateVec",
     "CMakeLists.txt",
 )
+_BINDINGS_SOURCE = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
 
 
 class TestRcclDistributedContract(unittest.TestCase):
@@ -47,6 +55,29 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("ROCQ_DISTRIBUTED_COMM", source)
         self.assertIn("ROCQ_REQUIRE_RCCL", source)
         self.assertIn("ROCQ_DISABLE_RCCL", source)
+
+    def test_runtime_exposes_active_distributed_backend(self):
+        with open(_STATEVEC_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+        with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
+            bindings = f.read()
+
+        self.assertIn("rocsvDistributedBackend_t", header)
+        self.assertIn("ROCSV_DISTRIBUTED_BACKEND_NONE", header)
+        self.assertIn("ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK", header)
+        self.assertIn("ROCSV_DISTRIBUTED_BACKEND_RCCL", header)
+        self.assertIn("rocsvGetDistributedBackend", header)
+        self.assertIn("rocsvDistributedBackendName", header)
+        self.assertIn("distributed_active_backend", source)
+        self.assertIn("distributed_rccl_ready(handle)", source)
+        self.assertIn("return ROCSV_DISTRIBUTED_BACKEND_RCCL", source)
+        self.assertIn("distributed_host_fallback_enabled()", source)
+        self.assertIn("return ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK", source)
+        self.assertIn("rocsvGetDistributedBackend", bindings)
+        self.assertIn("get_distributed_backend", bindings)
+        self.assertIn("DistributedBackend", bindings)
 
     def test_expectation_and_sampling_use_rccl_allreduce(self):
         with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:

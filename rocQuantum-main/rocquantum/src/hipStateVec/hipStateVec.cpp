@@ -605,6 +605,19 @@ inline bool distributed_rccl_ready(const rocsvInternalHandle* handle) {
 #endif
 }
 
+inline rocsvDistributedBackend_t distributed_active_backend(const rocsvInternalHandle* handle) {
+    if (!handle || !handle->distributedMode) {
+        return ROCSV_DISTRIBUTED_BACKEND_NONE;
+    }
+    if (distributed_rccl_ready(handle)) {
+        return ROCSV_DISTRIBUTED_BACKEND_RCCL;
+    }
+    if (distributed_host_fallback_enabled()) {
+        return ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK;
+    }
+    return ROCSV_DISTRIBUTED_BACKEND_NONE;
+}
+
 inline rocqStatus_t initialize_distributed_rccl_comms(rocsvInternalHandle* handle) {
 #ifdef ROCQ_HAVE_RCCL
     if (!handle || handle->distributedGpuCount <= 1) {
@@ -4358,6 +4371,27 @@ rocqStatus_t rocsvGetDistributedInfo(rocsvHandle_t handle, rocsvDistributedInfo_
     info->global_slice_qubits = handle->distributedMode ? handle->numGlobalSliceQubits : 0;
     info->local_slice_elements = handle->distributedMode ? handle->localSliceElements : 0;
     return ROCQ_STATUS_SUCCESS;
+}
+
+rocqStatus_t rocsvGetDistributedBackend(rocsvHandle_t handle, rocsvDistributedBackend_t* backend) {
+    if (!handle || !backend) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    *backend = distributed_active_backend(handle);
+    return ROCQ_STATUS_SUCCESS;
+}
+
+const char* rocsvDistributedBackendName(rocsvDistributedBackend_t backend) {
+    switch (backend) {
+        case ROCSV_DISTRIBUTED_BACKEND_NONE:
+            return "none";
+        case ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK:
+            return "host_fallback";
+        case ROCSV_DISTRIBUTED_BACKEND_RCCL:
+            return "rccl";
+        default:
+            return "unknown";
+    }
 }
 
 rocqStatus_t rocsvSynchronize(rocsvHandle_t handle) {
