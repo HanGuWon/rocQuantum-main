@@ -330,6 +330,8 @@ class VQE_Solver:
         params = _parameter_vector(params)
         _positive_integer(num_qubits, "num_qubits")
         gradient = np.zeros_like(params, dtype=float)
+        if not isinstance(method, str):
+            raise ValueError("method must be 'parameter_shift' or 'finite_diff'.")
         method = method.lower()
 
         if method == "parameter_shift":

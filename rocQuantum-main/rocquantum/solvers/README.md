@@ -18,6 +18,7 @@ Current supported subset:
   optimizer `intermediate_results` trace. VQE objective, optimizer initial
   parameters, and gradient parameters must be finite real values; boolean or
   string parameters are rejected instead of being coerced to numeric values.
+  Gradient methods must be supported method-name strings.
   Solver backends must match the canonical runtime supported backend names.
   Observed energies and optimizer result energies/parameters must also be finite
   real values; finite-difference steps must be positive finite real values.

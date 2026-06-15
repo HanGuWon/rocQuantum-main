@@ -31,7 +31,7 @@ class TestVqeSolverContract(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "finite-real parameter, energy, backend, optimizer-result, optimizer-interface, and optimizer-option validation",
+            "finite-real parameter, energy, backend, gradient-method, optimizer-result, optimizer-interface, and optimizer-option validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -281,6 +281,19 @@ class TestVqeSolverContract(unittest.TestCase):
                     step=True,
                 )
         patched_observe.assert_not_called()
+
+        for method in (None, True, 3):
+            with self.subTest(method=method):
+                with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
+                    with self.assertRaisesRegex(ValueError, "method must be"):
+                        solver.estimate_gradient(
+                            np.array([0.25]),
+                            hamiltonian,
+                            ansatz,
+                            1,
+                            method=method,
+                        )
+                patched_observe.assert_not_called()
 
         with mock.patch("rocquantum.solvers.vqe_solver.observe") as patched_observe:
             with self.assertRaisesRegex(ValueError, "num_qubits"):
