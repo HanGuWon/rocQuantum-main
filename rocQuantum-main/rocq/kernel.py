@@ -217,7 +217,13 @@ class QuantumKernel:
             raise RuntimeError(_COMPILER_BINDING_MISSING_MESSAGE)
         mlir_code = self.mlir(*args, **kwargs)
         compiler = rocquantum_bind.MLIRCompiler(self.num_qubits, "hip_statevec")
-        qir = compiler.emit_qir(mlir_code)
+        try:
+            qir = compiler.emit_qir(mlir_code)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "QIR emission failed through rocquantum_bind.MLIRCompiler. "
+                f"{_COMPILER_SUPPORTED_MLIR_SUBSET} Original error: {exc}"
+            ) from exc
         if isinstance(qir, str) and qir.startswith("Error:"):
             raise RuntimeError(
                 "QIR emission failed in rocquantum_bind.MLIRCompiler.emit_qir(): "

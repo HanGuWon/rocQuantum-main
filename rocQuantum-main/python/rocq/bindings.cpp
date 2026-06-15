@@ -58,6 +58,48 @@ std::string tensornet_pathfinder_name(rocPathfinderAlgorithm_t algorithm) {
     }
 }
 
+class ConceptualMLIRCompiler {
+public:
+    bool initialize_module(const std::string& module_name) {
+        module_name_ = module_name;
+        if (module_string_.empty()) {
+            module_string_ = "module {\n}";
+        }
+        return true;
+    }
+
+    void dump_module() const {}
+
+    std::string get_module_string() const {
+        return module_string_;
+    }
+
+    bool load_module_from_string(const std::string& mlir_string) {
+        module_string_ = mlir_string;
+        return true;
+    }
+
+    bool run_adjoint_generation_pass() const {
+        return false;
+    }
+
+    bool create_function(const std::string& func_name,
+                         const std::vector<std::string>& arg_type_strs,
+                         const std::vector<std::string>& result_type_strs) {
+        (void)arg_type_strs;
+        (void)result_type_strs;
+        if (module_string_.empty()) {
+            initialize_module(module_name_.empty() ? "rocq_module" : module_name_);
+        }
+        module_string_ += "\n// conceptual function declaration: " + func_name;
+        return true;
+    }
+
+private:
+    std::string module_name_;
+    std::string module_string_;
+};
+
 bool tensornet_pathfinder_supported(const hipTensorNetCapabilities_t& caps,
                                     rocPathfinderAlgorithm_t algorithm) {
     switch (algorithm) {
@@ -1299,63 +1341,25 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         }, py::arg("queue"));
     // --- End GateFusion Bindings ---
 
-    // --- MLIRCompiler Bindings ---
-    py::class_<rocquantum::compiler::MLIRCompiler>(m, "MLIRCompiler")
-        .def(py::init<>(), "Initializes the MLIR compiler environment.")
-        .def("initialize_module", &rocquantum::compiler::MLIRCompiler::initializeModule,
+    // --- Conceptual MLIR storage for the legacy API ---
+    py::class_<ConceptualMLIRCompiler>(m, "MLIRCompiler")
+        .def(py::init<>(), "Initializes the legacy conceptual MLIR holder.")
+        .def("initialize_module", &ConceptualMLIRCompiler::initialize_module,
              py::arg("module_name") = "rocq_module",
-             "Initializes a new MLIR module. Returns true on success.")
-        .def("dump_module", &rocquantum::compiler::MLIRCompiler::dumpModule,
-             "Dumps the current MLIR module to stderr.")
-        .def("get_module_string", &rocquantum::compiler::MLIRCompiler::getModuleString,
-             "Returns the current MLIR module as a string representation.")
-        .def("load_module_from_string", &rocquantum::compiler::MLIRCompiler::loadModuleFromString,
+             "Initializes a conceptual MLIR module string. Returns true on success.")
+        .def("dump_module", &ConceptualMLIRCompiler::dump_module,
+             "No-op placeholder retained for legacy API compatibility.")
+        .def("get_module_string", &ConceptualMLIRCompiler::get_module_string,
+             "Returns the stored conceptual MLIR string.")
+        .def("load_module_from_string", &ConceptualMLIRCompiler::load_module_from_string,
              py::arg("mlir_string"),
-             "Parses an MLIR string and loads it into the compiler's module. Returns true on success.")
-        .def("run_adjoint_generation_pass", &rocquantum::compiler::MLIRCompiler::runAdjointGenerationPass,
-             "Runs the Adjoint Generation compiler pass on the current module.")
-        .def("create_function",
-             [](rocquantum::compiler::MLIRCompiler &self, const std::string& funcName,
-                const std::vector<std::string>& argTypeStrs,
-                const std::vector<std::string>& resultTypeStrs) {
-
-                mlir::MLIRContext* context = self.getContext();
-                if (!context) throw std::runtime_error("MLIRContext is null in MLIRCompiler.");
-
-                llvm::SmallVector<mlir::Type, 4> argTypes;
-                for (const auto& typeStr : argTypeStrs) {
-                    // For this to work robustly, types need to be registered or be builtin.
-                    // Our QuantumDialect registers "!quantum.qubit".
-                    // Other types like "f64", "i32" are builtin.
-                    mlir::Type type = mlir::parseAttribute(typeStr, context).dyn_cast_or_null<mlir::TypeAttr>().getValue();
-                    if (!type) { // Fallback for simple dialect types like "!quantum.qubit"
-                        if (typeStr == "!quantum.qubit") type = rocquantum::quantum::QubitType::get(context);
-                        // Add more custom type string parsing here if needed
-                    }
-                    if (!type) throw std::runtime_error("Failed to parse argument type string: " + typeStr);
-                    argTypes.push_back(type);
-                }
-
-                llvm::SmallVector<mlir::Type, 4> resultTypes;
-                for (const auto& typeStr : resultTypeStrs) {
-                    mlir::Type type = mlir::parseAttribute(typeStr, context).dyn_cast_or_null<mlir::TypeAttr>().getValue();
-                     if (!type) { // Fallback for simple dialect types
-                        if (typeStr == "!quantum.qubit") type = rocquantum::quantum::QubitType::get(context);
-                    }
-                    if (!type) throw std::runtime_error("Failed to parse result type string: " + typeStr);
-                    resultTypes.push_back(type);
-                }
-
-                // The C++ createFunction returns a FuncOp, but we don't bind FuncOp directly yet.
-                // We'll just call it and rely on it being added to the ModuleOp inside the compiler.
-                // Return true/false for success.
-                mlir::func::FuncOp funcOp = self.createFunction(funcName, argTypes, resultTypes);
-                return static_cast<bool>(funcOp); // True if funcOp is not null
-             },
-             py::arg("func_name"), py::arg("arg_type_strs"), py::arg("result_type_strs") = std::vector<std::string>(),
-             "Creates a new function (FuncOp) in the module. Types are specified as strings.");
-        // Note: getContext and getModule (returning raw pointers) are not exposed directly
-        // to Python for safety, unless a clear need and management strategy arises.
-        // Python will interact via higher-level methods that use these internally.
+             "Stores a conceptual MLIR string. Returns true on success.")
+        .def("run_adjoint_generation_pass", &ConceptualMLIRCompiler::run_adjoint_generation_pass,
+             "Returns false because the default legacy binding does not link an MLIR pass pipeline.")
+        .def("create_function", &ConceptualMLIRCompiler::create_function,
+             py::arg("func_name"),
+             py::arg("arg_type_strs"),
+             py::arg("result_type_strs") = std::vector<std::string>(),
+             "Records a conceptual function declaration for legacy API compatibility.");
 
 }

@@ -11,13 +11,50 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#ifdef ROCQUANTUM_ENABLE_MLIR_COMPILER
 #include "rocqCompiler/MLIRCompiler.h"
 #include "rocqCompiler/QuantumBackend.h"
+#endif
 #include "rocquantum/QuantumSimulator.h"
 
 namespace py = pybind11;
 
 namespace {
+
+constexpr const char* kDisabledMlirCompilerMessage =
+    "MLIR compiler support is disabled in this rocquantum_bind build. "
+    "The default ROCm runtime binding exposes QuantumSimulator and framework adapters "
+    "without linking the experimental rocqCompiler MLIR stack.";
+
+#ifndef ROCQUANTUM_ENABLE_MLIR_COMPILER
+class DisabledRuntimeMLIRCompiler {
+public:
+    DisabledRuntimeMLIRCompiler(unsigned num_qubits, std::string backend_name)
+        : num_qubits_(num_qubits), backend_name_(std::move(backend_name)) {}
+
+    std::vector<std::complex<double>> compile_and_execute(const std::string& mlir) const {
+        (void)mlir;
+        throw std::runtime_error(kDisabledMlirCompilerMessage);
+    }
+
+    std::string emit_qir(const std::string& mlir) const {
+        (void)mlir;
+        throw std::runtime_error(kDisabledMlirCompilerMessage);
+    }
+
+    unsigned num_qubits() const {
+        return num_qubits_;
+    }
+
+    const std::string& backend_name() const {
+        return backend_name_;
+    }
+
+private:
+    unsigned num_qubits_;
+    std::string backend_name_;
+};
+#endif
 
 struct AdjointOperationPayload {
     std::string name;
@@ -916,6 +953,7 @@ py::array_t<double> compute_binding_adjoint_jacobian(
 PYBIND11_MODULE(rocquantum_bind, m) {
     m.doc() = "pybind11 plugin for rocQuantum-1";
 
+#ifdef ROCQUANTUM_ENABLE_MLIR_COMPILER
     py::class_<rocq::MLIRCompiler>(m, "MLIRCompiler")
         .def(py::init([](unsigned num_qubits, const std::string& backend_name) {
             auto backend = rocq::create_backend(backend_name);
@@ -932,6 +970,29 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              "Unsupported ops raise actionable diagnostics.")
         .def("emit_qir", &rocq::MLIRCompiler::emit_qir,
              "Compiles the MLIR string down to QIR (LLVM IR).");
+#else
+    py::class_<DisabledRuntimeMLIRCompiler>(m, "MLIRCompiler")
+        .def(py::init<unsigned, std::string>(),
+             py::arg("num_qubits"),
+             py::arg("backend_name"),
+             "Records a requested MLIR compiler configuration. The default build does not link "
+             "the experimental rocqCompiler MLIR runtime.")
+        .def_property_readonly("num_qubits", &DisabledRuntimeMLIRCompiler::num_qubits)
+        .def_property_readonly("backend_name", &DisabledRuntimeMLIRCompiler::backend_name)
+        .def("compile_and_execute",
+             [](DisabledRuntimeMLIRCompiler& self, const std::string& mlir, py::dict _args) {
+                 (void)_args;
+                 return self.compile_and_execute(mlir);
+             },
+             py::arg("mlir"),
+             py::arg("args") = py::dict(),
+             "Fails fast when the default binding is built without the experimental "
+             "rocqCompiler MLIR runtime. Supported source subset: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, "
+             "CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP.")
+        .def("emit_qir", &DisabledRuntimeMLIRCompiler::emit_qir,
+             "Fails fast when the default binding is built without the experimental "
+             "rocqCompiler MLIR runtime.");
+#endif
 
     auto simulator = py::class_<rocquantum::QuantumSimulator>(m, "QuantumSimulator");
 

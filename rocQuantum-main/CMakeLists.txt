@@ -19,6 +19,14 @@ endif()
 option(ROCQUANTUM_BUILD_BINDINGS "Build Python bindings." ON)
 option(ROCQUANTUM_BUILD_COMPONENTS_SHARED "Build component libraries as shared libraries." ON)
 option(ROCQUANTUM_ENABLE_SYNC_DEBUG "Enable debug stream synchronization in enqueue APIs." OFF)
+option(ROCQUANTUM_ENABLE_MLIR_COMPILER
+       "Build the experimental rocqCompiler MLIR runtime into rocquantum_bind." OFF)
+
+if(ROCQUANTUM_ENABLE_MLIR_COMPILER)
+    message(FATAL_ERROR
+        "ROCQUANTUM_ENABLE_MLIR_COMPILER is not wired into the release CMake graph yet. "
+        "The default Python binding exposes a fail-fast compiler guard instead.")
+endif()
 
 if(ROCQUANTUM_BUILD_COMPONENTS_SHARED)
     set(ROCQUANTUM_COMPONENT_LIBRARY_TYPE SHARED)

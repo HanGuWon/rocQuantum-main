@@ -42,6 +42,15 @@ def _compiler_skip_reason() -> str:
     )
 
 
+def _compiler_disabled_reason(exc: RuntimeError) -> str | None:
+    if "MLIR compiler support is disabled" not in str(exc):
+        return None
+    return (
+        "rocquantum_bind was built without the experimental rocqCompiler MLIR runtime; "
+        f"default binding diagnostic was: {exc}"
+    )
+
+
 class TestCompilerE2EFlow(unittest.TestCase):
     @staticmethod
     def _build_h_kernel() -> QuantumKernel:
@@ -83,7 +92,13 @@ class TestCompilerE2EFlow(unittest.TestCase):
             self.skipTest(_compiler_skip_reason())
 
         compiler = rocquantum_bind.MLIRCompiler(kernel_obj.num_qubits, "hip_statevec")
-        qir = compiler.emit_qir(mlir)
+        try:
+            qir = compiler.emit_qir(mlir)
+        except RuntimeError as exc:
+            disabled_reason = _compiler_disabled_reason(exc)
+            if disabled_reason:
+                self.skipTest(disabled_reason)
+            raise
         self.assertFalse(qir.startswith("Error:"), msg=qir)
         return mlir, qir, compiler
 
@@ -113,12 +128,14 @@ class TestCompilerE2EFlow(unittest.TestCase):
         if rocquantum_bind is None:
             self.skipTest(_compiler_skip_reason())
 
-        compiler = rocquantum_bind.MLIRCompiler(kernel_obj.num_qubits, "hip_statevec")
         try:
+            compiler = rocquantum_bind.MLIRCompiler(kernel_obj.num_qubits, "hip_statevec")
             state = compiler.compile_and_execute(mlir, {"strict": True})
         except RuntimeError as exc:
             msg = str(exc).lower()
             actionable_tokens = [
+                "disabled",
+                "mlir compiler support",
                 "not yet implemented",
                 "compile_and_execute",
                 "hipstatevec",

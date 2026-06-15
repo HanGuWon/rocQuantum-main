@@ -35,7 +35,7 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | Area | Status | Summary |
 | --- | --- | --- |
 | Native HIP simulator core | IMPLEMENTED | Core statevector, tensor-network, and limited density-matrix primitives are real |
-| Compiler-driven execution | PARTIAL | `compile_and_execute()` now executes a narrow qalloc/H/X/Y/Z/S/Sdg/T/Tdg/CNOT/CZ/SWAP/CCX/MCX/CSWAP/RX/RY/RZ/P/CRX/CRY/CRZ/CP MLIR subset; broad compiler/runtime parity is still absent |
+| Compiler-driven execution | PARTIAL | `compile_and_execute()` has a narrow source-level qalloc/H/X/Y/Z/S/Sdg/T/Tdg/CNOT/CZ/SWAP/CCX/MCX/CSWAP/RX/RY/RZ/P/CRX/CRY/CRZ/CP MLIR subset; default Python bindings and the unwired `ROCQUANTUM_ENABLE_MLIR_COMPILER` CMake option now fail fast instead of linking unresolved MLIR compiler symbols, and broad compiler/runtime parity is still absent |
 | High-level expectation APIs | PARTIAL | Native kernels exist, and canonical `rocq` now has an experimental Clifford-only stabilizer/tableau path for Pauli propagation, but public API coverage is split and inconsistent |
 | Multi-GPU / distributed | PARTIAL | Real scaffolding exists, but many paths remain `NOT_IMPLEMENTED` |
 | Packaging / install / export | PARTIAL | Native build exists, but releasable packaging is not coherent |
@@ -69,8 +69,8 @@ Recommended compatibility plan:
 
 Compared with the official CUDA-Q baseline (`https://nvidia.github.io/cuda-quantum/latest/`), the largest gaps are:
 
-- no real compile-and-execute loop
-- no unified compiler/runtime/kernel story
+- no release-wired compile-and-execute loop by default
+- no fully unified compiler/runtime/kernel story; the default bindings now separate the canonical runtime compiler guard from the legacy conceptual MLIR holder
 - only a narrow mid-circuit measurement and classical-control story: Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, loop-local `break_loop` / `continue_loop`, and `switch_case` sampling trajectories work, but estimator/statevector dynamic semantics remain open
 - no broad arbitrary-operator expectation coverage beyond the supported Pauli, dense Hermitian / Qiskit dense Operator, and full-state CSR sparse paths
 - no bounded, tested `mqpu`-style distributed story
@@ -79,7 +79,7 @@ What the repo does have:
 
 - a direct local simulator path
 - some native observable kernels in the backend
-- multiple beginnings of a compiler stack
+- multiple beginnings of a compiler stack, now with clearer default-build guards
 
 What it lacks is the integration layer that makes those pieces act like CUDA-Q rather than a collection of subsystems.
 
@@ -110,7 +110,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 
 ## Top 10 Missing Or Misleading Areas
 
-1. `compile_and_execute()` is exposed and now has an MVP execution subset, but it is not a full CUDA-Q-style compiler runtime.
+1. `compile_and_execute()` has an MVP source implementation, but the default Python binding now fails fast unless the experimental MLIR compiler stack is actually linked; it is still not a full CUDA-Q-style compiler runtime.
 2. Multi-GPU support is partial and previously overclaimed.
 3. Native expectations exist but the public API story is split and misleading.
 4. Two divergent Python stacks exist without one canonical answer.

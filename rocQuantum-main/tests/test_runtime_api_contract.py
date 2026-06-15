@@ -210,6 +210,26 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Supported canonical MLIR gates"):
                 prep_state.qir()
 
+    def test_qir_runtime_failure_is_augmented(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        class _FakeCompiler:
+            def __init__(self, num_qubits, backend):
+                pass
+
+            def emit_qir(self, mlir):
+                raise RuntimeError("MLIR compiler support is disabled")
+
+        fake_binding = mock.Mock()
+        fake_binding.MLIRCompiler = _FakeCompiler
+
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", fake_binding):
+            with self.assertRaisesRegex(RuntimeError, "Supported canonical MLIR gates"):
+                prep_state.qir()
+
     def test_compile_and_execute_uses_native_compiler_binding(self):
         @kernel
         def bell():

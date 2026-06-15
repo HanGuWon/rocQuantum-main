@@ -104,9 +104,32 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         with open(path, "r", encoding="utf-8") as f:
             src = f.read()
 
+        self.assertIn("ROCQUANTUM_ENABLE_MLIR_COMPILER", src)
+        self.assertIn("DisabledRuntimeMLIRCompiler", src)
+        self.assertIn("MLIR compiler support is disabled", src)
         self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP", src)
         self.assertIn("Unsupported ops raise actionable diagnostics", src)
         self.assertNotIn("Stub API", src)
+
+    def test_root_cmake_rejects_unwired_mlir_compiler_option(self):
+        path = os.path.join(_PROJECT_ROOT, "CMakeLists.txt")
+        with open(path, "r", encoding="utf-8") as f:
+            src = f.read()
+
+        self.assertIn("option(ROCQUANTUM_ENABLE_MLIR_COMPILER", src)
+        self.assertIn("if(ROCQUANTUM_ENABLE_MLIR_COMPILER)", src)
+        self.assertIn("FATAL_ERROR", src)
+        self.assertIn("fail-fast compiler guard", src)
+
+    def test_legacy_binding_uses_conceptual_mlir_holder(self):
+        path = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
+        with open(path, "r", encoding="utf-8") as f:
+            src = f.read()
+
+        self.assertIn("ConceptualMLIRCompiler", src)
+        self.assertIn("legacy conceptual MLIR holder", src)
+        self.assertNotIn("rocquantum::compiler::MLIRCompiler", src)
+        self.assertNotIn("mlir::MLIRContext", src)
 
     def test_tdg_reaches_native_statevec_dispatch(self):
         backend_path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "HipStateVecBackend.cpp")
