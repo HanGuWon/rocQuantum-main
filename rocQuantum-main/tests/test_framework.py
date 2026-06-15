@@ -43,7 +43,9 @@ class TestRocqFramework(unittest.TestCase):
             rocq.execute(dummy_kernel, backend="invalid_backend")
 
         self.assertIn("Unsupported backend 'invalid_backend'", str(cm.exception))
-        self.assertIn("['state_vector', 'density_matrix']", str(cm.exception))
+        self.assertIn("'state_vector'", str(cm.exception))
+        self.assertIn("'density_matrix'", str(cm.exception))
+        self.assertIn("'stabilizer'", str(cm.exception))
 
     def test_state_vector_backend_noise_rejection(self):
         @rocq.kernel

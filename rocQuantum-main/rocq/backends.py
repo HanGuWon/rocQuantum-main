@@ -28,6 +28,24 @@ _MOCK_BACKEND_NOTE = (
     "native ROCm binding is unavailable. This path is for local smoke tests only; "
     "it does not validate native ROCm/cuQuantum-style execution or performance."
 )
+_PAULI_MUL_TABLE = {
+    ("I", "I"): (1, "I"),
+    ("I", "X"): (1, "X"),
+    ("I", "Y"): (1, "Y"),
+    ("I", "Z"): (1, "Z"),
+    ("X", "I"): (1, "X"),
+    ("X", "X"): (1, "I"),
+    ("X", "Y"): (1j, "Z"),
+    ("X", "Z"): (-1j, "Y"),
+    ("Y", "I"): (1, "Y"),
+    ("Y", "X"): (-1j, "Z"),
+    ("Y", "Y"): (1, "I"),
+    ("Y", "Z"): (1j, "X"),
+    ("Z", "I"): (1, "Z"),
+    ("Z", "X"): (1j, "Y"),
+    ("Z", "Y"): (-1j, "X"),
+    ("Z", "Z"): (1, "I"),
+}
 
 
 class MockBackendWarning(RuntimeWarning):
@@ -84,6 +102,23 @@ def _combined_pauli_terms(operator):
         for key in order
         if combined[key] != 0
     ]
+
+
+def _multiply_pauli_strings(
+    left_phase: complex,
+    left: Sequence[str],
+    right_phase: complex,
+    right: Sequence[str],
+) -> tuple[complex, tuple[str, ...]]:
+    if len(left) != len(right):
+        raise ValueError("Pauli strings must have the same length.")
+    phase = left_phase * right_phase
+    output = []
+    for lhs, rhs in zip(left, right):
+        factor, pauli = _PAULI_MUL_TABLE[(lhs, rhs)]
+        phase *= factor
+        output.append(pauli)
+    return phase, tuple(output)
 
 
 def _matrix_expectation_cache_key(operator, num_qubits: int):
@@ -813,6 +848,269 @@ class _BaseBackend:
         raise NotImplementedError
 
 
+class StabilizerBackend(_BaseBackend):
+    """Small Clifford-only stabilizer/tableau backend for Pauli propagation."""
+
+    _H = (1.0 / math.sqrt(2.0)) * np.array([[1, 1], [1, -1]], dtype=np.complex128)
+    _X = np.array([[0, 1], [1, 0]], dtype=np.complex128)
+    _Y = np.array([[0, -1j], [1j, 0]], dtype=np.complex128)
+    _Z = np.array([[1, 0], [0, -1]], dtype=np.complex128)
+    _S = np.array([[1, 0], [0, 1j]], dtype=np.complex128)
+    _SDG = np.array([[1, 0], [0, -1j]], dtype=np.complex128)
+
+    def __init__(self, num_qubits: int):
+        super().__init__(num_qubits)
+        self._state = np.zeros(1 << int(num_qubits), dtype=np.complex128)
+        self._state[0] = 1.0 + 0.0j
+        self._generators: list[tuple[complex, tuple[str, ...]]] = []
+        for qubit in range(int(num_qubits)):
+            paulis = ["I"] * int(num_qubits)
+            paulis[qubit] = "Z"
+            self._generators.append((1.0 + 0.0j, tuple(paulis)))
+
+    def _validate_qubit(self, qubit: int) -> int:
+        qubit = int(qubit)
+        if qubit < 0 or qubit >= int(self.num_qubits):
+            raise ValueError(f"Qubit index {qubit} is out of range for {self.num_qubits} qubits.")
+        return qubit
+
+    def _single_pauli(self, qubit: int, pauli: str) -> tuple[str, ...]:
+        out = ["I"] * int(self.num_qubits)
+        out[int(qubit)] = pauli
+        return tuple(out)
+
+    def _apply_single_qubit_state(self, matrix: np.ndarray, target: int) -> None:
+        target = self._validate_qubit(target)
+        mask = 1 << target
+        state = self._state.copy()
+        for base in range(state.size):
+            if base & mask:
+                continue
+            paired = base | mask
+            amp0 = state[base]
+            amp1 = state[paired]
+            self._state[base] = matrix[0, 0] * amp0 + matrix[0, 1] * amp1
+            self._state[paired] = matrix[1, 0] * amp0 + matrix[1, 1] * amp1
+
+    def _apply_cnot_state(self, control: int, target: int) -> None:
+        control = self._validate_qubit(control)
+        target = self._validate_qubit(target)
+        if control == target:
+            raise ValueError("CNOT control and target must differ.")
+        control_mask = 1 << control
+        target_mask = 1 << target
+        for index in range(self._state.size):
+            if (index & control_mask) and not (index & target_mask):
+                paired = index | target_mask
+                self._state[index], self._state[paired] = self._state[paired], self._state[index]
+
+    def _apply_cz_state(self, control: int, target: int) -> None:
+        control = self._validate_qubit(control)
+        target = self._validate_qubit(target)
+        if control == target:
+            raise ValueError("CZ control and target must differ.")
+        mask = (1 << control) | (1 << target)
+        for index in range(self._state.size):
+            if (index & mask) == mask:
+                self._state[index] *= -1.0
+
+    def _apply_swap_state(self, first: int, second: int) -> None:
+        first = self._validate_qubit(first)
+        second = self._validate_qubit(second)
+        if first == second:
+            return
+        first_mask = 1 << first
+        second_mask = 1 << second
+        for index in range(self._state.size):
+            first_bit = bool(index & first_mask)
+            second_bit = bool(index & second_mask)
+            if first_bit or not second_bit:
+                continue
+            paired = (index | first_mask) & ~second_mask
+            self._state[index], self._state[paired] = self._state[paired], self._state[index]
+
+    def _apply_single_qubit_tableau(self, target: int, mapping: dict[str, tuple[complex, str]]) -> None:
+        target = self._validate_qubit(target)
+        transformed = []
+        for phase, paulis in self._generators:
+            pauli_list = list(paulis)
+            factor, mapped = mapping[pauli_list[target]]
+            pauli_list[target] = mapped
+            transformed.append((phase * factor, tuple(pauli_list)))
+        self._generators = transformed
+
+    def _transform_cnot_factor(self, qubit: int, pauli: str, control: int, target: int) -> tuple[complex, tuple[str, ...]]:
+        if pauli == "I":
+            return 1.0 + 0.0j, tuple(["I"] * int(self.num_qubits))
+        if qubit == control:
+            if pauli == "X":
+                out = list(self._single_pauli(control, "X"))
+                out[target] = "X"
+                return 1.0 + 0.0j, tuple(out)
+            if pauli == "Y":
+                out = list(self._single_pauli(control, "Y"))
+                out[target] = "X"
+                return 1.0 + 0.0j, tuple(out)
+            return 1.0 + 0.0j, self._single_pauli(control, "Z")
+        if qubit == target:
+            if pauli == "X":
+                return 1.0 + 0.0j, self._single_pauli(target, "X")
+            if pauli == "Y":
+                out = list(self._single_pauli(control, "Z"))
+                out[target] = "Y"
+                return 1.0 + 0.0j, tuple(out)
+            out = list(self._single_pauli(control, "Z"))
+            out[target] = "Z"
+            return 1.0 + 0.0j, tuple(out)
+        return 1.0 + 0.0j, self._single_pauli(qubit, pauli)
+
+    def _apply_cnot_tableau(self, control: int, target: int) -> None:
+        control = self._validate_qubit(control)
+        target = self._validate_qubit(target)
+        transformed = []
+        identity = tuple(["I"] * int(self.num_qubits))
+        for phase, paulis in self._generators:
+            out_phase = phase
+            out_paulis = identity
+            for qubit, pauli in enumerate(paulis):
+                factor, mapped = self._transform_cnot_factor(qubit, pauli, control, target)
+                out_phase, out_paulis = _multiply_pauli_strings(out_phase, out_paulis, factor, mapped)
+            transformed.append((out_phase, out_paulis))
+        self._generators = transformed
+
+    def _apply_swap_tableau(self, first: int, second: int) -> None:
+        first = self._validate_qubit(first)
+        second = self._validate_qubit(second)
+        transformed = []
+        for phase, paulis in self._generators:
+            pauli_list = list(paulis)
+            pauli_list[first], pauli_list[second] = pauli_list[second], pauli_list[first]
+            transformed.append((phase, tuple(pauli_list)))
+        self._generators = transformed
+
+    def _apply_op(self, op) -> None:
+        name = op.name.lower()
+        targets = [self._validate_qubit(target) for target in op.targets]
+        if name in {"h", "x", "y", "z", "s", "sdg"} and len(targets) != 1:
+            raise ValueError(f"Gate '{op.name}' expects one target.")
+        if name in {"cnot", "cz", "swap"} and len(targets) != 2:
+            raise ValueError(f"Gate '{op.name}' expects two targets.")
+
+        if name == "h":
+            self._apply_single_qubit_state(self._H, targets[0])
+            self._apply_single_qubit_tableau(targets[0], {"I": (1, "I"), "X": (1, "Z"), "Y": (-1, "Y"), "Z": (1, "X")})
+            return
+        if name == "x":
+            self._apply_single_qubit_state(self._X, targets[0])
+            self._apply_single_qubit_tableau(targets[0], {"I": (1, "I"), "X": (1, "X"), "Y": (-1, "Y"), "Z": (-1, "Z")})
+            return
+        if name == "y":
+            self._apply_single_qubit_state(self._Y, targets[0])
+            self._apply_single_qubit_tableau(targets[0], {"I": (1, "I"), "X": (-1, "X"), "Y": (1, "Y"), "Z": (-1, "Z")})
+            return
+        if name == "z":
+            self._apply_single_qubit_state(self._Z, targets[0])
+            self._apply_single_qubit_tableau(targets[0], {"I": (1, "I"), "X": (-1, "X"), "Y": (-1, "Y"), "Z": (1, "Z")})
+            return
+        if name == "s":
+            self._apply_single_qubit_state(self._S, targets[0])
+            self._apply_single_qubit_tableau(targets[0], {"I": (1, "I"), "X": (1, "Y"), "Y": (-1, "X"), "Z": (1, "Z")})
+            return
+        if name == "sdg":
+            self._apply_single_qubit_state(self._SDG, targets[0])
+            self._apply_single_qubit_tableau(targets[0], {"I": (1, "I"), "X": (-1, "Y"), "Y": (1, "X"), "Z": (1, "Z")})
+            return
+        if name == "cnot":
+            self._apply_cnot_state(targets[0], targets[1])
+            self._apply_cnot_tableau(targets[0], targets[1])
+            return
+        if name == "cz":
+            self._apply_cz_state(targets[0], targets[1])
+            self._apply_single_qubit_tableau(targets[1], {"I": (1, "I"), "X": (1, "Z"), "Y": (-1, "Y"), "Z": (1, "X")})
+            self._apply_cnot_tableau(targets[0], targets[1])
+            self._apply_single_qubit_tableau(targets[1], {"I": (1, "I"), "X": (1, "Z"), "Y": (-1, "Y"), "Z": (1, "X")})
+            return
+        if name == "swap":
+            self._apply_swap_state(targets[0], targets[1])
+            self._apply_swap_tableau(targets[0], targets[1])
+            return
+
+        raise NotImplementedError(
+            f"Gate '{op.name}' is outside the stabilizer backend's Clifford-only subset."
+        )
+
+    def run_ops(self, ops, noise_model=None):
+        if noise_model is not None:
+            raise NotImplementedError("Noise models are not supported by the stabilizer backend.")
+        for op in ops:
+            self._apply_op(op)
+
+    def apply_noise(self, channel: str, targets: List[int], prob: float, kraus_matrices=None):
+        raise NotImplementedError("Noise models are not supported by the stabilizer backend.")
+
+    def get_state(self):
+        return self._state.copy()
+
+    def sample(self, shots: int, qubits: Optional[Sequence[int]] = None):
+        if shots <= 0:
+            raise ValueError("shots must be positive.")
+        measured_qubits = list(range(self.num_qubits)) if qubits is None else [self._validate_qubit(q) for q in qubits]
+        probs = np.zeros(1 << len(measured_qubits), dtype=np.float64)
+        for basis, amplitude in enumerate(self._state):
+            outcome = 0
+            for bit, qubit in enumerate(measured_qubits):
+                if (basis >> int(qubit)) & 1:
+                    outcome |= 1 << bit
+            probs[outcome] += float(abs(amplitude) ** 2)
+        total = probs.sum()
+        if total <= 0.0:
+            raise RuntimeError("Stabilizer state has no probability mass.")
+        probs /= total
+        raw_results = np.random.choice(len(probs), size=int(shots), p=probs).astype(np.uint64)
+        return _format_sample_counts(raw_results, len(measured_qubits))
+
+    def _stabilizer_group(self) -> dict[tuple[str, ...], complex]:
+        group = {tuple(["I"] * int(self.num_qubits)): 1.0 + 0.0j}
+        for generator_phase, generator in self._generators:
+            additions = {}
+            for paulis, phase in group.items():
+                product_phase, product = _multiply_pauli_strings(phase, paulis, generator_phase, generator)
+                additions[product] = product_phase
+            group.update(additions)
+        return group
+
+    def _pauli_expectation(self, paulis: Sequence[tuple[str, int]]) -> complex:
+        target = ["I"] * int(self.num_qubits)
+        for pauli, qubit in paulis:
+            if pauli not in {"X", "Y", "Z"}:
+                raise NotImplementedError(f"Unsupported Pauli observable '{pauli}'.")
+            target[self._validate_qubit(qubit)] = pauli
+        phase = self._stabilizer_group().get(tuple(target))
+        if phase is None:
+            return 0.0
+        if np.isclose(phase, 1.0 + 0.0j):
+            return 1.0
+        if np.isclose(phase, -1.0 + 0.0j):
+            return -1.0
+        raise RuntimeError(f"Invalid stabilizer phase for observable {target}: {phase}")
+
+    def expectation(self, operator):
+        if isinstance(operator, (HermitianOperator, SparseHamiltonianOperator)):
+            raise NotImplementedError("The stabilizer backend supports Pauli observables only.")
+        if isinstance(operator, SumOperator):
+            terms = _combined_pauli_terms(operator)
+        else:
+            terms = _combined_pauli_terms(operator)
+
+        total = 0.0 + 0.0j
+        for coefficient, paulis in terms:
+            if not paulis:
+                total += coefficient
+            else:
+                total += coefficient * self._pauli_expectation(paulis)
+        return _finalize_expectation(total)
+
+
 class StateVectorBackend(_BaseBackend):
     """Simulates a quantum state vector by dispatching to hipStateVec."""
 
@@ -1129,7 +1427,13 @@ class DensityMatrixBackend(_BaseBackend):
 def get_backend(backend_name: str, num_qubits: int) -> _BaseBackend:
     """Factory function to instantiate a simulation backend."""
 
-    supported = {"state_vector": StateVectorBackend, "density_matrix": DensityMatrixBackend}
+    supported = {
+        "state_vector": StateVectorBackend,
+        "density_matrix": DensityMatrixBackend,
+        "stabilizer": StabilizerBackend,
+        "tableau": StabilizerBackend,
+        "clifford": StabilizerBackend,
+    }
     if backend_name not in supported:
         raise ValueError(f"Unsupported backend '{backend_name}'. Supported backends are: {list(supported.keys())}")
     return supported[backend_name](num_qubits)

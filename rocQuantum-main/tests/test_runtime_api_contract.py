@@ -125,6 +125,60 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertIs(fake_backend.operator, operator)
         self.assertEqual([op.name.lower() for op in fake_backend.ops], ["h"])
 
+    def test_stabilizer_backend_executes_clifford_bell_state(self):
+        @kernel
+        def bell():
+            q = rocq.qvec(2)
+            rocq.h(q[0])
+            rocq.cnot(q[0], q[1])
+
+        state = rocq.execute(bell, backend="stabilizer")
+
+        np.testing.assert_allclose(
+            state,
+            np.array([1 / np.sqrt(2), 0, 0, 1 / np.sqrt(2)], dtype=np.complex128),
+            atol=1e-12,
+        )
+        self.assertEqual(rocq.observe(bell, PauliOperator("Z0 Z1"), backend="stabilizer"), 1.0)
+        self.assertEqual(rocq.observe(bell, PauliOperator("X0 X1"), backend="stabilizer"), 1.0)
+        self.assertEqual(rocq.observe(bell, PauliOperator("Z0"), backend="stabilizer"), 0.0)
+
+    def test_stabilizer_backend_samples_deterministic_clifford_state(self):
+        @kernel
+        def flipped():
+            q = rocq.qvec(1)
+            rocq.x(q[0])
+
+        self.assertEqual(rocq.sample(flipped, 8, backend="stabilizer"), {"1": 8})
+
+    def test_stabilizer_backend_tracks_phase_gate_pauli_propagation(self):
+        @kernel
+        def phase_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+            rocq.s(q[0])
+
+        self.assertEqual(rocq.observe(phase_state, PauliOperator("Y0"), backend="stabilizer"), 1.0)
+        self.assertEqual(rocq.observe(phase_state, PauliOperator("X0"), backend="stabilizer"), 0.0)
+
+    def test_stabilizer_backend_rejects_non_clifford_gates(self):
+        @kernel
+        def non_clifford():
+            q = rocq.qvec(1)
+            rocq.t(q[0])
+
+        with self.assertRaisesRegex(NotImplementedError, "Clifford-only"):
+            rocq.execute(non_clifford, backend="stabilizer")
+
+    def test_stabilizer_backend_aliases_are_available(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        self.assertEqual(rocq.observe(prep_state, PauliOperator("X0"), backend="tableau"), 1.0)
+        self.assertEqual(rocq.observe(prep_state, PauliOperator("X0"), backend="clifford"), 1.0)
+
     def test_qir_missing_binding_error_is_actionable(self):
         @kernel
         def prep_state():

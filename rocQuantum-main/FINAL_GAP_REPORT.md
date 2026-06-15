@@ -36,7 +36,7 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | --- | --- | --- |
 | Native HIP simulator core | IMPLEMENTED | Core statevector, tensor-network, and limited density-matrix primitives are real |
 | Compiler-driven execution | PARTIAL | `compile_and_execute()` now executes a narrow qalloc/H/X/Y/Z/S/Sdg/T/Tdg/CNOT/CZ/SWAP/CCX/MCX/CSWAP/RX/RY/RZ/P/CRX/CRY/CRZ/CP MLIR subset; broad compiler/runtime parity is still absent |
-| High-level expectation APIs | PARTIAL | Native kernels exist, but public API coverage is split and inconsistent |
+| High-level expectation APIs | PARTIAL | Native kernels exist, and canonical `rocq` now has an experimental Clifford-only stabilizer/tableau path for Pauli propagation, but public API coverage is split and inconsistent |
 | Multi-GPU / distributed | PARTIAL | Real scaffolding exists, but many paths remain `NOT_IMPLEMENTED` |
 | Packaging / install / export | PARTIAL | Native build exists, but releasable packaging is not coherent |
 | Python surfaces | PARTIAL | Two divergent stacks exist, one with mock fallbacks |
@@ -117,7 +117,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 5. Packaging/install/export does not describe one releasable artifact.
 6. Gate fusion exists and is wired for narrow canonical `rocq` spans; unsupported fusion queue entries fail instead of being silently dropped, but legacy `python/rocq` and broader patterns remain unfused.
 7. `hipTensorNet` breadth is overstated relative to what is built and tested.
-8. `hipDensityMat` is real but still too narrow for broad noisy-simulation claims: generic single-qubit Kraus channels and host-side density sampling exist, while multi-qubit channels and GPU-fast shot workflows remain incomplete.
+8. `hipDensityMat` is real but still too narrow for broad noisy-simulation claims: generic single-qubit Kraus channels and host-side density sampling exist, while multi-qubit channels and GPU-fast shot workflows remain incomplete. A small Clifford-only stabilizer/tableau backend now reduces the broader simulator-portfolio gap for Pauli propagation, but it is not GPU-accelerated and does not cover noise or non-Clifford circuits.
 9. Integrations are still thin adapters, though PennyLane/Cirq/Qiskit sampling now prefers the native simulator `measure()` path where available, Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, loop-local `break_loop` / `continue_loop`, and `switch_case` sampling can use state-collapsing `measure_qubit()` trajectories, PennyLane/Qiskit Pauli-observable paths use native expectation helpers where possible, PennyLane `qml.Hermitian` and supported Qiskit dense `Operator` observables can use native dense-matrix single/batch expectation paths for supported targets, Qiskit/PennyLane default multi-control gates reach native `MCX` / `CSWAP`, PennyLane `SparseHamiltonian` can use native CSR moments, including local batch readouts, with a CSR statevector fallback, and self-hosted ROCm CI now has a native framework Bell-state smoke path whose artifacts are needed for hardware proof.
 10. CUDA-QX-style libraries are still shells.
 
