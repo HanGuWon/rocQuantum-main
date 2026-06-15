@@ -156,17 +156,19 @@
                                 ],
                       "evidence":  [
                                        "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:7",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:31",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:95",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:12",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:29",
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:38",
                                        "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:483",
-                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:1953"
+                                       "rocQuantum-main/rocquantum/src/hipStateVec/hipStateVec.cpp:3253",
+                                       "rocQuantum-main/tests/test_statevec_fastpath_contract.py:94"
                                    ],
-                      "notes":  "Current doc is internally contradictory.",
-                      "status":  "Needs ROCm CI",
+                      "notes":  "Guide now has a single behavior matrix, runtime switch table, and limitations table aligned with source-contract tests. Runtime validation remains tracked by separate ROCm CI items.",
+                      "status":  "Implemented",
                       "pr_link":  "unknown",
-                      "commit_link":  "unknown",
-                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:7",
-                      "verification_path":  "Run \u0027.github/workflows/rocm-linux-build.yml\u0027 (python-tests + build) and confirm runtime coverage on self-hosted ROCm runner."
+                      "commit_link":  "current-branch",
+                      "evidence_link":  "rocQuantum-main/rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md:12",
+                      "verification_path":  "Run tests/test_statevec_fastpath_contract.py, tests/test_rccl_distributed_contract.py, and tests/test_rocm_compatibility_contract.py; runtime behavior still requires ROCm self-hosted CI artifacts."
                   },
                   {
                       "id":  "P0-COMMS-001",

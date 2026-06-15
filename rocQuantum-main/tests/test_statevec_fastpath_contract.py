@@ -22,6 +22,14 @@ _GATE_FUSION_SOURCE = os.path.join(
     "hipStateVec",
     "GateFusion.cpp",
 )
+_MULTI_GPU_GUIDE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "MULTI_GPU_GUIDE.md",
+)
+_README = os.path.join(_PROJECT_ROOT, "README.md")
 
 
 class TestStateVecFastPathContract(unittest.TestCase):
@@ -83,6 +91,32 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("return apply_sparse_matrix_distributed_host_fallback", source)
         self.assertIn("return sparse_matrix_moments_distributed_host_fallback", source)
         self.assertGreaterEqual(source.count("distributed_host_fallback_enabled()"), 3)
+
+    def test_multi_gpu_guide_matches_distributed_contract(self):
+        with open(_MULTI_GPU_GUIDE, "r", encoding="utf-8") as f:
+            guide = f.read()
+        with open(_README, "r", encoding="utf-8") as f:
+            readme = f.read()
+
+        self.assertIn("## Behavior Matrix", guide)
+        self.assertIn("## Runtime Switches", guide)
+        self.assertIn("## Known Limitations", guide)
+        for expected in [
+            "ROCQ_DISTRIBUTED_FALLBACK_MODE",
+            "ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK",
+            "ROCQ_DISTRIBUTED_COMM",
+            "ROCQ_REQUIRE_RCCL",
+            "ROCQ_DISABLE_RCCL",
+            "distributed_expectation_rccl",
+            "distributed_sample_rccl",
+            "ROCQ_STATUS_NOT_IMPLEMENTED",
+            "Correctness/debug only; no performance parity claim",
+            "multi_gpu=True",
+        ]:
+            self.assertIn(expected, guide)
+        self.assertIn("MULTI_GPU_GUIDE.md", readme)
+        self.assertNotIn("complete distributed sampling story", guide)
+        self.assertNotIn("production-grade multi-gpu", guide.lower())
 
 
 if __name__ == "__main__":

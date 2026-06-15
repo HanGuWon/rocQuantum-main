@@ -5,33 +5,52 @@ This document describes the current implementation status, not the eventual desi
 ## Current Truth
 
 - Multi-GPU support is experimental and single-node only.
-- Distributed handles, state-allocation helpers, and some local-domain distributed operations exist.
-- Many distributed code paths still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
+- Distributed handles, state-allocation helpers, local-domain operations, explicit slow/debug host fallback paths, and RCCL reduction fast paths exist.
+- Unsupported distributed code paths return `ROCQ_STATUS_NOT_IMPLEMENTED` unless an explicit fallback mode covers the operation.
 - There is no release-grade multi-GPU CI coverage in this repo today.
 
-## What Exists In Code Today
+## Behavior Matrix
 
-- `rocsvGetDistributedInfo`
-- `rocsvAllocateDistributedState`
-- `rocsvInitializeDistributedState`
-- Partial local-domain distributed gate support in `hipStateVec.cpp`
-- Partial local-domain distributed measurement support
-- Optional RCCL discovery, linkage, communicator initialization, and communicator teardown
-- RCCL `AllReduce(sum)` fast paths for local-domain distributed expectation reductions and sampling probability reductions
-- `benchmark_hipStateVec_distributed_reductions`, a ROCm-only A/B benchmark for RCCL reduction mode versus explicit host fallback mode
+| Capability | Current behavior | Native fast path | Explicit fallback | User contract |
+| --- | --- | --- | --- | --- |
+| Distributed state lifecycle | `rocsvAllocateDistributedState`, `rocsvInitializeDistributedState`, and communicator teardown paths exist for one host with multiple visible GPUs | HIP allocation/copy streams per local slice | None | Experimental infrastructure only |
+| Local-domain named gates | Supported only when all touched qubits are local to each slice | HIP local-slice kernels | None | Non-local variants may return `ROCQ_STATUS_NOT_IMPLEMENTED` |
+| Non-local single/control/CNOT/CZ/generic matrix paths | Not a performance feature | None today | `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1` gathers to host and reapplies correctness fallback for covered matrix paths | Slow/debug correctness path, not CUDA-Q/cuStateVec-scale distributed execution |
+| Dense matrix expectation | Local small-target path is native; distributed or large-target cases are limited | HIP reduction for supported local cases | Explicit host fallback for large/distributed cases when fallback env vars are set | Correctness fallback exists; performance parity is not claimed |
+| Sparse matrix moments | Local single/batched CSR paths are native; distributed full-state CSR is limited | HIP CSR row reductions for supported local cases | Explicit distributed host fallback when fallback env vars are set | Correctness fallback exists; performant distributed sparse reductions remain future work |
+| Sparse matrix apply | Local-domain distributed slices can use the CSR kernel | HIP CSR apply for local-domain slices | Explicit distributed host fallback for non-local distributed sparse apply | Avoids dense materialization only on supported local-domain paths |
+| Expectation reductions over local-domain qubits | RCCL can sum per-rank expectation scalars when communicators are ready | `distributed_expectation_rccl` with `ncclAllReduce` | Host fallback after `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` | RCCL path is reduction-only, not general state redistribution |
+| Sampling probabilities over local-domain measured qubits | RCCL can sum per-rank probabilities when measured qubits are local-domain | `distributed_sample_rccl` / `accumulate_distributed_sample_probabilities_rccl` | Host fallback after `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` | Measured slice-domain bits remain unsupported without host fallback |
+| Multi-node execution | Not implemented | None | None | Out of scope today |
+| Public Python multi-GPU contract | Legacy `Circuit(..., multi_gpu=True)` exposes only experimental partial behavior | Binding-dependent | Warning and execution notes describe the boundary | Do not treat as a stable CUDA-Q-style distributed target |
 
-## What Is Not Ready To Claim
+## Runtime Switches
 
-- Arbitrary distributed gate application across slice-domain qubits
-- A complete distributed sampling story for measured qubits that include slice-domain bits
-- A complete distributed expectation-value story for observables that include slice-domain X/Y/global terms
-- Multi-node execution
-- A stable public Python API contract for general distributed execution
+| Switch | Values | Effect |
+| --- | --- | --- |
+| `ROCQ_DISTRIBUTED_FALLBACK_MODE` | `host` or `host_fallback` | Enables explicit slow/debug host fallback for covered non-local distributed operations, dense/sparse expectations, and sampling paths |
+| `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK` | truthy flag | Legacy alias for enabling the same explicit host fallback mode |
+| `ROCQ_DISTRIBUTED_COMM` | `rccl` | Requires RCCL communicator initialization and returns an RCCL error when RCCL cannot initialize |
+| `ROCQ_DISTRIBUTED_COMM` | `host` or `none` | Disables RCCL so host-fallback behavior can be tested explicitly |
+| `ROCQ_REQUIRE_RCCL` | truthy flag | Requires RCCL even when `ROCQ_DISTRIBUTED_COMM` is unset |
+| `ROCQ_DISABLE_RCCL` | truthy flag | Forces non-RCCL behavior for A/B testing |
+
+## Known Limitations
+
+| Area | Limitation | Expected result |
+| --- | --- | --- |
+| Non-local gates | General distributed remap/localization is incomplete for non-local single-qubit, controlled, CNOT/CZ, and higher-control paths | `ROCQ_STATUS_NOT_IMPLEMENTED` unless a covered explicit host fallback applies |
+| Controlled/multi-control matrices | Distributed controlled matrix and multi-control non-local paths are incomplete | `ROCQ_STATUS_NOT_IMPLEMENTED` for unsupported arities or non-local layouts |
+| Sampling | Slice-domain measured qubits do not have a native distributed sampler today | RCCL path returns `ROCQ_STATUS_NOT_IMPLEMENTED`; explicit host fallback can provide slow correctness when enabled |
+| Expectations | Slice-domain X/Y/global Pauli cases and broad dense/sparse distributed observables are not fully native | RCCL path returns `ROCQ_STATUS_NOT_IMPLEMENTED`; explicit host fallback can provide slow correctness when enabled |
+| Performance | Host fallback gathers distributed state to CPU memory | Correctness/debug only; no performance parity claim |
+| CI evidence | This repository cannot prove multi-GPU runtime behavior without a ROCm host exposing `/dev/kfd` and multiple GPUs | Mark runtime evidence as pending until self-hosted ROCm CI artifacts exist |
 
 ## User-Facing Guidance
 
 - Treat `multi_gpu=True` as experimental partial support.
-- Unsupported operations should be expected to raise `ROCQ_STATUS_NOT_IMPLEMENTED` or a higher-level `NotImplementedError`.
+- Unsupported operations should be expected to raise `ROCQ_STATUS_NOT_IMPLEMENTED` or a higher-level `NotImplementedError` unless an explicit fallback mode covers that path.
+- Set `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1` only for slow/debug correctness checks.
 - Set `ROCQ_DISTRIBUTED_COMM=rccl` or `ROCQ_REQUIRE_RCCL=1` when a ROCm runner should fail fast if RCCL cannot initialize.
 - Set `ROCQ_DISABLE_RCCL=1` or `ROCQ_DISTRIBUTED_COMM=host` to force non-RCCL behavior for A/B testing.
 - Run `benchmark_hipStateVec_distributed_reductions --output distributed-reductions.json` on a ROCm multi-GPU runner to capture expectation/sampling reduction timings.
