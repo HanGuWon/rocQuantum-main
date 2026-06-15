@@ -855,7 +855,7 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
-            "positive-integer shot/round/num_qubits, backend, code/decoder interface, stabilizer-fragment sequence, logical-operator result, decoder-correction result, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
+            "positive-integer shot/round/num_qubits, backend, code/decoder interface, non-mapping stabilizer-fragment sequence, logical-operator result, decoder-correction result, ancilla-index, initial-state callable, syndrome, and bool-safe count/bit validation",
             capability_data["supported_features"],
         )
         self.assertIn(
@@ -1063,6 +1063,15 @@ class TestQecHelpers(unittest.TestCase):
             experiment.run_single_round(FragmentCode(None), decoder, None, 5, [3], shots=1)
         with self.assertRaisesRegex(ValueError, "sequence of circuit fragments"):
             experiment.run_single_round(FragmentCode("fragment"), decoder, None, 5, [3], shots=1)
+        with self.assertRaisesRegex(ValueError, "sequence of circuit fragments"):
+            experiment.run_single_round(
+                FragmentCode({"stabilizer_0": "fragment"}),
+                decoder,
+                None,
+                5,
+                [3],
+                shots=1,
+            )
 
         generator_decoder = RecordingDecoder()
         with mock.patch(

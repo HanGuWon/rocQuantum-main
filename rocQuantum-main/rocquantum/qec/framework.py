@@ -112,7 +112,7 @@ def _validate_code_and_decoder(code, decoder) -> None:
 
 
 def _validate_stabilizer_circuits(stabilizer_circuits) -> List[Any]:
-    if isinstance(stabilizer_circuits, (str, bytes)):
+    if isinstance(stabilizer_circuits, (str, bytes, Mapping)):
         raise ValueError("generate_stabilizer_circuits must return a sequence of circuit fragments.")
     try:
         return list(stabilizer_circuits)
