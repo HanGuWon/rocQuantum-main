@@ -1,6 +1,11 @@
 """Experimental higher-level solver helpers for rocQuantum."""
 
-from .qaoa import make_maxcut_qaoa_kernel, maxcut_cost_operator, solve_maxcut_qaoa
+from .qaoa import (
+    get_num_qaoa_parameters,
+    make_maxcut_qaoa_kernel,
+    maxcut_cost_operator,
+    solve_maxcut_qaoa,
+)
 from .vqe_solver import Optimizer, SciPyOptimizer, VQE_Solver
 
 _SOLVER_ENTRY_POINTS = (
@@ -8,6 +13,7 @@ _SOLVER_ENTRY_POINTS = (
     "VQE_Solver.estimate_gradient",
     "VQE_Solver.solve",
     "make_maxcut_qaoa_kernel",
+    "get_num_qaoa_parameters",
     "maxcut_cost_operator",
     "solve_maxcut_qaoa",
 )
@@ -17,6 +23,7 @@ _SOLVER_SUPPORTED_FEATURES = (
     "VQE solve loop with a pluggable Optimizer interface",
     "parameter-shift and finite-difference gradient estimates",
     "MaxCut QAOA H/CNOT/RZ/RX ansatz construction",
+    "CUDA-QX-style QAOA parameter-count helper for the supported gamma/beta ansatz",
     "weighted MaxCut cost operator construction",
     "MaxCut solve wrapper that maximizes cut value through a negated VQE objective",
     "QAOA edge-list and edge-weight mapping normalization",
@@ -65,6 +72,7 @@ __all__ = [
     "SciPyOptimizer",
     "VQE_Solver",
     "capabilities",
+    "get_num_qaoa_parameters",
     "make_maxcut_qaoa_kernel",
     "maxcut_cost_operator",
     "solver_capabilities",

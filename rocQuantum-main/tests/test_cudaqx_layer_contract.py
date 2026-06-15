@@ -26,6 +26,7 @@ class TestVqeSolverContract(unittest.TestCase):
         self.assertEqual(capability_data["status"], "experimental_partial")
         self.assertEqual(capabilities(), capability_data)
         self.assertIn("VQE_Solver.evaluate_energy", capability_data["entry_points"])
+        self.assertIn("get_num_qaoa_parameters", capability_data["entry_points"])
         self.assertIn(
             "VQE one-shot energy evaluation through rocq.observe()",
             capability_data["supported_features"],
@@ -39,6 +40,10 @@ class TestVqeSolverContract(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
+            "CUDA-QX-style QAOA parameter-count helper for the supported gamma/beta ansatz",
+            capability_data["supported_features"],
+        )
+        self.assertIn(
             "VQE ansatz and optimizer result parameter-count validation",
             capability_data["supported_features"],
         )
@@ -49,6 +54,7 @@ class TestVqeSolverContract(unittest.TestCase):
         self.assertIn("scipy", capability_data["optional_dependencies"])
         self.assertIn("CUDA-QX", capability_data["comparison_target"])
         self.assertIn("self-hosted ROCm CI", capability_data["performance_note"])
+        self.assertIn("get_num_qaoa_parameters", solvers.__all__)
         self.assertIn("solver_capabilities", solvers.__all__)
 
     def test_objective_uses_canonical_observe(self):
@@ -876,6 +882,41 @@ class TestQaoaHelpers(unittest.TestCase):
             with self.subTest(expression=expression):
                 with self.assertRaisesRegex(TypeError, "Cannot"):
                     expression()
+
+    def test_qaoa_parameter_count_helper_matches_supported_ansatz(self):
+        from rocquantum.solvers import get_num_qaoa_parameters
+        from rocquantum.solvers.qaoa import maxcut_cost_operator, solve_maxcut_qaoa
+        from rocquantum.solvers.vqe_solver import Optimizer
+
+        class RecordingOptimizer(Optimizer):
+            def __init__(self):
+                self.x0 = None
+
+            def minimize(self, fun, x0, args=()):
+                self.x0 = np.asarray(x0, dtype=float).copy()
+                return types.SimpleNamespace(fun=-0.25, x=self.x0)
+
+        cost_operator = maxcut_cost_operator(2, [(0, 1)])
+        self.assertEqual(get_num_qaoa_parameters(cost_operator, layers=np.int64(2)), 4)
+        self.assertEqual(get_num_qaoa_parameters(layers=3), 6)
+
+        optimizer = RecordingOptimizer()
+        result = solve_maxcut_qaoa(
+            2,
+            [(0, 1)],
+            layers=2,
+            initial_params=np.zeros(get_num_qaoa_parameters(layers=2)),
+            optimizer=optimizer,
+        )
+        self.assertEqual(result["parameter_count"], 4)
+        np.testing.assert_allclose(optimizer.x0, np.zeros(4))
+
+        for layers in (True, 0, 1.5):
+            with self.subTest(layers=layers):
+                with self.assertRaisesRegex(ValueError, "layers"):
+                    get_num_qaoa_parameters(layers=layers)
+        with self.assertRaisesRegex(ValueError, "cost_operator"):
+            get_num_qaoa_parameters("Z0", layers=1)
 
     def test_maxcut_qaoa_kernel_emits_supported_ops(self):
         from rocquantum.solvers.qaoa import make_maxcut_qaoa_kernel, maxcut_cost_operator

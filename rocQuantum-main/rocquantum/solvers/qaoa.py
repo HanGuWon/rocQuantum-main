@@ -26,6 +26,29 @@ def _validate_positive_integer(value, name: str) -> int:
     return value
 
 
+def _validate_optional_cost_operator(cost_operator):
+    if cost_operator is None:
+        return None
+    if rocq is None:
+        raise RuntimeError("Canonical 'rocq' package is required to validate QAOA cost operators.")
+    from rocq.operator import QuantumOperator
+
+    if not isinstance(cost_operator, QuantumOperator):
+        raise ValueError("cost_operator must be a rocq.operator.QuantumOperator or None.")
+    return cost_operator
+
+
+def get_num_qaoa_parameters(cost_operator=None, layers: int = 1) -> int:
+    """Return the flat parameter-vector length used by this QAOA helper.
+
+    The experimental MaxCut ansatz uses one gamma and one beta per layer,
+    ordered as ``[gamma_0, ..., gamma_{p-1}, beta_0, ..., beta_{p-1}]``.
+    """
+    _validate_optional_cost_operator(cost_operator)
+    layers = _validate_positive_integer(layers, "layers")
+    return 2 * layers
+
+
 def _validate_qubit_index(value, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
         raise ValueError(f"QAOA edge {name} endpoint must be an integer qubit index.")
@@ -137,10 +160,11 @@ def make_maxcut_qaoa_kernel(num_qubits: int, edges: Iterable[Sequence[float]], l
     layers = _validate_positive_integer(layers, "layers")
 
     normalized_edges = _canonical_maxcut_edges(num_qubits, edges)
+    expected_params = get_num_qaoa_parameters(layers=layers)
 
     @rocq.kernel
     def qaoa_ansatz(parameters):
-        params = _validate_parameter_vector(parameters, 2 * layers, layers)
+        params = _validate_parameter_vector(parameters, expected_params, layers)
 
         q = rocq.qvec(num_qubits)
         for qubit in range(num_qubits):
@@ -192,7 +216,7 @@ def solve_maxcut_qaoa(
     layers = _validate_positive_integer(layers, "layers")
 
     normalized_edges = _canonical_maxcut_edges(num_qubits, edges)
-    expected_params = 2 * layers
+    expected_params = get_num_qaoa_parameters(layers=layers)
     if initial_params is None:
         params = np.zeros(expected_params, dtype=float)
     else:
@@ -228,6 +252,7 @@ def solve_maxcut_qaoa(
             "optimal_cut_value": optimal_cut_value,
             "intermediate_cut_values": intermediate_cut_values,
             "normalized_edges": normalized_edges,
+            "parameter_count": expected_params,
             "layers": layers,
             "num_qubits": num_qubits,
             "backend": backend,

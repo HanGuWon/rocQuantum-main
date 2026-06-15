@@ -35,6 +35,9 @@ Current supported subset:
 - `make_maxcut_qaoa_kernel()` builds a MaxCut-style QAOA ansatz using H, CNOT,
   RZ, and RX gates. The cost phase uses a CNOT-RZ-CNOT block with angle
   `-gamma * w`, matching the non-global phase of `0.5 * w * (I - Zi Zj)`.
+- `get_num_qaoa_parameters()` exposes the flat QAOA parameter count for the
+  supported gamma/beta ansatz, returning `2 * layers` after validating the
+  layer count and optional canonical cost operator.
 - `maxcut_cost_operator()` builds the weighted MaxCut cost operator as
   `0.5 * w * (I - Zi Zj)` for each edge, accepting either `(u, v, weight)`
   edge entries or `{(u, v): weight}` mappings and aggregating duplicate or
@@ -84,14 +87,15 @@ Minimal MaxCut QAOA wrapper example:
 
 ```python
 import numpy as np
-from rocquantum.solvers import solve_maxcut_qaoa
+from rocquantum.solvers import get_num_qaoa_parameters, solve_maxcut_qaoa
 
 
+parameter_count = get_num_qaoa_parameters(layers=1)
 result = solve_maxcut_qaoa(
     num_qubits=2,
     edges=[(0, 1, 1.0)],
     layers=1,
-    initial_params=np.array([0.2, 0.4]),
+    initial_params=np.zeros(parameter_count),
 )
 print(result["optimal_energy"], result["optimal_parameters"])
 print(result["optimal_cut_value"])
