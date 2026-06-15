@@ -175,6 +175,7 @@ class _KernelBuildContext:
         if not isinstance(targets, list):
             raise TypeError("targets must be a list of qubit indices.")
         resolved = [cls._active._validate_gate_target(t) for t in targets]
+        cls._active._validate_gate_arity(name, resolved)
         cls._active._validate_distinct_gate_targets(name, resolved)
         cls._active.ops.append(GateOp(name=name, targets=resolved, params=_normalize_gate_params(params)))
 
@@ -192,6 +193,41 @@ class _KernelBuildContext:
     def _validate_distinct_gate_targets(name: str, targets: List[int]) -> None:
         if len(set(targets)) != len(targets):
             raise ValueError(f"Gate '{name}' target qubits must be distinct.")
+
+    @staticmethod
+    def _validate_gate_arity(name: str, targets: List[int]) -> None:
+        gate = name.lower()
+        fixed_arity = {
+            "h": 1,
+            "x": 1,
+            "y": 1,
+            "z": 1,
+            "s": 1,
+            "sdg": 1,
+            "t": 1,
+            "tdg": 1,
+            "rx": 1,
+            "ry": 1,
+            "rz": 1,
+            "p": 1,
+            "cnot": 2,
+            "cz": 2,
+            "swap": 2,
+            "ccx": 3,
+            "cswap": 3,
+            "crx": 2,
+            "cry": 2,
+            "crz": 2,
+            "cp": 2,
+        }
+        if gate in fixed_arity and len(targets) != fixed_arity[gate]:
+            raise ValueError(
+                f"Gate '{name}' expects {fixed_arity[gate]} target(s), got {len(targets)}."
+            )
+        if gate == "mcx" and len(targets) < 2:
+            raise ValueError(
+                f"Gate '{name}' expects at least 2 target(s): one control and one target."
+            )
 
 
 def _normalize_gate_params(params: Optional[Dict[str, float]]) -> Dict[str, float]:

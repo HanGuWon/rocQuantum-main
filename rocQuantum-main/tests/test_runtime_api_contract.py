@@ -584,6 +584,17 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                         rocq.execute(bad_gate, backend="state_vector")
                 patched_get_backend.assert_not_called()
 
+    def test_kernel_rejects_invalid_gate_arity_before_backend_dispatch(self):
+        @kernel
+        def missing_mcx_control():
+            q = rocq.qvec(1)
+            rocq.mcx([], q[0])
+
+        with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+            with self.assertRaisesRegex(ValueError, "at least 2 target"):
+                rocq.execute(missing_mcx_control, backend="state_vector")
+        patched_get_backend.assert_not_called()
+
     def test_kernel_rejects_invalid_gate_parameters_before_backend_dispatch(self):
         invalid_angles = (np.inf, np.nan, True, "0.5")
 
