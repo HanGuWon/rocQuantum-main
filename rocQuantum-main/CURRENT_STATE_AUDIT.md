@@ -11,6 +11,7 @@ Runtime update note (2026-04-06):
 - Canonical sampling now rejects non-positive or non-integral shots and invalid selected-qubit lists before native backend dispatch; direct canonical backends share the same positive-integer shot and qubit-list validation.
 - Canonical kernel recording now rejects non-integer or out-of-range gate targets and non-finite gate parameters before native backend dispatch.
 - Shared framework runtime dispatch now rejects bool, string, complex, and non-finite operation parameters before Qiskit/PennyLane/Cirq adapters reach native single or batched gate calls.
+- Shared framework target normalization now rejects bool, string, bytes, and non-integral qubit targets before native operation, matrix, measurement, probability, expectation, or fallback dispatch.
 - Public `QuantumSimulator` native gate dispatch now rejects non-finite single and batched angle parameters before HIP state-vector kernels are invoked.
 - Public `QuantumSimulator` dense matrix application, controlled-matrix application, and dense expectation/moment readouts now reject non-finite complex payloads before device upload.
 - Public `QuantumSimulator` sparse matrix application and sparse-Hamiltonian moment readouts now reject non-finite CSR data values before host fallback or device upload.

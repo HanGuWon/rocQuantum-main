@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 import math
+from numbers import Integral
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -55,7 +56,19 @@ def normalize_gate_name(name: str) -> str:
 
 
 def normalize_targets(targets: Iterable[int]) -> list[int]:
-    return [int(target) for target in targets]
+    if isinstance(targets, (bool, np.bool_)) or isinstance(targets, (str, bytes)):
+        raise ValueError("Operation targets must be a sequence of integer qubit indices.")
+    try:
+        raw_targets = list(targets)
+    except TypeError as exc:
+        raise TypeError("Operation targets must be a sequence of integer qubit indices.") from exc
+
+    normalized = []
+    for target in raw_targets:
+        if isinstance(target, (bool, np.bool_)) or not isinstance(target, Integral):
+            raise ValueError("Operation targets must be integer qubit indices.")
+        normalized.append(int(target))
+    return normalized
 
 
 def normalize_params(params: Iterable[object] | None) -> list[float]:

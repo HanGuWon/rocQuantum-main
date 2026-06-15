@@ -896,6 +896,43 @@ def test_framework_runtime_rejects_ambiguous_gate_parameters(monkeypatch):
     assert batch_sim.batch_ops == []
 
 
+def test_framework_runtime_rejects_ambiguous_targets_before_native_dispatch(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import RocQuantumRuntime, normalize_targets
+
+    invalid_targets = (True, np.bool_(False), "0", b"0", 0.0, 0.5, 0.0 + 0.0j)
+    for target in invalid_targets:
+        with pytest.raises((TypeError, ValueError), match="Operation targets"):
+            normalize_targets([target])
+
+    with pytest.raises(ValueError, match="Operation targets"):
+        normalize_targets("0")
+    assert normalize_targets([np.int64(1), 0]) == [1, 0]
+
+    runtime = RocQuantumRuntime.from_bindings(2)
+    sim = _FakeQuantumSimulator.instances[-1]
+    for target in invalid_targets:
+        with pytest.raises((TypeError, ValueError), match="Operation targets"):
+            runtime.apply_operation("X", [target])
+        with pytest.raises((TypeError, ValueError), match="Operation targets"):
+            runtime.apply_matrix(np.eye(2, dtype=np.complex128), [target])
+        with pytest.raises((TypeError, ValueError), match="Operation targets"):
+            runtime.measure([target], 1)
+    assert sim.ops == []
+    assert sim.matrices == []
+    assert sim.measurements == []
+
+    batch_runtime = RocQuantumRuntime.from_bindings(2, batch_size=2)
+    batch_sim = _FakeQuantumSimulator.instances[-1]
+    with pytest.raises((TypeError, ValueError), match="Operation targets"):
+        batch_runtime.apply_operation_batch("RX", [0.0], [0.1, 0.2])
+    with pytest.raises((TypeError, ValueError), match="Operation targets"):
+        batch_runtime.probabilities_batch([True])
+    assert batch_sim.batch_ops == []
+    assert batch_sim.probability_requests == []
+
+
 def test_qiskit_backend_samples_mid_circuit_measurement_trajectory(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
