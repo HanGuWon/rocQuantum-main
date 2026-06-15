@@ -308,6 +308,10 @@ class QuantumKernel:
                 refs.append(qubit_values[t])
             return refs
 
+        def _require_distinct_targets(gate_name: str, targets: List[int]) -> None:
+            if len(set(targets)) != len(targets):
+                raise ValueError(f"Gate '{gate_name}' target qubits must be distinct.")
+
         for op in ctx.ops:
             gate = op.name.lower()
             if gate in self._GATE_TO_MLIR:
@@ -317,6 +321,7 @@ class QuantumKernel:
                     raise ValueError(
                         f"Gate '{op.name}' expects {arity} target(s), got {len(refs)}."
                     )
+                _require_distinct_targets(op.name, op.targets)
                 targets = ", ".join(refs)
                 operand_types = ", ".join("!quantum.qubit" for _ in range(arity))
                 body_lines.append(
@@ -329,6 +334,7 @@ class QuantumKernel:
                     raise ValueError(
                         f"Gate '{op.name}' expects at least {min_arity} target(s), got {len(refs)}."
                     )
+                _require_distinct_targets(op.name, op.targets)
                 targets = ", ".join(refs)
                 operand_types = ", ".join("!quantum.qubit" for _ in refs)
                 body_lines.append(
@@ -341,6 +347,7 @@ class QuantumKernel:
                     raise ValueError(
                         f"Gate '{op.name}' expects {arity} target(s), got {len(refs)}."
                     )
+                _require_distinct_targets(op.name, op.targets)
                 angle = op.params.get("theta")
                 if angle is None:
                     angle = op.params.get("phi")

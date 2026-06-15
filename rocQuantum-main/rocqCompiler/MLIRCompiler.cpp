@@ -66,6 +66,15 @@ unsigned resolve_qubit_index(mlir::Value value,
     return it->second;
 }
 
+void validate_distinct_targets(const std::vector<unsigned>& targets, const std::string& op_name) {
+    std::unordered_set<unsigned> seen;
+    for (unsigned target : targets) {
+        if (!seen.insert(target).second) {
+            throw_compile_diagnostic("operation '" + op_name + "' qubit operands must be distinct.");
+        }
+    }
+}
+
 std::vector<unsigned> resolve_targets(mlir::Operation* op,
                                       const llvm::DenseMap<mlir::Value, unsigned>& qubit_indices,
                                       unsigned expected_operands) {
@@ -81,6 +90,7 @@ std::vector<unsigned> resolve_targets(mlir::Operation* op,
     for (mlir::Value operand : op->getOperands()) {
         targets.push_back(resolve_qubit_index(operand, qubit_indices, op_name));
     }
+    validate_distinct_targets(targets, op_name);
     return targets;
 }
 
@@ -99,6 +109,7 @@ std::vector<unsigned> resolve_targets_at_least(mlir::Operation* op,
     for (mlir::Value operand : op->getOperands()) {
         targets.push_back(resolve_qubit_index(operand, qubit_indices, op_name));
     }
+    validate_distinct_targets(targets, op_name);
     return targets;
 }
 

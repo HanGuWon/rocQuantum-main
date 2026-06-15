@@ -102,6 +102,8 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("angle must be finite", src)
         self.assertIn("std::numeric_limits<unsigned>::max()", src)
         self.assertIn("qalloc size exceeds the supported compiler range", src)
+        self.assertIn("validate_distinct_targets", src)
+        self.assertIn("qubit operands must be distinct", src)
 
     def test_binding_documents_compile_and_execute_mvp(self):
         path = os.path.join(_PROJECT_ROOT, "bindings.cpp")
@@ -324,6 +326,31 @@ class TestKernelMlirEmission(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             missing_control.mlir()
         self.assertIn("at least 2", str(ctx.exception))
+
+    def test_mlir_emission_rejects_duplicate_gate_targets(self):
+        from rocq.kernel import QuantumKernel
+        from rocq.qvec import qvec
+        from rocq.gates import cnot, cp, mcx
+
+        @QuantumKernel
+        def duplicate_cnot_target():
+            q = qvec(1)
+            cnot(q[0], q[0])
+
+        @QuantumKernel
+        def duplicate_controlled_phase_target():
+            q = qvec(1)
+            cp(0.125, q[0], q[0])
+
+        @QuantumKernel
+        def duplicate_mcx_control_target():
+            q = qvec(2)
+            mcx([q[0], q[0]], q[1])
+
+        for kernel_obj in [duplicate_cnot_target, duplicate_controlled_phase_target, duplicate_mcx_control_target]:
+            with self.subTest(kernel=kernel_obj.name):
+                with self.assertRaisesRegex(ValueError, "target qubits must be distinct"):
+                    kernel_obj.mlir()
 
     def test_emitted_ops_exist_in_quantum_dialect(self):
         from rocq.kernel import QuantumKernel
