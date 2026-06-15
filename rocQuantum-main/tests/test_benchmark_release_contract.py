@@ -338,6 +338,59 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertEqual(result["threshold_failures"][0]["metric"], "expectation_ms")
         self.assertFalse(result["threshold_failures"][0]["passes_threshold"])
 
+    def test_release_runner_fails_missing_configured_speedup_metrics(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "payload = {'cases': [\n"
+                "    {'name': 'rccl', 'status': 0, 'expectation_ms': 2.0},\n"
+                "    {'name': 'host_fallback', 'status': 0, 'expectation_ms': 8.0},\n"
+                "]}\n"
+                "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                "    json.dump(payload, f)\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_distributed",
+                                "category": "distributed",
+                                "executable": sys.executable,
+                                "output": "fake-distributed.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": False,
+                                "speedup_thresholds": {
+                                    "expectation_ms": 2.0,
+                                    "sparse_moments_ms": 1.0,
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = runner.run(
+                manifest_path=manifest_path,
+                build_dir=tmp_path / "build",
+                output_dir=tmp_path / "artifacts",
+            )
+
+        result = summary["results"][0]
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["failure_reason"],
+            "one or more configured speedup metrics were missing",
+        )
+        self.assertEqual(result["missing_speedup_metrics"], ["sparse_moments_ms"])
+
     def test_release_runner_fails_speedup_trend_regressions(self):
         runner = _load_runner_module()
         with tempfile.TemporaryDirectory() as tmp:

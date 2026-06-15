@@ -368,7 +368,8 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
         result["failure_reason"] = "benchmark did not write its declared JSON output"
     try:
         payload = _read_json_object(output_path)
-        speedups = extract_case_speedups(payload, thresholds=_speedup_thresholds(entry))
+        thresholds = _speedup_thresholds(entry)
+        speedups = extract_case_speedups(payload, thresholds=thresholds)
         if speedups:
             result["speedups"] = speedups
             threshold_failures = [
@@ -380,6 +381,21 @@ def _run_entry(entry: dict[str, Any], build_dir: Path, output_dir: Path, has_dev
                 result["status"] = "failed"
                 result["threshold_failures"] = threshold_failures
                 result["failure_reason"] = "one or more configured speedup thresholds were not met"
+        if thresholds:
+            observed_metrics = {
+                speedup["metric"]
+                for speedup in speedups
+                if isinstance(speedup, dict) and isinstance(speedup.get("metric"), str)
+            }
+            missing_metrics = sorted(set(thresholds) - observed_metrics)
+            if missing_metrics:
+                result["status"] = "failed"
+                result["missing_speedup_metrics"] = missing_metrics
+                reason = "one or more configured speedup metrics were missing"
+                if result.get("failure_reason"):
+                    result["failure_reason"] = f"{result['failure_reason']}; {reason}"
+                else:
+                    result["failure_reason"] = reason
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         result["analysis_warning"] = f"could not analyze benchmark output: {exc}"
         result["status"] = "failed"
