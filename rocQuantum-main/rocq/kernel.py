@@ -7,7 +7,16 @@ from dataclasses import dataclass
 from numbers import Integral, Real
 from typing import Callable, Dict, List, Optional
 
-from .backends import get_backend, _normalize_sample_qubits, _validate_positive_integer
+from .backends import (
+    _DENSITY_MATRIX_MAX_DENSE_OBSERVABLE_TARGETS,
+    _DENSITY_MATRIX_MAX_KRAUS_TARGETS,
+    _DENSITY_MATRIX_MAX_QUBITS,
+    _DENSITY_MATRIX_MAX_SAMPLE_QUBITS,
+    _STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW,
+    get_backend,
+    _normalize_sample_qubits,
+    _validate_positive_integer,
+)
 from .qvec import qvec
 
 try:
@@ -198,6 +207,13 @@ def runtime_capabilities() -> Dict[str, object]:
         "supported_features": list(_RUNTIME_SUPPORTED_FEATURES),
         "unsupported_features": list(_RUNTIME_UNSUPPORTED_FEATURES),
         "async_execution": dict(_RUNTIME_ASYNC_EXECUTION),
+        "limits": {
+            "max_statevector_qubits_before_size_overflow": _STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW,
+            "max_density_matrix_qubits_before_dense_size_overflow": _DENSITY_MATRIX_MAX_QUBITS,
+            "max_density_matrix_kraus_channel_targets": _DENSITY_MATRIX_MAX_KRAUS_TARGETS,
+            "max_density_matrix_dense_observable_targets": _DENSITY_MATRIX_MAX_DENSE_OBSERVABLE_TARGETS,
+            "max_density_matrix_sampled_qubits": _DENSITY_MATRIX_MAX_SAMPLE_QUBITS,
+        },
         "runtime_options": {
             "enable_fusion": (
                 "Optional boolean accepted by state_vector execute/get_state/sample/"

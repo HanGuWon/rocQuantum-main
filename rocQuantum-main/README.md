@@ -214,4 +214,5 @@ For a release-grade Linux ROCm build, set explicit GPU targets:
 - CUDA-QX: `https://nvidia.github.io/cudaqx`
 
 This repo is currently closest to a ROCm-native simulator project with partial higher-level surfaces, not to a finished CUDA-Q/CUDA-QX equivalent.
+`rocq.runtime_capabilities()["limits"]` exposes the current state-vector and density-matrix size boundaries, including the 60-qubit state-vector size-arithmetic ceiling used by canonical, framework, and legacy Python runtime validation.
 `rocq.density_matrix_capabilities()["limits"]` exposes the current native density-matrix hard bounds, including the 30-qubit dense-size arithmetic ceiling and four-target native dense-observable/Kraus-channel paths.
