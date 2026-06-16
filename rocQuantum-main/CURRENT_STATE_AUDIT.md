@@ -267,3 +267,4 @@ As of 2026-06-10, the official AMD ROCm release history and production documenta
 
 - This shell exposes Python, but it does not expose `hipcc`, `cmake`, `ninja`, or a local ROCm runtime.
 - Native ROCm runtime validation therefore remains a CI/ROCm-Linux execution task.
+- As of the 2026-06-16 goal checkpoint, local validation can prove Python/mock/native-binding contracts and GitHub PR cleanliness, but it cannot prove AMD GPU performance parity. Treat actual-device benchmark JSON and native framework smoke artifacts from a ROCm runner as the required evidence for the final CUDA-Q/cuQuantum/CUDA-QX performance-comparison claim.

@@ -13,6 +13,14 @@ Audit refresh note (2026-06-10):
 - AMD production ROCm documentation now identifies ROCm `7.2.4` as the production release; `7.2.0` remains historical audit context.
 - Canonical `rocq` expectation and narrow GateFusion wiring have moved ahead of the original 2026-04-05 text.
 
+Goal checkpoint (2026-06-16):
+
+- GitHub API triage showed no open pull requests in `HanGuWon/rocQuantum-main`; the first page of pull requests contained 17 closed PRs.
+- The local `main` branch was aligned with `origin/main` after the latest Qiskit provider option-contract commit.
+- The local Python contract suite passed with `806 passed, 8 skipped` on Python 3.12; skipped cases are credential-, native compiler-, or ROCm-hardware-bound rather than local mock failures.
+- Because this workstation has no AMD GPU/ROCm runtime, the remaining completion evidence cannot be produced locally. A full 100% claim still requires native ROCm artifacts from the self-hosted runner or equivalent AMD GPU host, plus benchmark JSON proving actual-device execution for the state-vector, density-matrix, tensor-network, distributed, and framework smoke paths.
+- The remaining feature gaps are large-scope parity items rather than small local contract fixes: full CUDA-Q compiler/runtime parity, release-grade distributed/multi-node execution, broad cuTensorNet/cuDensityMat-style planning breadth, GPU-resident adjoint/solver workflows, robust CUDA-QX-style libraries, and production provider lanes.
+
 Compiler/runtime execution parity, distributed execution maturity, and higher-level CUDA-QX-style libraries remain outstanding.
 
 ## Executive Summary
