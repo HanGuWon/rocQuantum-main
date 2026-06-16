@@ -51,6 +51,9 @@ class TestVqeSolverContract(unittest.TestCase):
             "GPU-resident native adjoint differentiation",
             capability_data["unsupported_features"],
         )
+        self.assertIn("state_vector", capability_data["supported_backends"])
+        self.assertIn("density_matrix", capability_data["supported_backends"])
+        self.assertIn("stabilizer", capability_data["supported_backends"])
         self.assertIn("scipy", capability_data["optional_dependencies"])
         self.assertIn("CUDA-QX", capability_data["comparison_target"])
         self.assertIn("self-hosted ROCm CI", capability_data["performance_note"])
@@ -1143,6 +1146,9 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_code_family"],
             "three-qubit bit-flip repetition code",
         )
+        self.assertIn("state_vector", capability_data["supported_backends"])
+        self.assertIn("density_matrix", capability_data["supported_backends"])
+        self.assertIn("stabilizer", capability_data["supported_backends"])
         self.assertIn("CUDA-QX", capability_data["comparison_target"])
         self.assertIn("self-hosted ROCm CI", capability_data["performance_note"])
         self.assertIn("qec_capabilities", qec.__all__)

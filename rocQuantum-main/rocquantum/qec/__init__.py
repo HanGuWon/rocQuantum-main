@@ -7,6 +7,7 @@ from .framework import (
     mitigate_repetition_syndrome_counts,
     run_repetition_code_rounds,
     run_repetition_code_single_round,
+    _supported_backend_names as _runtime_supported_backend_names,
 )
 
 _QEC_ENTRY_POINTS = (
@@ -50,6 +51,7 @@ def qec_capabilities():
         "unsupported_features": list(_QEC_UNSUPPORTED_FEATURES),
         "supported_code_family": "three-qubit bit-flip repetition code",
         "measurement_error_model": "independent syndrome-bit flips with p in [0, 0.5)",
+        "supported_backends": list(_runtime_supported_backend_names()),
         "runtime": "canonical rocq.sample() over supported local backends",
         "docs": "rocquantum/qec/README.md",
         "performance_note": (

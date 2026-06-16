@@ -7,6 +7,7 @@ from .qaoa import (
     solve_maxcut_qaoa,
 )
 from .vqe_solver import Optimizer, SciPyOptimizer, VQE_Solver
+from .vqe_solver import _supported_backend_names as _runtime_supported_backend_names
 
 _SOLVER_ENTRY_POINTS = (
     "VQE_Solver.evaluate_energy",
@@ -49,6 +50,7 @@ def solver_capabilities():
         "entry_points": list(_SOLVER_ENTRY_POINTS),
         "supported_features": list(_SOLVER_SUPPORTED_FEATURES),
         "unsupported_features": list(_SOLVER_UNSUPPORTED_FEATURES),
+        "supported_backends": list(_runtime_supported_backend_names()),
         "runtime": "canonical rocq.observe() over supported local backends",
         "optional_dependencies": {
             "scipy": "required only when using the default SciPyOptimizer",
