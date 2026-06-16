@@ -3595,6 +3595,20 @@ def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     assert isinstance(provider.get_estimator(native=False), BackendEstimatorV2)
 
 
+def test_qiskit_provider_rejects_non_boolean_native_flag(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    for native in ("False", 0, 1, None, np.bool_(False)):
+        with pytest.raises(ValueError, match="native must be a boolean"):
+            provider.get_sampler(native=native)
+        with pytest.raises(ValueError, match="native must be a boolean"):
+            provider.get_estimator(native=native)
+
+
 def test_qiskit_backend_rejects_invalid_max_target_qubits(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

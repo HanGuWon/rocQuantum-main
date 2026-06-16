@@ -12,6 +12,12 @@ def _reject_unknown_native_options(options, primitive_name):
         raise ValueError(f"Unsupported native {primitive_name} option(s): {option_names}")
 
 
+def _normalize_native_option(native):
+    if not isinstance(native, bool):
+        raise ValueError("native must be a boolean.")
+    return native
+
+
 class RocQuantumProvider(_ProviderBase):
     """
     Provider for the rocQuantum simulator backend.
@@ -43,6 +49,7 @@ class RocQuantumProvider(_ProviderBase):
 
     def get_sampler(self, name="rocq_simulator", native=True, **options):
         """Return a Qiskit SamplerV2 backed by rocQuantum."""
+        native = _normalize_native_option(native)
         if native:
             from .sampler import RocQuantumSampler
 
@@ -65,6 +72,7 @@ class RocQuantumProvider(_ProviderBase):
 
     def get_estimator(self, name="rocq_simulator", native=True, **options):
         """Return a Qiskit EstimatorV2 backed by rocQuantum."""
+        native = _normalize_native_option(native)
         if native:
             from .estimator import RocQuantumEstimator
 
