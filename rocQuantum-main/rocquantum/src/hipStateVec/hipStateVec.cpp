@@ -3513,6 +3513,19 @@ __global__ void collapse_and_renorm_measure_kernel(rocComplex* state,
     }
 }
 
+__global__ void renormalize_state_kernel(rocComplex* state,
+                                         unsigned numQubits,
+                                         real_t invNorm) {
+    const size_t num_elements = size_t{1} << numQubits;
+    const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+
+    for (size_t idx = gid; idx < num_elements; idx += stride) {
+        state[idx].x *= invNorm;
+        state[idx].y *= invNorm;
+    }
+}
+
 inline int compute_reduction_blocks(size_t elements, int threadsPerBlock) {
     if (elements == 0 || threadsPerBlock <= 0) {
         return 1;

@@ -29,6 +29,20 @@ _MULTI_GPU_GUIDE = os.path.join(
     "hipStateVec",
     "MULTI_GPU_GUIDE.md",
 )
+_HIPSTATEVEC_CMAKE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "CMakeLists.txt",
+)
+_STALE_MEASUREMENT_KERNELS = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipStateVec",
+    "measurement_kernels.hip",
+)
 _README = os.path.join(_PROJECT_ROOT, "README.md")
 
 
@@ -71,6 +85,20 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("return rocsvApplyFusedSingleQubitMatrix", source)
         self.assertIn("queue[i + 1].name == \"CNOT\"", source)
         self.assertIn("get_gate_matrix_2x2(queue[i], single_matrix)", source)
+
+    def test_stale_single_thread_measurement_kernels_are_not_built(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+        with open(_HIPSTATEVEC_CMAKE, "r", encoding="utf-8") as f:
+            cmake = f.read()
+
+        self.assertFalse(os.path.exists(_STALE_MEASUREMENT_KERNELS))
+        self.assertNotIn("measurement_kernels.hip", cmake)
+        self.assertNotIn("calculate_prob0_kernel", source)
+        self.assertNotIn("sum_sq_magnitudes_kernel", source)
+        self.assertIn("reduce_measure_prob0_kernel", source)
+        self.assertIn("collapse_and_renorm_measure_kernel", source)
+        self.assertIn("renormalize_state_kernel", source)
 
     def test_distributed_host_fallback_is_explicit_mode(self):
         with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:

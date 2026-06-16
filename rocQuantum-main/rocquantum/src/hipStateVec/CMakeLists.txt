@@ -3,7 +3,6 @@ set(HIPSTATEVEC_SRC
     GateFusion.cpp
     single_qubit_kernels.hip
     two_qubit_kernels.hip
-    measurement_kernels.hip
     multi_qubit_kernels.hip
     swap_kernels.hip
 )
