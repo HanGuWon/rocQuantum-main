@@ -53,9 +53,23 @@ rocComplex make_rocq_complex(double real, double imag) {
 #endif
 }
 
+size_t checked_power_of_two(size_t exponent, const std::string& operation_name) {
+    if (exponent >= static_cast<size_t>(std::numeric_limits<size_t>::digits)) {
+        throw std::runtime_error("qubit count is too large for " + operation_name + ".");
+    }
+    return size_t{1} << exponent;
+}
+
+size_t checked_square_size(size_t dimension, const std::string& operation_name) {
+    if (dimension != 0 && dimension > std::numeric_limits<size_t>::max() / dimension) {
+        throw std::runtime_error("matrix is too large for " + operation_name + ".");
+    }
+    return dimension * dimension;
+}
+
 std::vector<rocComplex> dense_row_major_to_column_major(const rocComplex* matrix,
                                                         size_t matrix_dim) {
-    std::vector<rocComplex> out(matrix_dim * matrix_dim);
+    std::vector<rocComplex> out(checked_square_size(matrix_dim, "dense row-major conversion"));
     for (size_t row = 0; row < matrix_dim; ++row) {
         for (size_t col = 0; col < matrix_dim; ++col) {
             out[row + col * matrix_dim] = matrix[row * matrix_dim + col];
@@ -66,7 +80,7 @@ std::vector<rocComplex> dense_row_major_to_column_major(const rocComplex* matrix
 
 std::vector<rocComplex> square_dense_matrix_row_major(const rocComplex* matrix,
                                                       size_t matrix_dim) {
-    std::vector<rocComplex> out(matrix_dim * matrix_dim);
+    std::vector<rocComplex> out(checked_square_size(matrix_dim, "dense matrix square"));
     for (size_t row = 0; row < matrix_dim; ++row) {
         for (size_t col = 0; col < matrix_dim; ++col) {
             double value_re = 0.0;
@@ -312,7 +326,7 @@ size_t infer_batch_size_from_state_buffer(const DeviceBuffer& d_state_buffer,
     if (numQubits >= sizeof(size_t) * 8) {
         throw std::runtime_error("num_qubits is too large for " + operation_name + ".");
     }
-    size_t elements_per_state = size_t{1} << numQubits;
+    size_t elements_per_state = checked_power_of_two(numQubits, operation_name);
     if (elements_per_state > std::numeric_limits<size_t>::max() / sizeof(rocComplex)) {
         throw std::runtime_error("state size is too large for " + operation_name + ".");
     }
@@ -336,7 +350,7 @@ size_t checked_state_element_count(unsigned numQubits,
     if (numQubits >= sizeof(size_t) * 8) {
         throw std::runtime_error("num_qubits is too large for " + operation_name + ".");
     }
-    const size_t elements_per_state = size_t{1} << numQubits;
+    const size_t elements_per_state = checked_power_of_two(numQubits, operation_name);
     if (elements_per_state > std::numeric_limits<size_t>::max() / batch_size) {
         throw std::runtime_error("state batch is too large for " + operation_name + ".");
     }
@@ -759,13 +773,12 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             }
 
             const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
-            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
-                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+            if (matrix_dim != checked_power_of_two(targetQubits_vec.size(), "get_expectation_matrix")) {
                 throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
             }
 
             const rocComplex* matrix_row_major = matrix.data();
-            std::vector<rocComplex> matrix_col_major(matrix_dim * matrix_dim);
+            std::vector<rocComplex> matrix_col_major(checked_square_size(matrix_dim, "get_expectation_matrix"));
             for (size_t row = 0; row < matrix_dim; ++row) {
                 for (size_t col = 0; col < matrix_dim; ++col) {
                     matrix_col_major[row + col * matrix_dim] =
@@ -810,13 +823,12 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             }
 
             const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
-            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
-                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+            if (matrix_dim != checked_power_of_two(targetQubits_vec.size(), "get_expectation_matrix_batch")) {
                 throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
             }
 
             const rocComplex* matrix_row_major = matrix.data();
-            std::vector<rocComplex> matrix_col_major(matrix_dim * matrix_dim);
+            std::vector<rocComplex> matrix_col_major(checked_square_size(matrix_dim, "get_expectation_matrix_batch"));
             for (size_t row = 0; row < matrix_dim; ++row) {
                 for (size_t col = 0; col < matrix_dim; ++col) {
                     matrix_col_major[row + col * matrix_dim] =
@@ -873,8 +885,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             }
 
             const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
-            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
-                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+            if (matrix_dim != checked_power_of_two(targetQubits_vec.size(), "get_expectation_matrix_moments")) {
                 throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
             }
 
@@ -937,8 +948,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             }
 
             const size_t matrix_dim = static_cast<size_t>(matrix.shape(0));
-            if (targetQubits_vec.size() >= sizeof(size_t) * 8 ||
-                matrix_dim != (size_t{1} << targetQubits_vec.size())) {
+            if (matrix_dim != checked_power_of_two(targetQubits_vec.size(), "get_expectation_matrix_moments_batch")) {
                 throw std::runtime_error("matrix dimension must equal 2^len(target_qubits).");
             }
 
@@ -1020,7 +1030,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             if (rows == 0 || cols == 0 || rows != cols) {
                 throw std::runtime_error("CSR shape must be square and non-empty.");
             }
-            if (numQubits >= sizeof(size_t) * 8 || rows != (size_t{1} << numQubits)) {
+            if (rows != checked_power_of_two(numQubits, "get_sparse_matrix_moments")) {
                 throw std::runtime_error("CSR shape must match 2^num_qubits.");
             }
             if (indptr_vec.size() != rows + 1 || indptr_vec.empty() ||
@@ -1110,7 +1120,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             if (rows == 0 || cols == 0 || rows != cols) {
                 throw std::runtime_error("CSR shape must be square and non-empty.");
             }
-            if (numQubits >= sizeof(size_t) * 8 || rows != (size_t{1} << numQubits)) {
+            if (rows != checked_power_of_two(numQubits, "get_sparse_matrix_moments_batch")) {
                 throw std::runtime_error("CSR shape must match 2^num_qubits.");
             }
             if (indptr_vec.size() != rows + 1 || indptr_vec.empty() ||
@@ -1231,7 +1241,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             if (measuredQubits_vec.size() > 20) {
                 throw std::runtime_error("probabilities currently supports at most 20 measured qubits.");
             }
-            const std::size_t num_outcomes = std::size_t{1} << measuredQubits_vec.size();
+            const std::size_t num_outcomes = checked_power_of_two(measuredQubits_vec.size(), "probabilities");
             py::array_t<double> h_probabilities(num_outcomes);
 
             rocqStatus_t status = rocsvProbabilities(

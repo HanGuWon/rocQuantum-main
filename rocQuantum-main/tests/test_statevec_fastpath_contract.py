@@ -85,9 +85,27 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertNotIn("handle->batchSize * num_elements_per_state", source)
         self.assertIn("checked_state_element_count", bindings)
         self.assertIn("checked_state_byte_count", bindings)
+        self.assertIn("checked_power_of_two", bindings)
+        self.assertIn("checked_square_size", bindings)
         self.assertIn("state batch is too large", bindings)
+        self.assertIn("checked_power_of_two(targetQubits_vec.size(), \"get_expectation_matrix\")", bindings)
+        self.assertIn("checked_power_of_two(numQubits, \"get_sparse_matrix_moments\")", bindings)
+        self.assertIn("checked_power_of_two(measuredQubits_vec.size(), \"probabilities\")", bindings)
+        self.assertEqual(
+            bindings.count("return size_t{1} << exponent;"),
+            1,
+            "Raw shifts in the legacy Python binding should be isolated to checked_power_of_two().",
+        )
+        self.assertEqual(
+            bindings.count("return dimension * dimension;"),
+            1,
+            "Raw matrix squaring in the legacy Python binding should be isolated to checked_square_size().",
+        )
         self.assertNotIn("batch_size * (1ULL << numQubits)", bindings)
         self.assertNotIn("batch_size * (1ULL << num_qubits)", bindings)
+        self.assertNotIn("size_t{1} << targetQubits_vec.size()", bindings)
+        self.assertNotIn("size_t{1} << measuredQubits_vec.size()", bindings)
+        self.assertNotIn("matrix_dim * matrix_dim", bindings)
 
     def test_gate_fusion_rejects_unsupported_queue_entries(self):
         with open(_GATE_FUSION_SOURCE, "r", encoding="utf-8") as f:
