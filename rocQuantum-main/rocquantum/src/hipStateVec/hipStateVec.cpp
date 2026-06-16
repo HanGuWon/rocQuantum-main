@@ -307,6 +307,29 @@ inline bool compute_state_byte_count(size_t total_elements, size_t* total_bytes)
     return true;
 }
 
+inline bool compute_square_element_count(size_t dimension, size_t* elements) {
+    if (!elements) {
+        return false;
+    }
+    if (dimension != 0 && dimension > std::numeric_limits<size_t>::max() / dimension) {
+        return false;
+    }
+    *elements = dimension * dimension;
+    return true;
+}
+
+inline bool compute_matrix_element_count(unsigned numTargetQubits,
+                                         size_t* matrix_dim,
+                                         size_t* matrix_elements) {
+    if (!matrix_dim || !matrix_elements) {
+        return false;
+    }
+    if (!compute_power_of_two(numTargetQubits, matrix_dim)) {
+        return false;
+    }
+    return compute_square_element_count(*matrix_dim, matrix_elements);
+}
+
 inline int compute_reduction_blocks(size_t elements, int threadsPerBlock);
 
 inline std::complex<double> to_std_complex(const rocComplex& value) {
@@ -5340,8 +5363,9 @@ inline rocqStatus_t apply_matrix_distributed_local_targets(rocsvInternalHandle* 
 
     const unsigned numTargetQubits = static_cast<unsigned>(targets.size());
     size_t matrix_dim = 0;
-    if (!compute_power_of_two(numTargetQubits, &matrix_dim) ||
-        matrix_host.size() != matrix_dim * matrix_dim) {
+    size_t matrix_elements = 0;
+    if (!compute_matrix_element_count(numTargetQubits, &matrix_dim, &matrix_elements) ||
+        matrix_host.size() != matrix_elements) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
 
@@ -7224,14 +7248,11 @@ rocqStatus_t rocsvApplyMatrix(rocsvHandle_t handle,
     }
 
     size_t expected_matrix_dim = 0;
-    if (!compute_power_of_two(numTargetQubits, &expected_matrix_dim) || matrixDim != expected_matrix_dim) {
+    size_t matrix_elements = 0;
+    if (!compute_matrix_element_count(numTargetQubits, &expected_matrix_dim, &matrix_elements) ||
+        matrixDim != expected_matrix_dim) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    if (expected_matrix_dim > 0 &&
-        expected_matrix_dim > (std::numeric_limits<size_t>::max() / expected_matrix_dim)) {
-        return ROCQ_STATUS_INVALID_VALUE;
-    }
-    const size_t matrix_elements = expected_matrix_dim * expected_matrix_dim;
 
     if (uses_distributed_state(handle, d_state)) {
         if (numQubits != handle->globalNumQubits) {
@@ -9396,13 +9417,13 @@ rocqStatus_t rocsvApplyControlledMatrix(rocsvHandle_t handle,
                 return ROCQ_STATUS_HIP_ERROR;
             }
             size_t matrix_dim = 0;
-            if (!compute_power_of_two(numTargets, &matrix_dim) ||
-                matrix_dim > (std::numeric_limits<size_t>::max() / matrix_dim)) {
+            size_t matrix_elements = 0;
+            if (!compute_matrix_element_count(numTargets, &matrix_dim, &matrix_elements)) {
                 return ROCQ_STATUS_INVALID_VALUE;
             }
             std::vector<rocComplex> matrix_host;
             status = copy_matrix_from_device(d_matrix,
-                                             matrix_dim * matrix_dim,
+                                             matrix_elements,
                                              handle->streams[0],
                                              &matrix_host);
             if (status != ROCQ_STATUS_SUCCESS) {
@@ -9453,13 +9474,13 @@ rocqStatus_t rocsvApplyControlledMatrix(rocsvHandle_t handle,
             return ROCQ_STATUS_NOT_IMPLEMENTED;
         }
         size_t matrix_dim = 0;
-        if (!compute_power_of_two(numTargets, &matrix_dim) ||
-            matrix_dim > (std::numeric_limits<size_t>::max() / matrix_dim)) {
+        size_t matrix_elements = 0;
+        if (!compute_matrix_element_count(numTargets, &matrix_dim, &matrix_elements)) {
             return ROCQ_STATUS_INVALID_VALUE;
         }
         std::vector<rocComplex> matrix_host;
         status = copy_matrix_from_device(d_matrix,
-                                         matrix_dim * matrix_dim,
+                                         matrix_elements,
                                          handle->streams[0],
                                          &matrix_host);
         if (status != ROCQ_STATUS_SUCCESS) {
@@ -9488,13 +9509,10 @@ rocqStatus_t rocsvApplyControlledMatrix(rocsvHandle_t handle,
     }
 
     size_t matrix_dim = 0;
-    if (!compute_power_of_two(numTargets, &matrix_dim)) {
+    size_t matrix_elements = 0;
+    if (!compute_matrix_element_count(numTargets, &matrix_dim, &matrix_elements)) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    if (matrix_dim > 0 && matrix_dim > (std::numeric_limits<size_t>::max() / matrix_dim)) {
-        return ROCQ_STATUS_INVALID_VALUE;
-    }
-    const size_t matrix_elements = matrix_dim * matrix_dim;
 
     const bool using_internal_state = (state == handle->d_state);
     const bool kernel_fast_path_ok = using_internal_state || handle->batchSize == 1;

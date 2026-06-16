@@ -79,10 +79,18 @@ class TestStateVecFastPathContract(unittest.TestCase):
 
         self.assertIn("compute_state_element_count", source)
         self.assertIn("compute_state_byte_count", source)
+        self.assertIn("compute_square_element_count", source)
+        self.assertIn("compute_matrix_element_count", source)
         self.assertIn("normalized_batch_size", source)
         self.assertIn("device_malloc(handle, &allocated_ptr, total_bytes)", source)
         self.assertIn("hipMemsetAsync(target_state, 0, total_bytes", source)
         self.assertNotIn("handle->batchSize * num_elements_per_state", source)
+        self.assertNotIn("matrix_dim * matrix_dim", source)
+        self.assertEqual(
+            source.count("*elements = dimension * dimension;"),
+            1,
+            "Raw matrix squaring in hipStateVec should be isolated to compute_square_element_count().",
+        )
         self.assertIn("checked_state_element_count", bindings)
         self.assertIn("checked_state_byte_count", bindings)
         self.assertIn("checked_power_of_two", bindings)
