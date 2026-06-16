@@ -78,6 +78,28 @@ bool matrix_expectation_host_fallback_allowed() {
     return normalized == "1" || normalized == "true" || normalized == "on" || normalized == "yes";
 }
 
+std::size_t checked_power_of_two(std::size_t exponent, const char* label) {
+    if (exponent >= static_cast<std::size_t>(std::numeric_limits<std::size_t>::digits)) {
+        throw std::invalid_argument(std::string(label) + " exceeds the supported host bit width.");
+    }
+    return std::size_t{1} << exponent;
+}
+
+std::size_t checked_bit_mask(unsigned bit, const char* label) {
+    return checked_power_of_two(static_cast<std::size_t>(bit), label);
+}
+
+std::size_t checked_product(std::size_t lhs, std::size_t rhs, const char* label) {
+    if (lhs != 0 && rhs > std::numeric_limits<std::size_t>::max() / lhs) {
+        throw std::invalid_argument(std::string(label) + " is too large for host-side simulator validation.");
+    }
+    return lhs * rhs;
+}
+
+std::size_t checked_square_size(std::size_t dimension, const char* label) {
+    return checked_product(dimension, dimension, label);
+}
+
 rocComplex to_roc_complex(const std::complex<double>& value) {
 #ifdef ROCQ_PRECISION_DOUBLE
     return rocComplex{value.real(), value.imag()};
@@ -116,9 +138,9 @@ std::vector<std::complex<double>> square_matrix_row_major(
 std::size_t extract_local_sparse_row(std::size_t state_index, const std::vector<unsigned>& targets) {
     std::size_t local_row = 0;
     for (std::size_t output_bit = 0; output_bit < targets.size(); ++output_bit) {
-        const std::size_t mask = std::size_t{1} << targets[output_bit];
+        const std::size_t mask = checked_bit_mask(targets[output_bit], "sparse operation target");
         if ((state_index & mask) != 0) {
-            local_row |= std::size_t{1} << output_bit;
+            local_row |= checked_power_of_two(output_bit, "sparse operation local target bit");
         }
     }
     return local_row;
@@ -126,17 +148,17 @@ std::size_t extract_local_sparse_row(std::size_t state_index, const std::vector<
 
 std::size_t clear_target_bits(std::size_t state_index, const std::vector<unsigned>& targets) {
     for (unsigned target : targets) {
-        state_index &= ~(std::size_t{1} << target);
+        state_index &= ~checked_bit_mask(target, "sparse operation target");
     }
     return state_index;
 }
 
 std::size_t insert_local_sparse_col(std::size_t base_index,
                                     std::size_t local_col,
-                                    const std::vector<unsigned>& targets) {
+    const std::vector<unsigned>& targets) {
     for (std::size_t output_bit = 0; output_bit < targets.size(); ++output_bit) {
         if (((local_col >> output_bit) & std::size_t{1}) != 0) {
-            base_index |= std::size_t{1} << targets[output_bit];
+            base_index |= checked_bit_mask(targets[output_bit], "sparse operation target");
         }
     }
     return base_index;
@@ -219,7 +241,7 @@ QuantumSimulator::QuantumSimulator(unsigned num_qubits, std::size_t batch_size)
         throw std::invalid_argument("num_qubits is too large for this build.");
     }
 
-    state_vec_size_ = std::size_t{1} << num_qubits_;
+    state_vec_size_ = checked_power_of_two(num_qubits_, "QuantumSimulator qubit count");
 
     check_status(rocsvCreate(&sim_handle_), "handle creation");
     try {
@@ -614,8 +636,8 @@ void QuantumSimulator::apply_matrix(const std::vector<std::complex<double>>& mat
     if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
         throw std::invalid_argument("Too many target qubits for matrix application.");
     }
-    const std::size_t matrix_dim = std::size_t{1} << targets.size();
-    const std::size_t expected_elements = matrix_dim * matrix_dim;
+    const std::size_t matrix_dim = checked_power_of_two(targets.size(), "matrix target count");
+    const std::size_t expected_elements = checked_square_size(matrix_dim, "matrix payload");
     if (matrix.size() != expected_elements) {
         throw std::invalid_argument("Matrix element count does not match target qubit count.");
     }
@@ -670,7 +692,7 @@ void QuantumSimulator::apply_sparse_matrix(const std::vector<std::complex<double
         }
     }
 
-    const std::size_t local_dimension = std::size_t{1} << targets.size();
+    const std::size_t local_dimension = checked_power_of_two(targets.size(), "sparse matrix target count");
     validate_sparse_operation_csr(data, indices, indptr, rows, cols, local_dimension);
 
     auto host_fallback = [&]() {
@@ -800,8 +822,8 @@ void QuantumSimulator::apply_controlled_matrix(const std::vector<std::complex<do
     if (targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
         throw std::invalid_argument("Too many target qubits for controlled matrix application.");
     }
-    const std::size_t matrix_dim = std::size_t{1} << targets.size();
-    const std::size_t expected_elements = matrix_dim * matrix_dim;
+    const std::size_t matrix_dim = checked_power_of_two(targets.size(), "controlled matrix target count");
+    const std::size_t expected_elements = checked_square_size(matrix_dim, "controlled matrix payload");
     if (matrix.size() != expected_elements) {
         throw std::invalid_argument("Controlled matrix element count does not match target qubit count.");
     }
@@ -845,7 +867,7 @@ void QuantumSimulator::set_statevector(const std::vector<std::complex<double>>& 
 }
 
 void QuantumSimulator::set_statevectors(const std::vector<std::complex<double>>& states) {
-    if (states.size() != batch_size_ * state_vec_size_) {
+    if (states.size() != checked_product(batch_size_, state_vec_size_, "statevector batch")) {
         throw std::invalid_argument("set_statevectors input size must equal batch_size * 2^num_qubits.");
     }
     validate_finite_complex_payload(states, "Statevector payload");
@@ -885,7 +907,7 @@ std::vector<std::complex<double>> QuantumSimulator::get_statevector(std::size_t 
 }
 
 std::vector<std::complex<double>> QuantumSimulator::get_statevectors() const {
-    std::vector<rocComplex> raw(batch_size_ * state_vec_size_);
+    std::vector<rocComplex> raw(checked_product(batch_size_, state_vec_size_, "statevector batch readback"));
     check_status(rocsvGetStateVectorFull(sim_handle_, device_state_vector_, raw.data()), "state batch readback");
 
     std::vector<std::complex<double>> out(raw.size());
@@ -927,8 +949,8 @@ std::vector<double> QuantumSimulator::probabilities_batch(const std::vector<unsi
         }
     }
 
-    const std::size_t num_outcomes = std::size_t{1} << targets.size();
-    std::vector<double> out(batch_size_ * num_outcomes, 0.0);
+    const std::size_t num_outcomes = checked_power_of_two(targets.size(), "probability target count");
+    std::vector<double> out(checked_product(batch_size_, num_outcomes, "probability batch"), 0.0);
     check_status(rocsvProbabilitiesBatch(sim_handle_,
                                          device_state_vector_,
                                          num_qubits_,
@@ -992,7 +1014,7 @@ std::vector<long long> QuantumSimulator::measure_batch(const std::vector<unsigne
     }
 
     const std::size_t shot_count = static_cast<std::size_t>(shots);
-    std::vector<long long> out(batch_size_ * shot_count, 0);
+    std::vector<long long> out(checked_product(batch_size_, shot_count, "measurement batch"), 0);
     if (shots == 0) {
         return out;
     }
@@ -1085,8 +1107,8 @@ std::complex<double> QuantumSimulator::expectation_matrix(
         }
     }
 
-    const std::size_t matrix_dim = std::size_t{1} << targets.size();
-    const std::size_t expected_elements = matrix_dim * matrix_dim;
+    const std::size_t matrix_dim = checked_power_of_two(targets.size(), "expectation matrix target count");
+    const std::size_t expected_elements = checked_square_size(matrix_dim, "expectation matrix payload");
     if (matrix.size() != expected_elements) {
         throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
     }
@@ -1142,8 +1164,8 @@ std::pair<std::complex<double>, std::complex<double>> QuantumSimulator::expectat
         }
     }
 
-    const std::size_t matrix_dim = std::size_t{1} << targets.size();
-    if (matrix.size() != matrix_dim * matrix_dim) {
+    const std::size_t matrix_dim = checked_power_of_two(targets.size(), "expectation matrix moments target count");
+    if (matrix.size() != checked_square_size(matrix_dim, "expectation matrix moments payload")) {
         throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
     }
     validate_finite_complex_payload(matrix, "Expectation matrix payload");
@@ -1224,8 +1246,8 @@ std::vector<std::complex<double>> QuantumSimulator::expectation_matrix_batch(
         }
     }
 
-    const std::size_t matrix_dim = std::size_t{1} << targets.size();
-    const std::size_t expected_elements = matrix_dim * matrix_dim;
+    const std::size_t matrix_dim = checked_power_of_two(targets.size(), "batch expectation matrix target count");
+    const std::size_t expected_elements = checked_square_size(matrix_dim, "batch expectation matrix payload");
     if (matrix.size() != expected_elements) {
         throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
     }
@@ -1286,8 +1308,8 @@ QuantumSimulator::expectation_matrix_moments_batch(
         }
     }
 
-    const std::size_t matrix_dim = std::size_t{1} << targets.size();
-    if (matrix.size() != matrix_dim * matrix_dim) {
+    const std::size_t matrix_dim = checked_power_of_two(targets.size(), "batch expectation matrix moments target count");
+    if (matrix.size() != checked_square_size(matrix_dim, "batch expectation matrix moments payload")) {
         throw std::invalid_argument("Expectation matrix element count does not match target qubit count.");
     }
     validate_finite_complex_payload(matrix, "Expectation matrix payload");

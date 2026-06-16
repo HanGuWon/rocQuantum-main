@@ -119,6 +119,32 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
         self.assertNotIn("std::size_t{1} << operation.wires.size()", bindings)
         self.assertNotIn("dim * dim", bindings)
 
+    def test_quantum_simulator_size_validation_uses_checked_helpers(self):
+        simulator = self._read("rocquantum", "src", "simulator.cpp")
+
+        self.assertIn("checked_power_of_two", simulator)
+        self.assertIn("checked_bit_mask", simulator)
+        self.assertIn("checked_product", simulator)
+        self.assertIn("checked_square_size", simulator)
+        self.assertIn("std::numeric_limits<std::size_t>::digits", simulator)
+        self.assertIn(
+            "state_vec_size_ = checked_power_of_two(num_qubits_, \"QuantumSimulator qubit count\")",
+            simulator,
+        )
+        self.assertIn("checked_square_size(matrix_dim, \"matrix payload\")", simulator)
+        self.assertIn("checked_product(batch_size_, state_vec_size_, \"statevector batch\")", simulator)
+        self.assertIn("checked_product(batch_size_, num_outcomes, \"probability batch\")", simulator)
+        self.assertEqual(
+            simulator.count("return std::size_t{1} << exponent;"),
+            1,
+            "Raw host-size shifts in QuantumSimulator should be isolated to checked_power_of_two().",
+        )
+        self.assertNotIn("std::size_t{1} << num_qubits_", simulator)
+        self.assertNotIn("std::size_t{1} << targets.size()", simulator)
+        self.assertNotIn("matrix_dim * matrix_dim", simulator)
+        self.assertNotIn("batch_size_ * state_vec_size_", simulator)
+        self.assertNotIn("batch_size_ * num_outcomes", simulator)
+
 
 if __name__ == "__main__":
     unittest.main()
