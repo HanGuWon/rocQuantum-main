@@ -150,6 +150,7 @@ jobs:
             --history-path "${HISTORY_PATH}" \
             --fail-on-error \
             --require-native-performance-evidence \
+            --require-all-native-benchmark-evidence \
             2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" ]; then
             cat "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" >> "${GITHUB_STEP_SUMMARY}"
@@ -163,13 +164,15 @@ jobs:
           BASELINE_DIR: ${{ github.workspace }}/ci-artifacts/benchmark-baseline/rocm-nightly
         run: |
           mkdir -p "${BASELINE_DIR}"
-          if [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.json" ]; then
-            cp "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.json" "${BASELINE_DIR}/benchmark-summary.json"
+          SUMMARY_JSON="${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.json"
+          if [ -f "${SUMMARY_JSON}" ] && python3 -c 'import json, sys; summary = json.load(open(sys.argv[1], encoding="utf-8")); ok = bool(summary.get("has_native_performance_evidence")) and not summary.get("native_performance_evidence_failure") and not summary.get("all_native_benchmark_evidence_failure"); raise SystemExit(0 if ok else 1)' "${SUMMARY_JSON}"; then
+            cp "${SUMMARY_JSON}" "${BASELINE_DIR}/benchmark-summary.json"
             if [ -f "${BASELINE_DIR}/benchmark-history.json" ]; then
               cp "${BASELINE_DIR}/benchmark-history.json" "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-history.json"
             fi
             echo "cacheable=true" >> "${GITHUB_OUTPUT}"
           else
+            echo "Benchmark summary did not contain successful native performance evidence; skipping baseline cache."
             echo "cacheable=false" >> "${GITHUB_OUTPUT}"
           fi
 

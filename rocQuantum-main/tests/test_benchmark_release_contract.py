@@ -288,6 +288,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                     build_dir=tmp_path / "build",
                     output_dir=tmp_path / "artifacts",
                     require_native_performance_evidence=True,
+                    require_all_native_benchmark_evidence=True,
                 )
             markdown = (tmp_path / "artifacts" / "benchmark-summary.md").read_text(encoding="utf-8")
 
@@ -350,6 +351,7 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                     build_dir=tmp_path / "build",
                     output_dir=tmp_path / "artifacts",
                     require_native_performance_evidence=True,
+                    require_all_native_benchmark_evidence=True,
                 )
             markdown = (tmp_path / "artifacts" / "benchmark-summary.md").read_text(encoding="utf-8")
 
@@ -360,11 +362,90 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertTrue(summary["has_native_performance_evidence"])
         self.assertEqual(summary["native_performance_evidence_count"], 1)
         self.assertTrue(summary["native_performance_evidence_required"])
+        self.assertTrue(summary["all_native_benchmark_evidence_required"])
         self.assertEqual(summary["device_probe"], "actual_dev_kfd")
         self.assertNotIn("native_performance_evidence_failure", summary)
+        self.assertNotIn("all_native_benchmark_evidence_failure", summary)
+        self.assertEqual(summary["native_performance_evidence_missing_benchmarks"], [])
         self.assertIn("Native performance evidence: yes", markdown)
         self.assertIn("ROCm device probe: `actual_dev_kfd`", markdown)
         self.assertIn("Native performance evidence required: yes", markdown)
+        self.assertIn("All declared native benchmark evidence required: yes", markdown)
+
+    def test_release_runner_can_require_all_declared_native_benchmark_evidence(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "payload = {'cases': [\n"
+                "    {'name': 'rccl', 'status': 0, 'expectation_ms': 2.0},\n"
+                "    {'name': 'host_fallback', 'status': 0, 'expectation_ms': 8.0},\n"
+                "]}\n"
+                "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                "    json.dump(payload, f)\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_rocm_passed",
+                                "category": "statevec",
+                                "executable": sys.executable,
+                                "output": "fake-rocm-passed.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": True,
+                            },
+                            {
+                                "id": "fake_rocm_missing_binary",
+                                "category": "tensornet",
+                                "executable": "missing-benchmark",
+                                "output": "fake-rocm-missing.json",
+                                "args": ["{output}"],
+                                "requires_rocm_device": True,
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                runner,
+                "_rocm_device_probe",
+                return_value={"has_rocm_device": True, "device_probe": "actual_dev_kfd"},
+            ):
+                summary = runner.run(
+                    manifest_path=manifest_path,
+                    build_dir=tmp_path / "build",
+                    output_dir=tmp_path / "artifacts",
+                    require_all_native_benchmark_evidence=True,
+                )
+            markdown = (tmp_path / "artifacts" / "benchmark-summary.md").read_text(encoding="utf-8")
+
+        by_id = {result["id"]: result for result in summary["results"]}
+        self.assertTrue(by_id["fake_rocm_passed"]["performance_evidence"])
+        self.assertFalse(by_id["fake_rocm_missing_binary"]["performance_evidence"])
+        self.assertEqual(by_id["fake_rocm_missing_binary"]["status"], "skipped")
+        self.assertTrue(summary["has_native_performance_evidence"])
+        self.assertEqual(summary["native_performance_evidence_count"], 1)
+        self.assertNotIn("native_performance_evidence_failure", summary)
+        self.assertEqual(
+            summary["native_performance_evidence_missing_benchmarks"],
+            ["fake_rocm_missing_binary"],
+        )
+        self.assertEqual(
+            summary["all_native_benchmark_evidence_failure"],
+            "not all declared native ROCm benchmarks produced passed performance evidence",
+        )
+        self.assertIn("All declared native benchmark evidence required: yes", markdown)
+        self.assertIn("All declared native benchmark evidence gate: failed", markdown)
+        self.assertIn("Missing native benchmark evidence: `fake_rocm_missing_binary`", markdown)
 
     def test_release_runner_fails_missing_declared_json_output(self):
         runner = _load_runner_module()
@@ -753,10 +834,14 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("GITHUB_STEP_SUMMARY", combined)
         self.assertIn("--fail-on-error", combined)
         self.assertGreaterEqual(combined.count("--require-native-performance-evidence"), 2)
+        self.assertGreaterEqual(combined.count("--require-all-native-benchmark-evidence"), 2)
         self.assertIn("--history-path", combined)
         self.assertGreaterEqual(combined.count("set -o pipefail"), 3)
         self.assertIn("actions/cache/restore@v4", combined)
         self.assertIn("actions/cache/save@v4", combined)
+        self.assertIn("has_native_performance_evidence", combined)
+        self.assertIn("all_native_benchmark_evidence_failure", combined)
+        self.assertIn("skipping baseline cache", combined)
         self.assertIn("benchmark-baseline-rocm-runtime", combined)
         self.assertIn("benchmark-baseline-rocm-nightly", combined)
         self.assertIn("BASELINE_ARGS=(--baseline-summary", combined)
@@ -777,8 +862,11 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("assumed-device benchmark runs", readme)
         self.assertIn("ROCm timing", readme)
         self.assertIn("--require-native-performance-evidence", readme)
+        self.assertIn("--require-all-native-benchmark-evidence", readme)
         self.assertIn("--baseline-summary", readme)
         self.assertIn("self-hosted ROCm workflows restore the previous benchmark summary and bounded history", readme)
+        self.assertIn("successful native", readme)
+        self.assertIn("no native-evidence gate failure", readme)
         self.assertIn("dense expectation, sparse moments, and generic matrix", readme)
 
 
