@@ -39,6 +39,7 @@ _DISTRIBUTED_SUPPORTED_FEATURES = (
     "swap-localized 1-4 target dense matrix application",
     "local-domain sparse matrix application",
     "local-domain selected-qubit sampling/probabilities",
+    "swap-localized selected-qubit sampling/probabilities for covered single-node layouts",
     "local-domain Pauli, dense-matrix, and rank-local CSR expectation reductions",
     "optional RCCL all-reduce/send-recv paths when native bindings are built with RCCL",
     "explicit slow/debug host fallback when enabled",

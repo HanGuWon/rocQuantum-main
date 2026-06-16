@@ -182,6 +182,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "swap-localized selected-qubit sampling/probabilities for covered single-node layouts",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "multi-node distributed allocation",
             capabilities["unsupported_features"],
         )
