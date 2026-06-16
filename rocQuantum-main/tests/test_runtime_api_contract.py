@@ -1899,7 +1899,17 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         sim = _FakeSimulator()
         runtime = RocQuantumRuntime(sim)
 
-        operations = [{"name": "RY", "wires": [0], "params": [0.5], "param_indices": [0]}]
+        operations = [
+            {
+                "name": "RY",
+                "rocq_name": "RY",
+                "wires": [0],
+                "params": [0.5],
+                "param_indices": [0],
+                "trainable_param_indices": [0],
+                "trainable_param_positions": [0],
+            }
+        ]
         observables = [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
 
         self.assertTrue(runtime.supports_adjoint_jacobian())

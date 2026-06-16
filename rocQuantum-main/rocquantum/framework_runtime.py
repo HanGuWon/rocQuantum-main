@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from collections import Counter
 import math
 from numbers import Integral, Number, Real
@@ -292,6 +293,274 @@ def normalize_adjoint_jacobian_result(
     if normalized.size != expected_size:
         raise ValueError("Adjoint Jacobian result size must match observable and trainable parameter counts.")
     return np.ascontiguousarray(normalized)
+
+
+def _payload_sequence(values: object, label: str) -> list:
+    if isinstance(values, (str, bytes)):
+        raise ValueError(f"{label} must be a sequence.")
+    try:
+        return list(values)
+    except TypeError as exc:
+        raise TypeError(f"{label} must be a sequence.") from exc
+
+
+def _require_payload_mapping(value: object, label: str) -> Mapping:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} payloads must be dictionaries.")
+    return value
+
+
+def _require_payload_item(payload: Mapping, key: str, label: str) -> object:
+    if key not in payload:
+        raise ValueError(f"{label} payload is missing '{key}'.")
+    return payload[key]
+
+
+def _normalize_integer_sequence(values: object, label: str, *, allow_negative: bool) -> list[int]:
+    normalized = []
+    for value in _payload_sequence(values, label):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+            raise ValueError(f"{label} must contain integer values.")
+        integer = int(value)
+        if not allow_negative and integer < 0:
+            raise ValueError(f"{label} must contain non-negative values.")
+        normalized.append(integer)
+    return normalized
+
+
+def _normalize_payload_qubits(
+    values: object,
+    num_qubits: int | None,
+    label: str,
+    *,
+    allow_empty: bool,
+) -> list[int]:
+    try:
+        return normalize_qubit_subset(values, num_qubits, label, allow_empty=allow_empty)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a valid qubit-index sequence.") from exc
+
+
+def _normalize_payload_params(values: object, label: str) -> list[float]:
+    try:
+        return normalize_params(values)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must contain finite real numeric values.") from exc
+
+
+def _validate_adjoint_complex_scalar(value: object, label: str) -> complex:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{label} must contain finite numeric values.")
+    if isinstance(value, Number):
+        scalar = complex(value)
+    else:
+        pair = _payload_sequence(value, label)
+        if len(pair) != 2:
+            raise ValueError(f"{label} complex values must be represented as (real, imag) pairs.")
+        if any(isinstance(part, (bool, np.bool_)) or not isinstance(part, Real) for part in pair):
+            raise ValueError(f"{label} complex values must contain finite real and imaginary parts.")
+        scalar = complex(float(pair[0]), float(pair[1]))
+    if not math.isfinite(scalar.real) or not math.isfinite(scalar.imag):
+        raise ValueError(f"{label} must contain finite values.")
+    return scalar
+
+
+def _validate_adjoint_complex_vector(values: object, label: str) -> list[complex]:
+    return [_validate_adjoint_complex_scalar(value, label) for value in _payload_sequence(values, label)]
+
+
+def _validate_adjoint_complex_matrix(matrix: object, targets: Sequence[int], label: str) -> None:
+    rows = _payload_sequence(matrix, label)
+    if not rows:
+        raise ValueError(f"{label} must be a non-empty square matrix.")
+    width = None
+    for row in rows:
+        row_values = _payload_sequence(row, label)
+        if width is None:
+            width = len(row_values)
+        elif len(row_values) != width:
+            raise ValueError(f"{label} rows must have equal length.")
+        for value in row_values:
+            _validate_adjoint_complex_scalar(value, label)
+    if width != len(rows):
+        raise ValueError(f"{label} must be square.")
+    expected_dimension = 1 << len(targets)
+    if width != expected_dimension:
+        raise ValueError(f"{label} dimension must be 2^len(targets).")
+
+
+def _validate_adjoint_sparse_payload(
+    data: object,
+    indices: object,
+    indptr: object,
+    shape: object,
+    targets: Sequence[int] | None,
+    label: str,
+) -> None:
+    normalized_data = _validate_adjoint_complex_vector(data, f"{label} CSR data")
+    normalized_indices = _normalize_integer_sequence(indices, f"{label} CSR indices", allow_negative=False)
+    normalized_indptr = _normalize_integer_sequence(indptr, f"{label} CSR indptr", allow_negative=False)
+    normalized_shape = _normalize_integer_sequence(shape, f"{label} shape", allow_negative=False)
+    if len(normalized_shape) != 2:
+        raise ValueError(f"{label} shape must contain two dimensions.")
+    rows, cols = normalized_shape
+    if rows <= 0 or cols <= 0 or rows != cols:
+        raise ValueError(f"{label} shape must be square and positive.")
+    if targets is not None and rows != (1 << len(targets)):
+        raise ValueError(f"{label} dimension must be 2^len(targets).")
+    if len(normalized_indices) != len(normalized_data):
+        raise ValueError(f"{label} CSR indices length must match data length.")
+    if len(normalized_indptr) != rows + 1:
+        raise ValueError(f"{label} CSR indptr length must be rows + 1.")
+    if normalized_indptr[0] != 0 or normalized_indptr[-1] != len(normalized_data):
+        raise ValueError(f"{label} CSR indptr bounds must match data length.")
+    if any(left > right for left, right in zip(normalized_indptr, normalized_indptr[1:])):
+        raise ValueError(f"{label} CSR indptr must be non-decreasing.")
+    if any(index >= cols for index in normalized_indices):
+        raise ValueError(f"{label} CSR indices must be within matrix shape.")
+
+
+def normalize_adjoint_operations(operations: Sequence[Mapping], num_qubits: int | None = None) -> list[Mapping]:
+    normalized_num_qubits = None if num_qubits is None or int(num_qubits) <= 0 else int(num_qubits)
+    normalized_operations = []
+    for operation in _payload_sequence(operations, "Adjoint operation payloads"):
+        payload = _require_payload_mapping(operation, "Adjoint operation")
+        name = _require_payload_item(payload, "name", "Adjoint operation")
+        rocq_name = _require_payload_item(payload, "rocq_name", "Adjoint operation")
+        if not isinstance(name, str) or not name or not isinstance(rocq_name, str) or not rocq_name:
+            raise ValueError("Adjoint operation names must be non-empty strings.")
+        wires = _normalize_payload_qubits(
+            _require_payload_item(payload, "wires", "Adjoint operation"),
+            normalized_num_qubits,
+            "Adjoint operation wires",
+            allow_empty=False,
+        )
+        _normalize_payload_params(
+            _require_payload_item(payload, "params", "Adjoint operation"),
+            "Adjoint operation parameters",
+        )
+        param_indices = _normalize_integer_sequence(
+            _require_payload_item(payload, "param_indices", "Adjoint operation"),
+            "Adjoint operation parameter indices",
+            allow_negative=True,
+        )
+        if "param_derivative_scales" in payload:
+            scales = _normalize_payload_params(
+                payload["param_derivative_scales"],
+                "Adjoint operation param_derivative_scales",
+            )
+            if len(scales) != len(param_indices):
+                raise ValueError("Adjoint operation param_derivative_scales length must match param_indices.")
+        trainable_indices = _normalize_integer_sequence(
+            payload.get("trainable_param_indices", []),
+            "Adjoint operation trainable parameter indices",
+            allow_negative=True,
+        )
+        trainable_positions = _normalize_integer_sequence(
+            payload.get("trainable_param_positions", []),
+            "Adjoint operation trainable parameter positions",
+            allow_negative=False,
+        )
+        if len(trainable_indices) != len(trainable_positions):
+            raise ValueError("Adjoint operation trainable_param_indices length must match trainable_param_positions.")
+        if any(position >= len(param_indices) for position in trainable_positions):
+            raise ValueError("Adjoint operation trainable parameter positions are out of range.")
+        has_matrix = "matrix" in payload
+        has_sparse_matrix = "sparse_data" in payload
+        if has_matrix and has_sparse_matrix:
+            raise ValueError("Adjoint operation cannot contain both dense and sparse matrix payloads.")
+        if has_matrix:
+            controls = None
+            if "controls" in payload:
+                controls = _normalize_payload_qubits(
+                    payload["controls"],
+                    normalized_num_qubits,
+                    "Adjoint matrix operation controls",
+                    allow_empty=True,
+                )
+                if "control_values" in payload:
+                    control_values = _payload_sequence(payload["control_values"], "Adjoint matrix operation control values")
+                    if len(control_values) != len(controls):
+                        raise ValueError("Adjoint matrix operation control_values length must match controls.")
+                    if any(not isinstance(value, (bool, np.bool_)) for value in control_values):
+                        raise ValueError("Adjoint matrix operation control_values must be booleans.")
+                if set(controls).intersection(wires):
+                    raise ValueError("Adjoint matrix operation controls and wires must be disjoint.")
+            _validate_adjoint_complex_matrix(payload["matrix"], wires, "Adjoint matrix operation")
+        if has_sparse_matrix:
+            _validate_adjoint_sparse_payload(
+                payload["sparse_data"],
+                _require_payload_item(payload, "sparse_indices", "Adjoint operation"),
+                _require_payload_item(payload, "sparse_indptr", "Adjoint operation"),
+                _require_payload_item(payload, "sparse_shape", "Adjoint operation"),
+                wires,
+                "Adjoint sparse operation",
+            )
+        normalized_operations.append(payload)
+    return normalized_operations
+
+
+def normalize_adjoint_observables(observables: Sequence[Sequence[Mapping]], num_qubits: int | None = None) -> list[list[Mapping]]:
+    normalized_num_qubits = None if num_qubits is None or int(num_qubits) <= 0 else int(num_qubits)
+    normalized_observables = []
+    for observable in _payload_sequence(observables, "Adjoint observable payloads"):
+        terms = _payload_sequence(observable, "Adjoint observable terms")
+        if not terms:
+            raise ValueError("Adjoint observable payloads must not be empty.")
+        normalized_terms = []
+        for term in terms:
+            payload = _require_payload_mapping(term, "Adjoint observable")
+            kind = payload.get("kind")
+            if kind == "matrix":
+                targets = _normalize_payload_qubits(
+                    _require_payload_item(payload, "targets", "Adjoint observable"),
+                    normalized_num_qubits,
+                    "Adjoint matrix observable targets",
+                    allow_empty=False,
+                )
+                _validate_adjoint_complex_matrix(
+                    _require_payload_item(payload, "matrix", "Adjoint observable"),
+                    targets,
+                    "Adjoint matrix observable",
+                )
+            elif kind == "sparse":
+                targets = None
+                if "targets" in payload:
+                    targets = _normalize_payload_qubits(
+                        payload["targets"],
+                        normalized_num_qubits,
+                        "Adjoint sparse observable targets",
+                        allow_empty=True,
+                    )
+                _validate_adjoint_sparse_payload(
+                    _require_payload_item(payload, "data", "Adjoint observable"),
+                    _require_payload_item(payload, "indices", "Adjoint observable"),
+                    _require_payload_item(payload, "indptr", "Adjoint observable"),
+                    _require_payload_item(payload, "shape", "Adjoint observable"),
+                    targets,
+                    "Adjoint sparse observable",
+                )
+            elif kind is not None:
+                raise NotImplementedError(f"Unsupported adjoint observable kind: {kind}")
+            else:
+                coefficient = _require_payload_item(payload, "coefficient", "Adjoint observable")
+                _validate_adjoint_complex_scalar(coefficient, "Adjoint Pauli observable coefficient")
+                pauli_string = _require_payload_item(payload, "pauli_string", "Adjoint observable")
+                if not isinstance(pauli_string, str):
+                    raise ValueError("Adjoint Pauli observable string must be a string.")
+                targets = _normalize_payload_qubits(
+                    _require_payload_item(payload, "targets", "Adjoint observable"),
+                    normalized_num_qubits,
+                    "Adjoint Pauli observable targets",
+                    allow_empty=True,
+                )
+                if len(pauli_string) != len(targets):
+                    raise ValueError("Adjoint Pauli observable string length must match target count.")
+                if any(pauli not in {"I", "X", "Y", "Z"} for pauli in pauli_string):
+                    raise ValueError("Adjoint Pauli observable may only contain I, X, Y, or Z.")
+            normalized_terms.append(payload)
+        normalized_observables.append(normalized_terms)
+    return normalized_observables
 
 
 def as_complex_matrix(matrix: object, label: str = "Operation matrix") -> np.ndarray:
@@ -1322,13 +1591,16 @@ class RocQuantumRuntime:
 
         unavailable_error = None
         normalized_trainable_params = normalize_trainable_params(trainable_params)
+        num_qubits = self.num_qubits()
+        normalized_operations = normalize_adjoint_operations(operations, num_qubits)
+        normalized_observables = normalize_adjoint_observables(observables, num_qubits)
 
         native = getattr(self.simulator, "adjoint_jacobian", None)
         if callable(native):
             try:
                 return normalize_adjoint_jacobian_result(
-                    native(list(operations), list(observables), normalized_trainable_params),
-                    len(observables),
+                    native(normalized_operations, normalized_observables, normalized_trainable_params),
+                    len(normalized_observables),
                     len(normalized_trainable_params),
                 )
             except Exception as exc:
@@ -1340,8 +1612,8 @@ class RocQuantumRuntime:
         if callable(legacy):
             try:
                 return normalize_adjoint_jacobian_result(
-                    legacy(list(operations), list(observables), normalized_trainable_params),
-                    len(observables),
+                    legacy(normalized_operations, normalized_observables, normalized_trainable_params),
+                    len(normalized_observables),
                     len(normalized_trainable_params),
                 )
             except Exception as exc:

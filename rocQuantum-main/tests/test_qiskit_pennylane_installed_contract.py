@@ -11527,6 +11527,8 @@ def test_framework_runtime_validates_adjoint_trainable_params_before_native_disp
     from rocquantum.framework_runtime import (
         RocQuantumRuntime,
         normalize_adjoint_jacobian_result,
+        normalize_adjoint_observables,
+        normalize_adjoint_operations,
         normalize_trainable_params,
     )
 
@@ -11574,8 +11576,20 @@ def test_framework_runtime_validates_adjoint_trainable_params_before_native_disp
             self.calls.append((list(operations), list(observables), list(trainable_params)))
             return self.result
 
-    operations = [{"name": "RY", "params": [0.1]}]
-    observables = [[{"pauli_string": "Z", "targets": [0]}]]
+    operations = [
+        {
+            "name": "RY",
+            "rocq_name": "RY",
+            "wires": [0],
+            "params": [0.1],
+            "param_indices": [0],
+            "trainable_param_indices": [0],
+            "trainable_param_positions": [0],
+        }
+    ]
+    observables = [[{"coefficient": (1.0, 0.0), "pauli_string": "Z", "targets": [0]}]]
+    assert normalize_adjoint_operations(operations, 1) == operations
+    assert normalize_adjoint_observables(observables, 1) == observables
     simulator = _NativeAdjointRecorder()
     runtime = RocQuantumRuntime(simulator)
 
@@ -11588,6 +11602,42 @@ def test_framework_runtime_validates_adjoint_trainable_params_before_native_disp
     for trainable_params in invalid_trainable_params:
         with pytest.raises((TypeError, ValueError), match="Trainable parameter"):
             runtime.adjoint_jacobian(operations, observables, trainable_params)
+    assert simulator.calls == [(operations, observables, [0, -1])]
+
+    invalid_operations = (
+        "bad",
+        [{"name": "RY", "rocq_name": "RY", "wires": [0], "params": [0.1]}],
+        [{**operations[0], "wires": [True]}],
+        [{**operations[0], "params": [np.nan]}],
+        [{**operations[0], "param_indices": [0], "param_derivative_scales": [1.0, 1.0]}],
+        [
+            {
+                **operations[0],
+                "matrix": [[(1.0, 0.0), (0.0, 0.0)], [(0.0, 0.0), (1.0, 0.0)]],
+                "sparse_data": [(1.0, 0.0)],
+                "sparse_indices": [0],
+                "sparse_indptr": [0, 1],
+                "sparse_shape": [1, 1],
+            }
+        ],
+    )
+    for invalid_operations_payload in invalid_operations:
+        with pytest.raises((TypeError, ValueError), match="Adjoint operation"):
+            runtime.adjoint_jacobian(invalid_operations_payload, observables, [0, -1])
+    assert simulator.calls == [(operations, observables, [0, -1])]
+
+    invalid_observables = (
+        "bad",
+        [[]],
+        [[{"pauli_string": "Z", "targets": [0]}]],
+        [[{"coefficient": (1.0, 0.0), "pauli_string": "ZX", "targets": [0]}]],
+        [[{"coefficient": (1.0, 0.0), "pauli_string": "A", "targets": [0]}]],
+        [[{"kind": "matrix", "matrix": [[(1.0, 0.0)]], "targets": [0]}]],
+        [[{"kind": "sparse", "data": [(1.0, 0.0)], "indices": [2], "indptr": [0, 1], "shape": [1, 1]}]],
+    )
+    for invalid_observable_payload in invalid_observables:
+        with pytest.raises((TypeError, ValueError, NotImplementedError), match="Adjoint|Unsupported"):
+            runtime.adjoint_jacobian(operations, invalid_observable_payload, [0, -1])
     assert simulator.calls == [(operations, observables, [0, -1])]
 
     for jacobian in invalid_jacobians:

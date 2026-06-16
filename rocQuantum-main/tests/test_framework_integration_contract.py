@@ -304,6 +304,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def normalize_batch_index", source)
         self.assertIn("def normalize_trainable_params", source)
         self.assertIn("def normalize_adjoint_jacobian_result", source)
+        self.assertIn("def normalize_adjoint_operations", source)
+        self.assertIn("def normalize_adjoint_observables", source)
         self.assertIn("def normalize_sample_indices", source)
         self.assertIn("def normalize_targets", source)
         self.assertIn("not isinstance(target, Integral)", source)
@@ -337,6 +339,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def set_statevector", source)
         self.assertIn("def supports_adjoint_jacobian", source)
         self.assertIn("def adjoint_jacobian", source)
+        self.assertIn("normalized_operations = normalize_adjoint_operations(operations, num_qubits)", source)
+        self.assertIn("normalized_observables = normalize_adjoint_observables(observables, num_qubits)", source)
 
     def test_public_simulator_dispatches_native_multi_control_gates(self):
         with open(_QUANTUM_SIMULATOR_CPP, "r", encoding="utf-8") as f:
