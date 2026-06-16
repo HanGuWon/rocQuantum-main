@@ -55,6 +55,10 @@ typedef struct hipTensorNetCapabilities_t {
     int supports_pathfinder_metis;
     int supports_memory_limit_planning;
     int supports_runtime_slicing;
+    int runtime_slicing_is_limited_pair_gemm;
+    int supports_open_index_slicing;
+    int supports_mixed_precision;
+    int supports_simultaneous_c64_c128;
 } hipTensorNetCapabilities_t;
 
 #endif // HIP_TENSOR_NET_API_H

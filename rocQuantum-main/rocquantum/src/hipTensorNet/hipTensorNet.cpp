@@ -520,6 +520,10 @@ rocqStatus_t rocTensorNetworkGetCapabilities(hipTensorNetCapabilities_t* capabil
 #endif
     capabilities->supports_memory_limit_planning = 1;
     capabilities->supports_runtime_slicing = 1;
+    capabilities->runtime_slicing_is_limited_pair_gemm = 1;
+    capabilities->supports_open_index_slicing = 0;
+    capabilities->supports_mixed_precision = 0;
+    capabilities->supports_simultaneous_c64_c128 = 0;
     return ROCQ_STATUS_SUCCESS;
 }
 

@@ -69,9 +69,17 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("supports_c128", api)
         self.assertIn("supports_pathfinder_greedy", api)
         self.assertIn("supports_runtime_slicing", api)
+        self.assertIn("runtime_slicing_is_limited_pair_gemm", api)
+        self.assertIn("supports_open_index_slicing", api)
+        self.assertIn("supports_mixed_precision", api)
+        self.assertIn("supports_simultaneous_c64_c128", api)
         self.assertIn("ROC_TENSORNET_COMPILED_COMPLEX_DTYPE", header)
         self.assertIn("rocTensorNetworkGetCapabilities", header)
         self.assertIn("rocTensorNetworkGetCapabilities", source)
+        self.assertIn("runtime_slicing_is_limited_pair_gemm = 1", source)
+        self.assertIn("supports_open_index_slicing = 0", source)
+        self.assertIn("supports_mixed_precision = 0", source)
+        self.assertIn("supports_simultaneous_c64_c128 = 0", source)
 
     def test_dtype_support_is_build_precision_gated(self):
         with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
@@ -185,6 +193,11 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("limited runtime K-sliced GEMM execution", source)
         self.assertIn("cuTensorNet-style open-index slicing", source)
         self.assertIn("num_slices must be non-negative", source)
+        self.assertIn("runtime_slicing_kind", source)
+        self.assertIn("limited_pair_contraction_k_sliced_gemm", source)
+        self.assertIn("supports_open_index_slicing", source)
+        self.assertIn("supports_mixed_precision", source)
+        self.assertIn("supports_simultaneous_c64_c128", source)
         self.assertNotIn(
             'rocTensorNetworkContract failed: " + std::to_string(status)',
             source,
@@ -225,6 +238,8 @@ class TestTensorNetContract(unittest.TestCase):
             matrix = f.read()
 
         self.assertIn("deterministic runtime K-sliced GEMM accumulation", readme)
+        self.assertIn("limited_pair_contraction_k_sliced_gemm", readme)
+        self.assertIn("open-index slicing, mixed precision", readme)
         self.assertIn("active simulator stream", readme)
         self.assertIn("reuse a rocBLAS handle", readme)
         self.assertIn("stale unwired Pathfinder scaffold is not shipped", readme)
@@ -232,6 +247,8 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("placeholder BLAS/stream handles", matrix)
         self.assertIn("stale unwired `Pathfinder.cpp` / public `Pathfinder.h` scaffold is not shipped", matrix)
         self.assertIn("not full cuTensorNet-style open-index slicing", matrix)
+        self.assertIn("supports_open_index_slicing=False", matrix)
+        self.assertIn("supports_mixed_precision=False", matrix)
         self.assertIn("mixed precision remains a documented future lane", matrix)
         self.assertIn("No simultaneous runtime C64/C128 support", matrix)
 

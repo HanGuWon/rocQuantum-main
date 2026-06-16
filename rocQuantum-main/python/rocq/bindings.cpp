@@ -1512,6 +1512,13 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         result["supports_pathfinder_metis"] = caps.supports_pathfinder_metis != 0;
         result["supports_memory_limit_planning"] = caps.supports_memory_limit_planning != 0;
         result["supports_runtime_slicing"] = caps.supports_runtime_slicing != 0;
+        result["runtime_slicing_kind"] =
+            caps.runtime_slicing_is_limited_pair_gemm != 0
+                ? "limited_pair_contraction_k_sliced_gemm"
+                : "unknown";
+        result["supports_open_index_slicing"] = caps.supports_open_index_slicing != 0;
+        result["supports_mixed_precision"] = caps.supports_mixed_precision != 0;
+        result["supports_simultaneous_c64_c128"] = caps.supports_simultaneous_c64_c128 != 0;
         return result;
     }, "Reports TensorNet dtype, optimizer, and slicing capabilities for this build.");
 
