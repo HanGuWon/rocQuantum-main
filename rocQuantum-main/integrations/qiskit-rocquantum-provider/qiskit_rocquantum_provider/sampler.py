@@ -6,7 +6,7 @@ from qiskit.primitives import BaseSamplerV2
 from qiskit.primitives.containers import BitArray, DataBin, PrimitiveResult, SamplerPub, SamplerPubResult
 from qiskit.primitives.primitive_job import PrimitiveJob
 
-from rocquantum.framework_runtime import qiskit_sample_plan
+from rocquantum.framework_runtime import normalize_positive_integer, normalize_shots, qiskit_sample_plan
 
 
 def _measurement_plan(circuit, measured_bits):
@@ -97,15 +97,18 @@ class RocQuantumSampler(BaseSamplerV2):
         max_dynamic_loop_iterations: int | None = None,
     ):
         self._backend = backend
-        self._default_shots = int(default_shots)
+        self._default_shots = normalize_shots(default_shots)
         self._max_dynamic_loop_iterations = (
             None
             if max_dynamic_loop_iterations is None
-            else int(max_dynamic_loop_iterations)
+            else normalize_positive_integer(
+                max_dynamic_loop_iterations,
+                "max_dynamic_loop_iterations",
+            )
         )
 
     def run(self, pubs, *, shots: int | None = None):
-        target_shots = self._default_shots if shots is None else int(shots)
+        target_shots = self._default_shots if shots is None else normalize_shots(shots)
         coerced_pubs = [SamplerPub.coerce(pub, target_shots) for pub in pubs]
         job = PrimitiveJob(self._run, coerced_pubs)
         job._submit()
@@ -215,12 +218,13 @@ class RocQuantumSampler(BaseSamplerV2):
     def _dynamic_loop_limit(self):
         if self._max_dynamic_loop_iterations is not None:
             return self._max_dynamic_loop_iterations
-        return int(
+        return normalize_positive_integer(
             getattr(
                 getattr(self._backend, "options", None),
                 "max_dynamic_loop_iterations",
                 1024,
-            )
+            ),
+            "max_dynamic_loop_iterations",
         )
 
     def _try_run_pub_batched_parameters(self, pub):

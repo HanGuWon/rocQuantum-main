@@ -3595,6 +3595,38 @@ def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     assert isinstance(provider.get_estimator(native=False), BackendEstimatorV2)
 
 
+def test_qiskit_provider_rejects_bool_or_nonpositive_sampling_options(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    circuit = QuantumCircuit(1, 1)
+
+    with pytest.raises(ValueError, match="shots must be a positive integer"):
+        provider.get_sampler(default_shots=True)
+    with pytest.raises(ValueError, match="shots must be positive"):
+        provider.get_sampler(default_shots=0)
+    with pytest.raises(ValueError, match="max_dynamic_loop_iterations must be a positive integer"):
+        provider.get_sampler(max_dynamic_loop_iterations=True)
+    with pytest.raises(ValueError, match="max_dynamic_loop_iterations must be positive"):
+        provider.get_sampler(max_dynamic_loop_iterations=0)
+
+    sampler = provider.get_sampler()
+    with pytest.raises(ValueError, match="shots must be a positive integer"):
+        sampler.run([circuit], shots=True)
+    with pytest.raises(ValueError, match="shots must be positive"):
+        sampler.run([circuit], shots=0)
+
+    backend = provider.get_backend("rocq_simulator")
+    with pytest.raises(ValueError, match="shots must be a positive integer"):
+        backend.run(circuit, shots=True)
+    with pytest.raises(ValueError, match="max_dynamic_loop_iterations must be a positive integer"):
+        backend.run(circuit, max_dynamic_loop_iterations=True)
+
+
 def test_qiskit_provider_primitives_run_with_backend(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

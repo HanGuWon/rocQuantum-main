@@ -76,6 +76,8 @@ from rocquantum.framework_runtime import (
     counts_from_memory,
     normalize_gate_name,
     normalize_params,
+    normalize_positive_integer,
+    normalize_shots,
     qiskit_memory_from_samples,
     qiskit_sample_plan,
     statevector_to_little_endian_wires,
@@ -3332,7 +3334,14 @@ class RocQuantumBackend(BackendV2):
             run_input = [run_input]
 
         job_id = str(uuid.uuid4())
-        shots = int(options.get("shots", self.options.shots))
+        shots = normalize_shots(options.get("shots", self.options.shots))
+        max_dynamic_loop_iterations = normalize_positive_integer(
+            options.get(
+                "max_dynamic_loop_iterations",
+                self.options.max_dynamic_loop_iterations,
+            ),
+            "max_dynamic_loop_iterations",
+        )
         results = []
 
         if bool(options.get("sampling", self.options.sampling)) and not bool(
@@ -3391,10 +3400,7 @@ class RocQuantumBackend(BackendV2):
                     circuit,
                     shots,
                     bool(options.get("memory", self.options.memory)),
-                    int(options.get(
-                        "max_dynamic_loop_iterations",
-                        self.options.max_dynamic_loop_iterations,
-                    )),
+                    max_dynamic_loop_iterations,
                 )
                 exp_data = ExperimentResultData(**data)
                 results.append(
