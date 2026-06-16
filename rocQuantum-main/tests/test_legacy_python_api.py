@@ -291,6 +291,64 @@ class TestLegacyCircuitBatchState(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Number of shots"):
                     circuit.sample([0], shots)
 
+    def test_measure_and_sample_revalidate_native_results(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        circuit = _make_circuit(module)
+
+        def measure_result(outcome, probability):
+            def _measure(*args):
+                backend.calls.append(("measure", args))
+                return outcome, probability
+
+            return _measure
+
+        backend.measure = measure_result(np.int64(1), np.float64(0.25))
+        self.assertEqual(circuit.measure(0), (1, 0.25))
+
+        invalid_measurements = (
+            (True, 0.5),
+            (2, 0.5),
+            ("0", 0.5),
+            (0, True),
+            (0, np.nan),
+            (0, -0.1),
+            (0, 1.1),
+        )
+        for outcome, probability in invalid_measurements:
+            with self.subTest(measurement=(outcome, probability)):
+                backend.measure = measure_result(outcome, probability)
+                with self.assertRaisesRegex(ValueError, "Measurement"):
+                    circuit.measure(0)
+
+        def sample_result(results):
+            def _sample(*args):
+                backend.calls.append(("sample", args))
+                return results
+
+            return _sample
+
+        backend.sample = sample_result([np.uint64(0), np.int64(3), 3])
+        np.testing.assert_array_equal(
+            circuit.sample([0, 1], 3),
+            np.array([0, 3, 3], dtype=np.uint64),
+        )
+
+        invalid_samples = (
+            [0, 1],
+            [0, 4, 1],
+            [0, -1, 1],
+            [0, True, 1],
+            [0, 1.5, 1],
+            [0, "1", 1],
+            np.array([[0, 1, 2]], dtype=np.int64),
+        )
+        for results in invalid_samples:
+            with self.subTest(sample=repr(results)):
+                backend.sample = sample_result(results)
+                with self.assertRaisesRegex(ValueError, "Sample result"):
+                    circuit.sample([0, 1], 3)
+
     def test_multi_gpu_constructor_warns_about_partial_support(self):
         backend = _fake_backend()
         module = _load_legacy_api(backend)

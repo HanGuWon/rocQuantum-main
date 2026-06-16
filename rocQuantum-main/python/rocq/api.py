@@ -61,6 +61,42 @@ def _validate_finite_real(value, name: str) -> float:
     return normalized
 
 
+def _validate_measurement_result(outcome, probability) -> tuple[int, float]:
+    if isinstance(outcome, bool) or not isinstance(outcome, Integral):
+        raise ValueError("Measurement outcome must be an integer bit.")
+    normalized_outcome = int(outcome)
+    if normalized_outcome not in (0, 1):
+        raise ValueError("Measurement outcome must be either 0 or 1.")
+
+    normalized_probability = _validate_finite_real(probability, "Measurement probability")
+    if normalized_probability < 0.0 or normalized_probability > 1.0:
+        raise ValueError("Measurement probability must be between 0 and 1.")
+    return normalized_outcome, normalized_probability
+
+
+def _validate_sample_results(results, measured_width: int, num_shots: int) -> np.ndarray:
+    width = _validate_positive_integer(measured_width, "Sample result width")
+    expected_shots = _validate_positive_integer(num_shots, "Sample result count")
+    try:
+        raw = list(results)
+    except TypeError as exc:
+        raise ValueError("Sample results must be a sequence of integer outcome indices.") from exc
+
+    if len(raw) != expected_shots:
+        raise ValueError("Sample result count must match requested shots.")
+
+    outcome_limit = 1 << width
+    normalized = []
+    for outcome in raw:
+        if isinstance(outcome, bool) or not isinstance(outcome, Integral):
+            raise ValueError("Sample results must contain integer outcome indices.")
+        value = int(outcome)
+        if value < 0 or value >= outcome_limit:
+            raise ValueError("Sample result is outside the measured qubit range.")
+        normalized.append(value)
+    return np.asarray(normalized, dtype=np.uint64)
+
+
 class LegacyCompilerReplayWarning(RuntimeWarning):
     """Raised when legacy build() execution uses Python replay rather than MLIR execution."""
 
@@ -514,7 +550,7 @@ class Circuit:
             outcome, probability = backend.measure(
                 self._sim_handle, d_state_arg, self.num_qubits, qubit_to_measure
             )
-            return outcome, probability
+            return _validate_measurement_result(outcome, probability)
         except RuntimeError as e:
             self._reraise_runtime_error("measure", e)
 
@@ -535,7 +571,7 @@ class Circuit:
             results = backend.sample(
                 self._sim_handle, d_state_arg, self.num_qubits, measured_qubits, num_shots
             )
-            return results
+            return _validate_sample_results(results, len(measured_qubits), num_shots)
         except RuntimeError as e:
             self._reraise_runtime_error("sample", e)
 
