@@ -70,6 +70,11 @@ class TestLoweringCoverage(unittest.TestCase):
 
 
 class TestCompileAndExecuteContract(unittest.TestCase):
+    def _read(self, *parts):
+        path = os.path.join(_PROJECT_ROOT, *parts)
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
     def test_compile_and_execute_dispatches_supported_subset(self):
         path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "MLIRCompiler.cpp")
         with open(path, "r", encoding="utf-8") as f:
@@ -140,6 +145,30 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("legacy conceptual MLIR holder", src)
         self.assertNotIn("rocquantum::compiler::MLIRCompiler", src)
         self.assertNotIn("mlir::MLIRContext", src)
+
+    def test_legacy_dialect_scaffold_is_source_valid_but_not_release_parity(self):
+        header = self._read(
+            "rocquantum", "include", "rocquantum", "Dialect", "QuantumOps.h.inc"
+        )
+        op_list = self._read(
+            "rocquantum", "src", "rocqCompiler", "QuantumOps.cpp.inc"
+        )
+        dialect = self._read(
+            "rocquantum", "src", "rocqCompiler", "QuantumDialect.cpp"
+        )
+
+        header.encode("ascii")
+        op_list.encode("ascii")
+        self.assertIn("Legacy source scaffold", header)
+        self.assertIn("not treat it as generated TableGen coverage", header)
+        self.assertIn("getMeasurement() { return getOperation()->getResult(0); }", header)
+        self.assertNotIn("Format()", header)
+        self.assertNotIn("Typo", header)
+        self.assertIn("#ifdef GET_OP_LIST", op_list)
+        for op_name in ["AllocQubitOp,", "DeallocQubitOp,", "GenericGateOp,", "MeasureOp"]:
+            self.assertIn(op_name, op_list)
+        self.assertIn("not as parity evidence", dialect)
+        self.assertIn("outside the release compiler path", dialect)
 
     def test_tdg_reaches_native_statevec_dispatch(self):
         backend_path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "HipStateVecBackend.cpp")

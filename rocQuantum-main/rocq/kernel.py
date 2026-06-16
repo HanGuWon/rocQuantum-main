@@ -39,7 +39,21 @@ _COMPILER_UNSUPPORTED_FEATURES = (
     "noise channels",
     "arbitrary unitary/matrix operations",
     "release-linked default MLIR runtime",
+    "release-wired TableGen dialect/op generation",
 )
+_COMPILER_DIALECT_DEFINITION = {
+    "active_source_tree": "rocqCompiler/",
+    "legacy_scaffold_source_tree": "rocquantum/include/rocquantum/Dialect and rocquantum/src/rocqCompiler",
+    "release_tablegen_ops": False,
+    "release_wired": False,
+    "legacy_scaffold_release_linked": False,
+    "note": (
+        "The canonical source-level compiler MVP emits and parses a narrow textual "
+        "MLIR subset through rocqCompiler/, while the older rocquantum/Dialect "
+        "scaffold is not release-linked and must not be treated as CUDA-Q-style "
+        "compiler/runtime parity."
+    ),
+}
 _RUNTIME_EXECUTION_ENTRY_POINTS = (
     "execute",
     "get_state",
@@ -150,6 +164,7 @@ def compiler_capabilities() -> Dict[str, object]:
             for key, values in _COMPILER_SUPPORTED_GATE_GROUPS.items()
         },
         "unsupported_features": list(_COMPILER_UNSUPPORTED_FEATURES),
+        "dialect_definition": dict(_COMPILER_DIALECT_DEFINITION),
         "mlir_runtime_note": (
             "Compiler execution requires rocquantum_bind.MLIRCompiler with the "
             "experimental rocqCompiler MLIR stack linked; default builds may expose "

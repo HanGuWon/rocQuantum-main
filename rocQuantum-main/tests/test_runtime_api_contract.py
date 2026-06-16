@@ -1423,6 +1423,18 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             "mid-circuit measurement",
             capabilities["unsupported_features"],
         )
+        self.assertIn(
+            "release-wired TableGen dialect/op generation",
+            capabilities["unsupported_features"],
+        )
+        self.assertEqual(capabilities["dialect_definition"]["active_source_tree"], "rocqCompiler/")
+        self.assertEqual(
+            capabilities["dialect_definition"]["legacy_scaffold_source_tree"],
+            "rocquantum/include/rocquantum/Dialect and rocquantum/src/rocqCompiler",
+        )
+        self.assertFalse(capabilities["dialect_definition"]["release_tablegen_ops"])
+        self.assertFalse(capabilities["dialect_definition"]["release_wired"])
+        self.assertFalse(capabilities["dialect_definition"]["legacy_scaffold_release_linked"])
         self.assertIn("DisabledRuntimeMLIRCompiler", capabilities["mlir_runtime_note"])
 
     def test_compiler_capabilities_distinguish_binding_from_linked_mlir_runtime(self):
