@@ -1247,6 +1247,31 @@ def test_framework_runtime_rejects_nonfinite_probability_payloads():
     assert shape_simulator.statevector_reads == 0
 
 
+def test_framework_runtime_rejects_invalid_simulator_metadata():
+    from rocquantum.framework_runtime import RocQuantumRuntime, normalize_nonnegative_integer
+
+    class _MetadataSimulator:
+        def __init__(self, num_qubits=1, batch_size=1):
+            self._num_qubits = num_qubits
+            self._batch_size = batch_size
+
+        def num_qubits(self):
+            return self._num_qubits
+
+        def batch_size(self):
+            return self._batch_size
+
+    for value in (True, np.bool_(False), -1, 1.5, "2"):
+        with pytest.raises(ValueError, match="Simulator qubit count"):
+            RocQuantumRuntime(_MetadataSimulator(num_qubits=value)).num_qubits()
+        with pytest.raises(ValueError, match="Qubit count"):
+            normalize_nonnegative_integer(value, "Qubit count")
+
+    for value in (False, np.bool_(True), 0, -1, 1.5, "2"):
+        with pytest.raises(ValueError, match="Simulator batch size"):
+            RocQuantumRuntime(_MetadataSimulator(batch_size=value)).batch_size()
+
+
 def test_framework_runtime_rejects_ambiguous_gate_parameters(monkeypatch):
     _install_fake_binding(monkeypatch)
 

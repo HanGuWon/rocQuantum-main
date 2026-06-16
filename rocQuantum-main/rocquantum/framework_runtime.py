@@ -145,6 +145,15 @@ def normalize_positive_integer(value: object, label: str) -> int:
     return normalized
 
 
+def normalize_nonnegative_integer(value: object, label: str) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+        raise ValueError(f"{label} must be a non-negative integer.")
+    normalized = int(value)
+    if normalized < 0:
+        raise ValueError(f"{label} must be non-negative.")
+    return normalized
+
+
 def normalize_shots(shots: object) -> int:
     return normalize_positive_integer(shots, "shots")
 
@@ -1091,14 +1100,14 @@ class RocQuantumRuntime:
     def num_qubits(self) -> int:
         getter = getattr(self.simulator, "num_qubits", None)
         if callable(getter):
-            return int(getter())
-        return int(getattr(self.simulator, "num_qubits", 0))
+            return normalize_nonnegative_integer(getter(), "Simulator qubit count")
+        return normalize_nonnegative_integer(getattr(self.simulator, "num_qubits", 0), "Simulator qubit count")
 
     def batch_size(self) -> int:
         getter = getattr(self.simulator, "batch_size", None)
         if callable(getter):
-            return int(getter())
-        return int(getattr(self.simulator, "batch_size", 1))
+            return normalize_positive_integer(getter(), "Simulator batch size")
+        return normalize_positive_integer(getattr(self.simulator, "batch_size", 1), "Simulator batch size")
 
     def apply_operation(
         self,
