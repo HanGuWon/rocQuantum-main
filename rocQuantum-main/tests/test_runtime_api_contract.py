@@ -704,6 +704,9 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "state-vector backend maximum"):
                     StateVectorBackend(61)
 
+        with self.assertRaisesRegex(ValueError, "state-vector backend maximum"):
+            get_backend("stabilizer", 61)
+
         with mock.patch("rocq.backends.dm_backend", None):
             with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
                 with self.assertRaisesRegex(ValueError, "density-matrix backend maximum"):
@@ -862,6 +865,11 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             with self.subTest(helper_density=repr(payload)):
                 with self.assertRaisesRegex(ValueError, "Density matrix"):
                     _normalize_density_matrix_result(payload, 1)
+
+        with self.assertRaisesRegex(ValueError, "state-vector backend maximum"):
+            _normalize_statevector_result(np.array([], dtype=np.complex64), 61)
+        with self.assertRaisesRegex(ValueError, "density-matrix backend maximum"):
+            _normalize_density_matrix_result(np.empty((0, 0), dtype=np.complex64), 31)
 
         state_backend = StateVectorBackend.__new__(StateVectorBackend)
         state_backend.num_qubits = 1

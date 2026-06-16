@@ -248,6 +248,26 @@ def _validate_positive_integer(value, name: str) -> int:
     return normalized
 
 
+def _statevector_dimension(num_qubits: int) -> int:
+    normalized = _validate_positive_integer(num_qubits, "num_qubits")
+    if normalized > _STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW:
+        raise ValueError(
+            "num_qubits exceeds the state-vector backend maximum "
+            f"of {_STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW}."
+        )
+    return 1 << normalized
+
+
+def _density_matrix_dimension(num_qubits: int) -> int:
+    normalized = _validate_positive_integer(num_qubits, "num_qubits")
+    if normalized > _DENSITY_MATRIX_MAX_QUBITS:
+        raise ValueError(
+            "num_qubits exceeds the density-matrix backend maximum "
+            f"of {_DENSITY_MATRIX_MAX_QUBITS}."
+        )
+    return 1 << normalized
+
+
 def _validate_optional_boolean_option(value, name: str) -> Optional[bool]:
     if value is not None and not isinstance(value, bool):
         raise ValueError(f"{name} must be a boolean when provided.")
@@ -577,7 +597,7 @@ def _normalize_statevector_result(statevector, num_qubits: int) -> np.ndarray:
     if raw_state.ndim != 1:
         raise ValueError("Statevector readback must be one-dimensional.")
 
-    expected_dim = 1 << int(num_qubits)
+    expected_dim = _statevector_dimension(num_qubits)
     if raw_state.size != expected_dim:
         raise ValueError("Statevector dimension does not match backend qubit count.")
 
@@ -602,7 +622,7 @@ def _normalize_density_matrix_result(density_matrix, num_qubits: int) -> np.ndar
     if raw_density.ndim != 2:
         raise ValueError("Density matrix readback must be two-dimensional.")
 
-    expected_dim = 1 << int(num_qubits)
+    expected_dim = _density_matrix_dimension(num_qubits)
     if raw_density.shape != (expected_dim, expected_dim):
         raise ValueError("Density matrix dimension does not match backend qubit count.")
 
@@ -620,7 +640,7 @@ def _normalize_density_matrix_result(density_matrix, num_qubits: int) -> np.ndar
 
 def _statevector_expectation_matrix(statevector, matrix, targets: Sequence[int], num_qubits: int):
     state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
-    expected_state_dim = 1 << int(num_qubits)
+    expected_state_dim = _statevector_dimension(num_qubits)
     if state.size != expected_state_dim:
         raise ValueError("Statevector dimension does not match backend qubit count.")
 
@@ -650,7 +670,7 @@ def _statevector_expectation_matrix(statevector, matrix, targets: Sequence[int],
 
 def _statevector_pauli_expectation(statevector, paulis: Sequence[tuple[str, int]], num_qubits: int):
     state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
-    expected_state_dim = 1 << int(num_qubits)
+    expected_state_dim = _statevector_dimension(num_qubits)
     if state.size != expected_state_dim:
         raise ValueError("Statevector dimension does not match backend qubit count.")
 
@@ -684,7 +704,7 @@ def _statevector_pauli_expectation(statevector, paulis: Sequence[tuple[str, int]
 
 def _density_matrix_expectation_matrix(density_matrix, matrix, targets: Sequence[int], num_qubits: int):
     density = np.asarray(density_matrix, dtype=np.complex128)
-    expected_dim = 1 << int(num_qubits)
+    expected_dim = _density_matrix_dimension(num_qubits)
     if density.shape != (expected_dim, expected_dim):
         raise ValueError("Density matrix dimension does not match backend qubit count.")
 
@@ -787,7 +807,7 @@ def _normalize_sparse_hamiltonian(operator: SparseHamiltonianOperator, num_qubit
     indices = _normalize_sparse_hamiltonian_index_vector(operator.indices, "indices")
     indptr = _normalize_sparse_hamiltonian_index_vector(operator.indptr, "indptr")
     rows, cols = _normalize_sparse_hamiltonian_shape(operator.shape)
-    state_dim = 1 << int(num_qubits)
+    state_dim = _statevector_dimension(num_qubits)
 
     if rows != state_dim or cols != state_dim:
         raise ValueError("SparseHamiltonianOperator shape must match the backend state dimension.")
@@ -952,7 +972,7 @@ def _statevector_sparse_hamiltonian_moments(statevector, data, indices, indptr):
 class _MockStateVectorState:
     def __init__(self, n_qubits: int):
         self._num_qubits = n_qubits
-        self._state = np.zeros(1 << n_qubits, dtype=np.complex64)
+        self._state = np.zeros(_statevector_dimension(n_qubits), dtype=np.complex64)
         self._state[0] = 1.0 + 0.0j
 
     def _validate_qubit(self, qubit: int) -> int:
@@ -1219,7 +1239,7 @@ class _MockStateVectorState:
 class _MockDensityMatrixState:
     def __init__(self, n_qubits: int):
         self._num_qubits = int(n_qubits)
-        dim = 1 << n_qubits
+        dim = _density_matrix_dimension(n_qubits)
         self._density = np.zeros((dim, dim), dtype=np.complex64)
         self._density[0, 0] = 1.0 + 0.0j
 
@@ -1682,7 +1702,7 @@ class StabilizerBackend(_BaseBackend):
 
     def __init__(self, num_qubits: int):
         super().__init__(num_qubits)
-        self._state = np.zeros(1 << int(self.num_qubits), dtype=np.complex128)
+        self._state = np.zeros(_statevector_dimension(self.num_qubits), dtype=np.complex128)
         self._state[0] = 1.0 + 0.0j
         self._generators: list[tuple[complex, tuple[str, ...]]] = []
         for qubit in range(int(self.num_qubits)):
@@ -1939,11 +1959,7 @@ class StateVectorBackend(_BaseBackend):
 
     def __init__(self, num_qubits: int, enable_fusion: Optional[bool] = None):
         super().__init__(num_qubits)
-        if self.num_qubits > _STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW:
-            raise ValueError(
-                "num_qubits exceeds the state-vector backend maximum "
-                f"of {_STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW}."
-            )
+        _statevector_dimension(self.num_qubits)
         enable_fusion = _validate_optional_boolean_option(enable_fusion, "enable_fusion")
         if enable_fusion is None:
             enable_fusion = os.environ.get(_DISABLE_FUSION_ENV_VAR, "").strip().lower() not in {"1", "true", "yes", "on"}
@@ -2085,11 +2101,7 @@ class DensityMatrixBackend(_BaseBackend):
 
     def __init__(self, num_qubits: int):
         super().__init__(num_qubits)
-        if self.num_qubits > _DENSITY_MATRIX_MAX_QUBITS:
-            raise ValueError(
-                "num_qubits exceeds the density-matrix backend maximum "
-                f"of {_DENSITY_MATRIX_MAX_QUBITS}."
-            )
+        _density_matrix_dimension(self.num_qubits)
         if dm_backend is None:
             if not _mock_backends_enabled():
                 raise _native_backend_error("rocq_hip", "density_matrix")
