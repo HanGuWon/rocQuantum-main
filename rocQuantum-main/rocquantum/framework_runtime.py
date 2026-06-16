@@ -666,6 +666,27 @@ def operation_matrix_for_targets(
     return normalized_matrix, normalized_targets
 
 
+def dense_expectation_matrix_for_targets(
+    matrix: object,
+    targets: Iterable[int],
+    num_qubits: int | None,
+) -> tuple[np.ndarray, list[int]]:
+    normalized_num_qubits = (
+        None if num_qubits is None or int(num_qubits) <= 0 else int(num_qubits)
+    )
+    normalized_targets = normalize_qubit_subset(
+        targets,
+        normalized_num_qubits,
+        "Dense expectation targets",
+        allow_empty=False,
+    )
+    normalized_matrix = as_complex_matrix(matrix, "Dense expectation matrix")
+    dimension = 1 << len(normalized_targets)
+    if normalized_matrix.shape != (dimension, dimension):
+        raise ValueError("Dense expectation matrix dimension must be 2^len(targets).")
+    return normalized_matrix, normalized_targets
+
+
 def normalize_sparse_operation_csr(
     data: object,
     indices: object,
@@ -1162,20 +1183,12 @@ def expectation_matrix_from_statevector(
     if state.size != (1 << num_qubits):
         raise ValueError("Statevector length must be a power of two.")
 
-    normalized_targets = normalize_targets(targets)
-    if not normalized_targets:
-        raise ValueError("Dense matrix expectation requires at least one target qubit.")
-    if len(set(normalized_targets)) != len(normalized_targets):
-        raise ValueError("Dense matrix expectation targets must be unique.")
-    for target in normalized_targets:
-        if target < 0 or target >= num_qubits:
-            raise ValueError("Dense matrix expectation target is outside the statevector qubit range.")
-
-    normalized_matrix = np.asarray(matrix, dtype=np.complex128)
+    normalized_matrix, normalized_targets = dense_expectation_matrix_for_targets(
+        matrix,
+        targets,
+        num_qubits,
+    )
     dimension = 1 << len(normalized_targets)
-    if normalized_matrix.shape != (dimension, dimension):
-        raise ValueError("Dense expectation matrix dimension must be 2^len(targets).")
-    validate_finite_complex_array(normalized_matrix, "Dense expectation matrix")
 
     result = 0.0 + 0.0j
     for row_index, amplitude in enumerate(state):
@@ -2062,8 +2075,11 @@ class RocQuantumRuntime:
         return None
 
     def expectation_matrix(self, matrix: object, targets: Iterable[int]) -> complex:
-        normalized_targets = normalize_targets(targets)
-        normalized_matrix = as_complex_matrix(matrix, "Dense expectation matrix")
+        normalized_matrix, normalized_targets = dense_expectation_matrix_for_targets(
+            matrix,
+            targets,
+            self.num_qubits(),
+        )
 
         native_result = self._native_expectation_matrix(normalized_matrix, normalized_targets)
         if native_result is not None:
@@ -2075,8 +2091,11 @@ class RocQuantumRuntime:
         return expectation_matrix_from_statevector(self.statevector(), normalized_matrix, normalized_targets)
 
     def expectation_matrix_moments(self, matrix: object, targets: Iterable[int]) -> tuple[complex, complex]:
-        normalized_targets = normalize_targets(targets)
-        normalized_matrix = as_complex_matrix(matrix, "Dense expectation matrix")
+        normalized_matrix, normalized_targets = dense_expectation_matrix_for_targets(
+            matrix,
+            targets,
+            self.num_qubits(),
+        )
 
         native_moments = self._native_expectation_matrix_moments(normalized_matrix, normalized_targets)
         if native_moments is not None:
@@ -2131,8 +2150,11 @@ class RocQuantumRuntime:
         return None
 
     def expectation_matrix_batch(self, matrix: object, targets: Iterable[int]) -> np.ndarray:
-        normalized_targets = normalize_targets(targets)
-        normalized_matrix = as_complex_matrix(matrix, "Dense expectation matrix")
+        normalized_matrix, normalized_targets = dense_expectation_matrix_for_targets(
+            matrix,
+            targets,
+            self.num_qubits(),
+        )
 
         native_result = self._native_expectation_matrix_batch(normalized_matrix, normalized_targets)
         if native_result is not None:
@@ -2150,8 +2172,11 @@ class RocQuantumRuntime:
         )
 
     def expectation_matrix_moments_batch(self, matrix: object, targets: Iterable[int]) -> tuple[np.ndarray, np.ndarray]:
-        normalized_targets = normalize_targets(targets)
-        normalized_matrix = as_complex_matrix(matrix, "Dense expectation matrix")
+        normalized_matrix, normalized_targets = dense_expectation_matrix_for_targets(
+            matrix,
+            targets,
+            self.num_qubits(),
+        )
 
         def _native_expectation_unavailable(exc: Exception) -> bool:
             message = str(exc)

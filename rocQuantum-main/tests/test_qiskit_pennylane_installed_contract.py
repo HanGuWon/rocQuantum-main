@@ -909,6 +909,60 @@ def test_framework_runtime_rejects_nonfinite_matrix_and_sparse_payloads(monkeypa
     assert sim.sparse_moments == []
 
 
+def test_framework_runtime_validates_dense_expectation_inputs_before_native_dispatch(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        dense_expectation_matrix_for_targets,
+    )
+
+    matrix = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=np.complex128)
+    normalized_matrix, normalized_targets = dense_expectation_matrix_for_targets(
+        matrix,
+        [0],
+        2,
+    )
+    np.testing.assert_allclose(normalized_matrix, matrix)
+    assert normalized_targets == [0]
+
+    invalid_cases = (
+        (matrix, []),
+        (matrix, [0, 0]),
+        (matrix, [-1]),
+        (matrix, [2]),
+        (matrix, [0, 1]),
+        (np.eye(3, dtype=np.complex128), [0]),
+        (np.array([[1.0, 0.0, 0.0]], dtype=np.complex128), [0]),
+    )
+    for invalid_matrix, targets in invalid_cases:
+        with pytest.raises(ValueError, match="Dense expectation"):
+            dense_expectation_matrix_for_targets(invalid_matrix, targets, 2)
+
+    monkeypatch.setattr(_FakeQuantumSimulator, "enable_matrix_expectation", True)
+    runtime = RocQuantumRuntime.from_bindings(2, batch_size=2)
+    sim = _FakeQuantumSimulator.instances[-1]
+    for invalid_matrix, targets in invalid_cases:
+        with pytest.raises(ValueError, match="Dense expectation"):
+            runtime.expectation_matrix(invalid_matrix, targets)
+        with pytest.raises(ValueError, match="Dense expectation"):
+            runtime.expectation_matrix_moments(invalid_matrix, targets)
+        with pytest.raises(ValueError, match="Dense expectation"):
+            runtime.expectation_matrix_batch(invalid_matrix, targets)
+        with pytest.raises(ValueError, match="Dense expectation"):
+            runtime.expectation_matrix_moments_batch(invalid_matrix, targets)
+
+    assert sim.matrix_expectations == []
+    assert sim.matrix_batch_expectations == []
+
+    runtime.expectation_matrix(matrix, [0])
+    runtime.expectation_matrix_batch(matrix, [0])
+    assert len(sim.matrix_expectations) == 1
+    assert len(sim.matrix_batch_expectations) == 1
+    np.testing.assert_allclose(sim.matrix_expectations[0][0], matrix)
+    np.testing.assert_allclose(sim.matrix_batch_expectations[0][0], matrix)
+
+
 def test_framework_runtime_validates_matrix_shapes_and_sparse_csr_before_native_dispatch(monkeypatch):
     _install_fake_binding(monkeypatch)
 
