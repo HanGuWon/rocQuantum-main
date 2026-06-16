@@ -91,6 +91,28 @@ def normalize_qubit_subset(
     return normalized
 
 
+def normalize_single_qubit(
+    target: object,
+    num_qubits: int | None = None,
+    label: str = "Qubit target",
+) -> int:
+    return normalize_qubit_subset(
+        [target],
+        num_qubits,
+        label,
+        allow_empty=False,
+    )[0]
+
+
+def normalize_measurement_bit(value: object, label: str = "Measurement bit") -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+        raise ValueError(f"{label} must be an integer bit.")
+    bit = int(value)
+    if bit not in {0, 1}:
+        raise ValueError(f"{label} must be either 0 or 1.")
+    return bit
+
+
 def normalize_pauli_expectation_payload(
     pauli_string: object,
     targets: Iterable[int],
@@ -916,26 +938,44 @@ class RocQuantumRuntime:
         self.simulator = type(self.simulator)(int(self.num_qubits()))
 
     def reset_qubit(self, target: int) -> None:
+        num_qubits = self.num_qubits()
+        normalized_target = normalize_single_qubit(
+            target,
+            None if num_qubits <= 0 else num_qubits,
+            "Reset qubit target",
+        )
         native = getattr(self.simulator, "reset_qubit", None)
         if callable(native):
-            native(int(target))
+            native(normalized_target)
             return
 
         legacy = getattr(self.simulator, "ResetQubit", None)
         if callable(legacy):
-            legacy(int(target))
+            legacy(normalized_target)
             return
 
         raise NotImplementedError("The active rocQuantum binding does not expose qubit reset.")
 
     def measure_qubit(self, target: int) -> int:
+        num_qubits = self.num_qubits()
+        normalized_target = normalize_single_qubit(
+            target,
+            None if num_qubits <= 0 else num_qubits,
+            "Measurement qubit target",
+        )
         native = getattr(self.simulator, "measure_qubit", None)
         if callable(native):
-            return int(native(int(target)))
+            return normalize_measurement_bit(
+                native(normalized_target),
+                "Measurement bit",
+            )
 
         legacy = getattr(self.simulator, "MeasureQubit", None)
         if callable(legacy):
-            return int(legacy(int(target)))
+            return normalize_measurement_bit(
+                legacy(normalized_target),
+                "Measurement bit",
+            )
 
         raise NotImplementedError("The active rocQuantum binding does not expose state-collapsing qubit measurement.")
 

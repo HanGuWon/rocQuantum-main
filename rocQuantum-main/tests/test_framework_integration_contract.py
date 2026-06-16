@@ -294,6 +294,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def normalize_positive_integer", source)
         self.assertIn("def normalize_pauli_expectation_payload", source)
         self.assertIn("def normalize_qubit_subset", source)
+        self.assertIn("def normalize_single_qubit", source)
+        self.assertIn("def normalize_measurement_bit", source)
         self.assertIn("def normalize_complex_result_vector", source)
         self.assertIn("def normalize_real_result_vector", source)
         self.assertIn("def normalize_sample_indices", source)

@@ -1251,6 +1251,61 @@ def test_framework_runtime_validates_qubit_subsets_before_native_dispatch(monkey
     assert probability_batch_sim.probability_requests == []
 
 
+def test_framework_runtime_validates_single_qubit_measure_reset_payloads(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        normalize_measurement_bit,
+        normalize_single_qubit,
+    )
+
+    assert normalize_single_qubit(np.int64(1), 2, "Qubit target") == 1
+    assert normalize_measurement_bit(np.int64(1)) == 1
+
+    invalid_targets = (True, np.bool_(False), "0", b"0", 0.0, 0.5, -1, 2)
+    for target in invalid_targets:
+        with pytest.raises(ValueError):
+            normalize_single_qubit(target, 2, "Qubit target")
+
+    invalid_bits = (True, np.bool_(False), "1", b"1", 0.0, 0.5, -1, 2)
+    for bit in invalid_bits:
+        with pytest.raises(ValueError, match="Measurement bit"):
+            normalize_measurement_bit(bit)
+
+    runtime = RocQuantumRuntime.from_bindings(2)
+    sim = _FakeQuantumSimulator.instances[-1]
+    for target in invalid_targets:
+        with pytest.raises(ValueError):
+            runtime.measure_qubit(target)
+        with pytest.raises(ValueError):
+            runtime.reset_qubit(target)
+    assert sim.measure_qubits == []
+    assert sim.reset_qubits == []
+
+    class _BadMeasureQubitResultSimulator:
+        def __init__(self, result):
+            self.result = result
+            self.calls = []
+
+        def num_qubits(self):
+            return 1
+
+        def measure_qubit(self, target):
+            self.calls.append(int(target))
+            return self.result
+
+    for result in invalid_bits:
+        sim = _BadMeasureQubitResultSimulator(result)
+        with pytest.raises(ValueError, match="Measurement bit"):
+            RocQuantumRuntime(sim).measure_qubit(0)
+        assert sim.calls == [0]
+
+    valid_sim = _BadMeasureQubitResultSimulator(np.int64(1))
+    assert RocQuantumRuntime(valid_sim).measure_qubit(0) == 1
+    assert valid_sim.calls == [0]
+
+
 def test_framework_runtime_rejects_ambiguous_shots_before_native_dispatch(monkeypatch):
     _install_fake_binding(monkeypatch)
 
