@@ -71,6 +71,26 @@ def normalize_targets(targets: Iterable[int]) -> list[int]:
     return normalized
 
 
+def normalize_qubit_subset(
+    targets: Iterable[int],
+    num_qubits: int | None = None,
+    label: str = "Qubit targets",
+    allow_empty: bool = True,
+) -> list[int]:
+    normalized = normalize_targets(targets)
+    if not normalized and not allow_empty:
+        raise ValueError(f"{label} must include at least one qubit.")
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{label} must be unique.")
+    if any(target < 0 for target in normalized):
+        raise ValueError(f"{label} is out of range.")
+    if num_qubits is not None:
+        normalized_num_qubits = int(num_qubits)
+        if any(target >= normalized_num_qubits for target in normalized):
+            raise ValueError(f"{label} is out of range.")
+    return normalized
+
+
 def normalize_pauli_expectation_payload(
     pauli_string: object,
     targets: Iterable[int],
@@ -198,15 +218,12 @@ def validate_operation_targets(
     num_qubits: int,
     label: str = "Operation targets",
 ) -> list[int]:
-    normalized = normalize_targets(targets)
-    if not normalized:
-        raise ValueError(f"{label} must include at least one qubit.")
-    if len(set(normalized)) != len(normalized):
-        raise ValueError(f"{label} must be unique.")
-    for target in normalized:
-        if target < 0 or target >= int(num_qubits):
-            raise ValueError(f"{label} is out of range.")
-    return normalized
+    return normalize_qubit_subset(
+        targets,
+        num_qubits,
+        label,
+        allow_empty=False,
+    )
 
 
 def operation_matrix_for_targets(
@@ -564,7 +581,12 @@ def probabilities_from_statevector(
     if qubits is None:
         normalized_qubits = list(range(num_qubits))
     else:
-        normalized_qubits = normalize_targets(qubits)
+        normalized_qubits = normalize_qubit_subset(
+            qubits,
+            num_qubits,
+            "Probability qubits",
+            allow_empty=True,
+        )
 
     if not normalized_qubits or normalized_qubits == list(range(num_qubits)):
         return np.ascontiguousarray(probabilities)
@@ -1223,7 +1245,13 @@ class RocQuantumRuntime:
 
     def measure(self, qubits: Iterable[int], shots: int) -> list[int]:
         shots = normalize_shots(shots)
-        normalized_qubits = normalize_targets(qubits)
+        num_qubits = self.num_qubits()
+        normalized_qubits = normalize_qubit_subset(
+            qubits,
+            None if num_qubits <= 0 else num_qubits,
+            "Measurement qubits",
+            allow_empty=False,
+        )
         measure = getattr(self.simulator, "measure", None)
         if not callable(measure):
             raise NotImplementedError("The active rocQuantum binding does not expose native sampling.")
@@ -1235,7 +1263,13 @@ class RocQuantumRuntime:
         return [int(sample) for sample in samples]
 
     def measure_batch(self, qubits: Iterable[int], shots: int) -> np.ndarray:
-        normalized_qubits = normalize_targets(qubits)
+        num_qubits = self.num_qubits()
+        normalized_qubits = normalize_qubit_subset(
+            qubits,
+            None if num_qubits <= 0 else num_qubits,
+            "Measurement qubits",
+            allow_empty=False,
+        )
         shots = normalize_shots(shots)
 
         native = getattr(self.simulator, "measure_batch", None)
@@ -1260,7 +1294,17 @@ class RocQuantumRuntime:
         return sample_indices_batch_from_probabilities(probabilities, shots)
 
     def probabilities(self, qubits: Iterable[int] | None = None) -> np.ndarray:
-        normalized_qubits = None if qubits is None else normalize_targets(qubits)
+        num_qubits = self.num_qubits()
+        normalized_qubits = (
+            None
+            if qubits is None
+            else normalize_qubit_subset(
+                qubits,
+                None if num_qubits <= 0 else num_qubits,
+                "Probability qubits",
+                allow_empty=True,
+            )
+        )
         native_qubits = [] if normalized_qubits is None else normalized_qubits
 
         def _native_probabilities_unavailable(exc: Exception) -> bool:
@@ -1286,7 +1330,17 @@ class RocQuantumRuntime:
         return probabilities_from_statevector(self.statevector(), normalized_qubits)
 
     def probabilities_batch(self, qubits: Iterable[int] | None = None) -> np.ndarray:
-        normalized_qubits = None if qubits is None else normalize_targets(qubits)
+        num_qubits = self.num_qubits()
+        normalized_qubits = (
+            None
+            if qubits is None
+            else normalize_qubit_subset(
+                qubits,
+                None if num_qubits <= 0 else num_qubits,
+                "Probability qubits",
+                allow_empty=True,
+            )
+        )
         native_qubits = [] if normalized_qubits is None else normalized_qubits
 
         def _native_probabilities_unavailable(exc: Exception) -> bool:

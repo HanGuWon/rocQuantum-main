@@ -1194,6 +1194,63 @@ def test_framework_runtime_rejects_ambiguous_targets_before_native_dispatch(monk
     assert batch_sim.probability_requests == []
 
 
+def test_framework_runtime_validates_qubit_subsets_before_native_dispatch(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        normalize_qubit_subset,
+        probabilities_from_statevector,
+    )
+
+    assert normalize_qubit_subset([np.int64(1), 0], 2, "Qubit targets") == [1, 0]
+    assert normalize_qubit_subset([], 2, "Qubit targets", allow_empty=True) == []
+    with pytest.raises(ValueError, match="Qubit targets"):
+        normalize_qubit_subset([], 2, "Qubit targets", allow_empty=False)
+    with pytest.raises(ValueError, match="Qubit targets"):
+        normalize_qubit_subset([0, 0], 2, "Qubit targets")
+    with pytest.raises(ValueError, match="Qubit targets"):
+        normalize_qubit_subset([-1], 2, "Qubit targets")
+    with pytest.raises(ValueError, match="Qubit targets"):
+        normalize_qubit_subset([2], 2, "Qubit targets")
+
+    state = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.complex128)
+    for probability_qubits in ([0, 0], [-1], [2]):
+        with pytest.raises(ValueError, match="Probability qubits"):
+            probabilities_from_statevector(state, probability_qubits)
+    np.testing.assert_allclose(probabilities_from_statevector(state, []), np.array([1.0, 0.0, 0.0, 0.0]))
+
+    runtime = RocQuantumRuntime.from_bindings(2)
+    sim = _FakeQuantumSimulator.instances[-1]
+    for measure_qubits in ([], [0, 0], [-1], [2]):
+        with pytest.raises(ValueError, match="Measurement qubits"):
+            runtime.measure(measure_qubits, 1)
+    assert sim.measurements == []
+
+    batch_runtime = RocQuantumRuntime.from_bindings(2, batch_size=2)
+    batch_sim = _FakeQuantumSimulator.instances[-1]
+    for measure_qubits in ([], [0, 0], [-1], [2]):
+        with pytest.raises(ValueError, match="Measurement qubits"):
+            batch_runtime.measure_batch(measure_qubits, 1)
+    assert batch_sim.measurements == []
+    assert batch_sim.probability_requests == []
+
+    _FakeQuantumSimulator.enable_probabilities = True
+    probability_runtime = RocQuantumRuntime.from_bindings(2)
+    probability_sim = _FakeQuantumSimulator.instances[-1]
+    for probability_qubits in ([0, 0], [-1], [2]):
+        with pytest.raises(ValueError, match="Probability qubits"):
+            probability_runtime.probabilities(probability_qubits)
+    assert probability_sim.probability_requests == []
+
+    probability_batch_runtime = RocQuantumRuntime.from_bindings(2, batch_size=2)
+    probability_batch_sim = _FakeQuantumSimulator.instances[-1]
+    for probability_qubits in ([0, 0], [-1], [2]):
+        with pytest.raises(ValueError, match="Probability qubits"):
+            probability_batch_runtime.probabilities_batch(probability_qubits)
+    assert probability_batch_sim.probability_requests == []
+
+
 def test_framework_runtime_rejects_ambiguous_shots_before_native_dispatch(monkeypatch):
     _install_fake_binding(monkeypatch)
 
