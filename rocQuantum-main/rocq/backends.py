@@ -127,10 +127,34 @@ def _coerce_complex64_matrix(matrix: np.ndarray) -> np.ndarray:
     return np.asarray(matrix, dtype=np.complex64, order="C")
 
 
-def _format_sample_counts(raw_results: Iterable[int], width: int) -> Dict[str, int]:
+def _format_sample_counts(
+    raw_results: Iterable[int],
+    width: int,
+    expected_shots: int | None = None,
+) -> Dict[str, int]:
+    normalized_width = _validate_positive_integer(width, "sample result width")
+    normalized_expected_shots = (
+        None
+        if expected_shots is None
+        else _validate_positive_integer(expected_shots, "sample result count")
+    )
+    try:
+        raw = list(raw_results)
+    except TypeError as exc:
+        raise ValueError("sample results must be a sequence of integer outcome indices.") from exc
+
+    if normalized_expected_shots is not None and len(raw) != normalized_expected_shots:
+        raise ValueError("sample result count must match requested shots.")
+
+    outcome_limit = 1 << normalized_width
     counts: Dict[str, int] = {}
-    for outcome in raw_results:
-        bitstring = format(int(outcome), f"0{width}b")
+    for outcome in raw:
+        if isinstance(outcome, bool) or not isinstance(outcome, Integral):
+            raise ValueError("sample results must contain integer outcome indices.")
+        normalized_outcome = int(outcome)
+        if normalized_outcome < 0 or normalized_outcome >= outcome_limit:
+            raise ValueError("sample result is outside the measured qubit range.")
+        bitstring = format(normalized_outcome, f"0{normalized_width}b")
         counts[bitstring] = counts.get(bitstring, 0) + 1
     return counts
 
@@ -1736,7 +1760,7 @@ class StabilizerBackend(_BaseBackend):
             raise RuntimeError("Stabilizer state has no probability mass.")
         probs /= total
         raw_results = np.random.choice(len(probs), size=shots, p=probs).astype(np.uint64)
-        return _format_sample_counts(raw_results, len(measured_qubits))
+        return _format_sample_counts(raw_results, len(measured_qubits), shots)
 
     def _stabilizer_group(self) -> dict[tuple[str, ...], complex]:
         group = {tuple(["I"] * int(self.num_qubits)): 1.0 + 0.0j}
@@ -1915,7 +1939,7 @@ class StateVectorBackend(_BaseBackend):
         shots = _validate_positive_integer(shots, "shots")
         measured_qubits = _normalize_sample_qubits(qubits, self.num_qubits)
         raw_results = self._state.sample(measured_qubits, shots)
-        return _format_sample_counts(raw_results, len(measured_qubits))
+        return _format_sample_counts(raw_results, len(measured_qubits), shots)
 
     def expectation(self, operator):
         return self._state.expectation(operator)
@@ -2112,7 +2136,7 @@ class DensityMatrixBackend(_BaseBackend):
         shots = _validate_positive_integer(shots, "shots")
         measured_qubits = _normalize_sample_qubits(qubits, self.num_qubits)
         raw_results = self._state.sample(measured_qubits, shots)
-        return _format_sample_counts(raw_results, len(measured_qubits))
+        return _format_sample_counts(raw_results, len(measured_qubits), shots)
 
     def expectation(self, operator):
         if isinstance(operator, HermitianOperator):

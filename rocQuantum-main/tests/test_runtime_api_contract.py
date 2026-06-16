@@ -669,6 +669,47 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                         rocq.sample(prep_state, 8, backend="state_vector", qubits=qubits)
                 patched_get_backend.assert_not_called()
 
+    def test_direct_backends_revalidate_native_sample_results_before_counts(self):
+        from rocq.backends import DensityMatrixBackend, StateVectorBackend, _format_sample_counts
+
+        self.assertEqual(
+            _format_sample_counts([np.uint64(0), np.int64(3), 3], 2, 3),
+            {"00": 1, "11": 2},
+        )
+
+        invalid_payloads = (
+            [0, 1],
+            [0, 4, 1],
+            [0, -1, 1],
+            [0, True, 1],
+            [0, 1.5, 1],
+            [0, "1", 1],
+            np.array([[0, 1, 2]], dtype=np.int64),
+        )
+        for payload in invalid_payloads:
+            with self.subTest(helper_payload=repr(payload)):
+                with self.assertRaisesRegex(ValueError, "sample result"):
+                    _format_sample_counts(payload, 2, 3)
+
+        for backend_cls in (StateVectorBackend, DensityMatrixBackend):
+            with self.subTest(backend=backend_cls.__name__, payload="valid"):
+                backend = backend_cls.__new__(backend_cls)
+                backend.num_qubits = 2
+                backend._state = mock.Mock()
+                backend._state.sample.return_value = [0, 3, 3]
+                self.assertEqual(backend.sample(3, qubits=[0, 1]), {"00": 1, "11": 2})
+                backend._state.sample.assert_called_once_with([0, 1], 3)
+
+            for payload in invalid_payloads:
+                with self.subTest(backend=backend_cls.__name__, payload=repr(payload)):
+                    backend = backend_cls.__new__(backend_cls)
+                    backend.num_qubits = 2
+                    backend._state = mock.Mock()
+                    backend._state.sample.return_value = payload
+                    with self.assertRaisesRegex(ValueError, "sample result"):
+                        backend.sample(3, qubits=[0, 1])
+                    backend._state.sample.assert_called_once_with([0, 1], 3)
+
     def test_kernel_rejects_invalid_gate_targets_before_backend_dispatch(self):
         invalid_targets = (2, -1, 0.5, True, "0")
 
