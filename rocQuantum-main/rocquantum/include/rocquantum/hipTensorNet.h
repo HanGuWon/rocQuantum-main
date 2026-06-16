@@ -181,7 +181,7 @@ rocqStatus_t rocTensorNetworkContract(rocTensorNetworkHandle_t handle,
  * @param[out] S The resulting singular values (a vector).
  * @param[out] V The resulting unitary matrix V.
  * @param[in] A The input matrix to decompose.
- * @param[in] workspace A pre-allocated device buffer for rocSOLVER to use.
+ * @param[in] workspace Reserved for future rocSOLVER workspace control; currently unused and may be null.
  * @return rocqStatus_t Status of the operation.
  */
 rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,

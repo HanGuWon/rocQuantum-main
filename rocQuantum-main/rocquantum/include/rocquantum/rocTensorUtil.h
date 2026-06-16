@@ -279,37 +279,27 @@ rocqStatus_t rocTensorPermute(
 
 
 /**
- * @brief Conceptually contracts two tensors (tensorA, tensorB) using rocBLAS GEMM
- *        and stores the result in `result_tensor`.
+ * @brief Contracts two tensors using the simplified einsum parser plus rocBLAS GEMM.
  *
- * @note This is a conceptual wrapper. The current implementation is a STUB and
- *       does NOT perform actual tensor permutation, reshaping, or correct contraction.
- *       It primarily serves to establish the API and ensure rocBLAS linkage.
- *       The `contraction_indices_spec` is not fully parsed or used yet.
- *       `result_tensor` must be pre-allocated by the caller with the expected dimensions.
- *
- * A full implementation would involve:
- * 1. Parsing `contraction_indices_spec` (e.g., an Einstein summation string or explicit index pairs).
- * 2. Permuting `tensorA` and `tensorB` so that contracted modes are contiguous
- *    and uncontracted modes are contiguous, suitable for GEMM.
- * 3. Reshaping (casting) the permuted tensors into 2D matrices (tensor_A_matrix, tensor_B_matrix).
- * 4. Performing the matrix multiplication: C = A * B using `rocblas_cgemm`.
- * 5. Reshaping the resulting matrix C back into the `result_tensor`'s correct higher-order shape.
+ * @note The implementation supports the parser subset accepted by
+ *       `parse_simple_einsum_spec` and requires `result_tensor` to be
+ *       pre-allocated with the expected dimensions. It is not a full
+ *       cuTensorNet-style contraction planner, but it does perform the parsed
+ *       pair contraction through `rocTensorContractPair_internal`.
  *
  * @param result_tensor Pointer to the rocTensor struct for the output. Must be pre-allocated.
  * @param tensorA Pointer to the first input rocTensor.
  * @param tensorB Pointer to the second input rocTensor.
- * @param contraction_indices_spec A string or other structure specifying how indices are contracted.
- *                                 (Currently a placeholder, not fully utilized).
+ * @param contraction_indices_spec A simplified einsum string specifying how indices are contracted.
  * @param blas_handle A rocBLAS handle, assumed to be initialized by the caller.
  * @param stream The HIP stream to use for rocBLAS operations.
- * @return rocqStatus_t Status of the operation. ROCQ_STATUS_NOT_IMPLEMENTED for actual contraction logic.
+ * @return rocqStatus_t Status of the parsed pair contraction.
  */
 rocqStatus_t rocTensorContractWithRocBLAS(
     rocTensor* result_tensor,
     const rocTensor* tensorA,
     const rocTensor* tensorB,
-    const char* contraction_indices_spec, // Placeholder for actual spec, e.g., "ijk,klm->ijlm"
+    const char* contraction_indices_spec,
     rocblas_handle blas_handle,
     hipStream_t stream);
 

@@ -1528,15 +1528,12 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             if (A.rank() != 2) {
                 throw std::runtime_error("SVD input must be a 2D tensor (matrix).");
             }
-            // NOTE: Workspace management is simplified here. A robust implementation
-            // would query rocsolver for the required workspace size.
-            DeviceBuffer workspace(1, 1); // Placeholder
 
             auto U = rocquantum::util::rocTensor();
             auto S = rocquantum::util::rocTensor();
             auto V = rocquantum::util::rocTensor();
 
-            rocqStatus_t status = rocTensorSVD(handle.get(), &U, &S, &V, &A, workspace.ptr_);
+            rocqStatus_t status = rocTensorSVD(handle.get(), &U, &S, &V, &A, nullptr);
             if (status != ROCQ_STATUS_SUCCESS) {
                 throw std::runtime_error(tensornet_status_message("rocTensorSVD", status));
             }

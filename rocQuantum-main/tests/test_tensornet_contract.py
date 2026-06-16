@@ -42,6 +42,13 @@ _TENSORNET_CMAKE = os.path.join(
     "hipTensorNet",
     "CMakeLists.txt",
 )
+_TENSOR_UTIL_HEADER = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "include",
+    "rocquantum",
+    "rocTensorUtil.h",
+)
 _STALE_PATHFINDER_SOURCE = os.path.join(_PROJECT_ROOT, "rocquantum", "src", "Pathfinder.cpp")
 _STALE_PATHFINDER_HEADER = os.path.join(
     _PROJECT_ROOT,
@@ -97,6 +104,33 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("rocblas_zgemm", tensor_util_source)
         self.assertNotIn("if (dtype != ROC_DATATYPE_C64)", tensornet_source)
         self.assertNotIn("handle->dtype != ROC_DATATYPE_C64", tensornet_source)
+
+    def test_svd_binding_does_not_allocate_unused_workspace(self):
+        with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        with open(_TENSORNET_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("rocTensorSVD(handle.get(), &U, &S, &V, &A, nullptr)", bindings)
+        self.assertNotIn("DeviceBuffer workspace(1, 1)", bindings)
+        self.assertIn("Reserved for future rocSOLVER workspace control", header)
+        self.assertIn("(void)workspace", source)
+
+    def test_tensor_util_contract_header_matches_real_pair_contraction(self):
+        with open(_TENSOR_UTIL_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_TENSOR_UTIL_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("parse_simple_einsum_spec", source)
+        self.assertIn("rocTensorContractPair_internal", source)
+        self.assertIn("simplified einsum parser plus rocBLAS GEMM", header)
+        self.assertIn("rocTensorContractPair_internal", header)
+        self.assertNotIn("current implementation is a STUB", header)
+        self.assertNotIn("Currently a placeholder", header)
+        self.assertNotIn("ROCQ_STATUS_NOT_IMPLEMENTED for actual contraction logic", header)
 
     def test_optimizer_and_memory_limit_are_not_silent(self):
         with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
