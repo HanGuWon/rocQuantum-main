@@ -26,6 +26,7 @@ _MULTI_NODE_UNSUPPORTED_NOTE = (
     "supports only experimental single-node multi-GPU scaffolding; use "
     "multi_gpu=True on one ROCm host or run separate jobs explicitly."
 )
+_STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW = 60
 
 
 def _validate_nonnegative_integer(value, name: str) -> int:
@@ -44,6 +45,16 @@ def _validate_positive_integer(value, name: str) -> int:
     if normalized <= 0:
         raise ValueError(f"{name} must be a positive integer.")
     return normalized
+
+
+def _statevector_dimension(num_qubits, name: str = "Number of qubits") -> int:
+    normalized = _validate_nonnegative_integer(num_qubits, name)
+    if normalized > _STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW:
+        raise ValueError(
+            f"{name} exceeds the state-vector backend maximum "
+            f"of {_STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW}."
+        )
+    return 1 << normalized
 
 
 def _validate_boolean(value, name: str) -> bool:
@@ -123,7 +134,7 @@ def _validate_statevector_readback(values, num_qubits: int) -> np.ndarray:
 
     if raw.ndim != 1:
         raise ValueError(f"{label} must be one-dimensional.")
-    expected_size = 1 << int(num_qubits)
+    expected_size = _statevector_dimension(num_qubits)
     if raw.size != expected_size:
         raise ValueError(f"{label} length must match the circuit qubit count.")
     return np.ascontiguousarray(_normalize_statevector_values(raw, label), dtype=np.complex64)
@@ -132,7 +143,7 @@ def _validate_statevector_readback(values, num_qubits: int) -> np.ndarray:
 def _validate_statevector_batch_readback(values, batch_size: int, num_qubits: int) -> np.ndarray:
     label = "Statevector batch readback"
     expected_batch = _validate_positive_integer(batch_size, "Statevector batch size")
-    expected_width = 1 << int(num_qubits)
+    expected_width = _statevector_dimension(num_qubits)
     try:
         raw = np.asarray(values, dtype=object)
     except (TypeError, ValueError) as exc:
@@ -206,6 +217,7 @@ class Circuit:
         if not isinstance(simulator, Simulator):
             raise TypeError("A valid Simulator instance is required.")
         num_qubits = _validate_nonnegative_integer(num_qubits, "Number of qubits")
+        _statevector_dimension(num_qubits)
         batch_size = _validate_positive_integer(batch_size, "batch_size")
         multi_gpu = _validate_boolean(multi_gpu, "multi_gpu")
         multi_node = _validate_boolean(multi_node, "multi_node")

@@ -232,6 +232,10 @@ class TestLegacyCircuitBatchState(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Number of qubits"):
                     module.Circuit(num_qubits, simulator)
 
+        with self.assertRaisesRegex(ValueError, "state-vector backend maximum"):
+            module.Circuit(61, simulator)
+        self.assertNotIn(("allocate_state", ("handle", 61, 1)), backend.calls)
+
         with self.assertRaisesRegex(ValueError, "multi_gpu must be a boolean"):
             module.Circuit(2, simulator, multi_gpu="yes")
 
@@ -410,6 +414,17 @@ class TestLegacyCircuitBatchState(unittest.TestCase):
             circuit.get_statevector(batch_index=True)
 
     def test_batched_statevector_readback_validates_native_payloads(self):
+        backend = _fake_backend()
+        module = _load_legacy_api(backend)
+        self.assertEqual(module._statevector_dimension(0), 1)
+        self.assertEqual(module._statevector_dimension(1), 2)
+        with self.assertRaisesRegex(ValueError, "state-vector backend maximum"):
+            module._statevector_dimension(61)
+        with self.assertRaisesRegex(ValueError, "state-vector backend maximum"):
+            module._validate_statevector_readback([], 61)
+        with self.assertRaisesRegex(ValueError, "state-vector backend maximum"):
+            module._validate_statevector_batch_readback([], 1, 61)
+
         invalid_slices = (
             [1],
             [1, 0, 0],
