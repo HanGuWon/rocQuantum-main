@@ -175,10 +175,18 @@ def _contains_dense_operator_observable(observables) -> bool:
 def _validate_precision(precision: float | None) -> None:
     if precision is None:
         return
+    if isinstance(precision, (bool, np.bool_)):
+        raise ValueError("precision must be a finite non-negative real number.")
     if not isinstance(precision, Real):
         raise TypeError(f"precision must be a real number, not {type(precision)}.")
-    if precision < 0:
-        raise ValueError("precision must be non-negative")
+    normalized = float(precision)
+    if not np.isfinite(normalized) or normalized < 0:
+        raise ValueError("precision must be a finite non-negative real number.")
+
+
+def _normalize_precision(precision: float | None) -> float | None:
+    _validate_precision(precision)
+    return None if precision is None else float(precision)
 
 
 class _DenseOperatorObservablesArray:
@@ -561,10 +569,10 @@ class RocQuantumEstimator(BaseEstimatorV2):
 
     def __init__(self, backend, *, default_precision: float = 0.0):
         self._backend = backend
-        self._default_precision = float(default_precision)
+        self._default_precision = _normalize_precision(default_precision)
 
     def run(self, pubs, *, precision: float | None = None):
-        target_precision = self._default_precision if precision is None else float(precision)
+        target_precision = self._default_precision if precision is None else _normalize_precision(precision)
         coerced_pubs = [_coerce_estimator_pub(pub, target_precision) for pub in pubs]
         job = PrimitiveJob(self._run, coerced_pubs)
         job._submit()

@@ -6,6 +6,12 @@ except ImportError:  # Qiskit 1.x/2.x no longer requires ProviderV1 for local pr
     _ProviderBase = object
 
 
+def _reject_unknown_native_options(options, primitive_name):
+    if options:
+        option_names = ", ".join(sorted(str(name) for name in options))
+        raise ValueError(f"Unsupported native {primitive_name} option(s): {option_names}")
+
+
 class RocQuantumProvider(_ProviderBase):
     """
     Provider for the rocQuantum simulator backend.
@@ -46,6 +52,7 @@ class RocQuantumProvider(_ProviderBase):
                 if options
                 else None
             )
+            _reject_unknown_native_options(options, "sampler")
             return RocQuantumSampler(
                 self.get_backend(name),
                 default_shots=default_shots,
@@ -62,6 +69,7 @@ class RocQuantumProvider(_ProviderBase):
             from .estimator import RocQuantumEstimator
 
             default_precision = options.pop("default_precision", 0.0) if options else 0.0
+            _reject_unknown_native_options(options, "estimator")
             return RocQuantumEstimator(
                 self.get_backend(name),
                 default_precision=default_precision,

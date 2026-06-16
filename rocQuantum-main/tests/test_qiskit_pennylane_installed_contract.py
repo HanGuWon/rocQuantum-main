@@ -3613,6 +3613,8 @@ def test_qiskit_provider_rejects_bool_or_nonpositive_sampling_options(monkeypatc
         provider.get_sampler(max_dynamic_loop_iterations=True)
     with pytest.raises(ValueError, match="max_dynamic_loop_iterations must be positive"):
         provider.get_sampler(max_dynamic_loop_iterations=0)
+    with pytest.raises(ValueError, match="Unsupported native sampler option"):
+        provider.get_sampler(seed=1234)
 
     sampler = provider.get_sampler()
     with pytest.raises(ValueError, match="shots must be a positive integer"):
@@ -3625,6 +3627,30 @@ def test_qiskit_provider_rejects_bool_or_nonpositive_sampling_options(monkeypatc
         backend.run(circuit, shots=True)
     with pytest.raises(ValueError, match="max_dynamic_loop_iterations must be a positive integer"):
         backend.run(circuit, max_dynamic_loop_iterations=True)
+
+
+def test_qiskit_provider_rejects_invalid_estimator_options(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+
+    with pytest.raises(ValueError, match="Unsupported native estimator option"):
+        provider.get_estimator(seed=1234)
+    with pytest.raises(ValueError, match="precision must be a finite non-negative real number"):
+        provider.get_estimator(default_precision=True)
+    with pytest.raises(ValueError, match="precision must be a finite non-negative real number"):
+        provider.get_estimator(default_precision=-1.0)
+    with pytest.raises(ValueError, match="precision must be a finite non-negative real number"):
+        provider.get_estimator(default_precision=math.nan)
+
+    estimator = provider.get_estimator()
+    with pytest.raises(ValueError, match="precision must be a finite non-negative real number"):
+        estimator.run([], precision=True)
+    with pytest.raises(ValueError, match="precision must be a finite non-negative real number"):
+        estimator.run([], precision=math.inf)
 
 
 def test_qiskit_provider_primitives_run_with_backend(monkeypatch):
