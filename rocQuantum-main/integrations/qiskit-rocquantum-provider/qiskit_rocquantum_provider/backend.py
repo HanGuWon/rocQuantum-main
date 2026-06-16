@@ -449,7 +449,10 @@ class RocQuantumBackend(BackendV2):
     A Qiskit backend that interfaces with the rocQuantum C++/HIP simulator.
     """
     def __init__(self, provider=None, **kwargs):
-        max_target_qubits = int(kwargs.pop("max_target_qubits", 64))
+        max_target_qubits = normalize_positive_integer(
+            kwargs.pop("max_target_qubits", 64),
+            "max_target_qubits",
+        )
         super().__init__(provider=provider, name="rocq_simulator", **kwargs)
 
         # The simulator is instantiated once and maintained for the lifetime of the backend

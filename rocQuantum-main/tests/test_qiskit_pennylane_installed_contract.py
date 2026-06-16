@@ -3595,6 +3595,20 @@ def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     assert isinstance(provider.get_estimator(native=False), BackendEstimatorV2)
 
 
+def test_qiskit_backend_rejects_invalid_max_target_qubits(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit_rocquantum_provider import RocQuantumBackend
+
+    with pytest.raises(ValueError, match="max_target_qubits must be a positive integer"):
+        RocQuantumBackend(max_target_qubits=True)
+    with pytest.raises(ValueError, match="max_target_qubits must be positive"):
+        RocQuantumBackend(max_target_qubits=0)
+    with pytest.raises(ValueError, match="max_target_qubits must be a positive integer"):
+        RocQuantumBackend(max_target_qubits="4")
+
+
 def test_qiskit_provider_rejects_bool_or_nonpositive_sampling_options(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
