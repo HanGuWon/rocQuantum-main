@@ -1367,6 +1367,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
     class RocTensorNetworkHandleWrapper {
     public:
         rocTensorNetworkHandle_t handle_ = nullptr;
+        rocblas_handle blas_handle_ = nullptr;
         RocsvHandleWrapper& sim_handle_ref_; // Keep a reference to the simulator's handle for rocBLAS/stream
 
         RocTensorNetworkHandleWrapper(RocsvHandleWrapper& sim_handle, py::object dtype_source) 
@@ -1387,9 +1388,19 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             if (status != ROCQ_STATUS_SUCCESS) {
                 throw std::runtime_error(tensornet_status_message("rocTensorNetworkCreate", status));
             }
+
+            rocblas_status blas_status = rocblas_create_handle(&blas_handle_);
+            if (blas_status != rocblas_status_success) {
+                rocTensorNetworkDestroy(handle_);
+                handle_ = nullptr;
+                throw std::runtime_error("rocblas_create_handle failed for TensorNet contraction.");
+            }
         }
 
         ~RocTensorNetworkHandleWrapper() {
+            if (blas_handle_) {
+                rocblas_destroy_handle(blas_handle_);
+            }
             if (handle_) {
                 rocTensorNetworkDestroy(handle_);
             }
@@ -1401,14 +1412,18 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
 
         // Allow move construction
         RocTensorNetworkHandleWrapper(RocTensorNetworkHandleWrapper&& other) noexcept
-            : handle_(other.handle_), sim_handle_ref_(other.sim_handle_ref_) {
+            : handle_(other.handle_),
+              blas_handle_(other.blas_handle_),
+              sim_handle_ref_(other.sim_handle_ref_) {
             other.handle_ = nullptr;
+            other.blas_handle_ = nullptr;
         }
         
         // Note: Move assignment is problematic with reference members and is omitted for simplicity.
         RocTensorNetworkHandleWrapper& operator=(RocTensorNetworkHandleWrapper&& other) = delete;
 
         rocTensorNetworkHandle_t get() const { return handle_; }
+        rocblas_handle get_blas_handle() const { return blas_handle_; }
         RocsvHandleWrapper& get_sim_handle() const { return sim_handle_ref_; }
     };
 
@@ -1475,19 +1490,11 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
                 throw std::runtime_error(tensornet_status_message("rocsvGetStream", stream_status));
             }
 
-            rocblas_handle blas_h = nullptr;
-            rocblas_status blas_status = rocblas_create_handle(&blas_h);
-            if (blas_status != rocblas_status_success) {
-                throw std::runtime_error("rocblas_create_handle failed for TensorNet contraction.");
-            }
-            rocqStatus_t status = rocTensorNetworkContract(self.get(), &config, &result_tensor_py, blas_h, stream);
-            rocblas_status destroy_status = rocblas_destroy_handle(blas_h);
+            rocqStatus_t status = rocTensorNetworkContract(
+                self.get(), &config, &result_tensor_py, self.get_blas_handle(), stream);
             
             if (status != ROCQ_STATUS_SUCCESS) {
                 throw std::runtime_error(tensornet_contract_status_message(status, config));
-            }
-            if (destroy_status != rocblas_status_success) {
-                throw std::runtime_error("rocblas_destroy_handle failed after TensorNet contraction.");
             }
         }, py::arg("optimizer_config"), py::arg("result_tensor").noconvert(), "Contracts the tensor network. Result tensor must be pre-allocated.");
 

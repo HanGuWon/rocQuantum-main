@@ -188,12 +188,16 @@ class TestTensorNetContract(unittest.TestCase):
 
         self.assertIn("rocsvGetStream(self.get_sim_handle().get(), &stream)", source)
         self.assertIn("tensornet_status_message(\"rocsvGetStream\", stream_status)", source)
-        self.assertIn("rocblas_create_handle(&blas_h)", source)
-        self.assertIn("rocblas_destroy_handle(blas_h)", source)
-        self.assertIn("rocTensorNetworkContract(self.get(), &config, &result_tensor_py, blas_h, stream)", source)
+        self.assertIn("rocblas_handle blas_handle_ = nullptr", source)
+        self.assertIn("rocblas_create_handle(&blas_handle_)", source)
+        self.assertIn("rocblas_destroy_handle(blas_handle_)", source)
+        self.assertIn("self.get_blas_handle()", source)
+        self.assertIn("rocTensorNetworkContract", source)
         self.assertNotIn("Using placeholders for now", source)
         self.assertNotIn("rocblas_handle blas_h = nullptr; // Placeholder", source)
         self.assertNotIn("hipStream_t stream = 0; // Placeholder", source)
+        self.assertNotIn("rocblas_create_handle(&blas_h)", source)
+        self.assertNotIn("rocblas_destroy_handle(blas_h)", source)
 
     def test_docs_describe_limited_slicing_and_mixed_precision_boundary(self):
         with open(_README, "r", encoding="utf-8") as f:
