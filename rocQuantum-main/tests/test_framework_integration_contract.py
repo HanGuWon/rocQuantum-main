@@ -293,6 +293,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("from numbers import Integral", source)
         self.assertIn("def normalize_positive_integer", source)
         self.assertIn("def normalize_pauli_expectation_payload", source)
+        self.assertIn("def normalize_complex_result_vector", source)
         self.assertIn("def normalize_real_result_vector", source)
         self.assertIn("def normalize_sample_indices", source)
         self.assertIn("def normalize_targets", source)

@@ -150,6 +150,24 @@ def as_complex_vector(values: object, label: str = "Statevector amplitudes") -> 
     )
 
 
+def normalize_complex_result_vector(
+    values: object,
+    label: str,
+    expected_count: int | None = None,
+) -> np.ndarray:
+    normalized = as_complex_vector(values, label).reshape(-1)
+    if expected_count is not None:
+        normalized_count = normalize_positive_integer(expected_count, f"{label} count")
+        if normalized.size != normalized_count:
+            raise ValueError(f"{label} count must match the expected result size.")
+    return np.ascontiguousarray(normalized)
+
+
+def normalize_complex_result_scalar(value: object, label: str) -> complex:
+    normalized = normalize_complex_result_vector(value, label, expected_count=1)
+    return complex(normalized[0])
+
+
 def as_complex_matrix(matrix: object, label: str = "Operation matrix") -> np.ndarray:
     try:
         raw = np.asarray(matrix, dtype=object)
@@ -1405,7 +1423,10 @@ class RocQuantumRuntime:
         native = getattr(self.simulator, "expectation_matrix", None)
         if callable(native):
             try:
-                return complex(native(normalized_matrix, normalized_targets))
+                return normalize_complex_result_scalar(
+                    native(normalized_matrix, normalized_targets),
+                    "Dense expectation value",
+                )
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
                     raise
@@ -1413,7 +1434,10 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "ExpectationMatrix", None)
         if callable(legacy):
             try:
-                return complex(legacy(normalized_matrix, normalized_targets))
+                return normalize_complex_result_scalar(
+                    legacy(normalized_matrix, normalized_targets),
+                    "Dense expectation value",
+                )
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
                     raise
@@ -1429,7 +1453,10 @@ class RocQuantumRuntime:
         if callable(native):
             try:
                 mean, second_moment = native(normalized_matrix, normalized_targets)
-                return complex(mean), complex(second_moment)
+                return (
+                    normalize_complex_result_scalar(mean, "Dense expectation mean"),
+                    normalize_complex_result_scalar(second_moment, "Dense expectation second moment"),
+                )
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
                     raise
@@ -1438,7 +1465,10 @@ class RocQuantumRuntime:
         if callable(legacy):
             try:
                 mean, second_moment = legacy(normalized_matrix, normalized_targets)
-                return complex(mean), complex(second_moment)
+                return (
+                    normalize_complex_result_scalar(mean, "Dense expectation mean"),
+                    normalize_complex_result_scalar(second_moment, "Dense expectation second moment"),
+                )
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
                     raise
@@ -1491,8 +1521,10 @@ class RocQuantumRuntime:
         native = getattr(self.simulator, "expectation_matrix_batch", None)
         if callable(native):
             try:
-                return np.asarray(native(normalized_matrix, normalized_targets), dtype=np.complex128).reshape(
-                    self.batch_size()
+                return normalize_complex_result_vector(
+                    native(normalized_matrix, normalized_targets),
+                    "Batched dense expectation values",
+                    expected_count=self.batch_size(),
                 )
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
@@ -1501,8 +1533,10 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "ExpectationMatrixBatch", None)
         if callable(legacy):
             try:
-                return np.asarray(legacy(normalized_matrix, normalized_targets), dtype=np.complex128).reshape(
-                    self.batch_size()
+                return normalize_complex_result_vector(
+                    legacy(normalized_matrix, normalized_targets),
+                    "Batched dense expectation values",
+                    expected_count=self.batch_size(),
                 )
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
@@ -1542,8 +1576,16 @@ class RocQuantumRuntime:
             try:
                 means, second_moments = native(normalized_matrix, normalized_targets)
                 return (
-                    np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
-                    np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
+                    normalize_complex_result_vector(
+                        means,
+                        "Batched dense expectation means",
+                        expected_count=self.batch_size(),
+                    ),
+                    normalize_complex_result_vector(
+                        second_moments,
+                        "Batched dense expectation second moments",
+                        expected_count=self.batch_size(),
+                    ),
                 )
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
@@ -1554,8 +1596,16 @@ class RocQuantumRuntime:
             try:
                 means, second_moments = legacy(normalized_matrix, normalized_targets)
                 return (
-                    np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
-                    np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
+                    normalize_complex_result_vector(
+                        means,
+                        "Batched dense expectation means",
+                        expected_count=self.batch_size(),
+                    ),
+                    normalize_complex_result_vector(
+                        second_moments,
+                        "Batched dense expectation second moments",
+                        expected_count=self.batch_size(),
+                    ),
                 )
             except Exception as exc:
                 if not _native_expectation_unavailable(exc):
@@ -1621,7 +1671,10 @@ class RocQuantumRuntime:
                     normalized_indptr,
                     normalized_shape,
                 )
-                return complex(mean), complex(second_moment)
+                return (
+                    normalize_complex_result_scalar(mean, "Sparse Hamiltonian mean"),
+                    normalize_complex_result_scalar(second_moment, "Sparse Hamiltonian second moment"),
+                )
             except Exception as exc:
                 if not _native_sparse_unavailable(exc):
                     raise
@@ -1635,7 +1688,10 @@ class RocQuantumRuntime:
                     normalized_indptr,
                     normalized_shape,
                 )
-                return complex(mean), complex(second_moment)
+                return (
+                    normalize_complex_result_scalar(mean, "Sparse Hamiltonian mean"),
+                    normalize_complex_result_scalar(second_moment, "Sparse Hamiltonian second moment"),
+                )
             except Exception as exc:
                 if not _native_sparse_unavailable(exc):
                     raise
@@ -1681,8 +1737,16 @@ class RocQuantumRuntime:
                     normalized_shape,
                 )
                 return (
-                    np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
-                    np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
+                    normalize_complex_result_vector(
+                        means,
+                        "Batched sparse Hamiltonian means",
+                        expected_count=self.batch_size(),
+                    ),
+                    normalize_complex_result_vector(
+                        second_moments,
+                        "Batched sparse Hamiltonian second moments",
+                        expected_count=self.batch_size(),
+                    ),
                 )
             except Exception as exc:
                 if not _native_sparse_unavailable(exc):
@@ -1698,8 +1762,16 @@ class RocQuantumRuntime:
                     normalized_shape,
                 )
                 return (
-                    np.asarray(means, dtype=np.complex128).reshape(self.batch_size()),
-                    np.asarray(second_moments, dtype=np.complex128).reshape(self.batch_size()),
+                    normalize_complex_result_vector(
+                        means,
+                        "Batched sparse Hamiltonian means",
+                        expected_count=self.batch_size(),
+                    ),
+                    normalize_complex_result_vector(
+                        second_moments,
+                        "Batched sparse Hamiltonian second moments",
+                        expected_count=self.batch_size(),
+                    ),
                 )
             except Exception as exc:
                 if not _native_sparse_unavailable(exc):

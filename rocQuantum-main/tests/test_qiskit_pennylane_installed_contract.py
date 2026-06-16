@@ -14190,6 +14190,172 @@ def test_runtime_dense_expectation_moments_batch_fallback_reads_statevectors_onc
     assert simulator.statevector_reads == 1
 
 
+def test_framework_runtime_revalidates_native_complex_expectation_results():
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        normalize_complex_result_scalar,
+        normalize_complex_result_vector,
+    )
+
+    invalid_scalars = (
+        True,
+        np.bool_(False),
+        "0.5",
+        b"0.5",
+        np.nan,
+        np.inf,
+        1.0j * np.inf,
+        [0.5, 0.25],
+    )
+    for value in invalid_scalars:
+        with pytest.raises(ValueError, match="Dense expectation"):
+            normalize_complex_result_scalar(value, "Dense expectation value")
+
+    invalid_vectors = (
+        [0.5, True],
+        [0.5, "0.25"],
+        [0.5, np.nan],
+        [0.5],
+        [0.5, 0.25, 0.0],
+    )
+    for values in invalid_vectors:
+        with pytest.raises(ValueError, match="Batched dense"):
+            normalize_complex_result_vector(values, "Batched dense expectation values", expected_count=2)
+
+    matrix = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=np.complex128)
+    sparse_data = np.array([1.0, -1.0], dtype=np.complex128)
+    sparse_indices = np.array([0, 1], dtype=np.int64)
+    sparse_indptr = np.array([0, 1, 2], dtype=np.int64)
+
+    class _BadDenseExpectationSimulator:
+        def __init__(self, value):
+            self.value = value
+            self.calls = []
+
+        def batch_size(self):
+            return 1
+
+        def expectation_matrix(self, matrix_arg, targets):
+            self.calls.append((np.asarray(matrix_arg, dtype=np.complex128).copy(), tuple(targets)))
+            return self.value
+
+    for value in invalid_scalars:
+        sim = _BadDenseExpectationSimulator(value)
+        with pytest.raises(ValueError, match="Dense expectation"):
+            RocQuantumRuntime(sim).expectation_matrix(matrix, [0])
+        assert len(sim.calls) == 1
+
+    class _BadDenseMomentsSimulator:
+        def __init__(self, mean, second_moment):
+            self.mean = mean
+            self.second_moment = second_moment
+            self.calls = []
+
+        def batch_size(self):
+            return 1
+
+        def expectation_matrix_moments(self, matrix_arg, targets):
+            self.calls.append((np.asarray(matrix_arg, dtype=np.complex128).copy(), tuple(targets)))
+            return self.mean, self.second_moment
+
+    for mean, second_moment in ((np.nan, 1.0), (0.5, "1.0")):
+        sim = _BadDenseMomentsSimulator(mean, second_moment)
+        with pytest.raises(ValueError, match="Dense expectation"):
+            RocQuantumRuntime(sim).expectation_matrix_moments(matrix, [0])
+        assert len(sim.calls) == 1
+
+    class _BadDenseBatchExpectationSimulator:
+        def __init__(self, values):
+            self.values = values
+            self.calls = []
+
+        def batch_size(self):
+            return 2
+
+        def expectation_matrix_batch(self, matrix_arg, targets):
+            self.calls.append((np.asarray(matrix_arg, dtype=np.complex128).copy(), tuple(targets)))
+            return self.values
+
+    for values in invalid_vectors:
+        sim = _BadDenseBatchExpectationSimulator(values)
+        with pytest.raises(ValueError, match="Batched dense"):
+            RocQuantumRuntime(sim).expectation_matrix_batch(matrix, [0])
+        assert len(sim.calls) == 1
+
+    class _BadDenseBatchMomentsSimulator:
+        def __init__(self, means, second_moments):
+            self.means = means
+            self.second_moments = second_moments
+            self.calls = []
+
+        def batch_size(self):
+            return 2
+
+        def expectation_matrix_moments_batch(self, matrix_arg, targets):
+            self.calls.append((np.asarray(matrix_arg, dtype=np.complex128).copy(), tuple(targets)))
+            return self.means, self.second_moments
+
+    for means, second_moments in (([0.5, np.nan], [1.0, 1.0]), ([0.5, -0.5], [1.0])):
+        sim = _BadDenseBatchMomentsSimulator(means, second_moments)
+        with pytest.raises(ValueError, match="Batched dense"):
+            RocQuantumRuntime(sim).expectation_matrix_moments_batch(matrix, [0])
+        assert len(sim.calls) == 1
+
+    class _BadSparseMomentsSimulator:
+        def __init__(self, mean, second_moment):
+            self.mean = mean
+            self.second_moment = second_moment
+            self.calls = []
+
+        def num_qubits(self):
+            return 1
+
+        def batch_size(self):
+            return 1
+
+        def sparse_hamiltonian_moments(self, data, indices, indptr, shape):
+            self.calls.append((np.asarray(data, dtype=np.complex128).copy(), tuple(shape)))
+            return self.mean, self.second_moment
+
+    for mean, second_moment in ((np.inf, 1.0), (0.5, "1.0")):
+        sim = _BadSparseMomentsSimulator(mean, second_moment)
+        with pytest.raises(ValueError, match="Sparse Hamiltonian"):
+            RocQuantumRuntime(sim).sparse_hamiltonian_moments(
+                sparse_data,
+                sparse_indices,
+                sparse_indptr,
+                (2, 2),
+            )
+        assert len(sim.calls) == 1
+
+    class _BadSparseBatchMomentsSimulator:
+        def __init__(self, means, second_moments):
+            self.means = means
+            self.second_moments = second_moments
+            self.calls = []
+
+        def num_qubits(self):
+            return 1
+
+        def batch_size(self):
+            return 2
+
+        def sparse_hamiltonian_moments_batch(self, data, indices, indptr, shape):
+            self.calls.append((np.asarray(data, dtype=np.complex128).copy(), tuple(shape)))
+            return self.means, self.second_moments
+
+    for means, second_moments in (([0.5, np.nan], [1.0, 1.0]), ([0.5, -0.5], [1.0])):
+        sim = _BadSparseBatchMomentsSimulator(means, second_moments)
+        with pytest.raises(ValueError, match="Batched sparse"):
+            RocQuantumRuntime(sim).sparse_hamiltonian_moments_batch(
+                sparse_data,
+                sparse_indices,
+                sparse_indptr,
+                (2, 2),
+            )
+        assert len(sim.calls) == 1
+
+
 def test_runtime_sparse_moments_fall_back_to_statevector():
     from rocquantum.framework_runtime import RocQuantumRuntime
 
