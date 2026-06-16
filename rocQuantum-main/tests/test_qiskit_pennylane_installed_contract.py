@@ -790,8 +790,10 @@ def test_framework_runtime_validates_statevector_readback_payloads():
         normalize_batch_index,
         normalize_statevector_batch_readback,
         normalize_statevector_readback,
+        statevector_dimension,
     )
 
+    assert statevector_dimension(1) == 2
     np.testing.assert_allclose(
         normalize_statevector_readback([1.0, 0.0], 1),
         np.array([1.0, 0.0], dtype=np.complex128),
@@ -806,6 +808,12 @@ def test_framework_runtime_validates_statevector_readback_payloads():
         normalize_statevector_readback([1.0], 1)
     with pytest.raises(ValueError, match="Batched statevector length"):
         normalize_statevector_batch_readback([1.0, 0.0], 2, 1)
+    with pytest.raises(ValueError, match="state-vector backend maximum"):
+        statevector_dimension(61)
+    with pytest.raises(ValueError, match="state-vector backend maximum"):
+        normalize_statevector_readback([], 61)
+    with pytest.raises(ValueError, match="Statevector amplitudes batch size"):
+        normalize_statevector_batch_readback([1.0, 0.0], 0, 1)
     for index in (True, np.bool_(False), "0", b"0", 0.0, -1, 2):
         with pytest.raises(ValueError):
             normalize_batch_index(index, 2)

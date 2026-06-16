@@ -67,6 +67,7 @@ SINGLE_QUBIT_GATES = {
 }
 TWO_QUBIT_GATES = {"CNOT", "CZ", "SWAP", "CRX", "CRY", "CRZ", "CP"}
 PARAMETRIC_GATES = {"RX", "RY", "RZ", "P", "CRX", "CRY", "CRZ", "CP"}
+STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW = 60
 
 
 def normalize_gate_name(name: str) -> str:
@@ -164,6 +165,16 @@ def normalize_positive_integer(value: object, label: str) -> int:
     return normalized
 
 
+def statevector_dimension(num_qubits: object, label: str = "num_qubits") -> int:
+    normalized = normalize_positive_integer(num_qubits, label)
+    if normalized > STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW:
+        raise ValueError(
+            f"{label} exceeds the state-vector backend maximum "
+            f"of {STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW}."
+        )
+    return 1 << normalized
+
+
 def normalize_nonnegative_integer(value: object, label: str) -> int:
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
         raise ValueError(f"{label} must be a non-negative integer.")
@@ -248,7 +259,7 @@ def normalize_statevector_readback(
         if normalized.size == 0 or normalized.size & (normalized.size - 1):
             raise ValueError("Statevector length must be a power of two.")
         return np.ascontiguousarray(normalized)
-    expected_size = 1 << int(num_qubits)
+    expected_size = statevector_dimension(num_qubits)
     if normalized.size != expected_size:
         raise ValueError("Statevector length must match the simulator qubit count.")
     return np.ascontiguousarray(normalized)
@@ -261,18 +272,19 @@ def normalize_statevector_batch_readback(
     label: str = "Statevector amplitudes",
 ) -> np.ndarray:
     normalized = as_complex_vector(values, label).reshape(-1)
+    normalized_batch_size = normalize_positive_integer(batch_size, f"{label} batch size")
     if int(num_qubits) <= 0:
-        normalized_batch_size = int(batch_size)
         if normalized.size % normalized_batch_size:
             raise ValueError("Batched statevector length must match simulator batch and qubit count.")
         state_size = normalized.size // normalized_batch_size
         if state_size == 0 or state_size & (state_size - 1):
             raise ValueError("Batched statevector length must contain power-of-two statevectors.")
         return np.ascontiguousarray(normalized.reshape(normalized_batch_size, state_size))
-    expected_size = int(batch_size) * (1 << int(num_qubits))
+    state_size = statevector_dimension(num_qubits)
+    expected_size = normalized_batch_size * state_size
     if normalized.size != expected_size:
         raise ValueError("Batched statevector length must match simulator batch and qubit count.")
-    return np.ascontiguousarray(normalized.reshape(int(batch_size), 1 << int(num_qubits)))
+    return np.ascontiguousarray(normalized.reshape(normalized_batch_size, state_size))
 
 
 def normalize_batch_index(value: object, batch_size: int, label: str = "batch_index") -> int:
@@ -1016,7 +1028,7 @@ def normalize_probability_result_matrix(
 
 def probability_outcome_count(normalized_qubits: Sequence[int] | None, num_qubits: int) -> int | None:
     if normalized_qubits is None or not normalized_qubits:
-        return (1 << int(num_qubits)) if int(num_qubits) > 0 else None
+        return statevector_dimension(num_qubits) if int(num_qubits) > 0 else None
     return 1 << len(normalized_qubits)
 
 
@@ -1305,7 +1317,7 @@ def apply_sparse_matrix_to_statevector(
     normalized_indptr = np.asarray(indptr, dtype=np.int64).reshape(-1)
     normalized_shape = tuple(int(dim) for dim in shape)
     normalized_targets = normalize_targets(targets)
-    dimension = 1 << int(num_qubits)
+    dimension = statevector_dimension(num_qubits)
 
     if state.size != dimension:
         raise ValueError("Statevector length must match the simulator qubit count.")
@@ -1711,7 +1723,7 @@ class RocQuantumRuntime:
 
     def set_statevector(self, statevector: object) -> None:
         normalized_state = as_complex_vector(statevector, "Statevector amplitudes").reshape(-1)
-        expected_size = 1 << self.num_qubits()
+        expected_size = statevector_dimension(self.num_qubits(), "Simulator qubit count")
         if normalized_state.size != expected_size:
             raise ValueError("Statevector length must match the simulator qubit count.")
         setter = getattr(self.simulator, "set_statevector", None)
@@ -1728,7 +1740,7 @@ class RocQuantumRuntime:
 
     def set_statevectors(self, statevectors: object) -> None:
         normalized_states = as_complex_vector(statevectors, "Statevector amplitudes").reshape(-1)
-        expected_size = self.batch_size() * (1 << self.num_qubits())
+        expected_size = self.batch_size() * statevector_dimension(self.num_qubits(), "Simulator qubit count")
         if normalized_states.size != expected_size:
             raise ValueError("Batched statevector length must match simulator batch and qubit count.")
         setter = getattr(self.simulator, "set_statevectors", None)
