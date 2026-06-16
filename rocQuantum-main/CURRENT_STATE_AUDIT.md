@@ -24,7 +24,7 @@ Runtime update note (2026-04-06):
 - Canonical mock state-vector fallback now performs CPU statevector semantics for named-gate contract tests, including phase, controlled phase/rotation, Toffoli, and CSWAP cases; this remains local correctness smoke coverage rather than native ROCm performance proof.
 - Canonical noise models now reject non-finite probabilities, invalid channel names, invalid `after_op` names, and non-integral or duplicate channel targets before density-matrix backend dispatch; direct Kraus backend calls share the stricter target normalization, and valid channel registration is quiet by default.
 - Canonical top-level `rocq` now exports the recorded phase-gate aliases (`tdg`/`tdag`, `p`/`phase`, `cp`/`cphase`) instead of requiring users to reach into `rocq.gates`.
-- Canonical `rocq.runtime_capabilities()` exposes the primary runtime entry points, supported backends, backend-name validation, state-vector `enable_fusion` option, environment switches, legacy `python/rocq` compatibility note, and unsupported native-HIP-stream / multi-QPU / unified-compiler boundaries without requiring a ROCm device.
+- Canonical `rocq.runtime_capabilities()` exposes the primary runtime entry points, supported backends, backend-name validation, host-threadpool async execution scope, state-vector `enable_fusion` option, environment switches, legacy `python/rocq` compatibility note, and unsupported native-HIP-stream / multi-QPU / unified-compiler boundaries without running a kernel or proving ROCm performance.
 - Packaging has moved to a CMake-first `scikit-build-core` path.
 
 Audit refresh note (2026-06-10):
@@ -123,7 +123,7 @@ What is not real today:
 
 - End-to-end compiler-driven execution parity with CUDA-Q is not present.
 - `rocqCompiler::MLIRCompiler::compile_and_execute()` is only an MVP subset executor, not a CUDA-Q-style full compiler runtime.
-- Distributed multi-GPU is only partially implemented and was overclaimed in docs.
+- Distributed multi-GPU is only partially implemented; the current guide and `rocq.distributed_capabilities()` now mark the experimental single-node scope, unsupported multi-node boundary, and hardware-evidence requirements explicitly.
 - High-level expectation-value workflows remain split across canonical runtime APIs and legacy Python bindings, but `rocq.runtime_capabilities()` now identifies `rocq` as the primary Python surface and `python/rocq` as a compatibility API.
 - Packaging is CMake-first and now exports package config files with Python/CMake package-version alignment, but the release artifact story remains split across canonical `rocq`, legacy `python/rocq`, framework plugins, and ROCm CI validation.
 
@@ -157,11 +157,12 @@ What is not real today:
 - `hipDensityMatSample` plus canonical `rocq.backends.DensityMatrixBackend.sample()` provide density-matrix sampling through GPU-side measured-qubit marginal probability reduction followed by host-side shot drawing.
 - Direct `rocq.backends.DensityMatrixBackend.apply_noise()` calls now share bool-safe target and finite probability validation with `NoiseModel`, so invalid named or Kraus noise parameters are rejected before mock/native dispatch.
 - Density-matrix expectation helpers exist for single-qubit X/Y/Z and Pauli-Z products.
+- Canonical `rocq.density_matrix_capabilities()` exposes the supported density-matrix correctness paths, cuDensityMat-style descriptor/sampling gaps, execution scope, and hardware-evidence boundary without running a kernel.
 
 ### Tensor networks
 
 - `hipTensorNet` contains real permutation helpers, pairwise contraction, greedy multi-tensor contraction, and complex64 SVD.
-- TensorNet exposes build-time capabilities for C64/C128 dtype availability, pathfinder algorithms, memory-limit planning, and runtime slicing status. GREEDY is the only always-available optimizer; unsupported METIS/KAHYPAR choices fail explicitly.
+- TensorNet exposes build-time capabilities for C64/C128 dtype availability, pathfinder algorithms, memory-limit planning, limited pair-contraction K-sliced GEMM runtime slicing, unsupported open-index slicing, unsupported mixed precision, and unsupported simultaneous runtime C64/C128 execution. GREEDY is the only always-available optimizer; unsupported METIS/KAHYPAR choices fail explicitly.
 - CI contains one real GPU regression target for tensor-network contraction.
 
 ### Direct runtime execution
@@ -186,11 +187,11 @@ What is not real today:
 ### Multi-GPU/distributed
 
 - Distributed handles, allocation, distributed metadata, and some local-domain distributed operations exist.
-- Canonical `rocq.distributed_capabilities()` exposes the partial distributed runtime contract, runtime switches, binding/query availability, supported features, unsupported features, and guide path without requiring a ROCm device.
+- Canonical `rocq.distributed_capabilities()` exposes the partial distributed runtime contract, runtime switches, binding/query availability, supported features, unsupported features, execution scope, hardware-evidence requirements, and guide path without performing a hardware probe.
 - Many distributed operations still return `ROCQ_STATUS_NOT_IMPLEMENTED`.
 - Non-local single-qubit, controlled single-qubit, CNOT/CZ, and generic matrix/control-matrix operations can use an explicit correctness-first host fallback with `ROCQ_DISTRIBUTED_FALLBACK_MODE=host` or `ROCQ_ENABLE_DISTRIBUTED_HOST_FALLBACK=1`.
-- When RCCL is found at build time, local-domain distributed Pauli expectation, sampling, and probability-vector reductions can use RCCL `AllReduce(sum)` instead of gathering the full state to host.
-- `MULTI_GPU_GUIDE.md` overclaimed implemented RCCL behavior relative to the actual code path.
+- When RCCL is found at build time, local-domain distributed Pauli expectation, sampling, probability-vector reductions, and covered swap-localized selected-qubit sampling/probability paths can use RCCL reductions instead of gathering the full state to host.
+- `MULTI_GPU_GUIDE.md` now documents the experimental single-node scope, the unsupported multi-node boundary, explicit host fallback switches, RCCL backend introspection, and the fact that capability queries do not prove native multi-GPU performance.
 
 ### High-level expectations
 
@@ -201,7 +202,7 @@ What is not real today:
 - The experimental MaxCut QAOA ansatz now uses `-gamma * w` for the CNOT-RZ-CNOT cost-phase angle, matching that cost Hamiltonian up to the expected global phase; edge-list entries and `{(u, v): weight}` edge-weight mappings are normalized through the same path; duplicate or reversed undirected edges are aggregated before emitting cost-phase blocks and cost-operator terms; invalid problem data such as non-iterable edge containers, malformed edge entries, malformed edge-weight mapping keys, non-integer endpoints, non-positive layer counts, self-loops, out-of-range endpoints, non-finite or non-real weights, and non-finite/non-real ansatz or initial parameters is rejected early; and `solve_maxcut_qaoa()` maximizes cut value by preserving the positive cost operator for inspection while minimizing the negated operator through `VQE_Solver`.
 - `rocquantum.solvers.VQE_Solver` now passes arrays as one argument to single vector-style ansatz parameters, including one-element vectors, allowing the experimental MaxCut QAOA solve helper and vector-parameter ansatzes to run through the same VQE objective path instead of failing on scalar argument splatting.
 - `rocquantum.solvers.VQE_Solver.evaluate_energy()`, `estimate_gradient()`, and `solve()` normalize scalar single-parameter inputs to one-element vectors before evaluating, shifting, or invoking optimizers, reject non-`QuantumOperator` Hamiltonians, non-callable/non-`QuantumKernel` ansatz kernels, bool/string/non-real/non-finite objective/initial/gradient parameters, invalid `num_qubits`, unknown backend names, unsupported/non-string gradient methods, non-positive or non-finite finite-diff steps, non-boolean `verbose` options, and ansatz positional parameter-count mismatches before backend/optimizer use, validate observed energies and optimizer-result `fun`/`x` payloads as present finite real values with result parameter counts matching the initial vector, require custom optimizers to expose callable `minimize()`, validate/copy string-keyed `SciPyOptimizer` options at construction, keep gradient probes out of the optimizer `intermediate_results` trace, and keep `solve()` quiet by default with explicit `verbose=True` progress printing for interactive examples.
-- `rocquantum.solvers.solver_capabilities()` and `rocquantum.qec.qec_capabilities()` now expose the experimental supported/unsupported solver and QEC contracts, entry points, docs paths, optional dependencies or code-family scope, and the ROCm hardware validation boundary for CUDA-QX comparisons.
+- `rocquantum.solvers.solver_capabilities()` and `rocquantum.qec.qec_capabilities()` now expose the experimental supported/unsupported solver and QEC contracts, entry points, docs paths, optional dependencies or code-family scope, host-loop/sequential-feedback execution scopes, and the ROCm hardware validation boundary for CUDA-QX comparisons.
 - `python/rocq/api.py::Circuit.expval()` now uses native backend Pauli expectation helpers, matching `get_expval()` for supported Pauli terms.
 
 ### Packaging and CI
