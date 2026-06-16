@@ -273,6 +273,18 @@ def normalize_trainable_params(trainable_params: Sequence[int]) -> list[int]:
     return normalized
 
 
+def normalize_adjoint_jacobian_result(
+    values: object,
+    num_observables: int,
+    num_trainable_params: int,
+) -> np.ndarray:
+    normalized = _as_real_probability_array(values, "Adjoint Jacobian result")
+    expected_size = int(num_observables) * int(num_trainable_params)
+    if normalized.size != expected_size:
+        raise ValueError("Adjoint Jacobian result size must match observable and trainable parameter counts.")
+    return np.ascontiguousarray(normalized)
+
+
 def as_complex_matrix(matrix: object, label: str = "Operation matrix") -> np.ndarray:
     try:
         raw = np.asarray(matrix, dtype=object)
@@ -1271,7 +1283,11 @@ class RocQuantumRuntime:
         native = getattr(self.simulator, "adjoint_jacobian", None)
         if callable(native):
             try:
-                return native(list(operations), list(observables), normalized_trainable_params)
+                return normalize_adjoint_jacobian_result(
+                    native(list(operations), list(observables), normalized_trainable_params),
+                    len(observables),
+                    len(normalized_trainable_params),
+                )
             except Exception as exc:
                 if not _native_adjoint_unavailable(exc):
                     raise
@@ -1280,7 +1296,11 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "AdjointJacobian", None)
         if callable(legacy):
             try:
-                return legacy(list(operations), list(observables), normalized_trainable_params)
+                return normalize_adjoint_jacobian_result(
+                    legacy(list(operations), list(observables), normalized_trainable_params),
+                    len(observables),
+                    len(normalized_trainable_params),
+                )
             except Exception as exc:
                 if not _native_adjoint_unavailable(exc):
                     raise

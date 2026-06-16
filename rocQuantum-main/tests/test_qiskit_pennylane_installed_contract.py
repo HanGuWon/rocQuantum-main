@@ -11458,9 +11458,17 @@ def test_pennylane_device_jacobian_batches_probability_shift_tapes(monkeypatch):
 
 
 def test_framework_runtime_validates_adjoint_trainable_params_before_native_dispatch():
-    from rocquantum.framework_runtime import RocQuantumRuntime, normalize_trainable_params
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        normalize_adjoint_jacobian_result,
+        normalize_trainable_params,
+    )
 
     assert normalize_trainable_params([np.int64(0), -1]) == [0, -1]
+    np.testing.assert_allclose(
+        normalize_adjoint_jacobian_result([[0.25, -0.5]], 1, 2),
+        np.asarray([[0.25, -0.5]], dtype=float),
+    )
 
     invalid_trainable_params = (
         True,
@@ -11477,13 +11485,28 @@ def test_framework_runtime_validates_adjoint_trainable_params_before_native_disp
         with pytest.raises((TypeError, ValueError), match="Trainable parameter"):
             normalize_trainable_params(trainable_params)
 
+    invalid_jacobians = (
+        True,
+        "0.25",
+        b"0.25",
+        [True, 0.25],
+        ["0.25", 0.5],
+        [np.nan, 0.5],
+        [0.25],
+        [0.25, -0.5, 0.0],
+    )
+    for jacobian in invalid_jacobians:
+        with pytest.raises(ValueError, match="Adjoint Jacobian"):
+            normalize_adjoint_jacobian_result(jacobian, 1, 2)
+
     class _NativeAdjointRecorder:
-        def __init__(self):
+        def __init__(self, result=None):
+            self.result = np.asarray([[0.25, -0.5]], dtype=float) if result is None else result
             self.calls = []
 
         def adjoint_jacobian(self, operations, observables, trainable_params):
             self.calls.append((list(operations), list(observables), list(trainable_params)))
-            return np.asarray([[0.25, -0.5]], dtype=float)
+            return self.result
 
     operations = [{"name": "RY", "params": [0.1]}]
     observables = [[{"pauli_string": "Z", "targets": [0]}]]
@@ -11500,6 +11523,13 @@ def test_framework_runtime_validates_adjoint_trainable_params_before_native_disp
         with pytest.raises((TypeError, ValueError), match="Trainable parameter"):
             runtime.adjoint_jacobian(operations, observables, trainable_params)
     assert simulator.calls == [(operations, observables, [0, -1])]
+
+    for jacobian in invalid_jacobians:
+        invalid_simulator = _NativeAdjointRecorder(jacobian)
+        invalid_runtime = RocQuantumRuntime(invalid_simulator)
+        with pytest.raises(ValueError, match="Adjoint Jacobian"):
+            invalid_runtime.adjoint_jacobian(operations, observables, [0, -1])
+        assert invalid_simulator.calls == [(operations, observables, [0, -1])]
 
 
 def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):

@@ -302,6 +302,7 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("def normalize_statevector_batch_readback", source)
         self.assertIn("def normalize_batch_index", source)
         self.assertIn("def normalize_trainable_params", source)
+        self.assertIn("def normalize_adjoint_jacobian_result", source)
         self.assertIn("def normalize_sample_indices", source)
         self.assertIn("def normalize_targets", source)
         self.assertIn("not isinstance(target, Integral)", source)
