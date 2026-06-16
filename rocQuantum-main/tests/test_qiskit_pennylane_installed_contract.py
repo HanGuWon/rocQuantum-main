@@ -784,6 +784,82 @@ def test_framework_runtime_rejects_nonfinite_statevector_uploads(monkeypatch):
     assert batch_sim.statevectors == []
 
 
+def test_framework_runtime_validates_statevector_readback_payloads():
+    from rocquantum.framework_runtime import (
+        RocQuantumRuntime,
+        normalize_batch_index,
+        normalize_statevector_batch_readback,
+        normalize_statevector_readback,
+    )
+
+    np.testing.assert_allclose(
+        normalize_statevector_readback([1.0, 0.0], 1),
+        np.array([1.0, 0.0], dtype=np.complex128),
+    )
+    np.testing.assert_allclose(
+        normalize_statevector_batch_readback([[1.0, 0.0], [0.0, 1.0]], 2, 1),
+        np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.complex128),
+    )
+    assert normalize_batch_index(np.int64(1), 2) == 1
+
+    with pytest.raises(ValueError, match="Statevector length"):
+        normalize_statevector_readback([1.0], 1)
+    with pytest.raises(ValueError, match="Batched statevector length"):
+        normalize_statevector_batch_readback([1.0, 0.0], 2, 1)
+    for index in (True, np.bool_(False), "0", b"0", 0.0, -1, 2):
+        with pytest.raises(ValueError):
+            normalize_batch_index(index, 2)
+
+    class _BadStatevectorReadbackSimulator:
+        def __init__(self, state):
+            self.state = state
+            self.calls = []
+
+        def num_qubits(self):
+            return 1
+
+        def batch_size(self):
+            return 2
+
+        def get_statevector(self, batch_index):
+            self.calls.append(int(batch_index))
+            return self.state
+
+    for state in ([1.0], [1.0, 0.0, 0.0]):
+        sim = _BadStatevectorReadbackSimulator(state)
+        with pytest.raises(ValueError, match="Statevector length"):
+            RocQuantumRuntime(sim).statevector(1)
+        assert sim.calls == [1]
+
+    sim = _BadStatevectorReadbackSimulator([1.0, 0.0])
+    runtime = RocQuantumRuntime(sim)
+    for index in (True, np.bool_(False), "0", b"0", 0.0, -1, 2):
+        with pytest.raises(ValueError):
+            runtime.statevector(index)
+    assert sim.calls == []
+
+    class _BadBatchedStatevectorReadbackSimulator:
+        def __init__(self, states):
+            self.states = states
+            self.calls = 0
+
+        def num_qubits(self):
+            return 1
+
+        def batch_size(self):
+            return 2
+
+        def get_statevectors(self):
+            self.calls += 1
+            return self.states
+
+    for states in ([1.0, 0.0], [1.0, 0.0, 0.0]):
+        sim = _BadBatchedStatevectorReadbackSimulator(states)
+        with pytest.raises(ValueError, match="Batched statevector length"):
+            RocQuantumRuntime(sim).statevectors()
+        assert sim.calls == 1
+
+
 def test_framework_runtime_rejects_nonfinite_matrix_and_sparse_payloads(monkeypatch):
     _install_fake_binding(monkeypatch)
 

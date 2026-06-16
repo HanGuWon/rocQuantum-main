@@ -210,6 +210,52 @@ def normalize_complex_result_scalar(value: object, label: str) -> complex:
     return complex(normalized[0])
 
 
+def normalize_statevector_readback(
+    values: object,
+    num_qubits: int,
+    label: str = "Statevector amplitudes",
+) -> np.ndarray:
+    normalized = as_complex_vector(values, label).reshape(-1)
+    if int(num_qubits) <= 0:
+        if normalized.size == 0 or normalized.size & (normalized.size - 1):
+            raise ValueError("Statevector length must be a power of two.")
+        return np.ascontiguousarray(normalized)
+    expected_size = 1 << int(num_qubits)
+    if normalized.size != expected_size:
+        raise ValueError("Statevector length must match the simulator qubit count.")
+    return np.ascontiguousarray(normalized)
+
+
+def normalize_statevector_batch_readback(
+    values: object,
+    batch_size: int,
+    num_qubits: int,
+    label: str = "Statevector amplitudes",
+) -> np.ndarray:
+    normalized = as_complex_vector(values, label).reshape(-1)
+    if int(num_qubits) <= 0:
+        normalized_batch_size = int(batch_size)
+        if normalized.size % normalized_batch_size:
+            raise ValueError("Batched statevector length must match simulator batch and qubit count.")
+        state_size = normalized.size // normalized_batch_size
+        if state_size == 0 or state_size & (state_size - 1):
+            raise ValueError("Batched statevector length must contain power-of-two statevectors.")
+        return np.ascontiguousarray(normalized.reshape(normalized_batch_size, state_size))
+    expected_size = int(batch_size) * (1 << int(num_qubits))
+    if normalized.size != expected_size:
+        raise ValueError("Batched statevector length must match simulator batch and qubit count.")
+    return np.ascontiguousarray(normalized.reshape(int(batch_size), 1 << int(num_qubits)))
+
+
+def normalize_batch_index(value: object, batch_size: int, label: str = "batch_index") -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+        raise ValueError(f"{label} must be an integer.")
+    normalized = int(value)
+    if normalized < 0 or normalized >= int(batch_size):
+        raise ValueError(f"{label} is out of range.")
+    return normalized
+
+
 def as_complex_matrix(matrix: object, label: str = "Operation matrix") -> np.ndarray:
     try:
         raw = np.asarray(matrix, dtype=object)
@@ -1260,26 +1306,36 @@ class RocQuantumRuntime:
         raise NotImplementedError("The active rocQuantum binding does not expose batched statevector upload.")
 
     def statevector(self, batch_index: int = 0) -> np.ndarray:
+        normalized_batch_index = normalize_batch_index(batch_index, self.batch_size())
+        num_qubits = self.num_qubits()
         getter = getattr(self.simulator, "get_statevector", None)
         if not callable(getter):
             getter = getattr(self.simulator, "GetStateVector", None)
         if not callable(getter):
             raise NotImplementedError("The active rocQuantum binding does not expose state readback.")
-        if batch_index == 0:
+        if normalized_batch_index == 0:
             try:
-                return as_complex_vector(getter(batch_index), "Statevector amplitudes").reshape(-1)
+                return normalize_statevector_readback(
+                    getter(normalized_batch_index),
+                    num_qubits,
+                )
             except TypeError:
-                return as_complex_vector(getter(), "Statevector amplitudes").reshape(-1)
-        return as_complex_vector(getter(batch_index), "Statevector amplitudes").reshape(-1)
+                return normalize_statevector_readback(getter(), num_qubits)
+        return normalize_statevector_readback(getter(normalized_batch_index), num_qubits)
 
     def statevectors(self) -> np.ndarray:
+        batch_size = self.batch_size()
+        num_qubits = self.num_qubits()
         getter = getattr(self.simulator, "get_statevectors", None)
         if not callable(getter):
             getter = getattr(self.simulator, "GetStateVectors", None)
         if callable(getter):
-            states = as_complex_vector(getter(), "Statevector amplitudes").reshape(-1)
-            return states.reshape(self.batch_size(), 1 << self.num_qubits())
-        if self.batch_size() == 1:
+            return normalize_statevector_batch_readback(
+                getter(),
+                batch_size,
+                num_qubits,
+            )
+        if batch_size == 1:
             return self.statevector().reshape(1, -1)
         raise NotImplementedError("The active rocQuantum binding does not expose batched state readback.")
 
