@@ -9937,6 +9937,31 @@ def test_pennylane_select_pauli_rot_decomposes_natively(monkeypatch):
     assert sim.matrices == []
 
 
+def test_pennylane_uniform_control_decompositions_fail_fast_when_too_large():
+    pytest.importorskip("pennylane")
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    from pennylane_rocq.rocq_device import (
+        MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS,
+        _apply_select_pauli_rot,
+        _apply_select_pauli_rot_batch,
+        _diagonal_unitary_phases,
+        _gray_code,
+    )
+
+    too_many_controls = MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS + 1
+    with pytest.raises(NotImplementedError, match="Uniform-control decomposition"):
+        _gray_code(too_many_controls)
+    with pytest.raises(NotImplementedError, match="DiagonalQubitUnitary decomposition"):
+        _diagonal_unitary_phases([1.0], too_many_controls + 1)
+    with pytest.raises(NotImplementedError, match="SelectPauliRot decomposition"):
+        _apply_select_pauli_rot(None, list(range(too_many_controls + 1)), [], "Z")
+    with pytest.raises(NotImplementedError, match="SelectPauliRot decomposition"):
+        _apply_select_pauli_rot_batch(None, list(range(too_many_controls + 1)), np.empty((1, 0)), "Z")
+
+
 def test_pennylane_permutation_templates_decompose_natively(monkeypatch):
     pytest.importorskip("pennylane")
     _install_fake_binding(monkeypatch)

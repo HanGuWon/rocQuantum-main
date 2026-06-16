@@ -120,6 +120,7 @@ PAULI_PRODUCTS = {
     ("Z", "Z"): (1.0 + 0.0j, "I"),
 }
 MAX_DIAGONAL_OBSERVABLE_PAULI_QUBITS = 4
+MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS = 12
 
 
 def _pauli_string_from_observable(observable, wire_map):
@@ -1614,6 +1615,12 @@ def _apply_controlled_phase_shift_batch(runtime, wire_indices, thetas):
 
 
 def _gray_code(rank):
+    if rank > MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS:
+        raise NotImplementedError(
+            "Uniform-control decomposition is limited to "
+            f"{MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS} controls; "
+            "larger operations require a native diagonal/unitary kernel."
+        )
     if rank == 0:
         return np.array([0], dtype=int)
     code = np.array([0, 1], dtype=int)
@@ -1678,6 +1685,11 @@ def _apply_uniform_rz_batch(runtime, control_indices, target, angles_by_batch):
 
 
 def _diagonal_unitary_phases(diagonal, wire_count):
+    if wire_count > MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS + 1:
+        raise NotImplementedError(
+            "DiagonalQubitUnitary decomposition is limited to "
+            f"{MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS + 1} wires."
+        )
     phases = np.angle(np.asarray(diagonal, dtype=np.complex128).reshape(-1))
     expected = 1 << wire_count
     if phases.shape[-1] != expected:
@@ -1740,6 +1752,11 @@ def _apply_select_pauli_rot(runtime, wire_indices, angles, rot_axis):
     if len(wire_indices) < 2:
         raise ValueError("SelectPauliRot requires at least one control wire and one target wire.")
     control_indices = wire_indices[:-1]
+    if len(control_indices) > MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS:
+        raise NotImplementedError(
+            "SelectPauliRot decomposition is limited to "
+            f"{MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS} control wires."
+        )
     target = wire_indices[-1]
     expected = 1 << len(control_indices)
     if np.asarray(angles).reshape(-1).shape[-1] != expected:
@@ -1765,6 +1782,11 @@ def _apply_select_pauli_rot_batch(runtime, wire_indices, angles_by_batch, rot_ax
     if len(wire_indices) < 2:
         raise ValueError("SelectPauliRot requires at least one control wire and one target wire.")
     control_indices = wire_indices[:-1]
+    if len(control_indices) > MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS:
+        raise NotImplementedError(
+            "SelectPauliRot decomposition is limited to "
+            f"{MAX_UNIFORM_CONTROL_DECOMPOSITION_QUBITS} control wires."
+        )
     target = wire_indices[-1]
     angle_array = np.asarray(angles_by_batch, dtype=float)
     expected = 1 << len(control_indices)
