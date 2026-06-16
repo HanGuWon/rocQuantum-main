@@ -22,6 +22,7 @@ _QEC_SUPPORTED_FEATURES = (
     "generic sampled stabilizer-fragment orchestration",
     "three-qubit bit-flip repetition-code single-round sampling",
     "sequential repeated-round repetition-code aggregation",
+    "sequential sampled repeated-round classical feed-forward over most-likely corrections",
     "lookup-table single-X repetition-code correction",
     "syndrome histogram and logical-success analysis",
     "independent syndrome-bit readout-error mitigation",
@@ -30,7 +31,7 @@ _QEC_SUPPORTED_FEATURES = (
 
 _QEC_UNSUPPORTED_FEATURES = (
     "fault-tolerant logical workflow execution",
-    "mid-circuit measurement and classical feedback",
+    "in-circuit mid-circuit measurement with dynamic classical feedback",
     "general stabilizer or surface-code decoder stack",
     "noise-aware decoder models beyond independent syndrome readout flips",
     "GPU-resident performance-tuned syndrome extraction",

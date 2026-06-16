@@ -1128,11 +1128,15 @@ class TestQecHelpers(unittest.TestCase):
             capability_data["supported_features"],
         )
         self.assertIn(
+            "sequential sampled repeated-round classical feed-forward over most-likely corrections",
+            capability_data["supported_features"],
+        )
+        self.assertIn(
             "positive-integer shot/round/num_qubits, backend, verbose-option, code/decoder interface, non-empty non-mapping stabilizer-fragment sequence, logical-operator result, decoder-correction result, unique ancilla-index, callable-or-None initial-state, one-bit ancilla sample, syndrome, and bool-safe count/bit validation",
             capability_data["supported_features"],
         )
         self.assertIn(
-            "mid-circuit measurement and classical feedback",
+            "in-circuit mid-circuit measurement with dynamic classical feedback",
             capability_data["unsupported_features"],
         )
         self.assertEqual(

@@ -79,7 +79,7 @@ print(analysis["mitigated_syndrome_scores"])
 
 Limitations:
 
-- No mid-circuit measurement or classical feedback.
+- No in-circuit mid-circuit measurement or dynamic classical feedback.
 - Repeated rounds are sequential sampled helper calls with classical
   most-likely feed-forward, not an in-circuit dynamic-control workflow.
 - No general noise-aware decoder beyond deterministic single-X syndrome lookup
