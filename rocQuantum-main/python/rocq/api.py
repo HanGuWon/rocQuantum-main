@@ -1,7 +1,7 @@
 import math
 import os
 import warnings
-from numbers import Integral, Real
+from numbers import Integral, Number, Real
 
 import numpy as np
 from . import _rocq_hip_backend as backend # Assuming the compiled module is named this
@@ -95,6 +95,62 @@ def _validate_sample_results(results, measured_width: int, num_shots: int) -> np
             raise ValueError("Sample result is outside the measured qubit range.")
         normalized.append(value)
     return np.asarray(normalized, dtype=np.uint64)
+
+
+def _normalize_statevector_values(values, label: str) -> list[complex]:
+    try:
+        raw = np.asarray(values, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must contain finite numeric amplitudes.") from exc
+
+    normalized = []
+    for amplitude in raw.reshape(-1):
+        if isinstance(amplitude, (bool, np.bool_)) or not isinstance(amplitude, Number):
+            raise ValueError(f"{label} must contain finite numeric amplitudes.")
+        value = complex(amplitude)
+        if not math.isfinite(value.real) or not math.isfinite(value.imag):
+            raise ValueError(f"{label} must contain finite numeric amplitudes.")
+        normalized.append(value)
+    return normalized
+
+
+def _validate_statevector_readback(values, num_qubits: int) -> np.ndarray:
+    label = "Statevector readback"
+    try:
+        raw = np.asarray(values, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a one-dimensional complex sequence.") from exc
+
+    if raw.ndim != 1:
+        raise ValueError(f"{label} must be one-dimensional.")
+    expected_size = 1 << int(num_qubits)
+    if raw.size != expected_size:
+        raise ValueError(f"{label} length must match the circuit qubit count.")
+    return np.ascontiguousarray(_normalize_statevector_values(raw, label), dtype=np.complex64)
+
+
+def _validate_statevector_batch_readback(values, batch_size: int, num_qubits: int) -> np.ndarray:
+    label = "Statevector batch readback"
+    expected_batch = _validate_positive_integer(batch_size, "Statevector batch size")
+    expected_width = 1 << int(num_qubits)
+    try:
+        raw = np.asarray(values, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a complex array.") from exc
+
+    if raw.ndim == 1:
+        if raw.size != expected_batch * expected_width:
+            raise ValueError(f"{label} size must match batch_size * 2**num_qubits.")
+    elif raw.ndim == 2:
+        if raw.shape != (expected_batch, expected_width):
+            raise ValueError(f"{label} shape must match (batch_size, 2**num_qubits).")
+    else:
+        raise ValueError(f"{label} must be a one- or two-dimensional array.")
+
+    normalized = _normalize_statevector_values(raw, label)
+    return np.ascontiguousarray(
+        np.asarray(normalized, dtype=np.complex64).reshape(expected_batch, expected_width)
+    )
 
 
 class LegacyCompilerReplayWarning(RuntimeWarning):
@@ -589,13 +645,14 @@ class Circuit:
         self.flush()
         self._validate_batch_index(batch_index)
 
-        return backend.get_state_vector_slice(
+        state = backend.get_state_vector_slice(
             self._sim_handle,
             self._get_d_state_for_backend(),
             self.num_qubits,
             self.batch_size,
             batch_index,
         )
+        return _validate_statevector_readback(state, self.num_qubits)
 
     def get_statevectors(self) -> np.ndarray:
         """
@@ -609,7 +666,7 @@ class Circuit:
             self.num_qubits,
             self.batch_size,
         )
-        return np.asarray(states, dtype=np.complex64).reshape(self.batch_size, 1 << self.num_qubits)
+        return _validate_statevector_batch_readback(states, self.batch_size, self.num_qubits)
 
     def expval(self, pauli_operator: 'PauliOperator') -> float:
         """

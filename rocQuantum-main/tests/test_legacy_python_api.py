@@ -409,6 +409,60 @@ class TestLegacyCircuitBatchState(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "batch_index must be an integer"):
             circuit.get_statevector(batch_index=True)
 
+    def test_batched_statevector_readback_validates_native_payloads(self):
+        invalid_slices = (
+            [1],
+            [1, 0, 0],
+            [[1, 0]],
+            [1, np.nan],
+            [1, np.inf],
+            [1, complex(0.0, float("inf"))],
+            [1, True],
+            ["1", 0],
+        )
+        for payload in invalid_slices:
+            with self.subTest(slice_payload=repr(payload)):
+                backend = _fake_backend()
+
+                def slice_result(*args, payload=payload):
+                    backend.calls.append(("state_slice", args))
+                    return payload
+
+                backend.get_state_vector_slice = slice_result
+                module = _load_legacy_api(backend)
+                circuit = _make_circuit(module)
+                circuit.num_qubits = 1
+                with self.assertRaisesRegex(ValueError, "Statevector readback"):
+                    circuit.get_statevector()
+
+        invalid_batches = (
+            [1, 0],
+            [1, 0, 0],
+            np.ones((1, 4), dtype=np.complex64),
+            np.ones((2, 1), dtype=np.complex64),
+            np.ones((1, 1, 4), dtype=np.complex64),
+            [1, 0, 0, np.nan],
+            [1, 0, 0, np.inf],
+            [1, 0, 0, complex(0.0, float("inf"))],
+            [1, 0, 0, True],
+            ["1", 0, 0, 0],
+        )
+        for payload in invalid_batches:
+            with self.subTest(batch_payload=repr(payload)):
+                backend = _fake_backend()
+
+                def batch_result(*args, payload=payload):
+                    backend.calls.append(("state_full", args))
+                    return payload
+
+                backend.get_state_vector_full = batch_result
+                module = _load_legacy_api(backend)
+                circuit = _make_circuit(module)
+                circuit.num_qubits = 1
+                circuit.batch_size = 2
+                with self.assertRaisesRegex(ValueError, "Statevector batch readback"):
+                    circuit.get_statevectors()
+
 
 class TestLegacyCircuitExpectation(unittest.TestCase):
     def test_legacy_pauli_operator_validates_coefficients(self):
