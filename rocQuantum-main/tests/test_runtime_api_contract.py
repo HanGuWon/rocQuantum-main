@@ -165,6 +165,19 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             "native HIP-stream futures",
             capabilities["unsupported_features"],
         )
+        self.assertEqual(
+            capabilities["async_execution"]["future_type"],
+            "concurrent.futures.Future",
+        )
+        self.assertEqual(
+            capabilities["async_execution"]["submission"],
+            "host_threadpool",
+        )
+        self.assertTrue(capabilities["async_execution"]["preserves_backend_validation"])
+        self.assertFalse(capabilities["async_execution"]["native_hip_stream_future"])
+        self.assertFalse(capabilities["async_execution"]["multi_qpu_scheduler"])
+        self.assertFalse(capabilities["async_execution"]["distributed_scheduler"])
+        self.assertFalse(capabilities["async_execution"]["device_overlap_proof"])
         self.assertIn("enable_fusion", capabilities["runtime_options"])
         self.assertIn("ROCQ_DISABLE_GATE_FUSION", capabilities["environment_switches"])
         self.assertIn("compatibility surface", capabilities["legacy_note"])

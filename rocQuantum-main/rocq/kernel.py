@@ -90,6 +90,15 @@ _RUNTIME_UNSUPPORTED_FEATURES = (
     "one unified compiler/runtime stack across rocq and legacy python/rocq",
     "production multi-GPU parity without self-hosted ROCm artifacts",
 )
+_RUNTIME_ASYNC_EXECUTION = {
+    "future_type": "concurrent.futures.Future",
+    "submission": "host_threadpool",
+    "preserves_backend_validation": True,
+    "native_hip_stream_future": False,
+    "multi_qpu_scheduler": False,
+    "distributed_scheduler": False,
+    "device_overlap_proof": False,
+}
 _BUILD_LOCK = threading.RLock()
 _ASYNC_EXECUTOR_LOCK = threading.Lock()
 _ASYNC_EXECUTOR: Optional[ThreadPoolExecutor] = None
@@ -160,6 +169,7 @@ def runtime_capabilities() -> Dict[str, object]:
         "supported_backends": list(_RUNTIME_SUPPORTED_BACKENDS),
         "supported_features": list(_RUNTIME_SUPPORTED_FEATURES),
         "unsupported_features": list(_RUNTIME_UNSUPPORTED_FEATURES),
+        "async_execution": dict(_RUNTIME_ASYNC_EXECUTION),
         "runtime_options": {
             "enable_fusion": (
                 "Optional boolean accepted by state_vector execute/get_state/sample/"
