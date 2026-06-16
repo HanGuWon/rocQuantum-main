@@ -3653,6 +3653,34 @@ def test_qiskit_provider_rejects_invalid_estimator_options(monkeypatch):
         estimator.run([], precision=math.inf)
 
 
+def test_qiskit_backend_rejects_non_boolean_run_toggles(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1, 1)
+
+    invalid_options = (
+        {"sampling": "False"},
+        {"sampling": 1},
+        {"sampling": np.bool_(False)},
+        {"sampling": None},
+        {"statevector": "False"},
+        {"statevector": 0},
+        {"statevector": np.bool_(True)},
+        {"memory": "False"},
+        {"memory": 1},
+        {"memory": np.bool_(False)},
+    )
+    for options in invalid_options:
+        name = next(iter(options))
+        with pytest.raises(ValueError, match=f"{name} must be a boolean"):
+            backend.run(circuit, **options)
+
+
 def test_qiskit_provider_primitives_run_with_backend(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)

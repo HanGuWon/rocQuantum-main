@@ -131,6 +131,12 @@ STATEVECTOR_BATCH_SAFE_OPS = {
 }
 
 
+def _normalize_bool_option(value, name):
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean.")
+    return value
+
+
 def _instruction_condition(instruction):
     operation_condition = getattr(instruction.operation, "condition", None)
     if operation_condition is not None:
@@ -3335,6 +3341,15 @@ class RocQuantumBackend(BackendV2):
 
         job_id = str(uuid.uuid4())
         shots = normalize_shots(options.get("shots", self.options.shots))
+        return_memory = _normalize_bool_option(options.get("memory", self.options.memory), "memory")
+        statevector_option = _normalize_bool_option(
+            options.get("statevector", self.options.statevector),
+            "statevector",
+        )
+        sampling_option = _normalize_bool_option(
+            options.get("sampling", self.options.sampling),
+            "sampling",
+        )
         max_dynamic_loop_iterations = normalize_positive_integer(
             options.get(
                 "max_dynamic_loop_iterations",
@@ -3344,13 +3359,11 @@ class RocQuantumBackend(BackendV2):
         )
         results = []
 
-        if bool(options.get("sampling", self.options.sampling)) and not bool(
-            options.get("statevector", self.options.statevector)
-        ):
+        if sampling_option and not statevector_option:
             batched_results = self._try_run_batched_sampling_circuits(
                 run_input,
                 shots,
-                bool(options.get("memory", self.options.memory)),
+                return_memory,
             )
             if batched_results is not None:
                 result = Result(
@@ -3363,10 +3376,10 @@ class RocQuantumBackend(BackendV2):
                 )
                 return RocQuantumJob(self, job_id, result)
 
-        if not bool(options.get("sampling", self.options.sampling)):
+        if not sampling_option:
             batched_results = self._try_run_batched_statevector_circuits(
                 run_input,
-                bool(options.get("statevector", self.options.statevector)),
+                statevector_option,
             )
             if batched_results is not None:
                 result = Result(
@@ -3380,11 +3393,8 @@ class RocQuantumBackend(BackendV2):
                 return RocQuantumJob(self, job_id, result)
 
         for circuit in run_input:
-            return_statevector = bool(
-                options.get("statevector", self.options.statevector)
-                or self._requests_statevector(circuit)
-            )
-            return_sampling = bool(options.get("sampling", self.options.sampling))
+            return_statevector = statevector_option or self._requests_statevector(circuit)
+            return_sampling = sampling_option
             has_runtime_reset = self._has_runtime_reset(circuit)
             has_dynamic_circuit = self._has_dynamic_circuit(circuit)
 
@@ -3399,7 +3409,7 @@ class RocQuantumBackend(BackendV2):
                 data = self._run_dynamic_sampling(
                     circuit,
                     shots,
-                    bool(options.get("memory", self.options.memory)),
+                    return_memory,
                     max_dynamic_loop_iterations,
                 )
                 exp_data = ExperimentResultData(**data)
@@ -3429,7 +3439,7 @@ class RocQuantumBackend(BackendV2):
                 data = self._run_runtime_reset_sampling(
                     circuit,
                     shots,
-                    bool(options.get("memory", self.options.memory)),
+                    return_memory,
                 )
                 exp_data = ExperimentResultData(**data)
                 results.append(
@@ -3469,7 +3479,7 @@ class RocQuantumBackend(BackendV2):
                 data.update(
                     {
                         "counts": formatted_counts,
-                        "memory": memory if options.get("memory", self.options.memory) else None,
+                        "memory": memory if return_memory else None,
                     }
                 )
                 result_shots = shots
