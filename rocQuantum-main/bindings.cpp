@@ -6,6 +6,7 @@
 #include <cctype>
 #include <complex>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -102,6 +103,24 @@ struct ObservablePayload {
     std::vector<DenseMatrixPayload> dense_terms;
     std::vector<SparseMatrixPayload> sparse_terms;
 };
+
+std::size_t checked_power_of_two(std::size_t exponent, const std::string& label) {
+    if (exponent >= static_cast<std::size_t>(std::numeric_limits<std::size_t>::digits)) {
+        throw std::invalid_argument(label + " exceeds the supported host bit width.");
+    }
+    return std::size_t{1} << exponent;
+}
+
+std::size_t checked_bit_mask(unsigned bit, const std::string& label) {
+    return checked_power_of_two(static_cast<std::size_t>(bit), label);
+}
+
+std::size_t checked_square_size(std::size_t dimension, const std::string& label) {
+    if (dimension != 0 && dimension > std::numeric_limits<std::size_t>::max() / dimension) {
+        throw std::invalid_argument(label + " is too large for host-side binding validation.");
+    }
+    return dimension * dimension;
+}
 
 std::vector<std::size_t> copy_nonnegative_indices(
     py::array_t<long long, py::array::c_style | py::array::forcecast> values,
@@ -379,7 +398,7 @@ std::vector<std::complex<double>> apply_pauli_to_state(
     const std::string& pauli_string,
     const std::vector<unsigned>& targets,
     unsigned num_qubits) {
-    const std::size_t expected_size = std::size_t{1} << num_qubits;
+    const std::size_t expected_size = checked_power_of_two(num_qubits, "simulator qubit count");
     if (state.size() != expected_size) {
         throw std::invalid_argument("Statevector size does not match the simulator qubit count.");
     }
@@ -398,7 +417,7 @@ std::vector<std::complex<double>> apply_pauli_to_state(
                 throw std::invalid_argument("Pauli observable target exceeds simulator qubit count.");
             }
             const char pauli = static_cast<char>(std::toupper(static_cast<unsigned char>(pauli_string[idx])));
-            const std::size_t mask = std::size_t{1} << target;
+            const std::size_t mask = checked_bit_mask(target, "Pauli observable target");
             const bool bit_is_one = (basis & mask) != 0;
             if (pauli == 'I') {
                 continue;
@@ -437,11 +456,15 @@ std::vector<std::complex<double>> apply_controlled_pauli_to_state(
     if (control == target) {
         throw std::invalid_argument("Controlled Pauli generator control and target must differ.");
     }
+    const std::size_t expected_size = checked_power_of_two(num_qubits, "simulator qubit count");
+    if (state.size() != expected_size) {
+        throw std::invalid_argument("Statevector size does not match the simulator qubit count.");
+    }
 
     std::vector<std::complex<double>> out(state.size(), std::complex<double>{0.0, 0.0});
     const std::complex<double> imag{0.0, 1.0};
-    const std::size_t control_mask = std::size_t{1} << control;
-    const std::size_t target_mask = std::size_t{1} << target;
+    const std::size_t control_mask = checked_bit_mask(control, "Controlled Pauli generator control");
+    const std::size_t target_mask = checked_bit_mask(target, "Controlled Pauli generator target");
     pauli = static_cast<char>(std::toupper(static_cast<unsigned char>(pauli)));
 
     for (std::size_t basis = 0; basis < state.size(); ++basis) {
@@ -476,7 +499,7 @@ std::size_t extract_local_basis_index(std::size_t basis, const std::vector<unsig
             throw std::invalid_argument("Dense observable target exceeds simulator qubit count.");
         }
         if (((basis >> target) & std::size_t{1}) != 0) {
-            local_index |= std::size_t{1} << bit;
+            local_index |= checked_power_of_two(bit, "Dense observable local target bit");
         }
     }
     return local_index;
@@ -493,7 +516,7 @@ std::size_t replace_local_basis_index(
         if (target >= num_qubits) {
             throw std::invalid_argument("Dense observable target exceeds simulator qubit count.");
         }
-        const std::size_t mask = std::size_t{1} << target;
+        const std::size_t mask = checked_bit_mask(target, "Dense observable target");
         if (((local_index >> bit) & std::size_t{1}) != 0) {
             out |= mask;
         } else {
@@ -513,8 +536,8 @@ std::vector<std::complex<double>> apply_dense_matrix_to_state(
     if (payload.targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
         throw std::invalid_argument("Too many dense observable target qubits.");
     }
-    const std::size_t dim = std::size_t{1} << payload.targets.size();
-    if (payload.matrix.size() != dim * dim) {
+    const std::size_t dim = checked_power_of_two(payload.targets.size(), "dense observable target count");
+    if (payload.matrix.size() != checked_square_size(dim, "dense observable matrix")) {
         throw std::invalid_argument("Dense adjoint observable matrix dimension does not match target count.");
     }
 
@@ -556,11 +579,11 @@ std::vector<std::complex<double>> apply_sparse_matrix_to_state(
         if (payload.targets.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
             throw std::invalid_argument("Too many sparse observable target qubits.");
         }
-        const std::size_t expected_state_size = std::size_t{1} << num_qubits;
+        const std::size_t expected_state_size = checked_power_of_two(num_qubits, "simulator qubit count");
         if (state.size() != expected_state_size) {
             throw std::invalid_argument("Statevector size does not match the simulator qubit count.");
         }
-        const std::size_t dim = std::size_t{1} << payload.targets.size();
+        const std::size_t dim = checked_power_of_two(payload.targets.size(), "sparse observable target count");
         if (payload.rows != dim || payload.cols != dim) {
             throw std::invalid_argument("Sparse adjoint observable matrix dimension does not match target count.");
         }
@@ -722,8 +745,8 @@ void apply_adjoint_operation(
         if (operation.wires.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
             throw std::invalid_argument("Too many matrix operation target qubits.");
         }
-        const std::size_t dim = std::size_t{1} << operation.wires.size();
-        if (operation.matrix.size() != dim * dim) {
+        const std::size_t dim = checked_power_of_two(operation.wires.size(), "matrix operation target count");
+        if (operation.matrix.size() != checked_square_size(dim, "matrix operation")) {
             throw std::invalid_argument("Matrix adjoint operation dimension does not match target count.");
         }
         std::vector<std::complex<double>> matrix = operation.matrix;
@@ -763,7 +786,7 @@ void apply_adjoint_operation(
         if (operation.wires.size() >= static_cast<std::size_t>(sizeof(std::size_t) * 8)) {
             throw std::invalid_argument("Too many sparse matrix operation target qubits.");
         }
-        const std::size_t dim = std::size_t{1} << operation.wires.size();
+        const std::size_t dim = checked_power_of_two(operation.wires.size(), "sparse matrix operation target count");
         if (operation.sparse_rows != dim || operation.sparse_cols != dim) {
             throw std::invalid_argument("Sparse matrix adjoint operation dimension does not match target count.");
         }
@@ -1046,7 +1069,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      throw std::invalid_argument("Too many target qubits for apply_matrix.");
                  }
 
-                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t expected_dim = checked_power_of_two(targets.size(), "matrix target count");
                  const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
                  if (actual_dim != expected_dim) {
                      throw std::invalid_argument("apply_matrix dimension must be 2^len(targets).");
@@ -1084,7 +1107,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      throw std::invalid_argument("Too many target qubits for apply_controlled_matrix.");
                  }
 
-                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t expected_dim = checked_power_of_two(targets.size(), "controlled matrix target count");
                  const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
                  if (actual_dim != expected_dim) {
                      throw std::invalid_argument("apply_controlled_matrix dimension must be 2^len(targets).");
@@ -1211,7 +1234,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      throw std::invalid_argument("Too many target qubits for expectation_matrix.");
                  }
 
-                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t expected_dim = checked_power_of_two(targets.size(), "expectation matrix target count");
                  const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
                  if (actual_dim != expected_dim) {
                      throw std::invalid_argument("expectation_matrix dimension must be 2^len(targets).");
@@ -1238,7 +1261,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      throw std::invalid_argument("Too many target qubits for expectation_matrix_moments.");
                  }
 
-                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t expected_dim = checked_power_of_two(targets.size(), "expectation matrix target count");
                  const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
                  if (actual_dim != expected_dim) {
                      throw std::invalid_argument("expectation_matrix_moments dimension must be 2^len(targets).");
@@ -1265,7 +1288,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      throw std::invalid_argument("Too many target qubits for expectation_matrix_batch.");
                  }
 
-                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t expected_dim = checked_power_of_two(targets.size(), "expectation matrix target count");
                  const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
                  if (actual_dim != expected_dim) {
                      throw std::invalid_argument("expectation_matrix_batch dimension must be 2^len(targets).");
@@ -1297,7 +1320,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      throw std::invalid_argument("Too many target qubits for expectation_matrix_moments_batch.");
                  }
 
-                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t expected_dim = checked_power_of_two(targets.size(), "expectation matrix target count");
                  const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
                  if (actual_dim != expected_dim) {
                      throw std::invalid_argument(
@@ -1540,7 +1563,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      throw std::invalid_argument("Too many target qubits for ExpectationMatrix.");
                  }
 
-                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t expected_dim = checked_power_of_two(targets.size(), "batch matrix target count");
                  const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
                  if (actual_dim != expected_dim) {
                      throw std::invalid_argument("ExpectationMatrix dimension must be 2^len(targets).");
@@ -1566,7 +1589,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      throw std::invalid_argument("Too many target qubits for ExpectationMatrixMoments.");
                  }
 
-                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t expected_dim = checked_power_of_two(targets.size(), "batch matrix target count");
                  const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
                  if (actual_dim != expected_dim) {
                      throw std::invalid_argument("ExpectationMatrixMoments dimension must be 2^len(targets).");
@@ -1592,7 +1615,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      throw std::invalid_argument("Too many target qubits for ExpectationMatrixBatch.");
                  }
 
-                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t expected_dim = checked_power_of_two(targets.size(), "batch expectation matrix target count");
                  const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
                  if (actual_dim != expected_dim) {
                      throw std::invalid_argument("ExpectationMatrixBatch dimension must be 2^len(targets).");
@@ -1623,7 +1646,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
                      throw std::invalid_argument("Too many target qubits for ExpectationMatrixMomentsBatch.");
                  }
 
-                 const std::size_t expected_dim = std::size_t{1} << targets.size();
+                 const std::size_t expected_dim = checked_power_of_two(targets.size(), "batch expectation matrix target count");
                  const std::size_t actual_dim = static_cast<std::size_t>(matrix.shape(0));
                  if (actual_dim != expected_dim) {
                      throw std::invalid_argument("ExpectationMatrixMomentsBatch dimension must be 2^len(targets).");

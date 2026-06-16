@@ -96,6 +96,29 @@ class TestHipStateVecExpectationContract(unittest.TestCase):
         self.assertIn("get_sparse_matrix_moments", legacy_bindings)
         self.assertIn("rocsvGetSparseMatrixMoments", legacy_bindings)
 
+    def test_root_binding_size_validation_uses_checked_helpers(self):
+        bindings = self._read("bindings.cpp")
+
+        self.assertIn("checked_power_of_two", bindings)
+        self.assertIn("checked_bit_mask", bindings)
+        self.assertIn("checked_square_size", bindings)
+        self.assertIn("std::numeric_limits<std::size_t>::digits", bindings)
+        self.assertIn("Statevector size does not match the simulator qubit count.", bindings)
+        self.assertIn("checked_power_of_two(num_qubits, \"simulator qubit count\")", bindings)
+        self.assertIn("checked_square_size(dim, \"dense observable matrix\")", bindings)
+        self.assertIn("checked_square_size(dim, \"matrix operation\")", bindings)
+        self.assertIn("checked_bit_mask(target, \"Pauli observable target\")", bindings)
+        self.assertIn("checked_bit_mask(control, \"Controlled Pauli generator control\")", bindings)
+        self.assertEqual(
+            bindings.count("return std::size_t{1} << exponent;"),
+            1,
+            "Raw host-size shifts in the root binding should be isolated to checked_power_of_two().",
+        )
+        self.assertNotIn("std::size_t{1} << num_qubits", bindings)
+        self.assertNotIn("std::size_t{1} << targets.size()", bindings)
+        self.assertNotIn("std::size_t{1} << operation.wires.size()", bindings)
+        self.assertNotIn("dim * dim", bindings)
+
 
 if __name__ == "__main__":
     unittest.main()
