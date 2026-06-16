@@ -182,6 +182,19 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("supports_runtime_slicing", source)
         self.assertIn("warn_tensornet_limited_runtime_slicing(config)", source)
 
+    def test_python_binding_uses_simulator_stream_and_real_rocblas_handle(self):
+        with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("rocsvGetStream(self.get_sim_handle().get(), &stream)", source)
+        self.assertIn("tensornet_status_message(\"rocsvGetStream\", stream_status)", source)
+        self.assertIn("rocblas_create_handle(&blas_h)", source)
+        self.assertIn("rocblas_destroy_handle(blas_h)", source)
+        self.assertIn("rocTensorNetworkContract(self.get(), &config, &result_tensor_py, blas_h, stream)", source)
+        self.assertNotIn("Using placeholders for now", source)
+        self.assertNotIn("rocblas_handle blas_h = nullptr; // Placeholder", source)
+        self.assertNotIn("hipStream_t stream = 0; // Placeholder", source)
+
     def test_docs_describe_limited_slicing_and_mixed_precision_boundary(self):
         with open(_README, "r", encoding="utf-8") as f:
             readme = f.read()

@@ -1469,16 +1469,25 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
             warn_tensornet_pathfinder_fallback(config);
             warn_tensornet_limited_runtime_slicing(config);
 
-            // TODO: The rocblas_handle and hipStream_t should be retrieved from the simulator handle.
-            // The current structure of RocsvHandleWrapper makes this difficult without modifying it.
-            // Using placeholders for now.
-            rocblas_handle blas_h = nullptr; // Placeholder
-            hipStream_t stream = 0; // Placeholder
+            hipStream_t stream = 0;
+            rocqStatus_t stream_status = rocsvGetStream(self.get_sim_handle().get(), &stream);
+            if (stream_status != ROCQ_STATUS_SUCCESS) {
+                throw std::runtime_error(tensornet_status_message("rocsvGetStream", stream_status));
+            }
 
+            rocblas_handle blas_h = nullptr;
+            rocblas_status blas_status = rocblas_create_handle(&blas_h);
+            if (blas_status != rocblas_status_success) {
+                throw std::runtime_error("rocblas_create_handle failed for TensorNet contraction.");
+            }
             rocqStatus_t status = rocTensorNetworkContract(self.get(), &config, &result_tensor_py, blas_h, stream);
+            rocblas_status destroy_status = rocblas_destroy_handle(blas_h);
             
             if (status != ROCQ_STATUS_SUCCESS) {
                 throw std::runtime_error(tensornet_contract_status_message(status, config));
+            }
+            if (destroy_status != rocblas_status_success) {
+                throw std::runtime_error("rocblas_destroy_handle failed after TensorNet contraction.");
             }
         }, py::arg("optimizer_config"), py::arg("result_tensor").noconvert(), "Contracts the tensor network. Result tensor must be pre-allocated.");
 
