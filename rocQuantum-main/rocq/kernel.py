@@ -69,6 +69,7 @@ _RUNTIME_SUPPORTED_FEATURES = (
     "direct backend gate-target validation",
     "finite direct backend gate-angle validation",
     "GateFusion rotation-angle validation before native queue dispatch",
+    "direct backend state readback validation before returning native results",
     "Pauli observable target validation before backend dispatch",
     "lazy statevector fallback for legacy Pauli expectation bindings",
     "dense Hermitian observable validation before native/backend dispatch",

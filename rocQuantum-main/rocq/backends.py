@@ -488,6 +488,56 @@ def _normalize_matrix_targets(matrix, targets, num_qubits: int):
     return matrix_array, normalized_targets
 
 
+def _normalize_statevector_result(statevector, num_qubits: int) -> np.ndarray:
+    try:
+        raw_state = np.asarray(statevector, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Statevector readback must be a one-dimensional complex sequence.") from exc
+
+    if raw_state.ndim != 1:
+        raise ValueError("Statevector readback must be one-dimensional.")
+
+    expected_dim = 1 << int(num_qubits)
+    if raw_state.size != expected_dim:
+        raise ValueError("Statevector dimension does not match backend qubit count.")
+
+    normalized = []
+    for amplitude in raw_state:
+        if isinstance(amplitude, (bool, np.bool_)) or not isinstance(amplitude, Number):
+            raise ValueError("Statevector readback must contain finite numeric amplitudes.")
+        value = complex(amplitude)
+        if not math.isfinite(value.real) or not math.isfinite(value.imag):
+            raise ValueError("Statevector readback must contain finite numeric amplitudes.")
+        normalized.append(value)
+
+    return np.ascontiguousarray(normalized, dtype=np.complex128)
+
+
+def _normalize_density_matrix_result(density_matrix, num_qubits: int) -> np.ndarray:
+    try:
+        raw_density = np.asarray(density_matrix, dtype=object)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Density matrix readback must be a two-dimensional complex matrix.") from exc
+
+    if raw_density.ndim != 2:
+        raise ValueError("Density matrix readback must be two-dimensional.")
+
+    expected_dim = 1 << int(num_qubits)
+    if raw_density.shape != (expected_dim, expected_dim):
+        raise ValueError("Density matrix dimension does not match backend qubit count.")
+
+    normalized = []
+    for value in raw_density.reshape(-1):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Number):
+            raise ValueError("Density matrix readback must contain finite numeric entries.")
+        matrix_value = complex(value)
+        if not math.isfinite(matrix_value.real) or not math.isfinite(matrix_value.imag):
+            raise ValueError("Density matrix readback must contain finite numeric entries.")
+        normalized.append(matrix_value)
+
+    return np.ascontiguousarray(normalized, dtype=np.complex128).reshape(raw_density.shape)
+
+
 def _statevector_expectation_matrix(statevector, matrix, targets: Sequence[int], num_qubits: int):
     state = np.asarray(statevector, dtype=np.complex128).reshape(-1)
     expected_state_dim = 1 << int(num_qubits)
@@ -1933,7 +1983,7 @@ class StateVectorBackend(_BaseBackend):
         raise NotImplementedError("Noise models are only supported by the 'density_matrix' backend.")
 
     def get_state(self):
-        return self._state.get_state_vector()
+        return _normalize_statevector_result(self._state.get_state_vector(), self.num_qubits)
 
     def sample(self, shots: int, qubits: Optional[Sequence[int]] = None):
         shots = _validate_positive_integer(shots, "shots")
@@ -2130,7 +2180,7 @@ class DensityMatrixBackend(_BaseBackend):
                 raise ValueError(f"Noise channel '{channel_type}' is not supported by the DensityMatrixBackend.")
 
     def get_state(self):
-        return self._state.get_density_matrix()
+        return _normalize_density_matrix_result(self._state.get_density_matrix(), self.num_qubits)
 
     def sample(self, shots: int, qubits: Optional[Sequence[int]] = None):
         shots = _validate_positive_integer(shots, "shots")

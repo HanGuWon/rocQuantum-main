@@ -120,6 +120,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["supported_features"],
         )
         self.assertIn(
+            "direct backend state readback validation before returning native results",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "Pauli observable target validation before backend dispatch",
             capabilities["supported_features"],
         )
@@ -709,6 +713,81 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "sample result"):
                         backend.sample(3, qubits=[0, 1])
                     backend._state.sample.assert_called_once_with([0, 1], 3)
+
+    def test_direct_backends_revalidate_native_state_readbacks_before_returning(self):
+        from rocq.backends import (
+            DensityMatrixBackend,
+            StateVectorBackend,
+            _normalize_density_matrix_result,
+            _normalize_statevector_result,
+        )
+
+        state = _normalize_statevector_result(np.array([1, 0], dtype=np.complex64), 1)
+        np.testing.assert_allclose(state, np.array([1, 0], dtype=np.complex128))
+        self.assertEqual(state.dtype, np.complex128)
+
+        density = _normalize_density_matrix_result(np.eye(2, dtype=np.complex64), 1)
+        np.testing.assert_allclose(density, np.eye(2, dtype=np.complex128))
+        self.assertEqual(density.dtype, np.complex128)
+
+        invalid_statevectors = (
+            [1],
+            [1, 0, 0],
+            [[1, 0]],
+            [1, np.nan],
+            [1, np.inf],
+            [1, complex(0.0, float("inf"))],
+            [1, True],
+            ["1", 0],
+        )
+        for payload in invalid_statevectors:
+            with self.subTest(helper_statevector=repr(payload)):
+                with self.assertRaisesRegex(ValueError, "Statevector"):
+                    _normalize_statevector_result(payload, 1)
+
+        invalid_density_matrices = (
+            np.eye(3, dtype=np.complex128),
+            [1, 0],
+            np.ones((1, 1, 1), dtype=np.complex128),
+            [[1, np.nan], [0, 1]],
+            [[1, complex(0.0, float("inf"))], [0, 1]],
+            [[1, True], [0, 1]],
+            [["1", 0], [0, 1]],
+        )
+        for payload in invalid_density_matrices:
+            with self.subTest(helper_density=repr(payload)):
+                with self.assertRaisesRegex(ValueError, "Density matrix"):
+                    _normalize_density_matrix_result(payload, 1)
+
+        state_backend = StateVectorBackend.__new__(StateVectorBackend)
+        state_backend.num_qubits = 1
+        state_backend._state = mock.Mock()
+        state_backend._state.get_state_vector.return_value = np.array([1, 0], dtype=np.complex64)
+        np.testing.assert_allclose(state_backend.get_state(), np.array([1, 0], dtype=np.complex128))
+        state_backend._state.get_state_vector.assert_called_once_with()
+
+        state_backend = StateVectorBackend.__new__(StateVectorBackend)
+        state_backend.num_qubits = 1
+        state_backend._state = mock.Mock()
+        state_backend._state.get_state_vector.return_value = [1, np.nan]
+        with self.assertRaisesRegex(ValueError, "Statevector"):
+            state_backend.get_state()
+        state_backend._state.get_state_vector.assert_called_once_with()
+
+        density_backend = DensityMatrixBackend.__new__(DensityMatrixBackend)
+        density_backend.num_qubits = 1
+        density_backend._state = mock.Mock()
+        density_backend._state.get_density_matrix.return_value = np.eye(2, dtype=np.complex64)
+        np.testing.assert_allclose(density_backend.get_state(), np.eye(2, dtype=np.complex128))
+        density_backend._state.get_density_matrix.assert_called_once_with()
+
+        density_backend = DensityMatrixBackend.__new__(DensityMatrixBackend)
+        density_backend.num_qubits = 1
+        density_backend._state = mock.Mock()
+        density_backend._state.get_density_matrix.return_value = [[1, np.nan], [0, 1]]
+        with self.assertRaisesRegex(ValueError, "Density matrix"):
+            density_backend.get_state()
+        density_backend._state.get_density_matrix.assert_called_once_with()
 
     def test_kernel_rejects_invalid_gate_targets_before_backend_dispatch(self):
         invalid_targets = (2, -1, 0.5, True, "0")
