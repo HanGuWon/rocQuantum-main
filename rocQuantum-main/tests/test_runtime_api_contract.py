@@ -185,8 +185,24 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             "multi-node distributed allocation",
             capabilities["unsupported_features"],
         )
+        self.assertEqual(
+            capabilities["execution_scope"]["single_node_multi_gpu"],
+            "experimental_partial",
+        )
+        self.assertEqual(capabilities["execution_scope"]["multi_node"], "unsupported")
+        self.assertEqual(
+            capabilities["execution_scope"]["host_fallback"],
+            "explicit_slow_debug_only",
+        )
+        self.assertFalse(capabilities["hardware_evidence"]["probe_performed"])
+        self.assertTrue(capabilities["hardware_evidence"]["native_rocm_device_required"])
+        self.assertTrue(
+            capabilities["hardware_evidence"]["multiple_gpus_required_for_runtime_proof"]
+        )
+        self.assertFalse(capabilities["hardware_evidence"]["capability_query_is_runtime_proof"])
         self.assertIn("MULTI_GPU_GUIDE.md", capabilities["guide"])
         self.assertIn("self-hosted ROCm CI", capabilities["performance_note"])
+        self.assertIn("does not perform a hardware probe", capabilities["performance_note"])
 
     def test_statevector_backend_fuses_same_target_single_qubit_spans(self):
         from rocq.backends import StateVectorBackend

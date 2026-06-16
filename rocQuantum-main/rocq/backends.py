@@ -53,6 +53,21 @@ _DISTRIBUTED_UNSUPPORTED_FEATURES = (
     "distributed scheduler or multi-QPU async execution",
     "local hardware proof without self-hosted ROCm CI artifacts",
 )
+_DISTRIBUTED_EXECUTION_SCOPE = {
+    "single_node_multi_gpu": "experimental_partial",
+    "multi_node": "unsupported",
+    "distributed_scheduler": "unsupported",
+    "multi_qpu_async_execution": "unsupported",
+    "host_fallback": "explicit_slow_debug_only",
+    "rccl_fast_paths": "optional_when_native_bindings_are_built_with_rccl",
+}
+_DISTRIBUTED_HARDWARE_EVIDENCE = {
+    "probe_performed": False,
+    "native_rocm_device_required": True,
+    "multiple_gpus_required_for_runtime_proof": True,
+    "self_hosted_ci_required_for_release_claim": True,
+    "capability_query_is_runtime_proof": False,
+}
 _MOCK_BACKEND_NOTE = (
     "{backend_name} is using the Python mock fallback because {env_var}=1 and the "
     "native ROCm binding is unavailable. This path is for local smoke tests only; "
@@ -107,10 +122,13 @@ def distributed_capabilities() -> Dict[str, object]:
         "runtime_switches": list(_DISTRIBUTED_RUNTIME_SWITCHES),
         "supported_features": list(_DISTRIBUTED_SUPPORTED_FEATURES),
         "unsupported_features": list(_DISTRIBUTED_UNSUPPORTED_FEATURES),
+        "execution_scope": dict(_DISTRIBUTED_EXECUTION_SCOPE),
+        "hardware_evidence": dict(_DISTRIBUTED_HARDWARE_EVIDENCE),
         "guide": "rocquantum/src/hipStateVec/MULTI_GPU_GUIDE.md",
         "performance_note": (
             "Distributed support is experimental and correctness-oriented; "
-            "ROCm multi-GPU performance proof requires self-hosted ROCm CI or real hardware."
+            "the capability query does not perform a hardware probe, and ROCm "
+            "multi-GPU performance proof requires self-hosted ROCm CI or real hardware."
         ),
     }
 

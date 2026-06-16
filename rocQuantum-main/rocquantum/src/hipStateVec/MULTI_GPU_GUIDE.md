@@ -46,6 +46,11 @@ This document describes the current implementation status, not the eventual desi
 | `host_fallback` | The handle is distributed, RCCL is not active, and explicit slow/debug host fallback mode is enabled |
 | `none` | The handle is not distributed, or distributed execution has no active RCCL or host-fallback backend |
 
+`rocq.distributed_capabilities()` is the Python-side capability contract for tools and CI. It
+reports the same partial single-node scope, explicitly marks multi-node and multi-QPU scheduler
+execution as unsupported, and includes a `hardware_evidence` block that states the query does not
+perform a ROCm device probe or prove multi-GPU runtime performance.
+
 ## Known Limitations
 
 | Area | Limitation | Expected result |
