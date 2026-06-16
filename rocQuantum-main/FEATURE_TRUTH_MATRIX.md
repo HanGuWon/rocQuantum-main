@@ -28,7 +28,7 @@ Recent Qiskit constant-observable note: native Estimator now folds dense scalar 
 
 Recent Qiskit diagonal-observable note: native Estimator and direct provider expectation now lower small diagonal dense `Operator` observables, including explicit target wrappers, into Pauli-Z terms before dense-matrix hooks, avoiding dense expectation and statevector fallback for those readouts.
 
-Recent Qiskit sampler-option note: `backend.run()` and native `RocQuantumSampler` now validate `shots`, `default_shots`, and `max_dynamic_loop_iterations` through the shared bool-safe positive-integer contract, so invalid sampler and dynamic-loop limits are rejected before dispatch or per-shot trajectory replay.
+Recent Qiskit option-contract note: `RocQuantumBackend`, `backend.run()`, native `RocQuantumSampler`, and native `RocQuantumEstimator` now validate `max_target_qubits`, `shots`, `default_shots`, `max_dynamic_loop_iterations`, `sampling`, `statevector`, `memory`, native primitive option names, and estimator `precision` / `default_precision` through explicit bool-safe integer, bool-toggle, and finite non-negative precision contracts, so invalid options are rejected before target construction, dispatch, or per-shot trajectory replay.
 
 Recent PennyLane diagonal-observable note: scalar identity and small diagonal `qml.Hermitian` or CSR `qml.SparseHamiltonian` observables, including scalar `qml.s_prod` wrappers, now fold into constant or Pauli-Z payloads for expval, variance, compatible `batch_execute`, and explicit adjoint payloads, avoiding dense/CSR expectation hooks and statevector fallback.
 
