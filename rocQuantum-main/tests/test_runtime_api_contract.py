@@ -63,6 +63,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                     return DensityMatrixBackend(num_qubits)
 
     def test_observe_and_sample_exports_exist(self):
+        self.assertTrue(callable(rocq.density_matrix_capabilities))
         self.assertTrue(callable(rocq.distributed_capabilities))
         self.assertTrue(callable(rocq.runtime_capabilities))
         self.assertTrue(callable(rocq.observe))
@@ -83,6 +84,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             "compile_and_execute_async",
         ):
             self.assertIn(name, rocq.__all__)
+        self.assertIn("density_matrix_capabilities", rocq.__all__)
         self.assertIn("distributed_capabilities", rocq.__all__)
         self.assertIn("runtime_capabilities", rocq.__all__)
 
@@ -220,6 +222,51 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertIn("MULTI_GPU_GUIDE.md", capabilities["guide"])
         self.assertIn("self-hosted ROCm CI", capabilities["performance_note"])
         self.assertIn("does not perform a hardware probe", capabilities["performance_note"])
+
+    def test_density_matrix_capabilities_expose_cudensitymat_boundary(self):
+        capabilities = rocq.density_matrix_capabilities()
+
+        self.assertEqual(capabilities["status"], "partial")
+        self.assertIn("native_binding_available", capabilities)
+        self.assertIn(
+            "generic single- and multi-qubit Kraus channel application",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
+            "density sampling with device-side measured-qubit marginal probability reduction",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
+            "native dense Hermitian expectation for up to four target qubits",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
+            "GPU-resident cuDensityMat-style channel descriptors",
+            capabilities["unsupported_features"],
+        )
+        self.assertIn(
+            "GPU-resident RNG/CDF sampling",
+            capabilities["unsupported_features"],
+        )
+        self.assertEqual(
+            capabilities["execution_scope"]["channel_application"],
+            "per_kraus_kernel_correctness_path",
+        )
+        self.assertEqual(
+            capabilities["execution_scope"]["sampling"],
+            "device_marginal_probabilities_host_shot_drawing",
+        )
+        self.assertEqual(
+            capabilities["execution_scope"]["dense_observable_targets"],
+            "native_up_to_4_target_qubits",
+        )
+        self.assertEqual(
+            capabilities["execution_scope"]["descriptor_planning"],
+            "unsupported",
+        )
+        self.assertFalse(capabilities["hardware_evidence"]["probe_performed"])
+        self.assertFalse(capabilities["hardware_evidence"]["capability_query_is_runtime_proof"])
+        self.assertIn("cuDensityMat-style descriptor planning", capabilities["performance_note"])
 
     def test_statevector_backend_fuses_same_target_single_qubit_spans(self):
         from rocq.backends import StateVectorBackend

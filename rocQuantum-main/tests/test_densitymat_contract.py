@@ -43,6 +43,9 @@ _PY_BINDINGS = os.path.join(
     "py_hip_density_mat.cpp",
 )
 _CANONICAL_BACKEND = os.path.join(_PROJECT_ROOT, "rocq", "backends.py")
+_ROCQ_INIT = os.path.join(_PROJECT_ROOT, "rocq", "__init__.py")
+_README = os.path.join(_PROJECT_ROOT, "README.md")
+_FEATURE_TRUTH_MATRIX = os.path.join(_PROJECT_ROOT, "FEATURE_TRUTH_MATRIX.md")
 
 
 class TestDensityMatContract(unittest.TestCase):
@@ -161,6 +164,27 @@ class TestDensityMatContract(unittest.TestCase):
         self.assertIn('if name in {"ccx", "toffoli"}', backend)
         self.assertIn('if name in {"cswap", "fredkin"}', backend)
         self.assertIn("larger MCX needs an explicit ancilla/decomposition policy", backend)
+
+    def test_density_matrix_capability_api_documents_cudensitymat_boundary(self):
+        with open(_CANONICAL_BACKEND, "r", encoding="utf-8") as f:
+            backend = f.read()
+        with open(_ROCQ_INIT, "r", encoding="utf-8") as f:
+            rocq_init = f.read()
+        with open(_README, "r", encoding="utf-8") as f:
+            readme = f.read()
+        with open(_FEATURE_TRUTH_MATRIX, "r", encoding="utf-8") as f:
+            matrix = f.read()
+
+        self.assertIn("def density_matrix_capabilities", backend)
+        self.assertIn("GPU-resident cuDensityMat-style channel descriptors", backend)
+        self.assertIn("device_marginal_probabilities_host_shot_drawing", backend)
+        self.assertIn("native_up_to_4_target_qubits", backend)
+        self.assertIn("capability_query_is_runtime_proof", backend)
+        self.assertIn("density_matrix_capabilities", rocq_init)
+        self.assertIn("rocq.density_matrix_capabilities()", readme)
+        self.assertIn("cuDensityMat descriptor/sampling boundaries", readme)
+        self.assertIn("per_kraus_kernel_correctness_path", matrix)
+        self.assertIn("GPU-resident RNG/CDF sampling unsupported", matrix)
 
 
 if __name__ == "__main__":

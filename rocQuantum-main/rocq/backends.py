@@ -69,6 +69,38 @@ _DISTRIBUTED_HARDWARE_EVIDENCE = {
     "self_hosted_ci_required_for_release_claim": True,
     "capability_query_is_runtime_proof": False,
 }
+_DENSITY_MATRIX_SUPPORTED_FEATURES = (
+    "native density-matrix allocation, reset, and core named gates",
+    "named noise channels through shared Kraus helper",
+    "generic single- and multi-qubit Kraus channel application",
+    "density sampling with device-side measured-qubit marginal probability reduction",
+    "native dense Hermitian expectation for up to four target qubits",
+    "canonical CCX, two-control MCX, and CSWAP decompositions",
+    "density-matrix noise-model channel revalidation before backend dispatch",
+)
+_DENSITY_MATRIX_UNSUPPORTED_FEATURES = (
+    "GPU-resident cuDensityMat-style channel descriptors",
+    "descriptor-planned channel scheduling",
+    "GPU-resident RNG/CDF sampling",
+    "large dense observables beyond four target qubits",
+    "native full-state CSR density-matrix observables",
+    "batched density-matrix observables",
+    "native broad multi-control density kernels",
+    "ROCm density-matrix performance proof without self-hosted CI artifacts",
+)
+_DENSITY_MATRIX_EXECUTION_SCOPE = {
+    "channel_application": "per_kraus_kernel_correctness_path",
+    "sampling": "device_marginal_probabilities_host_shot_drawing",
+    "dense_observable_targets": "native_up_to_4_target_qubits",
+    "sparse_observables": "host_correctness_fallback",
+    "descriptor_planning": "unsupported",
+}
+_DENSITY_MATRIX_HARDWARE_EVIDENCE = {
+    "probe_performed": False,
+    "native_rocm_device_required": True,
+    "self_hosted_ci_required_for_performance_claim": True,
+    "capability_query_is_runtime_proof": False,
+}
 _MOCK_BACKEND_NOTE = (
     "{backend_name} is using the Python mock fallback because {env_var}=1 and the "
     "native ROCm binding is unavailable. This path is for local smoke tests only; "
@@ -130,6 +162,24 @@ def distributed_capabilities() -> Dict[str, object]:
             "Distributed support is experimental and correctness-oriented; "
             "the capability query does not perform a hardware probe, and ROCm "
             "multi-GPU performance proof requires self-hosted ROCm CI or real hardware."
+        ),
+    }
+
+
+def density_matrix_capabilities() -> Dict[str, object]:
+    """Return the advertised canonical density-matrix runtime contract."""
+
+    return {
+        "status": "partial",
+        "native_binding_available": dm_backend is not None,
+        "supported_features": list(_DENSITY_MATRIX_SUPPORTED_FEATURES),
+        "unsupported_features": list(_DENSITY_MATRIX_UNSUPPORTED_FEATURES),
+        "execution_scope": dict(_DENSITY_MATRIX_EXECUTION_SCOPE),
+        "hardware_evidence": dict(_DENSITY_MATRIX_HARDWARE_EVIDENCE),
+        "performance_note": (
+            "Density-matrix support is correctness-oriented for channels, sampling, "
+            "and supported observables; cuDensityMat-style descriptor planning and "
+            "ROCm performance proof require native self-hosted CI or real hardware."
         ),
     }
 
