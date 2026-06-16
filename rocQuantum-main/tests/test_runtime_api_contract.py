@@ -1427,6 +1427,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             "release-wired TableGen dialect/op generation",
             capabilities["unsupported_features"],
         )
+        self.assertIn(
+            "release-wired adjoint-generation pass pipeline",
+            capabilities["unsupported_features"],
+        )
         self.assertEqual(capabilities["dialect_definition"]["active_source_tree"], "rocqCompiler/")
         self.assertEqual(
             capabilities["dialect_definition"]["legacy_scaffold_source_tree"],
@@ -1435,6 +1439,17 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertFalse(capabilities["dialect_definition"]["release_tablegen_ops"])
         self.assertFalse(capabilities["dialect_definition"]["release_wired"])
         self.assertFalse(capabilities["dialect_definition"]["legacy_scaffold_release_linked"])
+        self.assertEqual(
+            capabilities["transform_pipeline"]["adjoint_generation"]["source_tree"],
+            "rocquantum/src/rocqCompiler/Transforms/AdjointGeneration.cpp",
+        )
+        self.assertTrue(
+            capabilities["transform_pipeline"]["adjoint_generation"]["legacy_scaffold_only"]
+        )
+        self.assertFalse(capabilities["transform_pipeline"]["adjoint_generation"]["release_wired"])
+        self.assertFalse(
+            capabilities["transform_pipeline"]["adjoint_generation"]["native_runtime_entry_point"]
+        )
         self.assertIn("DisabledRuntimeMLIRCompiler", capabilities["mlir_runtime_note"])
 
     def test_compiler_capabilities_distinguish_binding_from_linked_mlir_runtime(self):

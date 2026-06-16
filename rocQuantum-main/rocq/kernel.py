@@ -40,6 +40,7 @@ _COMPILER_UNSUPPORTED_FEATURES = (
     "arbitrary unitary/matrix operations",
     "release-linked default MLIR runtime",
     "release-wired TableGen dialect/op generation",
+    "release-wired adjoint-generation pass pipeline",
 )
 _COMPILER_DIALECT_DEFINITION = {
     "active_source_tree": "rocqCompiler/",
@@ -53,6 +54,14 @@ _COMPILER_DIALECT_DEFINITION = {
         "scaffold is not release-linked and must not be treated as CUDA-Q-style "
         "compiler/runtime parity."
     ),
+}
+_COMPILER_TRANSFORM_PIPELINE = {
+    "adjoint_generation": {
+        "source_tree": "rocquantum/src/rocqCompiler/Transforms/AdjointGeneration.cpp",
+        "legacy_scaffold_only": True,
+        "release_wired": False,
+        "native_runtime_entry_point": False,
+    },
 }
 _RUNTIME_EXECUTION_ENTRY_POINTS = (
     "execute",
@@ -165,6 +174,10 @@ def compiler_capabilities() -> Dict[str, object]:
         },
         "unsupported_features": list(_COMPILER_UNSUPPORTED_FEATURES),
         "dialect_definition": dict(_COMPILER_DIALECT_DEFINITION),
+        "transform_pipeline": {
+            key: dict(value)
+            for key, value in _COMPILER_TRANSFORM_PIPELINE.items()
+        },
         "mlir_runtime_note": (
             "Compiler execution requires rocquantum_bind.MLIRCompiler with the "
             "experimental rocqCompiler MLIR stack linked; default builds may expose "

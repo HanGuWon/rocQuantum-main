@@ -1,7 +1,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/Pass.h"
-#include "rocquantum/Dialect/QuantumOps.h" // Assumes this path, adjust if necessary
+#include "rocquantum/Dialect/QuantumDialect.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
@@ -46,7 +46,8 @@ func::FuncOp AdjointGenerationPass::generateAdjoint(func::FuncOp originalFunc, O
         if (auto genericGate = dyn_cast<GenericGateOp>(op)) {
             // Clone the gate and flip the 'is_adjoint' attribute
             auto newGate = builder.clone(op, mapper);
-            bool isCurrentlyAdjoint = newGate->getAttr("is_adjoint").dyn_cast_or_null<BoolAttr>();
+            auto isCurrentlyAdjoint =
+                newGate->getAttr("is_adjoint").dyn_cast_or_null<BoolAttr>();
             if (isCurrentlyAdjoint && isCurrentlyAdjoint.getValue()) {
                 // If it was adjoint, remove the attribute.
                 newGate->removeAttr("is_adjoint");

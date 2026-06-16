@@ -170,6 +170,22 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("not as parity evidence", dialect)
         self.assertIn("outside the release compiler path", dialect)
 
+    def test_legacy_adjoint_generation_scaffold_uses_valid_attr_handling(self):
+        source = self._read(
+            "rocquantum",
+            "src",
+            "rocqCompiler",
+            "Transforms",
+            "AdjointGeneration.cpp",
+        )
+
+        source.encode("ascii")
+        self.assertIn('#include "rocquantum/Dialect/QuantumDialect.h"', source)
+        self.assertNotIn("Assumes this path", source)
+        self.assertIn("auto isCurrentlyAdjoint", source)
+        self.assertIn("isCurrentlyAdjoint.getValue()", source)
+        self.assertNotIn("bool isCurrentlyAdjoint", source)
+
     def test_tdg_reaches_native_statevec_dispatch(self):
         backend_path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "HipStateVecBackend.cpp")
         simulator_path = os.path.join(_PROJECT_ROOT, "rocquantum", "src", "simulator.cpp")
