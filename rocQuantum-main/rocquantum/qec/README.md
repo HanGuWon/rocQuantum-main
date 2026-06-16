@@ -7,8 +7,11 @@ Current supported subset:
 
 - `rocquantum.qec.qec_capabilities()` and the package-level `capabilities()`
   alias expose the experimental supported/unsupported QEC contract, entry
-  points, code-family scope, measurement-error model, docs path, and ROCm
-  validation limit for CUDA-QX comparisons.
+  points, code-family scope, measurement-error model, execution scope,
+  hardware-evidence boundary, docs path, and ROCm validation limit for CUDA-QX
+  comparisons. The execution scope is sequential sampled classical
+  post-processing over canonical `rocq.sample()` calls, not in-circuit dynamic
+  feedback or distributed QEC execution.
 - 3 data qubits plus 2 ancilla qubits; concrete repetition-code circuit
   generation requires a positive integer `num_qubits >= 5` and an
   `initial_state_kernel` that is callable or `None`.

@@ -7,8 +7,11 @@ Current supported subset:
 
 - `rocquantum.solvers.solver_capabilities()` and the package-level
   `capabilities()` alias expose the experimental supported/unsupported solver
-  contract, entry points, optional SciPy dependency, docs path, and ROCm
-  validation limit for CUDA-QX comparisons.
+  contract, entry points, optional SciPy dependency, execution scope,
+  hardware-evidence boundary, docs path, and ROCm validation limit for CUDA-QX
+  comparisons. The execution scope is a host Python optimizer loop over
+  canonical `rocq.observe()` calls, not native adjoint, distributed solver, or
+  hybrid-workflow scheduler execution.
 - `VQE_Solver.evaluate_energy()` and `VQE_Solver.solve()` evaluate canonical `rocq.operator.QuantumOperator` objectives through `rocq.observe()`, including supported Pauli, dense Hermitian, scaled/divided composite sums, and full-state CSR sparse observables on the state-vector backend or density-matrix correctness fallback. Hamiltonians must be canonical `QuantumOperator` instances, ansatz kernels must be `rocq.kernel.QuantumKernel` objects or callables, and both are rejected before backend or optimizer use.
 - `VQE_Solver.solve()` is quiet by default for library and batch use; pass
   `verbose=True` to print start/finish progress messages. The `verbose`

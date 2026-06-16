@@ -38,6 +38,19 @@ _QEC_UNSUPPORTED_FEATURES = (
     "GPU-resident performance-tuned syndrome extraction",
     "broad CUDA-QX QEC library parity",
 )
+_QEC_EXECUTION_SCOPE = {
+    "quantum_runtime": "canonical_rocq_sample_local_backends",
+    "feedback": "sequential_sampled_classical_post_processing",
+    "mid_circuit_dynamic_feedback": "unsupported",
+    "decoder_scope": "lookup_table_repetition_code",
+    "noise_model": "independent_syndrome_readout_flips",
+    "distributed_qec_execution": "unsupported",
+}
+_QEC_HARDWARE_EVIDENCE = {
+    "probe_performed": False,
+    "native_rocm_device_required_for_performance_claim": True,
+    "capability_query_is_runtime_proof": False,
+}
 
 
 def qec_capabilities():
@@ -53,6 +66,8 @@ def qec_capabilities():
         "measurement_error_model": "independent syndrome-bit flips with p in [0, 0.5)",
         "supported_backends": list(_runtime_supported_backend_names()),
         "runtime": "canonical rocq.sample() over supported local backends",
+        "execution_scope": dict(_QEC_EXECUTION_SCOPE),
+        "hardware_evidence": dict(_QEC_HARDWARE_EVIDENCE),
         "docs": "rocquantum/qec/README.md",
         "performance_note": (
             "This is a correctness-oriented experimental Python layer; ROCm "

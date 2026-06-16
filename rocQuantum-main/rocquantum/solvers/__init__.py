@@ -39,6 +39,19 @@ _SOLVER_UNSUPPORTED_FEATURES = (
     "distributed or multi-QPU solver execution",
     "broad CUDA-QX hybrid-algorithm library parity",
 )
+_SOLVER_EXECUTION_SCOPE = {
+    "quantum_runtime": "canonical_rocq_observe_local_backends",
+    "classical_optimizer": "host_python_optimizer_loop",
+    "gradients": "host_parameter_shift_or_finite_difference",
+    "native_adjoint": "unsupported",
+    "distributed_solver_execution": "unsupported",
+    "workflow_scheduler": "unsupported",
+}
+_SOLVER_HARDWARE_EVIDENCE = {
+    "probe_performed": False,
+    "native_rocm_device_required_for_performance_claim": True,
+    "capability_query_is_runtime_proof": False,
+}
 
 
 def solver_capabilities():
@@ -52,6 +65,8 @@ def solver_capabilities():
         "unsupported_features": list(_SOLVER_UNSUPPORTED_FEATURES),
         "supported_backends": list(_runtime_supported_backend_names()),
         "runtime": "canonical rocq.observe() over supported local backends",
+        "execution_scope": dict(_SOLVER_EXECUTION_SCOPE),
+        "hardware_evidence": dict(_SOLVER_HARDWARE_EVIDENCE),
         "optional_dependencies": {
             "scipy": "required only when using the default SciPyOptimizer",
         },
