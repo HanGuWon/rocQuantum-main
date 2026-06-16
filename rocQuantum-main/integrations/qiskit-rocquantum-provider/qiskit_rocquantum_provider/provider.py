@@ -12,6 +12,12 @@ def _reject_unknown_native_options(options, primitive_name):
         raise ValueError(f"Unsupported native {primitive_name} option(s): {option_names}")
 
 
+def _reject_unknown_backend_selection_options(options):
+    if options:
+        option_names = ", ".join(sorted(str(name) for name in options))
+        raise ValueError(f"Unsupported provider backend selection option(s): {option_names}")
+
+
 def _normalize_native_option(native):
     if not isinstance(native, bool):
         raise ValueError("native must be a boolean.")
@@ -33,6 +39,7 @@ class RocQuantumProvider(_ProviderBase):
 
     def backends(self, name=None, **kwargs):
         """Return a list of backends."""
+        _reject_unknown_backend_selection_options(kwargs)
         if name is not None:
             backend = self._backends.get(name)
             return [backend] if backend is not None else []

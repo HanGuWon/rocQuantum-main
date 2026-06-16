@@ -3595,6 +3595,19 @@ def test_qiskit_provider_exposes_backend_primitives(monkeypatch):
     assert isinstance(provider.get_estimator(native=False), BackendEstimatorV2)
 
 
+def test_qiskit_provider_rejects_unknown_backend_selection_options(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    provider = RocQuantumProvider()
+    with pytest.raises(ValueError, match="Unsupported provider backend selection option"):
+        provider.backends(operational=True)
+    with pytest.raises(ValueError, match="Unsupported provider backend selection option"):
+        provider.get_backend("rocq_simulator", min_num_qubits=1)
+
+
 def test_qiskit_provider_rejects_non_boolean_native_flag(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
