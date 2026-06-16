@@ -5,13 +5,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Define rocComplex based on precision
+// Define rocComplex based on precision while also exposing explicit aliases for
+// template instantiations and tests that need both precision variants.
+typedef hipFloatComplex rocFloatComplex;
+typedef hipDoubleComplex rocDoubleComplex;
+
 #ifdef ROCQ_PRECISION_DOUBLE
-    typedef hipDoubleComplex rocComplex;
+    typedef rocDoubleComplex rocComplex;
     typedef double real_t;
     const real_t REAL_EPSILON = 1e-12;
 #else
-    typedef hipFloatComplex rocComplex;
+    typedef rocFloatComplex rocComplex;
     typedef float real_t;
     const real_t REAL_EPSILON = 1e-6f;
 #endif

@@ -35,6 +35,27 @@ _TENSOR_UTIL_SOURCE = os.path.join(
     "hipTensorNet",
     "rocTensorUtil.cpp",
 )
+_TENSOR_UTIL_KERNELS = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipTensorNet",
+    "rocTensorUtil_kernels.hip",
+)
+_PERMUTATION_KERNELS = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipTensorNet",
+    "PermutationKernels.hip",
+)
+_HIP_STATEVEC_HEADER = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "include",
+    "rocquantum",
+    "hipStateVec.h",
+)
 _TENSORNET_CMAKE = os.path.join(
     _PROJECT_ROOT,
     "rocquantum",
@@ -80,6 +101,9 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("supports_open_index_slicing", api)
         self.assertIn("supports_mixed_precision", api)
         self.assertIn("supports_simultaneous_c64_c128", api)
+        self.assertIn("ROC_TENSORNET_MAX_PERMUTATION_MODES", api)
+        self.assertIn("max_tensor_permutation_modes", api)
+        self.assertIn("permutation_modes_are_hard_limited", api)
         self.assertIn("ROC_TENSORNET_COMPILED_COMPLEX_DTYPE", header)
         self.assertIn("rocTensorNetworkGetCapabilities", header)
         self.assertIn("rocTensorNetworkGetCapabilities", source)
@@ -87,6 +111,47 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("supports_open_index_slicing = 0", source)
         self.assertIn("supports_mixed_precision = 0", source)
         self.assertIn("supports_simultaneous_c64_c128 = 0", source)
+        self.assertIn(
+            "max_tensor_permutation_modes = ROC_TENSORNET_MAX_PERMUTATION_MODES",
+            source,
+        )
+        self.assertIn("permutation_modes_are_hard_limited = 1", source)
+
+    def test_permutation_rank_limit_is_explicit_and_guarded(self):
+        with open(_TENSOR_UTIL_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+        with open(_TENSOR_UTIL_KERNELS, "r", encoding="utf-8") as f:
+            kernels = f.read()
+        with open(_TENSOR_UTIL_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
+            bindings = f.read()
+
+        self.assertIn("#include \"rocquantum/hipTensorNet_api.h\"", source)
+        self.assertIn("input_tensor->rank() > ROC_TENSORNET_MAX_PERMUTATION_MODES", source)
+        self.assertIn("return ROCQ_STATUS_NOT_IMPLEMENTED", source)
+        self.assertIn("ROC_TENSORNET_MAX_PERMUTATION_MODES", kernels)
+        self.assertNotIn("input_multi_indices[16]", kernels)
+        self.assertNotIn("output_multi_indices[16]", kernels)
+        self.assertNotIn("output_coords[16]", kernels)
+        self.assertIn("ROC_TENSORNET_MAX_PERMUTATION_MODES", header)
+        self.assertIn("max_tensor_permutation_modes", bindings)
+        self.assertIn("permutation_modes_are_hard_limited", bindings)
+
+    def test_permutation_template_instantiations_use_concrete_complex_aliases(self):
+        with open(_PERMUTATION_KERNELS, "r", encoding="utf-8") as f:
+            source = f.read()
+        with open(_HIP_STATEVEC_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+
+        self.assertIn("typedef hipFloatComplex rocFloatComplex", header)
+        self.assertIn("typedef hipDoubleComplex rocDoubleComplex", header)
+        self.assertIn("launch_permute_tensor<rocFloatComplex>", source)
+        self.assertIn("rocFloatComplex* output_tensor", source)
+        self.assertIn("launch_permute_tensor<rocDoubleComplex>", source)
+        self.assertIn("rocDoubleComplex* output_tensor", source)
+        self.assertNotIn("launch_permute_tensor<rocComplex>(T*", source)
+        self.assertNotIn("launch_permute_tensor<rocDoubleComplex>(T*", source)
 
     def test_dtype_support_is_build_precision_gated(self):
         with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:

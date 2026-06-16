@@ -1,5 +1,6 @@
 #include "rocquantum/rocTensorUtil.h"
 #include "rocquantum/hipStateVec.h"
+#include "rocquantum/hipTensorNet_api.h"
 #include <hip/hip_runtime.h>
 #include <rocblas/rocblas.h>
 #include <cctype>
@@ -63,6 +64,9 @@ rocqStatus_t rocTensorPermute(
             return ROCQ_STATUS_SUCCESS;
         }
         return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (input_tensor->rank() > ROC_TENSORNET_MAX_PERMUTATION_MODES) {
+        return ROCQ_STATUS_NOT_IMPLEMENTED;
     }
 
     long long total_elements = input_tensor->get_element_count();

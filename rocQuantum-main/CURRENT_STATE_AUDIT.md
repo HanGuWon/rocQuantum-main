@@ -162,7 +162,7 @@ What is not real today:
 ### Tensor networks
 
 - `hipTensorNet` contains real permutation helpers, pairwise contraction, greedy multi-tensor contraction, and complex64 SVD.
-- TensorNet exposes build-time capabilities for C64/C128 dtype availability, pathfinder algorithms, memory-limit planning, limited pair-contraction K-sliced GEMM runtime slicing, unsupported open-index slicing, unsupported mixed precision, and unsupported simultaneous runtime C64/C128 execution. GREEDY is the only always-available optimizer; unsupported METIS/KAHYPAR choices fail explicitly.
+- TensorNet exposes build-time capabilities for C64/C128 dtype availability, pathfinder algorithms, memory-limit planning, limited pair-contraction K-sliced GEMM runtime slicing, the hard 16-mode tensor permutation limit, unsupported open-index slicing, unsupported mixed precision, and unsupported simultaneous runtime C64/C128 execution. GREEDY is the only always-available optimizer; unsupported METIS/KAHYPAR choices fail explicitly, and tensor permutations above the fixed kernel rank limit fail before launch instead of overflowing local index arrays.
 - CI contains one real GPU regression target for tensor-network contraction.
 
 ### Direct runtime execution

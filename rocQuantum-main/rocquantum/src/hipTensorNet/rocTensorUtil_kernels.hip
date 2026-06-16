@@ -1,4 +1,5 @@
 #include "rocquantum/hipStateVec.h" // For rocComplex
+#include "rocquantum/hipTensorNet_api.h"
 #include "rocquantum/rocTensorUtil.h" // For rocTensor struct (though it's in include path)
 #include <hip/hip_runtime.h>
 
@@ -74,8 +75,8 @@ __global__ void permute_tensor_kernel(
     long long output_flat_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (output_flat_idx < total_elements) {
-        long long input_multi_indices[16]; // Max 16 modes, adjust if necessary
-        long long output_multi_indices[16];
+        long long input_multi_indices[ROC_TENSORNET_MAX_PERMUTATION_MODES];
+        long long output_multi_indices[ROC_TENSORNET_MAX_PERMUTATION_MODES];
 
         // 1. Get multi-dimensional indices for the current output element
         long long temp_flat_idx = output_flat_idx;
@@ -130,7 +131,7 @@ __global__ void general_permute_kernel(rocComplex* p_output_data, const rocCompl
         long long factor = 1;
 
         // Calculate output coordinates
-        long long output_coords[16]; // Max 16 dims, consistent with above
+        long long output_coords[ROC_TENSORNET_MAX_PERMUTATION_MODES];
         for (int i = 0; i < num_dims; ++i) {
             output_coords[i] = temp_gid % p_output_dims[i];
             temp_gid /= p_output_dims[i];

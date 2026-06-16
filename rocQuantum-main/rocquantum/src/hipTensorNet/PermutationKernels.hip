@@ -156,6 +156,16 @@ void launch_permute_tensor(
 }
 
 // Explicit template instantiations
-#include "rocquantum/hipStateVec.h" // For rocComplex types
-template void launch_permute_tensor<rocComplex>(T* output_tensor, const T* input_tensor, const std::vector<long long>& input_dims, const std::vector<int>& permutation_map, hipStream_t stream);
-template void launch_permute_tensor<rocDoubleComplex>(T* output_tensor, const T* input_tensor, const std::vector<long long>& input_dims, const std::vector<int>& permutation_map, hipStream_t stream);
+#include "rocquantum/hipStateVec.h" // For rocFloatComplex and rocDoubleComplex
+template void launch_permute_tensor<rocFloatComplex>(
+    rocFloatComplex* output_tensor,
+    const rocFloatComplex* input_tensor,
+    const std::vector<long long>& input_dims,
+    const std::vector<int>& permutation_map,
+    hipStream_t stream);
+template void launch_permute_tensor<rocDoubleComplex>(
+    rocDoubleComplex* output_tensor,
+    const rocDoubleComplex* input_tensor,
+    const std::vector<long long>& input_dims,
+    const std::vector<int>& permutation_map,
+    hipStream_t stream);

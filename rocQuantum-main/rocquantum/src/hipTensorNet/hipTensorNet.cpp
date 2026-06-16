@@ -524,6 +524,8 @@ rocqStatus_t rocTensorNetworkGetCapabilities(hipTensorNetCapabilities_t* capabil
     capabilities->supports_open_index_slicing = 0;
     capabilities->supports_mixed_precision = 0;
     capabilities->supports_simultaneous_c64_c128 = 0;
+    capabilities->max_tensor_permutation_modes = ROC_TENSORNET_MAX_PERMUTATION_MODES;
+    capabilities->permutation_modes_are_hard_limited = 1;
     return ROCQ_STATUS_SUCCESS;
 }
 

@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 
+#define ROC_TENSORNET_MAX_PERMUTATION_MODES 16
+
 typedef enum {
     ROCTN_PATHFINDER_ALGO_GREEDY = 0,
     ROCTN_PATHFINDER_ALGO_KAHYPAR = 1,
@@ -59,6 +61,8 @@ typedef struct hipTensorNetCapabilities_t {
     int supports_open_index_slicing;
     int supports_mixed_precision;
     int supports_simultaneous_c64_c128;
+    int max_tensor_permutation_modes;
+    int permutation_modes_are_hard_limited;
 } hipTensorNetCapabilities_t;
 
 #endif // HIP_TENSOR_NET_API_H

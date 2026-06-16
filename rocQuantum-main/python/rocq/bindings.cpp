@@ -1519,6 +1519,9 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
         result["supports_open_index_slicing"] = caps.supports_open_index_slicing != 0;
         result["supports_mixed_precision"] = caps.supports_mixed_precision != 0;
         result["supports_simultaneous_c64_c128"] = caps.supports_simultaneous_c64_c128 != 0;
+        result["max_tensor_permutation_modes"] = caps.max_tensor_permutation_modes;
+        result["permutation_modes_are_hard_limited"] =
+            caps.permutation_modes_are_hard_limited != 0;
         return result;
     }, "Reports TensorNet dtype, optimizer, and slicing capabilities for this build.");
 

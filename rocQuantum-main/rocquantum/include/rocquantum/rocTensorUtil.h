@@ -262,6 +262,8 @@ inline rocqStatus_t rocTensorFree(rocTensor* tensor) {
  * For example, to transpose a 2D matrix (modes 0, 1 -> 1, 0), host_permutation_map would be {1, 0}.
  * The output_tensor must be pre-allocated with the correct permuted dimensions and its data pointer set.
  * Input and output tensors must have the same rank (number of modes) and total number of elements.
+ * Tensors with rank greater than ROC_TENSORNET_MAX_PERMUTATION_MODES return
+ * ROCQ_STATUS_NOT_IMPLEMENTED instead of launching the fixed-local-array HIP kernel.
  *
  * @param output_tensor Pointer to the rocTensor struct for the output (permuted) tensor.
  *                      Its `data_`, `dimensions_`, and `strides_` must be set appropriately for the permuted layout.
