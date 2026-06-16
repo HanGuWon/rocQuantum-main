@@ -111,6 +111,10 @@ class TestCompileAndExecuteContract(unittest.TestCase):
             src = f.read()
 
         self.assertIn("ROCQUANTUM_ENABLE_MLIR_COMPILER", src)
+        self.assertIn("MLIR_COMPILER_ENABLED", src)
+        self.assertIn("MLIR_COMPILER_RUNTIME_KIND", src)
+        self.assertIn("linked_runtime", src)
+        self.assertIn("disabled_runtime_guard", src)
         self.assertIn("DisabledRuntimeMLIRCompiler", src)
         self.assertIn("MLIR compiler support is disabled", src)
         self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP", src)

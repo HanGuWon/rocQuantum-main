@@ -954,6 +954,8 @@ PYBIND11_MODULE(rocquantum_bind, m) {
     m.doc() = "pybind11 plugin for rocQuantum-1";
 
 #ifdef ROCQUANTUM_ENABLE_MLIR_COMPILER
+    m.attr("MLIR_COMPILER_ENABLED") = py::bool_(true);
+    m.attr("MLIR_COMPILER_RUNTIME_KIND") = "linked_runtime";
     py::class_<rocq::MLIRCompiler>(m, "MLIRCompiler")
         .def(py::init([](unsigned num_qubits, const std::string& backend_name) {
             auto backend = rocq::create_backend(backend_name);
@@ -971,6 +973,8 @@ PYBIND11_MODULE(rocquantum_bind, m) {
         .def("emit_qir", &rocq::MLIRCompiler::emit_qir,
              "Compiles the MLIR string down to QIR (LLVM IR).");
 #else
+    m.attr("MLIR_COMPILER_ENABLED") = py::bool_(false);
+    m.attr("MLIR_COMPILER_RUNTIME_KIND") = "disabled_runtime_guard";
     py::class_<DisabledRuntimeMLIRCompiler>(m, "MLIRCompiler")
         .def(py::init<unsigned, std::string>(),
              py::arg("num_qubits"),

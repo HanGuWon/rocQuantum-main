@@ -64,7 +64,7 @@ _RUNTIME_SUPPORTED_FEATURES = (
     "state readback through get_state()/execute()",
     "selected-qubit sampling through sample()",
     "observable evaluation through observe()",
-    "host-side Future wrappers for execute/get_state/sample/observe",
+    "host-side Future wrappers for execute/get_state/sample/observe/compile_and_execute",
     "bool-safe state-vector-only enable_fusion execution option",
     "canonical backend-name validation",
     "positive-integer direct backend size validation",
@@ -114,9 +114,25 @@ def _submit_async(callback: Callable[[], object], executor: Optional[Executor] =
 def compiler_capabilities() -> Dict[str, object]:
     """Return the supported canonical compiler subset without invoking MLIR."""
 
+    binding_available = rocquantum_bind is not None
+    mlir_runtime_available = bool(
+        getattr(rocquantum_bind, "MLIR_COMPILER_ENABLED", False)
+    ) if binding_available else False
+    if binding_available:
+        mlir_runtime_kind = str(
+            getattr(
+                rocquantum_bind,
+                "MLIR_COMPILER_RUNTIME_KIND",
+                "unknown_binding_runtime",
+            )
+        )
+    else:
+        mlir_runtime_kind = "missing_binding"
     return {
         "status": "partial",
-        "binding_available": rocquantum_bind is not None,
+        "binding_available": binding_available,
+        "mlir_runtime_available": mlir_runtime_available,
+        "mlir_runtime_kind": mlir_runtime_kind,
         "default_backend": "hip_statevec",
         "supported_backends": list(_COMPILER_SUPPORTED_BACKENDS),
         "supported_subset": _COMPILER_SUPPORTED_MLIR_SUBSET,

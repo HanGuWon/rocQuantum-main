@@ -98,6 +98,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertIn("compile_and_execute_async", capabilities["execution_entry_points"])
         self.assertIn("state_vector", capabilities["supported_backends"])
         self.assertIn(
+            "host-side Future wrappers for execute/get_state/sample/observe/compile_and_execute",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
             "bool-safe state-vector-only enable_fusion execution option",
             capabilities["supported_features"],
         )
@@ -1326,6 +1330,8 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         self.assertEqual(capabilities["status"], "partial")
         self.assertFalse(capabilities["binding_available"])
+        self.assertFalse(capabilities["mlir_runtime_available"])
+        self.assertEqual(capabilities["mlir_runtime_kind"], "missing_binding")
         self.assertEqual(capabilities["default_backend"], "hip_statevec")
         self.assertEqual(capabilities["supported_backends"], ["hip_statevec"])
         self.assertIn("Supported canonical MLIR gates", capabilities["supported_subset"])
@@ -1338,6 +1344,26 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["unsupported_features"],
         )
         self.assertIn("DisabledRuntimeMLIRCompiler", capabilities["mlir_runtime_note"])
+
+    def test_compiler_capabilities_distinguish_binding_from_linked_mlir_runtime(self):
+        disabled_binding = mock.Mock()
+        disabled_binding.MLIR_COMPILER_ENABLED = False
+        disabled_binding.MLIR_COMPILER_RUNTIME_KIND = "disabled_runtime_guard"
+        enabled_binding = mock.Mock()
+        enabled_binding.MLIR_COMPILER_ENABLED = True
+        enabled_binding.MLIR_COMPILER_RUNTIME_KIND = "linked_runtime"
+
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", disabled_binding):
+            disabled = rocq.compiler_capabilities()
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", enabled_binding):
+            enabled = rocq.compiler_capabilities()
+
+        self.assertTrue(disabled["binding_available"])
+        self.assertFalse(disabled["mlir_runtime_available"])
+        self.assertEqual(disabled["mlir_runtime_kind"], "disabled_runtime_guard")
+        self.assertTrue(enabled["binding_available"])
+        self.assertTrue(enabled["mlir_runtime_available"])
+        self.assertEqual(enabled["mlir_runtime_kind"], "linked_runtime")
 
     def test_qir_error_string_is_not_returned_as_qir(self):
         @kernel
