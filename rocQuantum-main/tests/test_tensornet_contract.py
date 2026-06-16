@@ -225,7 +225,12 @@ class TestTensorNetContract(unittest.TestCase):
             matrix = f.read()
 
         self.assertIn("deterministic runtime K-sliced GEMM accumulation", readme)
+        self.assertIn("active simulator stream", readme)
+        self.assertIn("reuse a rocBLAS handle", readme)
+        self.assertIn("stale unwired Pathfinder scaffold is not shipped", readme)
         self.assertIn("mixed precision remains a documented future lane", readme)
+        self.assertIn("placeholder BLAS/stream handles", matrix)
+        self.assertIn("stale unwired `Pathfinder.cpp` / public `Pathfinder.h` scaffold is not shipped", matrix)
         self.assertIn("not full cuTensorNet-style open-index slicing", matrix)
         self.assertIn("mixed precision remains a documented future lane", matrix)
         self.assertIn("No simultaneous runtime C64/C128 support", matrix)

@@ -100,6 +100,13 @@ class TestStateVecFastPathContract(unittest.TestCase):
         self.assertIn("collapse_and_renorm_measure_kernel", source)
         self.assertIn("renormalize_state_kernel", source)
 
+    def test_docs_describe_active_measurement_kernels_without_stale_scaffold(self):
+        with open(_README, "r", encoding="utf-8") as f:
+            readme = f.read()
+
+        self.assertIn("active parallel measurement/probability kernels", readme)
+        self.assertIn("stale single-thread measurement scaffolding is not built", readme)
+
     def test_distributed_host_fallback_is_explicit_mode(self):
         with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
             source = f.read()
