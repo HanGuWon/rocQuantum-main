@@ -42,6 +42,14 @@ _TENSORNET_CMAKE = os.path.join(
     "hipTensorNet",
     "CMakeLists.txt",
 )
+_STALE_PATHFINDER_SOURCE = os.path.join(_PROJECT_ROOT, "rocquantum", "src", "Pathfinder.cpp")
+_STALE_PATHFINDER_HEADER = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "include",
+    "rocquantum",
+    "Pathfinder.h",
+)
 _BINDINGS_SOURCE = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
 _README = os.path.join(_PROJECT_ROOT, "README.md")
 _FEATURE_TRUTH_MATRIX = os.path.join(_PROJECT_ROOT, "FEATURE_TRUTH_MATRIX.md")
@@ -128,6 +136,17 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertIn("ROCTN_PATHFINDER_ALGO_METIS", source)
         self.assertIn("using_metis_partition", source)
         self.assertIn("add_metis_partition_penalty", source)
+
+    def test_stale_unwired_pathfinder_sources_are_not_shipped(self):
+        with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertFalse(os.path.exists(_STALE_PATHFINDER_SOURCE))
+        self.assertFalse(os.path.exists(_STALE_PATHFINDER_HEADER))
+        self.assertIn("pathfinder_algorithm_available", source)
+        self.assertIn("effective_pathfinder_algorithm", source)
+        self.assertIn("metis_partition_active_tensors", source)
+        self.assertNotIn("findMetisPath", source)
 
     def test_kahypar_build_option_fails_fast_until_release_wired(self):
         with open(_TENSORNET_CMAKE, "r", encoding="utf-8") as f:
