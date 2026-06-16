@@ -45,10 +45,12 @@ _RUNTIME_EXECUTION_ENTRY_POINTS = (
     "get_state",
     "sample",
     "observe",
+    "compile_and_execute",
     "execute_async",
     "get_state_async",
     "sample_async",
     "observe_async",
+    "compile_and_execute_async",
 )
 _RUNTIME_SUPPORTED_BACKENDS = (
     "state_vector",
@@ -79,6 +81,7 @@ _RUNTIME_SUPPORTED_FEATURES = (
     "density-matrix noise-model channel revalidation before backend dispatch",
     "density-matrix noise model execution",
     "experimental Clifford stabilizer Pauli propagation backend",
+    "partial compiler execution entry point with compiler_capabilities() boundary metadata",
 )
 _RUNTIME_UNSUPPORTED_FEATURES = (
     "native HIP-stream futures",

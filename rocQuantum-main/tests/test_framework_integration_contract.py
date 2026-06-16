@@ -87,6 +87,7 @@ _WINDOWS_BUILD_BAT = os.path.join(_PROJECT_ROOT, "build.bat")
 _WINDOWS_BUILD_ROCQ_BAT = os.path.join(_PROJECT_ROOT, "build_rocq.bat")
 _NATIVE_FRAMEWORK_SMOKE = os.path.join(_PROJECT_ROOT, "scripts", "native_framework_smoke.py")
 _ROCM_CI_WORKFLOW = os.path.join(os.path.dirname(_PROJECT_ROOT), ".github", "workflows", "rocm-ci.yml")
+_README = os.path.join(_PROJECT_ROOT, "README.md")
 
 
 class TestFrameworkIntegrationContract(unittest.TestCase):
@@ -1074,6 +1075,8 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
     def test_qiskit_counts_are_fixed_width_bitstrings(self):
         with open(_QISKIT_BACKEND, "r", encoding="utf-8") as f:
             source = f.read()
+        with open(_README, "r", encoding="utf-8") as f:
+            readme = f.read()
 
         self.assertIn("qiskit_memory_from_samples", source)
         self.assertIn("MATRIX_FALLBACK_OPS", source)
@@ -1263,6 +1266,12 @@ class TestFrameworkIntegrationContract(unittest.TestCase):
         self.assertIn("formatted_counts = counts_from_memory(memory)", source)
         self.assertIn("return RocQuantumJob(self, job_id, result)", source)
         self.assertNotIn("{bin(k): v for k, v in counts.items()}", source)
+        self.assertIn("simple `if_test` / `if_else`", readme)
+        self.assertIn("finite `for_loop`", readme)
+        self.assertIn("bounded `while_loop`", readme)
+        self.assertIn("loop-local `break_loop` / `continue_loop`", readme)
+        self.assertIn("`switch_case`", readme)
+        self.assertIn("broader Qiskit control-flow semantics remain explicit unsupported boundaries", readme)
 
     def test_qiskit_estimator_uses_native_expectation(self):
         with open(_QISKIT_ESTIMATOR, "r", encoding="utf-8") as f:

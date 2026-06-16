@@ -93,7 +93,9 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(capabilities["primary_python_surface"], "rocq")
         self.assertIn("python/rocq", capabilities["legacy_python_surface"])
         self.assertIn("execute", capabilities["execution_entry_points"])
+        self.assertIn("compile_and_execute", capabilities["execution_entry_points"])
         self.assertIn("observe_async", capabilities["execution_entry_points"])
+        self.assertIn("compile_and_execute_async", capabilities["execution_entry_points"])
         self.assertIn("state_vector", capabilities["supported_backends"])
         self.assertIn(
             "bool-safe state-vector-only enable_fusion execution option",
@@ -149,6 +151,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         )
         self.assertIn(
             "density-matrix noise-model channel revalidation before backend dispatch",
+            capabilities["supported_features"],
+        )
+        self.assertIn(
+            "partial compiler execution entry point with compiler_capabilities() boundary metadata",
             capabilities["supported_features"],
         )
         self.assertIn(
