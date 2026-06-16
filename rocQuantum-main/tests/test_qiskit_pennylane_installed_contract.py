@@ -1299,6 +1299,64 @@ def test_framework_runtime_rejects_ambiguous_gate_parameters(monkeypatch):
     assert batch_sim.batch_ops == []
 
 
+def test_framework_runtime_validates_named_gate_signatures_before_native_dispatch(monkeypatch):
+    _install_fake_binding(monkeypatch)
+
+    from rocquantum.framework_runtime import RocQuantumRuntime, validate_gate_signature
+
+    assert validate_gate_signature("H", [0], [], 2) == [0]
+    assert validate_gate_signature("CNOT", [0, 1], [], 2) == [0, 1]
+    assert validate_gate_signature("RX", [0], [0.25], 2) == [0]
+    assert validate_gate_signature("CP", [0, 1], [0.25], 2) == [0, 1]
+    assert validate_gate_signature("MCX", [0, 1, 2], [], 3) == [0, 1, 2]
+    assert validate_gate_signature("CSWAP", [0, 1, 2], [], 3) == [0, 1, 2]
+
+    invalid_signatures = (
+        ("H", [0, 1], []),
+        ("CNOT", [0], []),
+        ("RX", [0, 1], [0.25]),
+        ("RX", [0], []),
+        ("RX", [0], [0.25, 0.5]),
+        ("CP", [0], [0.25]),
+        ("CP", [0, 1], []),
+        ("MCX", [0], []),
+        ("CSWAP", [0, 1], []),
+        ("X", [-1], []),
+        ("X", [2], []),
+        ("X", [0, 0], []),
+    )
+    for name, targets, params in invalid_signatures:
+        with pytest.raises(ValueError, match="operation|Operation targets"):
+            validate_gate_signature(name, targets, params, 2)
+
+    runtime = RocQuantumRuntime.from_bindings(2)
+    sim = _FakeQuantumSimulator.instances[-1]
+    for name, targets, params in invalid_signatures:
+        with pytest.raises(ValueError, match="operation|Operation targets"):
+            runtime.apply_operation(name, targets, params)
+    assert sim.ops == []
+
+    runtime.apply_operation("X", [0])
+    runtime.apply_operation("CRZ", [0, 1], [0.25])
+    assert sim.ops == [("X", (0,), ()), ("CRZ", (0, 1), (0.25,))]
+
+    batch_runtime = RocQuantumRuntime.from_bindings(2, batch_size=2)
+    batch_sim = _FakeQuantumSimulator.instances[-1]
+    invalid_batch_signatures = (
+        ("RX", [0, 1], [0.1, 0.2]),
+        ("CP", [0], [0.1, 0.2]),
+        ("RX", [2], [0.1, 0.2]),
+    )
+    for name, targets, params in invalid_batch_signatures:
+        with pytest.raises(ValueError, match="operation|Operation targets"):
+            batch_runtime.apply_operation_batch(name, targets, params)
+    assert batch_sim.batch_ops == []
+
+    batch_runtime.apply_operation_batch("RX", [0], [0.1, 0.2])
+    batch_runtime.apply_operation_batch("CP", [0, 1], [0.3, 0.4])
+    assert batch_sim.batch_ops == [("RX", (0,), (0.1, 0.2)), ("CP", (0, 1), (0.3, 0.4))]
+
+
 def test_framework_runtime_rejects_ambiguous_targets_before_native_dispatch(monkeypatch):
     _install_fake_binding(monkeypatch)
 

@@ -50,6 +50,24 @@ GATE_ALIASES = {
 
 NO_OPS = {"barrier", "delay", "save_statevector", "snapshot"}
 
+SINGLE_QUBIT_GATES = {
+    "H",
+    "I",
+    "X",
+    "Y",
+    "Z",
+    "S",
+    "SDG",
+    "T",
+    "TDG",
+    "RX",
+    "RY",
+    "RZ",
+    "P",
+}
+TWO_QUBIT_GATES = {"CNOT", "CZ", "SWAP", "CRX", "CRY", "CRZ", "CP"}
+PARAMETRIC_GATES = {"RX", "RY", "RZ", "P", "CRX", "CRY", "CRZ", "CP"}
+
 
 def normalize_gate_name(name: str) -> str:
     key = str(name).replace("_", "").replace("-", "").upper()
@@ -421,7 +439,9 @@ def _validate_adjoint_sparse_payload(
 
 
 def normalize_adjoint_operations(operations: Sequence[Mapping], num_qubits: int | None = None) -> list[Mapping]:
-    normalized_num_qubits = None if num_qubits is None or int(num_qubits) <= 0 else int(num_qubits)
+    normalized_num_qubits = (
+        None if num_qubits is None or int(num_qubits) <= 0 else int(num_qubits)
+    )
     normalized_operations = []
     for operation in _payload_sequence(operations, "Adjoint operation payloads"):
         payload = _require_payload_mapping(operation, "Adjoint operation")
@@ -599,6 +619,37 @@ def validate_operation_targets(
         label,
         allow_empty=False,
     )
+
+
+def validate_gate_signature(
+    name: str,
+    targets: Iterable[int],
+    params: Sequence[float],
+    num_qubits: int | None = None,
+) -> list[int]:
+    normalized_name = normalize_gate_name(name)
+    normalized_num_qubits = None if num_qubits is None or int(num_qubits) <= 0 else int(num_qubits)
+    normalized_targets = normalize_qubit_subset(
+        targets,
+        normalized_num_qubits,
+        "Operation targets",
+        allow_empty=False,
+    )
+
+    if normalized_name in SINGLE_QUBIT_GATES and len(normalized_targets) != 1:
+        raise ValueError(f"{normalized_name} operation requires exactly one target qubit.")
+    if normalized_name in TWO_QUBIT_GATES and len(normalized_targets) != 2:
+        raise ValueError(f"{normalized_name} operation requires exactly two target qubits.")
+    if normalized_name == "MCX" and len(normalized_targets) < 2:
+        raise ValueError("MCX operation requires at least one control and one target qubit.")
+    if normalized_name == "CSWAP" and len(normalized_targets) != 3:
+        raise ValueError("CSWAP operation requires exactly one control and two target qubits.")
+
+    expected_param_count = 1 if normalized_name in PARAMETRIC_GATES else 0
+    if len(params) != expected_param_count:
+        label = "one parameter" if expected_param_count == 1 else "no parameters"
+        raise ValueError(f"{normalized_name} operation requires {label}.")
+    return normalized_targets
 
 
 def operation_matrix_for_targets(
@@ -1400,6 +1451,13 @@ class RocQuantumRuntime:
 
         apply_gate = getattr(self.simulator, "apply_gate", None)
         if callable(apply_gate) and normalized_name in GATE_ALIASES.values():
+            if matrix is None:
+                normalized_targets = validate_gate_signature(
+                    normalized_name,
+                    normalized_targets,
+                    normalized_params,
+                    self.num_qubits(),
+                )
             try:
                 apply_gate(normalized_name, normalized_targets, normalized_params)
                 return
@@ -1413,6 +1471,12 @@ class RocQuantumRuntime:
 
         legacy_apply = getattr(self.simulator, "ApplyGate", None)
         if callable(legacy_apply) and normalized_name in GATE_ALIASES.values() and not normalized_params:
+            normalized_targets = validate_gate_signature(
+                normalized_name,
+                normalized_targets,
+                normalized_params,
+                self.num_qubits(),
+            )
             if len(normalized_targets) == 1:
                 legacy_apply(normalized_name, normalized_targets[0])
                 return
@@ -1439,6 +1503,13 @@ class RocQuantumRuntime:
             raise ValueError("Batch parameter count must equal the simulator batch size.")
 
         batched_parametric_ops = {"RX", "RY", "RZ", "P", "CRX", "CRY", "CRZ", "CP"}
+        if normalized_name in batched_parametric_ops:
+            normalized_targets = validate_gate_signature(
+                normalized_name,
+                normalized_targets,
+                [normalized_params[0]],
+                self.num_qubits(),
+            )
 
         apply_gate_batch = getattr(self.simulator, "apply_gate_batch", None)
         if callable(apply_gate_batch) and normalized_name in batched_parametric_ops:
