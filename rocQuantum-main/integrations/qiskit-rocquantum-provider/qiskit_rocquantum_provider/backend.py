@@ -96,6 +96,13 @@ CONTROL_FLOW_OPS = {
     "break_loop", "continue_loop", "for_loop", "if_else", "switch_case", "while_loop",
 }
 DEFAULT_MAX_DYNAMIC_LOOP_ITERATIONS = 1024
+RUN_OPTION_NAMES = {
+    "max_dynamic_loop_iterations",
+    "memory",
+    "sampling",
+    "shots",
+    "statevector",
+}
 STATEVECTOR_BATCH_SAFE_OPS = {
     "barrier",
     "delay",
@@ -135,6 +142,12 @@ def _normalize_bool_option(value, name):
     if not isinstance(value, bool):
         raise ValueError(f"{name} must be a boolean.")
     return value
+
+
+def _reject_unknown_run_options(options):
+    unknown = sorted(str(name) for name in options if name not in RUN_OPTION_NAMES)
+    if unknown:
+        raise ValueError(f"Unsupported backend.run option(s): {', '.join(unknown)}")
 
 
 def _instruction_condition(instruction):
@@ -3339,6 +3352,7 @@ class RocQuantumBackend(BackendV2):
         return results
 
     def run(self, run_input, **options):
+        _reject_unknown_run_options(options)
         if not isinstance(run_input, list):
             run_input = [run_input]
 

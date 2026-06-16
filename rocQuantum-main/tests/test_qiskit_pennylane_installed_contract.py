@@ -3709,6 +3709,22 @@ def test_qiskit_backend_rejects_non_boolean_run_toggles(monkeypatch):
             backend.run(circuit, **options)
 
 
+def test_qiskit_backend_rejects_unknown_run_options(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    backend = RocQuantumProvider().get_backend("rocq_simulator")
+    circuit = QuantumCircuit(1, 1)
+
+    with pytest.raises(ValueError, match="Unsupported backend.run option"):
+        backend.run(circuit, seed_simulator=1234)
+    with pytest.raises(ValueError, match="Unsupported backend.run option"):
+        backend.run(circuit, foo=True, bar=False)
+
+
 def test_qiskit_provider_primitives_run_with_backend(monkeypatch):
     pytest.importorskip("qiskit")
     _install_fake_binding(monkeypatch)
