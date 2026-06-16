@@ -58,6 +58,12 @@ class TestDensityMatContract(unittest.TestCase):
             compat = f.read()
 
         self.assertIn("hipDensityMatChannel_t", header)
+        self.assertIn("HIPDENSITYMAT_MAX_QUBITS", header)
+        self.assertIn("HIPDENSITYMAT_MAX_DENSE_OBSERVABLE_TARGETS", header)
+        self.assertIn("HIPDENSITYMAT_MAX_KRAUS_TARGETS", header)
+        self.assertIn("HIPDENSITYMAT_MAX_SAMPLE_QUBITS", header)
+        self.assertIn("ROCDM_MAX_QUBITS", public_header)
+        self.assertIn("ROCDM_MAX_KRAUS_TARGETS", public_header)
         self.assertIn("kraus_matrices_host", header)
         self.assertIn("num_targets", header)
         self.assertIn("target_qubits_host", header)
@@ -79,6 +85,7 @@ class TestDensityMatContract(unittest.TestCase):
         self.assertIn("hipDensityMatApplyChannel", source)
         self.assertIn("const hipDensityMatChannel_t* channel", source)
         self.assertIn("channel->target_qubits_host", source)
+        self.assertIn("num_targets > HIPDENSITYMAT_MAX_KRAUS_TARGETS", source)
         self.assertNotIn("return HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED;\n}", source.split("hipDensityMatApplyChannel", 1)[1])
         self.assertGreaterEqual(source.count("return apply_kraus_channel"), 5)
 
@@ -99,7 +106,7 @@ class TestDensityMatContract(unittest.TestCase):
         self.assertNotIn("diagonal_probs", sample_block)
         self.assertNotIn("density_host[basis * dim + basis]", source)
         self.assertIn("validate_measured_qubits", source)
-        self.assertIn("num_measured_qubits > 20", source)
+        self.assertIn("num_measured_qubits > HIPDENSITYMAT_MAX_SAMPLE_QUBITS", source)
 
     def test_dense_observable_expectation_is_native_for_supported_targets(self):
         with open(_DENSITY_SOURCE, "r", encoding="utf-8") as f:
@@ -114,7 +121,7 @@ class TestDensityMatContract(unittest.TestCase):
         self.assertIn("hipDensityMatComputeExpectationMatrix", header)
         self.assertIn("density_matrix_expectation_matrix_kernel", source)
         self.assertIn("Tr(M rho)", header)
-        self.assertIn("num_target_qubits > 4", source)
+        self.assertIn("num_target_qubits > HIPDENSITYMAT_MAX_DENSE_OBSERVABLE_TARGETS", source)
         self.assertIn("HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED", source)
         self.assertIn('.def("compute_expectation_matrix"', bindings)
         self.assertIn("hipDensityMatComputeExpectationMatrix", bindings)
@@ -135,6 +142,7 @@ class TestDensityMatContract(unittest.TestCase):
         self.assertIn('.def("apply_channel"', bindings)
         self.assertIn("2**len(target_qubits)", bindings)
         self.assertIn("target_qubit.cast<std::vector<int>>()", bindings)
+        self.assertIn("targets.size() > HIPDENSITYMAT_MAX_KRAUS_TARGETS", bindings)
         self.assertIn('.def("apply_phase_flip_channel"', bindings)
         self.assertIn('.def("apply_amplitude_damping_channel"', bindings)
         self.assertIn('.def("sample"', bindings)
@@ -179,6 +187,8 @@ class TestDensityMatContract(unittest.TestCase):
         self.assertIn("GPU-resident cuDensityMat-style channel descriptors", backend)
         self.assertIn("device_marginal_probabilities_host_shot_drawing", backend)
         self.assertIn("native_up_to_4_target_qubits", backend)
+        self.assertIn("max_kraus_channel_targets", backend)
+        self.assertIn("max_qubits_before_dense_size_overflow", backend)
         self.assertIn("capability_query_is_runtime_proof", backend)
         self.assertIn("density_matrix_capabilities", rocq_init)
         self.assertIn("rocq.density_matrix_capabilities()", readme)

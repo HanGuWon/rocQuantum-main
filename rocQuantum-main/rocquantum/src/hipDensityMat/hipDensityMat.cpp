@@ -320,8 +320,11 @@ hipDensityMatStatus_t apply_multi_qubit_kraus_channel(
         kraus_matrices_host == nullptr || num_targets <= 0 || num_kraus <= 0) {
         return HIPDENSITYMAT_STATUS_INVALID_VALUE;
     }
-    if (num_targets > internal_state->num_qubits_ || num_targets > 20) {
+    if (num_targets > internal_state->num_qubits_) {
         return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
+    if (num_targets > HIPDENSITYMAT_MAX_KRAUS_TARGETS) {
+        return HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED;
     }
 
     for (int i = 0; i < num_targets; ++i) {
@@ -434,7 +437,7 @@ hipDensityMatStatus_t validate_measured_qubits(
     if (num_measured_qubits > num_qubits) {
         return HIPDENSITYMAT_STATUS_INVALID_VALUE;
     }
-    if (num_measured_qubits > 20) {
+    if (num_measured_qubits > HIPDENSITYMAT_MAX_SAMPLE_QUBITS) {
         return HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED;
     }
 
@@ -628,7 +631,9 @@ __global__ void expectation_value_kernel(
 
 
 hipDensityMatStatus_t hipDensityMatCreateState(hipDensityMatState_t* state, int num_qubits) {
-    if (state == nullptr || num_qubits <= 0) return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    if (state == nullptr || num_qubits <= 0 || num_qubits > HIPDENSITYMAT_MAX_QUBITS) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     
     hipDensityMatState* internal_state = nullptr;
     try {
@@ -968,7 +973,7 @@ hipDensityMatStatus_t hipDensityMatComputeExpectationMatrix(
     if (target_status != HIPDENSITYMAT_STATUS_SUCCESS) {
         return target_status;
     }
-    if (num_target_qubits > 4) {
+    if (num_target_qubits > HIPDENSITYMAT_MAX_DENSE_OBSERVABLE_TARGETS) {
         return HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED;
     }
     if (matrix_dim != (1 << num_target_qubits)) {

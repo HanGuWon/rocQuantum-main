@@ -69,10 +69,14 @@ _DISTRIBUTED_HARDWARE_EVIDENCE = {
     "self_hosted_ci_required_for_release_claim": True,
     "capability_query_is_runtime_proof": False,
 }
+_DENSITY_MATRIX_MAX_QUBITS = 30
+_DENSITY_MATRIX_MAX_DENSE_OBSERVABLE_TARGETS = 4
+_DENSITY_MATRIX_MAX_KRAUS_TARGETS = 4
+_DENSITY_MATRIX_MAX_SAMPLE_QUBITS = 20
 _DENSITY_MATRIX_SUPPORTED_FEATURES = (
     "native density-matrix allocation, reset, and core named gates",
     "named noise channels through shared Kraus helper",
-    "generic single- and multi-qubit Kraus channel application",
+    "generic single- and multi-qubit Kraus channel application up to four targets",
     "density sampling with device-side measured-qubit marginal probability reduction",
     "native dense Hermitian expectation for up to four target qubits",
     "canonical CCX, two-control MCX, and CSWAP decompositions",
@@ -89,7 +93,7 @@ _DENSITY_MATRIX_UNSUPPORTED_FEATURES = (
     "ROCm density-matrix performance proof without self-hosted CI artifacts",
 )
 _DENSITY_MATRIX_EXECUTION_SCOPE = {
-    "channel_application": "per_kraus_kernel_correctness_path",
+    "channel_application": "per_kraus_kernel_correctness_path_up_to_4_targets",
     "sampling": "device_marginal_probabilities_host_shot_drawing",
     "dense_observable_targets": "native_up_to_4_target_qubits",
     "sparse_observables": "host_correctness_fallback",
@@ -175,6 +179,12 @@ def density_matrix_capabilities() -> Dict[str, object]:
         "supported_features": list(_DENSITY_MATRIX_SUPPORTED_FEATURES),
         "unsupported_features": list(_DENSITY_MATRIX_UNSUPPORTED_FEATURES),
         "execution_scope": dict(_DENSITY_MATRIX_EXECUTION_SCOPE),
+        "limits": {
+            "max_qubits_before_dense_size_overflow": _DENSITY_MATRIX_MAX_QUBITS,
+            "max_dense_observable_targets": _DENSITY_MATRIX_MAX_DENSE_OBSERVABLE_TARGETS,
+            "max_kraus_channel_targets": _DENSITY_MATRIX_MAX_KRAUS_TARGETS,
+            "max_sampled_qubits": _DENSITY_MATRIX_MAX_SAMPLE_QUBITS,
+        },
         "hardware_evidence": dict(_DENSITY_MATRIX_HARDWARE_EVIDENCE),
         "performance_note": (
             "Density-matrix support is correctness-oriented for channels, sampling, "
@@ -2069,6 +2079,11 @@ class DensityMatrixBackend(_BaseBackend):
 
     def __init__(self, num_qubits: int):
         super().__init__(num_qubits)
+        if self.num_qubits > _DENSITY_MATRIX_MAX_QUBITS:
+            raise ValueError(
+                "num_qubits exceeds the density-matrix backend maximum "
+                f"of {_DENSITY_MATRIX_MAX_QUBITS}."
+            )
         if dm_backend is None:
             if not _mock_backends_enabled():
                 raise _native_backend_error("rocq_hip", "density_matrix")

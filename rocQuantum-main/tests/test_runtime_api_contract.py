@@ -229,7 +229,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(capabilities["status"], "partial")
         self.assertIn("native_binding_available", capabilities)
         self.assertIn(
-            "generic single- and multi-qubit Kraus channel application",
+            "generic single- and multi-qubit Kraus channel application up to four targets",
             capabilities["supported_features"],
         )
         self.assertIn(
@@ -250,7 +250,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         )
         self.assertEqual(
             capabilities["execution_scope"]["channel_application"],
-            "per_kraus_kernel_correctness_path",
+            "per_kraus_kernel_correctness_path_up_to_4_targets",
         )
         self.assertEqual(
             capabilities["execution_scope"]["sampling"],
@@ -266,6 +266,10 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         )
         self.assertFalse(capabilities["hardware_evidence"]["probe_performed"])
         self.assertFalse(capabilities["hardware_evidence"]["capability_query_is_runtime_proof"])
+        self.assertEqual(capabilities["limits"]["max_qubits_before_dense_size_overflow"], 30)
+        self.assertEqual(capabilities["limits"]["max_kraus_channel_targets"], 4)
+        self.assertEqual(capabilities["limits"]["max_dense_observable_targets"], 4)
+        self.assertEqual(capabilities["limits"]["max_sampled_qubits"], 20)
         self.assertIn("cuDensityMat-style descriptor planning", capabilities["performance_note"])
 
     def test_statevector_backend_fuses_same_target_single_qubit_spans(self):
@@ -680,7 +684,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             get_backend("density_matrix", 1, enable_fusion=False)
 
     def test_backend_constructors_validate_num_qubits_before_dispatch(self):
-        from rocq.backends import StateVectorBackend, get_backend
+        from rocq.backends import DensityMatrixBackend, StateVectorBackend, get_backend
 
         invalid_num_qubits = (0, -1, True, 1.5, "1")
         for num_qubits in invalid_num_qubits:
@@ -694,6 +698,11 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                             StateVectorBackend(num_qubits)
 
         self.assertEqual(get_backend("stabilizer", np.int64(2)).num_qubits, 2)
+
+        with mock.patch("rocq.backends.dm_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                with self.assertRaisesRegex(ValueError, "density-matrix backend maximum"):
+                    DensityMatrixBackend(31)
 
     def test_backend_factory_validates_backend_name_before_dispatch(self):
         from rocq.backends import get_backend

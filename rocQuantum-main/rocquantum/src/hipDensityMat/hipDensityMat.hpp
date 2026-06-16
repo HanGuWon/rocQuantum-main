@@ -7,6 +7,11 @@
 #include <hip/hip_runtime.h>
 #include <stdint.h>
 
+#define HIPDENSITYMAT_MAX_QUBITS 30
+#define HIPDENSITYMAT_MAX_DENSE_OBSERVABLE_TARGETS 4
+#define HIPDENSITYMAT_MAX_KRAUS_TARGETS 4
+#define HIPDENSITYMAT_MAX_SAMPLE_QUBITS 20
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -159,9 +164,10 @@ hipDensityMatStatus_t hipDensityMatComputePauliZProductExpectation(
 /**
  * @brief Computes Tr(M rho) for a dense matrix acting on target qubits.
  *
- * Supports up to four target qubits in the native HIP reduction path. Larger
- * target sets return HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED so callers can use
- * an explicit correctness fallback.
+ * Supports up to HIPDENSITYMAT_MAX_DENSE_OBSERVABLE_TARGETS target qubits in
+ * the native HIP reduction path. Larger target sets return
+ * HIPDENSITYMAT_STATUS_NOT_IMPLEMENTED so callers can use an explicit
+ * correctness fallback.
  *
  * @param[in] state The state handle.
  * @param[in] target_qubits_host Array of target qubit indices.

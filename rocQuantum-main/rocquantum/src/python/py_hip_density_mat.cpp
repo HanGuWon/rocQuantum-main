@@ -96,7 +96,7 @@ PYBIND11_MODULE(rocq_hip, m) {
             if (target_qubits.empty()) {
                 throw std::invalid_argument("target_qubits must not be empty for compute_expectation_matrix.");
             }
-            if (target_qubits.size() > 4) {
+            if (target_qubits.size() > HIPDENSITYMAT_MAX_DENSE_OBSERVABLE_TARGETS) {
                 throw std::invalid_argument("compute_expectation_matrix supports at most four target qubits.");
             }
             if (matrix.ndim() != 2 || matrix.shape(0) != matrix.shape(1)) {
@@ -150,8 +150,8 @@ PYBIND11_MODULE(rocq_hip, m) {
             if (targets.empty()) {
                 throw std::invalid_argument("Kraus channel must target at least one qubit.");
             }
-            if (targets.size() > 20) {
-                throw std::invalid_argument("Kraus channel target count is too large.");
+            if (targets.size() > HIPDENSITYMAT_MAX_KRAUS_TARGETS) {
+                throw std::invalid_argument("Kraus channel supports at most four target qubits.");
             }
 
             const int matrix_dim = 1 << static_cast<int>(targets.size());

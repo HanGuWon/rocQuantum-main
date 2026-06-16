@@ -6,6 +6,11 @@
 
 #include "rocquantum/hipStateVec.h"
 
+#define ROCDM_MAX_QUBITS 30
+#define ROCDM_MAX_DENSE_OBSERVABLE_TARGETS 4
+#define ROCDM_MAX_KRAUS_TARGETS 4
+#define ROCDM_MAX_SAMPLE_QUBITS 20
+
 typedef struct hipDensityMatState* rocdmHandle_t;
 
 typedef enum {
