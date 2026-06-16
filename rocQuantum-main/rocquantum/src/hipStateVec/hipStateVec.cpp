@@ -279,6 +279,34 @@ inline bool compute_power_of_two(unsigned exponent, size_t* out) {
     return true;
 }
 
+inline bool compute_state_element_count(unsigned numQubits,
+                                        size_t batchSize,
+                                        size_t* elements_per_state,
+                                        size_t* total_elements) {
+    if (!elements_per_state || !total_elements || batchSize == 0) {
+        return false;
+    }
+    if (!compute_power_of_two(numQubits, elements_per_state)) {
+        return false;
+    }
+    if (*elements_per_state > std::numeric_limits<size_t>::max() / batchSize) {
+        return false;
+    }
+    *total_elements = (*elements_per_state) * batchSize;
+    return true;
+}
+
+inline bool compute_state_byte_count(size_t total_elements, size_t* total_bytes) {
+    if (!total_bytes) {
+        return false;
+    }
+    if (total_elements > std::numeric_limits<size_t>::max() / sizeof(rocComplex)) {
+        return false;
+    }
+    *total_bytes = total_elements * sizeof(rocComplex);
+    return true;
+}
+
 inline int compute_reduction_blocks(size_t elements, int threadsPerBlock);
 
 inline std::complex<double> to_std_complex(const rocComplex& value) {
@@ -1416,13 +1444,16 @@ rocqStatus_t launch_single_qubit_matrix(rocsvInternalHandle* handle,
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t elements_per_state = 1ULL << numQubits;
+    size_t elements_per_state = 0;
+    size_t total_elements = 0;
+    if (!compute_state_element_count(numQubits, handle->batchSize, &elements_per_state, &total_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     if (elements_per_state < 2) {
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t pairs_per_state = elements_per_state >> 1;
-    const size_t total_pairs = handle->batchSize * pairs_per_state;
+    const size_t total_pairs = total_elements >> 1;
     if (total_pairs == 0) {
         return ROCQ_STATUS_SUCCESS;
     }
@@ -1586,13 +1617,16 @@ rocqStatus_t launch_controlled_single_qubit_matrix(rocsvInternalHandle* handle,
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t elements_per_state = 1ULL << numQubits;
+    size_t elements_per_state = 0;
+    size_t total_elements = 0;
+    if (!compute_state_element_count(numQubits, handle->batchSize, &elements_per_state, &total_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     if (elements_per_state < 2) {
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t pairs_per_state = elements_per_state >> 1;
-    const size_t total_pairs = handle->batchSize * pairs_per_state;
+    const size_t total_pairs = total_elements >> 1;
     if (total_pairs == 0) {
         return ROCQ_STATUS_SUCCESS;
     }
@@ -5781,12 +5815,16 @@ rocqStatus_t rocsvAllocateState(rocsvHandle_t handle,
         }
     }
 
+    const size_t normalized_batch_size = batchSize > 0 ? batchSize : 1;
     size_t num_elements_per_state = 0;
-    if (!compute_power_of_two(numQubits, &num_elements_per_state)) {
+    size_t total_elements = 0;
+    size_t total_bytes = 0;
+    if (!compute_state_element_count(numQubits, normalized_batch_size, &num_elements_per_state, &total_elements) ||
+        !compute_state_byte_count(total_elements, &total_bytes)) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
 
-    handle->batchSize = batchSize > 0 ? batchSize : 1;
+    handle->batchSize = normalized_batch_size;
     handle->numQubits = numQubits;
 
     if (handle->d_state && handle->ownsState) {
@@ -5798,9 +5836,8 @@ rocqStatus_t rocsvAllocateState(rocsvHandle_t handle,
         handle->ownsState = false;
     }
 
-    const size_t total_elements = handle->batchSize * num_elements_per_state;
     void* allocated_ptr = nullptr;
-    rocqStatus_t alloc_status = device_malloc(handle, &allocated_ptr, total_elements * sizeof(rocComplex));
+    rocqStatus_t alloc_status = device_malloc(handle, &allocated_ptr, total_bytes);
     if (alloc_status != ROCQ_STATUS_SUCCESS) {
         return alloc_status;
     }
@@ -5848,14 +5885,16 @@ rocqStatus_t rocsvInitializeState(rocsvHandle_t handle,
     rocComplex* target_state = resolve_state_pointer(handle, d_state);
     if (!target_state) return ROCQ_STATUS_INVALID_VALUE;
 
+    const size_t batch_size = effective_batch_size(handle, target_state);
     size_t elements_per_state = 0;
-    if (!compute_power_of_two(numQubits, &elements_per_state)) {
+    size_t total_elements = 0;
+    size_t total_bytes = 0;
+    if (!compute_state_element_count(numQubits, batch_size, &elements_per_state, &total_elements) ||
+        !compute_state_byte_count(total_elements, &total_bytes)) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
-    const size_t batch_size = effective_batch_size(handle, target_state);
-    const size_t total_elements = batch_size * elements_per_state;
 
-    if (hipMemsetAsync(target_state, 0, total_elements * sizeof(rocComplex), handle->streams[0]) != hipSuccess) {
+    if (hipMemsetAsync(target_state, 0, total_bytes, handle->streams[0]) != hipSuccess) {
         return ROCQ_STATUS_HIP_ERROR;
     }
 
@@ -6503,12 +6542,15 @@ rocqStatus_t rocsvApplyCNOT(rocsvHandle_t handle,
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t elements_per_state = 1ULL << numQubits;
+    size_t elements_per_state = 0;
+    size_t total_states = 0;
+    if (!compute_state_element_count(numQubits, handle->batchSize, &elements_per_state, &total_states)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     if (elements_per_state < 4) {
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t total_states = handle->batchSize * elements_per_state;
     constexpr int threads_per_block = 256;
     const int blocks = static_cast<int>((total_states + threads_per_block - 1) / threads_per_block);
 
@@ -6588,12 +6630,15 @@ rocqStatus_t rocsvApplyCZ(rocsvHandle_t handle,
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t elements_per_state = 1ULL << numQubits;
+    size_t elements_per_state = 0;
+    size_t total_states = 0;
+    if (!compute_state_element_count(numQubits, handle->batchSize, &elements_per_state, &total_states)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     if (elements_per_state < 4) {
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t total_states = handle->batchSize * elements_per_state;
     constexpr int threads_per_block = 256;
     const int blocks = static_cast<int>((total_states + threads_per_block - 1) / threads_per_block);
 
@@ -6631,13 +6676,16 @@ rocqStatus_t rocsvApplySWAP(rocsvHandle_t handle,
         return rocsvSwapIndexBits(handle, qubitA, qubitB);
     }
 
-    const size_t elements_per_state = 1ULL << numQubits;
+    size_t elements_per_state = 0;
+    size_t total_elements = 0;
+    if (!compute_state_element_count(numQubits, handle->batchSize, &elements_per_state, &total_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     if (elements_per_state < 4) {
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t groups_per_state = elements_per_state >> 2;
-    const size_t total_groups = handle->batchSize * groups_per_state;
+    const size_t total_groups = total_elements >> 2;
     if (total_groups == 0) {
         return ROCQ_STATUS_SUCCESS;
     }
@@ -6918,12 +6966,15 @@ rocqStatus_t rocsvApplyMultiControlledX(rocsvHandle_t handle,
         return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
     }
 
-    const size_t elements_per_state = 1ULL << numQubits;
+    size_t elements_per_state = 0;
+    size_t total_states = 0;
+    if (!compute_state_element_count(numQubits, handle->batchSize, &elements_per_state, &total_states)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     if (elements_per_state < 2) {
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t total_states = handle->batchSize * elements_per_state;
     constexpr int threads_per_block = 256;
     const int blocks = static_cast<int>((total_states + threads_per_block - 1) / threads_per_block);
 
@@ -7002,12 +7053,15 @@ rocqStatus_t rocsvApplyCSWAP(rocsvHandle_t handle,
         return status != ROCQ_STATUS_SUCCESS ? status : restore_status;
     }
 
-    const size_t elements_per_state = 1ULL << numQubits;
+    size_t elements_per_state = 0;
+    size_t total_states = 0;
+    if (!compute_state_element_count(numQubits, handle->batchSize, &elements_per_state, &total_states)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     if (elements_per_state < 8) {
         return ROCQ_STATUS_SUCCESS;
     }
 
-    const size_t total_states = handle->batchSize * elements_per_state;
     constexpr int threads_per_block = 256;
     const int blocks = static_cast<int>((total_states + threads_per_block - 1) / threads_per_block);
 
@@ -7046,11 +7100,16 @@ rocqStatus_t rocsvGetStateVectorFull(rocsvHandle_t handle,
 
     rocComplex* state = resolve_state_pointer(handle, d_state);
     if (!state) return ROCQ_STATUS_INVALID_VALUE;
-    const size_t elements_per_state = 1ULL << handle->numQubits;
-    const size_t total_elements = handle->batchSize * elements_per_state;
+    size_t elements_per_state = 0;
+    size_t total_elements = 0;
+    size_t total_bytes = 0;
+    if (!compute_state_element_count(handle->numQubits, handle->batchSize, &elements_per_state, &total_elements) ||
+        !compute_state_byte_count(total_elements, &total_bytes)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     if (hipMemcpy(h_state,
                   state,
-                  total_elements * sizeof(rocComplex),
+                  total_bytes,
                   hipMemcpyDeviceToHost) != hipSuccess) {
         return ROCQ_STATUS_HIP_ERROR;
     }
@@ -7081,8 +7140,16 @@ rocqStatus_t rocsvGetStateVectorSlice(rocsvHandle_t handle,
     rocComplex* state = resolve_state_pointer(handle, d_state);
     if (!state) return ROCQ_STATUS_INVALID_VALUE;
 
-    const size_t elements_per_state = 1ULL << handle->numQubits;
+    size_t elements_per_state = 0;
+    size_t total_elements = 0;
+    if (!compute_state_element_count(handle->numQubits, handle->batchSize, &elements_per_state, &total_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     if (batch_index >= handle->batchSize) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    size_t bytes_per_state = 0;
+    if (!compute_state_byte_count(elements_per_state, &bytes_per_state)) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
 
@@ -7090,7 +7157,7 @@ rocqStatus_t rocsvGetStateVectorSlice(rocsvHandle_t handle,
     const rocComplex* slice_ptr = state + offset;
     if (hipMemcpy(h_state,
                   slice_ptr,
-                  elements_per_state * sizeof(rocComplex),
+                  bytes_per_state,
                   hipMemcpyDeviceToHost) != hipSuccess) {
         return ROCQ_STATUS_HIP_ERROR;
     }

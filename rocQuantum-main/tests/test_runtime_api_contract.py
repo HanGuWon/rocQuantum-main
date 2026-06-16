@@ -699,6 +699,11 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         self.assertEqual(get_backend("stabilizer", np.int64(2)).num_qubits, 2)
 
+        with mock.patch("rocq.backends.hip_backend", None):
+            with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
+                with self.assertRaisesRegex(ValueError, "state-vector backend maximum"):
+                    StateVectorBackend(61)
+
         with mock.patch("rocq.backends.dm_backend", None):
             with mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": "1"}):
                 with self.assertRaisesRegex(ValueError, "density-matrix backend maximum"):

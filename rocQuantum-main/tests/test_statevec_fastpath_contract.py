@@ -70,6 +70,25 @@ class TestStateVecFastPathContract(unittest.TestCase):
             ),
         )
 
+    def test_state_allocation_counts_reject_shift_and_batch_overflow(self):
+        with open(_STATEVEC_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+        bindings_path = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
+        with open(bindings_path, "r", encoding="utf-8") as f:
+            bindings = f.read()
+
+        self.assertIn("compute_state_element_count", source)
+        self.assertIn("compute_state_byte_count", source)
+        self.assertIn("normalized_batch_size", source)
+        self.assertIn("device_malloc(handle, &allocated_ptr, total_bytes)", source)
+        self.assertIn("hipMemsetAsync(target_state, 0, total_bytes", source)
+        self.assertNotIn("handle->batchSize * num_elements_per_state", source)
+        self.assertIn("checked_state_element_count", bindings)
+        self.assertIn("checked_state_byte_count", bindings)
+        self.assertIn("state batch is too large", bindings)
+        self.assertNotIn("batch_size * (1ULL << numQubits)", bindings)
+        self.assertNotIn("batch_size * (1ULL << num_qubits)", bindings)
+
     def test_gate_fusion_rejects_unsupported_queue_entries(self):
         with open(_GATE_FUSION_SOURCE, "r", encoding="utf-8") as f:
             source = f.read()

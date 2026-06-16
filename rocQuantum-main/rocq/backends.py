@@ -69,6 +69,7 @@ _DISTRIBUTED_HARDWARE_EVIDENCE = {
     "self_hosted_ci_required_for_release_claim": True,
     "capability_query_is_runtime_proof": False,
 }
+_STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW = 60
 _DENSITY_MATRIX_MAX_QUBITS = 30
 _DENSITY_MATRIX_MAX_DENSE_OBSERVABLE_TARGETS = 4
 _DENSITY_MATRIX_MAX_KRAUS_TARGETS = 4
@@ -1938,6 +1939,11 @@ class StateVectorBackend(_BaseBackend):
 
     def __init__(self, num_qubits: int, enable_fusion: Optional[bool] = None):
         super().__init__(num_qubits)
+        if self.num_qubits > _STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW:
+            raise ValueError(
+                "num_qubits exceeds the state-vector backend maximum "
+                f"of {_STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW}."
+            )
         enable_fusion = _validate_optional_boolean_option(enable_fusion, "enable_fusion")
         if enable_fusion is None:
             enable_fusion = os.environ.get(_DISABLE_FUSION_ENV_VAR, "").strip().lower() not in {"1", "true", "yes", "on"}

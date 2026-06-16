@@ -327,6 +327,29 @@ size_t infer_batch_size_from_state_buffer(const DeviceBuffer& d_state_buffer,
     return batch_size;
 }
 
+size_t checked_state_element_count(unsigned numQubits,
+                                   size_t batch_size,
+                                   const std::string& operation_name) {
+    if (batch_size == 0) {
+        throw std::runtime_error("batch_size must be positive for " + operation_name + ".");
+    }
+    if (numQubits >= sizeof(size_t) * 8) {
+        throw std::runtime_error("num_qubits is too large for " + operation_name + ".");
+    }
+    const size_t elements_per_state = size_t{1} << numQubits;
+    if (elements_per_state > std::numeric_limits<size_t>::max() / batch_size) {
+        throw std::runtime_error("state batch is too large for " + operation_name + ".");
+    }
+    return elements_per_state * batch_size;
+}
+
+size_t checked_state_byte_count(size_t num_elements, const std::string& operation_name) {
+    if (num_elements > std::numeric_limits<size_t>::max() / sizeof(rocComplex)) {
+        throw std::runtime_error("state byte size is too large for " + operation_name + ".");
+    }
+    return num_elements * sizeof(rocComplex);
+}
+
 
 // Wrapper for rocsvHandle_t to ensure proper creation and destruction
 class RocsvHandleWrapper {
@@ -425,14 +448,17 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
     // We'll return a DeviceBuffer that wraps the allocated device pointer.
     m.def("allocate_state_internal", 
         [](const RocsvHandleWrapper& handle_wrapper, unsigned numQubits, size_t batch_size) {
+            const size_t normalized_batch_size = batch_size > 0 ? batch_size : 1;
+            const size_t num_elements =
+                checked_state_element_count(numQubits, normalized_batch_size, "allocate_state_internal");
+            const size_t num_bytes = checked_state_byte_count(num_elements, "allocate_state_internal");
             rocComplex* d_state_ptr = nullptr;
             rocqStatus_t status = rocsvAllocateState(handle_wrapper.get(), numQubits, &d_state_ptr, batch_size);
             if (status != ROCQ_STATUS_SUCCESS) {
                 throw std::runtime_error("rocsvAllocateState failed: " + std::to_string(status));
             }
-            size_t num_elements = batch_size * (1ULL << numQubits);
             // The DeviceBuffer now owns this d_state_ptr and will hipFree it.
-            return DeviceBuffer(static_cast<void*>(d_state_ptr), num_elements * sizeof(rocComplex), true /*owned*/);
+            return DeviceBuffer(static_cast<void*>(d_state_ptr), num_bytes, true /*owned*/);
         }, py::arg("handle"), py::arg("num_qubits"), py::arg("batch_size") = 1, "Allocates state vector on device, returns an owning DeviceBuffer.");
 
     m.def("initialize_state", 
@@ -1261,7 +1287,7 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
            "Applies a matrix to target qubits, controlled by control qubits.");
 
     m.def("get_state_vector_full", [](const RocsvHandleWrapper& handle, DeviceBuffer& d_state_buffer, unsigned num_qubits, size_t batch_size) {
-        size_t num_elements = batch_size * (1ULL << num_qubits);
+        size_t num_elements = checked_state_element_count(num_qubits, batch_size, "get_state_vector_full");
         py::array_t<rocComplex> h_state(num_elements);
         rocqStatus_t status = rocsvGetStateVectorFull(handle.get(), d_state_buffer.get_ptr<rocComplex>(), h_state.mutable_data());
         if (status != ROCQ_STATUS_SUCCESS) {
@@ -1271,7 +1297,8 @@ PYBIND11_MODULE(_rocq_hip_backend, m) {
     }, py::arg("handle"), py::arg("d_state").noconvert(), py::arg("num_qubits"), py::arg("batch_size"));
 
     m.def("get_state_vector_slice", [](const RocsvHandleWrapper& handle, DeviceBuffer& d_state_buffer, unsigned num_qubits, size_t batch_size, unsigned batch_index) {
-        size_t num_elements = 1ULL << num_qubits;
+        (void)checked_state_element_count(num_qubits, batch_size, "get_state_vector_slice");
+        size_t num_elements = checked_state_element_count(num_qubits, 1, "get_state_vector_slice");
         py::array_t<rocComplex> h_state(num_elements);
         rocqStatus_t status = rocsvGetStateVectorSlice(handle.get(), d_state_buffer.get_ptr<rocComplex>(), h_state.mutable_data(), batch_index);
         if (status != ROCQ_STATUS_SUCCESS) {
