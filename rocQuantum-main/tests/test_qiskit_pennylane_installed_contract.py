@@ -1157,6 +1157,8 @@ def test_framework_runtime_revalidates_native_pauli_expectation_results():
 def test_framework_runtime_rejects_nonfinite_probability_payloads():
     from rocquantum.framework_runtime import (
         RocQuantumRuntime,
+        normalize_probability_result_matrix,
+        normalize_probability_result_vector,
         probabilities_from_statevector,
         sample_indices_batch_from_probabilities,
         sample_indices_from_probabilities,
@@ -1176,6 +1178,10 @@ def test_framework_runtime_rejects_nonfinite_probability_payloads():
         probabilities_from_statevector(np.array([1.0, np.nan], dtype=np.complex128))
     with pytest.raises(ValueError, match="Statevector amplitudes"):
         probabilities_from_statevector([True, 0.0])
+    with pytest.raises(ValueError, match="Probability vector length"):
+        normalize_probability_result_vector([1.0, 0.0, 0.0], 2)
+    with pytest.raises(ValueError, match="Batched probability vector length"):
+        normalize_probability_result_matrix([[1.0, 0.0], [0.0, 1.0]], 2, 4)
 
     class _BadProbabilitySimulator:
         def __init__(self):
@@ -1204,6 +1210,41 @@ def test_framework_runtime_rejects_nonfinite_probability_payloads():
     with pytest.raises(ValueError, match="Batched probability vector"):
         runtime.measure_batch([0], 4)
     assert simulator.statevector_reads == 0
+
+    class _WrongProbabilityShapeSimulator:
+        def __init__(self):
+            self.probability_requests = []
+            self.statevector_reads = 0
+
+        def num_qubits(self):
+            return 2
+
+        def batch_size(self):
+            return 2
+
+        def probabilities(self, qubits):
+            self.probability_requests.append(tuple(qubits))
+            return np.array([1.0, 0.0, 0.0], dtype=float)
+
+        def probabilities_batch(self, qubits):
+            self.probability_requests.append(tuple(qubits))
+            return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=float)
+
+        def get_statevector(self):
+            self.statevector_reads += 1
+            return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.complex128)
+
+    shape_simulator = _WrongProbabilityShapeSimulator()
+    shape_runtime = RocQuantumRuntime(shape_simulator)
+
+    with pytest.raises(ValueError, match="Probability vector length"):
+        shape_runtime.probabilities([0])
+    with pytest.raises(ValueError, match="Batched probability vector length"):
+        shape_runtime.probabilities_batch([0, 1])
+    with pytest.raises(ValueError, match="Batched probability vector length"):
+        shape_runtime.measure_batch([0, 1], 4)
+    assert shape_simulator.probability_requests == [(0,), (0, 1), (0, 1)]
+    assert shape_simulator.statevector_reads == 0
 
 
 def test_framework_runtime_rejects_ambiguous_gate_parameters(monkeypatch):

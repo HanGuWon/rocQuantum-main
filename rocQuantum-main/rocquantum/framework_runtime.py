@@ -625,6 +625,17 @@ def normalize_probability_vector(probabilities: Sequence[float], label: str = "P
     return np.ascontiguousarray(np.clip(probabilities, 0.0, None))
 
 
+def normalize_probability_result_vector(
+    probabilities: Sequence[float],
+    expected_outcomes: int | None,
+    label: str = "Probability vector",
+) -> np.ndarray:
+    normalized = normalize_probability_vector(probabilities, label)
+    if expected_outcomes is not None and normalized.size != int(expected_outcomes):
+        raise ValueError(f"{label} length must match requested qubit count.")
+    return normalized
+
+
 def normalize_probability_matrix(probabilities: Sequence[Sequence[float]], label: str = "Batched probability vector") -> np.ndarray:
     probabilities = _as_real_probability_array(probabilities, label)
     if probabilities.ndim != 2:
@@ -634,6 +645,29 @@ def normalize_probability_matrix(probabilities: Sequence[Sequence[float]], label
     return np.vstack(
         [normalize_probability_vector(row, label) for row in probabilities]
     ).astype(float, copy=False)
+
+
+def normalize_probability_result_matrix(
+    probabilities: Sequence[Sequence[float]],
+    batch_size: int,
+    expected_outcomes: int | None,
+    label: str = "Batched probability vector",
+) -> np.ndarray:
+    flattened = _as_real_probability_array(probabilities, label).reshape(-1)
+    normalized_batch_size = normalize_positive_integer(batch_size, f"{label} batch size")
+    if flattened.size % normalized_batch_size:
+        raise ValueError(f"{label} length must match simulator batch size.")
+    matrix = flattened.reshape(normalized_batch_size, -1)
+    normalized = normalize_probability_matrix(matrix, label)
+    if expected_outcomes is not None and normalized.shape[1] != int(expected_outcomes):
+        raise ValueError(f"{label} length must match requested qubit count.")
+    return np.ascontiguousarray(normalized)
+
+
+def probability_outcome_count(normalized_qubits: Sequence[int] | None, num_qubits: int) -> int | None:
+    if normalized_qubits is None or not normalized_qubits:
+        return (1 << int(num_qubits)) if int(num_qubits) > 0 else None
+    return 1 << len(normalized_qubits)
 
 
 def sample_indices_from_probabilities(probabilities: Sequence[float], shots: int, rng=None) -> np.ndarray:
@@ -1440,6 +1474,7 @@ class RocQuantumRuntime:
             )
         )
         native_qubits = [] if normalized_qubits is None else normalized_qubits
+        expected_outcomes = probability_outcome_count(normalized_qubits, num_qubits)
 
         def _native_probabilities_unavailable(exc: Exception) -> bool:
             message = str(exc)
@@ -1448,7 +1483,11 @@ class RocQuantumRuntime:
         native = getattr(self.simulator, "probabilities", None)
         if callable(native):
             try:
-                return normalize_probability_vector(native(native_qubits), "Probability vector")
+                return normalize_probability_result_vector(
+                    native(native_qubits),
+                    expected_outcomes,
+                    "Probability vector",
+                )
             except Exception as exc:
                 if not _native_probabilities_unavailable(exc):
                     raise
@@ -1456,7 +1495,11 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "Probabilities", None)
         if callable(legacy):
             try:
-                return normalize_probability_vector(legacy(native_qubits), "Probability vector")
+                return normalize_probability_result_vector(
+                    legacy(native_qubits),
+                    expected_outcomes,
+                    "Probability vector",
+                )
             except Exception as exc:
                 if not _native_probabilities_unavailable(exc):
                     raise
@@ -1476,6 +1519,7 @@ class RocQuantumRuntime:
             )
         )
         native_qubits = [] if normalized_qubits is None else normalized_qubits
+        expected_outcomes = probability_outcome_count(normalized_qubits, num_qubits)
 
         def _native_probabilities_unavailable(exc: Exception) -> bool:
             message = str(exc)
@@ -1484,11 +1528,12 @@ class RocQuantumRuntime:
         native = getattr(self.simulator, "probabilities_batch", None)
         if callable(native):
             try:
-                probabilities = _as_real_probability_array(
+                return normalize_probability_result_matrix(
                     native(native_qubits),
+                    self.batch_size(),
+                    expected_outcomes,
                     "Batched probability vector",
-                ).reshape(self.batch_size(), -1)
-                return normalize_probability_matrix(probabilities, "Batched probability vector")
+                )
             except Exception as exc:
                 if not _native_probabilities_unavailable(exc):
                     raise
@@ -1496,11 +1541,12 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "ProbabilitiesBatch", None)
         if callable(legacy):
             try:
-                probabilities = _as_real_probability_array(
+                return normalize_probability_result_matrix(
                     legacy(native_qubits),
+                    self.batch_size(),
+                    expected_outcomes,
                     "Batched probability vector",
-                ).reshape(self.batch_size(), -1)
-                return normalize_probability_matrix(probabilities, "Batched probability vector")
+                )
             except Exception as exc:
                 if not _native_probabilities_unavailable(exc):
                     raise
