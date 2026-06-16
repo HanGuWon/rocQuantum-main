@@ -196,6 +196,28 @@ class TestDensityMatContract(unittest.TestCase):
         self.assertIn("per_kraus_kernel_correctness_path", matrix)
         self.assertIn("GPU-resident RNG/CDF sampling unsupported", matrix)
 
+    def test_density_host_size_arithmetic_uses_checked_helpers(self):
+        with open(_DENSITY_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        self.assertIn("bool checked_element_count_bytes", source)
+        self.assertIn("bool checked_density_dimension", source)
+        self.assertIn("bool checked_density_storage_size", source)
+        self.assertIn("bool density_state_size_bytes", source)
+        self.assertIn("std::numeric_limits<int64_t>::max()", source)
+        self.assertIn("std::numeric_limits<size_t>::max()", source)
+
+        create_block = source.split("hipDensityMatStatus_t hipDensityMatCreateState", 1)[1].split(
+            "hipDensityMatStatus_t hipDensityMatDestroyState", 1
+        )[0]
+        self.assertIn("checked_density_storage_size(num_qubits", create_block)
+        self.assertNotIn("1LL << num_qubits", create_block)
+        self.assertNotIn("dim * dim", create_block)
+        self.assertNotIn("internal_state->num_elements_ * sizeof(hipComplex)", create_block)
+
+        self.assertGreaterEqual(source.count("checked_density_dimension(internal_state->num_qubits_"), 10)
+        self.assertGreaterEqual(source.count("density_state_size_bytes(internal_state"), 5)
+
 
 if __name__ == "__main__":
     unittest.main()

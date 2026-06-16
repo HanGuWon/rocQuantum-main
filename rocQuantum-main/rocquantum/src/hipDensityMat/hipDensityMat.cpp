@@ -234,6 +234,68 @@ __global__ void density_matrix_expectation_matrix_kernel(
 
 namespace {
 
+bool checked_element_count_bytes(int64_t element_count, size_t element_size, size_t* size_bytes)
+{
+    if (size_bytes == nullptr || element_count < 0) {
+        return false;
+    }
+    const uint64_t max_size = static_cast<uint64_t>(std::numeric_limits<size_t>::max());
+    const uint64_t count = static_cast<uint64_t>(element_count);
+    if (element_size != 0 && count > max_size / element_size) {
+        return false;
+    }
+    *size_bytes = static_cast<size_t>(count) * element_size;
+    return true;
+}
+
+bool checked_density_dimension(int num_qubits, int64_t* dim)
+{
+    if (dim == nullptr || num_qubits <= 0 || num_qubits > HIPDENSITYMAT_MAX_QUBITS) {
+        return false;
+    }
+    if (num_qubits >= std::numeric_limits<int64_t>::digits) {
+        return false;
+    }
+    *dim = int64_t{1} << num_qubits;
+    return true;
+}
+
+bool checked_density_storage_size(
+    int num_qubits,
+    int64_t* dim,
+    int64_t* num_elements,
+    size_t* size_bytes)
+{
+    if (num_elements == nullptr) {
+        return false;
+    }
+
+    int64_t local_dim = 0;
+    if (!checked_density_dimension(num_qubits, &local_dim)) {
+        return false;
+    }
+    if (local_dim > std::numeric_limits<int64_t>::max() / local_dim) {
+        return false;
+    }
+
+    const int64_t local_num_elements = local_dim * local_dim;
+    if (!checked_element_count_bytes(local_num_elements, sizeof(hipComplex), size_bytes)) {
+        return false;
+    }
+
+    if (dim != nullptr) {
+        *dim = local_dim;
+    }
+    *num_elements = local_num_elements;
+    return true;
+}
+
+bool density_state_size_bytes(const hipDensityMatState* internal_state, size_t* size_bytes)
+{
+    return internal_state != nullptr &&
+           checked_element_count_bytes(internal_state->num_elements_, sizeof(hipComplex), size_bytes);
+}
+
 hipDensityMatStatus_t apply_kraus_channel(
     hipDensityMatState* internal_state,
     int target_qubit,
@@ -247,8 +309,12 @@ hipDensityMatStatus_t apply_kraus_channel(
         return HIPDENSITYMAT_STATUS_INVALID_VALUE;
     }
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
-    const size_t size_bytes = internal_state->num_elements_ * sizeof(hipComplex);
+    int64_t dim = 0;
+    size_t size_bytes = 0;
+    if (!checked_density_dimension(internal_state->num_qubits_, &dim) ||
+        !density_state_size_bytes(internal_state, &size_bytes)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
 
     hipComplex* accumulator_rho_device = nullptr;
     hipComplex* temp_rho_device = nullptr;
@@ -343,10 +409,16 @@ hipDensityMatStatus_t apply_multi_qubit_kraus_channel(
         return apply_kraus_channel(internal_state, target_qubits_host[0], kraus_matrices_host, num_kraus);
     }
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
+    int64_t dim = 0;
+    if (!checked_density_dimension(internal_state->num_qubits_, &dim)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     const int target_dim = 1 << num_targets;
     const size_t kraus_size = static_cast<size_t>(target_dim) * static_cast<size_t>(target_dim);
-    const size_t size_bytes = internal_state->num_elements_ * sizeof(hipComplex);
+    size_t size_bytes = 0;
+    if (!density_state_size_bytes(internal_state, &size_bytes)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
 
     hipComplex* accumulator_rho_device = nullptr;
     hipComplex* temp_rho_device = nullptr;
@@ -462,11 +534,16 @@ hipDensityMatStatus_t copy_density_diagonal_to_host(
         return HIPDENSITYMAT_STATUS_INVALID_VALUE;
     }
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
+    int64_t dim = 0;
+    size_t diagonal_bytes = 0;
+    if (!checked_density_dimension(internal_state->num_qubits_, &dim) ||
+        !checked_element_count_bytes(dim, sizeof(double), &diagonal_bytes)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     diagonal_host.assign(static_cast<size_t>(dim), 0.0);
 
     double* diagonal_device = nullptr;
-    hipError_t hip_err = hipMalloc(&diagonal_device, static_cast<size_t>(dim) * sizeof(double));
+    hipError_t hip_err = hipMalloc(&diagonal_device, diagonal_bytes);
     if (hip_err != hipSuccess) {
         return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
     }
@@ -491,7 +568,7 @@ hipDensityMatStatus_t copy_density_diagonal_to_host(
         hip_err = hipMemcpy(
             diagonal_host.data(),
             diagonal_device,
-            static_cast<size_t>(dim) * sizeof(double),
+            diagonal_bytes,
             hipMemcpyDeviceToHost);
     }
 
@@ -509,7 +586,10 @@ hipDensityMatStatus_t compute_density_marginal_probabilities(
         return HIPDENSITYMAT_STATUS_INVALID_VALUE;
     }
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
+    int64_t dim = 0;
+    if (!checked_density_dimension(internal_state->num_qubits_, &dim)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     const size_t num_outcomes = size_t{1} << num_measured_qubits;
     outcome_probs_host.assign(num_outcomes, 0.0);
 
@@ -642,10 +722,14 @@ hipDensityMatStatus_t hipDensityMatCreateState(hipDensityMatState_t* state, int 
         return HIPDENSITYMAT_STATUS_ALLOC_FAILED;
     }
 
+    int64_t num_elements = 0;
+    size_t size_bytes = 0;
+    if (!checked_density_storage_size(num_qubits, nullptr, &num_elements, &size_bytes)) {
+        delete internal_state;
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     internal_state->num_qubits_ = num_qubits;
-    int64_t dim = 1LL << num_qubits;
-    internal_state->num_elements_ = dim * dim;
-    size_t size_bytes = internal_state->num_elements_ * sizeof(hipComplex);
+    internal_state->num_elements_ = num_elements;
 
     if (hipMalloc(&internal_state->device_data_, size_bytes) != hipSuccess) {
         delete internal_state;
@@ -762,7 +846,10 @@ hipDensityMatStatus_t hipDensityMatComputeExpectation(
     hipDensityMatState* internal_state = static_cast<hipDensityMatState*>(state);
     if (target_qubit < 0 || target_qubit >= internal_state->num_qubits_) return HIPDENSITYMAT_STATUS_INVALID_VALUE;
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
+    int64_t dim = 0;
+    if (!checked_density_dimension(internal_state->num_qubits_, &dim)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     hipError_t hip_err;
 
     const int block_size = 256;
@@ -884,7 +971,10 @@ hipDensityMatStatus_t hipDensityMatComputePauliZProductExpectation(
         return HIPDENSITYMAT_STATUS_SUCCESS;
     }
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
+    int64_t dim = 0;
+    if (!checked_density_dimension(internal_state->num_qubits_, &dim)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     hipError_t hip_err;
 
     int* z_qubit_indices_device = nullptr;
@@ -980,7 +1070,10 @@ hipDensityMatStatus_t hipDensityMatComputeExpectationMatrix(
         return HIPDENSITYMAT_STATUS_INVALID_VALUE;
     }
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
+    int64_t dim = 0;
+    if (!checked_density_dimension(internal_state->num_qubits_, &dim)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     const size_t matrix_elements = static_cast<size_t>(matrix_dim) * static_cast<size_t>(matrix_dim);
 
     int* target_qubits_device = nullptr;
@@ -1094,8 +1187,12 @@ hipDensityMatStatus_t hipDensityMatApplyGate(
     hipDensityMatState* internal_state = static_cast<hipDensityMatState*>(state);
     if (target_qubit < 0 || target_qubit >= internal_state->num_qubits_) return HIPDENSITYMAT_STATUS_INVALID_VALUE;
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
-    const size_t size_bytes = internal_state->num_elements_ * sizeof(hipComplex);
+    int64_t dim = 0;
+    size_t size_bytes = 0;
+    if (!checked_density_dimension(internal_state->num_qubits_, &dim) ||
+        !density_state_size_bytes(internal_state, &size_bytes)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     
     hipComplex* gate_matrix_device = nullptr;
     hipComplex* rho_out_device = nullptr;
@@ -1179,8 +1276,12 @@ hipDensityMatStatus_t hipDensityMatApplyCNOT(
         return HIPDENSITYMAT_STATUS_INVALID_VALUE;
     }
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
-    const size_t size_bytes = internal_state->num_elements_ * sizeof(hipComplex);
+    int64_t dim = 0;
+    size_t size_bytes = 0;
+    if (!checked_density_dimension(internal_state->num_qubits_, &dim) ||
+        !density_state_size_bytes(internal_state, &size_bytes)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     
     hipComplex* rho_out_device = nullptr;
     hipError_t hip_err;
@@ -1329,8 +1430,12 @@ hipDensityMatStatus_t hipDensityMatApplyControlledGate(
         return HIPDENSITYMAT_STATUS_INVALID_VALUE;
     }
 
-    const int64_t dim = 1LL << internal_state->num_qubits_;
-    const size_t size_bytes = internal_state->num_elements_ * sizeof(hipComplex);
+    int64_t dim = 0;
+    size_t size_bytes = 0;
+    if (!checked_density_dimension(internal_state->num_qubits_, &dim) ||
+        !density_state_size_bytes(internal_state, &size_bytes)) {
+        return HIPDENSITYMAT_STATUS_INVALID_VALUE;
+    }
     
     hipComplex* rho_out_device = nullptr;
     hipError_t hip_err;
