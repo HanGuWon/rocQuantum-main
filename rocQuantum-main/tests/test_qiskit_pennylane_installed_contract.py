@@ -11457,6 +11457,51 @@ def test_pennylane_device_jacobian_batches_probability_shift_tapes(monkeypatch):
     assert sim.statevector_reads == 0
 
 
+def test_framework_runtime_validates_adjoint_trainable_params_before_native_dispatch():
+    from rocquantum.framework_runtime import RocQuantumRuntime, normalize_trainable_params
+
+    assert normalize_trainable_params([np.int64(0), -1]) == [0, -1]
+
+    invalid_trainable_params = (
+        True,
+        "0",
+        b"0",
+        [True],
+        [np.bool_(False)],
+        ["0"],
+        [b"0"],
+        [0.0],
+        [0.5],
+    )
+    for trainable_params in invalid_trainable_params:
+        with pytest.raises((TypeError, ValueError), match="Trainable parameter"):
+            normalize_trainable_params(trainable_params)
+
+    class _NativeAdjointRecorder:
+        def __init__(self):
+            self.calls = []
+
+        def adjoint_jacobian(self, operations, observables, trainable_params):
+            self.calls.append((list(operations), list(observables), list(trainable_params)))
+            return np.asarray([[0.25, -0.5]], dtype=float)
+
+    operations = [{"name": "RY", "params": [0.1]}]
+    observables = [[{"pauli_string": "Z", "targets": [0]}]]
+    simulator = _NativeAdjointRecorder()
+    runtime = RocQuantumRuntime(simulator)
+
+    np.testing.assert_allclose(
+        runtime.adjoint_jacobian(operations, observables, [np.int64(0), -1]),
+        np.asarray([[0.25, -0.5]], dtype=float),
+    )
+    assert simulator.calls == [(operations, observables, [0, -1])]
+
+    for trainable_params in invalid_trainable_params:
+        with pytest.raises((TypeError, ValueError), match="Trainable parameter"):
+            runtime.adjoint_jacobian(operations, observables, trainable_params)
+    assert simulator.calls == [(operations, observables, [0, -1])]
+
+
 def test_pennylane_explicit_adjoint_gradient_uses_captured_state(monkeypatch):
     pytest.importorskip("pennylane")
 

@@ -256,6 +256,23 @@ def normalize_batch_index(value: object, batch_size: int, label: str = "batch_in
     return normalized
 
 
+def normalize_trainable_params(trainable_params: Sequence[int]) -> list[int]:
+    if isinstance(trainable_params, (str, bytes)):
+        raise ValueError("Trainable parameter indices must be a sequence of integers.")
+
+    normalized = []
+    try:
+        raw_params = list(trainable_params)
+    except TypeError as exc:
+        raise TypeError("Trainable parameter indices must be a sequence of integers.") from exc
+
+    for param in raw_params:
+        if isinstance(param, (bool, np.bool_)) or not isinstance(param, Integral):
+            raise ValueError("Trainable parameter indices must be integers.")
+        normalized.append(int(param))
+    return normalized
+
+
 def as_complex_matrix(matrix: object, label: str = "Operation matrix") -> np.ndarray:
     try:
         raw = np.asarray(matrix, dtype=object)
@@ -1249,11 +1266,12 @@ class RocQuantumRuntime:
             return isinstance(exc, NotImplementedError) or "status 5" in message
 
         unavailable_error = None
+        normalized_trainable_params = normalize_trainable_params(trainable_params)
 
         native = getattr(self.simulator, "adjoint_jacobian", None)
         if callable(native):
             try:
-                return native(list(operations), list(observables), [int(param) for param in trainable_params])
+                return native(list(operations), list(observables), normalized_trainable_params)
             except Exception as exc:
                 if not _native_adjoint_unavailable(exc):
                     raise
@@ -1262,7 +1280,7 @@ class RocQuantumRuntime:
         legacy = getattr(self.simulator, "AdjointJacobian", None)
         if callable(legacy):
             try:
-                return legacy(list(operations), list(observables), [int(param) for param in trainable_params])
+                return legacy(list(operations), list(observables), normalized_trainable_params)
             except Exception as exc:
                 if not _native_adjoint_unavailable(exc):
                     raise
