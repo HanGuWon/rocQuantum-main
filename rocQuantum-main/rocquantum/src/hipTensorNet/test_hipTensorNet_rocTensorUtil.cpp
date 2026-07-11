@@ -88,7 +88,7 @@ std::vector<std::pair<std::string, TestFunc>> tests;
 
 #define ADD_TEST(name) tests.push_back({#name, name})
 
-void RUN_ALL_TESTS() {
+int RUN_ALL_TESTS() {
     int passed_count = 0;
     int failed_count = 0;
     std::cout << "Running " << tests.size() << " tests..." << std::endl;
@@ -117,10 +117,7 @@ void RUN_ALL_TESTS() {
     std::cout << "----------------------------------------" << std::endl;
     std::cout << "All tests completed." << std::endl;
     std::cout << "Passed: " << passed_count << ", Failed: " << failed_count << std::endl;
-    if (failed_count > 0) {
-        // Consider exiting with non-zero status for CI
-        // exit(1);
-    }
+    return failed_count;
 }
 
 // Global rocBLAS handle and stream for tests
@@ -865,10 +862,10 @@ int main() {
     ADD_TEST(test_rocWorkspaceManager_basic);
     ADD_TEST(test_TensorNetwork_contract_simple_chain);
 
-    RUN_ALL_TESTS();
+    const int failed_count = RUN_ALL_TESTS();
 
     teardown_global_test_resources();
-    return 0;
+    return failed_count;
 }
 
 // Placeholder for rocquantum::checkHipError if not found in hipStateVec.h

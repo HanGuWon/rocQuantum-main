@@ -9,6 +9,7 @@ include(GNUInstallDirs)
 
 add_library(rocqsim_tensornet ${ROCQUANTUM_COMPONENT_LIBRARY_TYPE}
     rocTensorUtil.cpp
+    rocWorkspaceManager.cpp
     hipTensorNet.cpp
     rocTensorUtil_kernels.hip
     PermutationKernels.hip

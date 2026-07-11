@@ -737,6 +737,51 @@ def test_qiskit_backend_batches_statevector_lists_with_fixed_pauli_and_unitary(m
     assert sim.batch_ops == [("RY", (1,), (0.1, 0.2))]
 
 
+def test_qiskit_backend_does_not_batch_near_but_distinct_unitaries(monkeypatch):
+    pytest.importorskip("qiskit")
+    _install_fake_binding(monkeypatch)
+
+    from qiskit import QuantumCircuit
+    from qiskit_rocquantum_provider import RocQuantumProvider
+
+    first_unitary = np.diag([np.exp(0.1j), 1.0]).astype(np.complex128)
+    second_unitary = np.diag([np.exp(0.100001j), 1.0]).astype(np.complex128)
+    circuits = []
+    for unitary in (first_unitary, second_unitary):
+        circuit = QuantumCircuit(1)
+        circuit.unitary(unitary, [0])
+        circuits.append(circuit)
+
+    before = len(_FakeQuantumSimulator.instances)
+    result = RocQuantumProvider().get_backend("rocq_simulator").run(
+        circuits,
+        sampling=False,
+        statevector=True,
+    ).result()
+
+    assert len(result.results) == 2
+    sims = _FakeQuantumSimulator.instances[before:]
+    assert sims
+    assert sims[-1].batch_size() == 1
+    np.testing.assert_array_equal(sims[-1].matrices[0][0], second_unitary)
+
+
+def test_framework_runtime_parameter_comparison_helpers_cover_scalar_and_array_edges():
+    from rocquantum.framework_runtime import parameter_lists_match, parameter_value_matches
+
+    assert parameter_value_matches(0.5, 0.5)
+    assert parameter_value_matches(np.float64(0.5), 0.5)
+    assert parameter_value_matches(np.array([0.1, 0.2]), np.array([0.1, 0.2]))
+    assert not parameter_value_matches(np.array([[0.1, 0.2]]), np.array([0.1, 0.2]))
+    assert not parameter_value_matches(
+        np.diag([np.exp(0.1j), 1.0]),
+        np.diag([np.exp(0.100001j), 1.0]),
+    )
+    assert parameter_lists_match([0.5, np.float64(0.25)], [0.5, 0.25])
+    assert not parameter_lists_match([0.5, 0.25], [0.5, 0.5])
+    assert not parameter_lists_match([0.5], [0.5, 0.25])
+
+
 def test_framework_runtime_converts_full_statevectors_to_little_endian_order():
     from rocquantum.framework_runtime import statevector_to_little_endian_wires
 
@@ -14725,6 +14770,46 @@ def test_runtime_dense_expectation_falls_back_to_statevector():
     assert simulator.statevector_reads == 1
 
 
+def test_runtime_dense_expectation_status_five_falls_back_but_malformed_results_raise():
+    from rocquantum.framework_runtime import RocQuantumRuntime
+
+    class _NativeBoundarySimulator:
+        def __init__(self):
+            self.mode = "status"
+            self.statevector_reads = 0
+
+        def batch_size(self):
+            return 1
+
+        def expectation_matrix(self, matrix, targets):
+            if self.mode == "status":
+                raise RuntimeError("rocQuantum status 5: dense expectation unavailable")
+            if self.mode == "value_error_status":
+                raise ValueError("status 5 appeared while validating a malformed result")
+            return [0.5, 0.25]
+
+        def get_statevector(self):
+            self.statevector_reads += 1
+            return np.array([1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0)], dtype=np.complex128)
+
+    simulator = _NativeBoundarySimulator()
+    runtime = RocQuantumRuntime(simulator)
+    matrix = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128)
+
+    assert runtime.expectation_matrix(matrix, [0]) == pytest.approx(1.0)
+    assert simulator.statevector_reads == 1
+
+    simulator.mode = "value_error_status"
+    with pytest.raises(ValueError, match="status 5 appeared"):
+        runtime.expectation_matrix(matrix, [0])
+    assert simulator.statevector_reads == 1
+
+    simulator.mode = "malformed"
+    with pytest.raises(ValueError, match="Dense expectation value"):
+        runtime.expectation_matrix(matrix, [0])
+    assert simulator.statevector_reads == 1
+
+
 def test_runtime_dense_expectation_moments_fallback_reads_state_once():
     from rocquantum.framework_runtime import RocQuantumRuntime
 
@@ -15218,6 +15303,98 @@ def test_root_package_declares_framework_entry_points():
     assert pennylane_plugins["lightning.rocq"] == "pennylane_rocq:LightningRocqDevice"
     assert pennylane_plugins["lightning.rocm"] == "pennylane_rocq:LightningRocmDevice"
     assert entry_points["qiskit.providers"]["rocquantum"] == "qiskit_rocquantum_provider:RocQuantumProvider"
+
+
+def test_pennylane_lightning_aliases_reject_unsupported_non_default_options(monkeypatch):
+    qml = pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+
+    from pennylane_rocq import LightningRocmDevice, LightningRocqDevice, RocQDevice
+
+    base_device = RocQDevice(wires=2)
+    assert not hasattr(base_device, "_lightning_compat_options")
+    assert "lightning_compatible_aliases" not in RocQDevice.capabilities()
+
+    for device_cls in (LightningRocqDevice, LightningRocmDevice):
+        accepted_device = device_cls(
+            wires=2,
+            batch_obs=False,
+            mpi=False,
+            mcmc=False,
+            kernel_name=None,
+            num_burnin=np.int64(0),
+            c_dtype=np.complex128,
+            seed="global",
+        )
+        assert accepted_device._lightning_compat_options["num_burnin"] == 0
+        assert device_cls.capabilities()["lightning_compatible_aliases"] == (
+            "lightning.rocq",
+            "lightning.rocm",
+        )
+
+        for option_name, option_value in (
+            ("batch_obs", True),
+            ("mpi", True),
+            ("mcmc", True),
+            ("kernel_name", "Local"),
+            ("num_burnin", 10),
+            ("c_dtype", np.complex64),
+            ("seed", 123),
+        ):
+            with pytest.raises(NotImplementedError, match=option_name):
+                device_cls(wires=2, **{option_name: option_value})
+
+        for option_name, option_value, message in (
+            ("batch_obs", 0, "batch_obs must be a boolean"),
+            ("mpi", np.bool_(False), "mpi must be a boolean"),
+            ("mcmc", "false", "mcmc must be a boolean"),
+            ("kernel_name", 1, "kernel_name must be a string or None"),
+            ("num_burnin", True, "num_burnin must be a non-negative integer"),
+            ("num_burnin", -1, "num_burnin must be non-negative"),
+            ("num_burnin", 1.5, "num_burnin must be a non-negative integer"),
+            ("c_dtype", "not-a-dtype", "c_dtype must be a valid NumPy dtype"),
+        ):
+            with pytest.raises(ValueError, match=message):
+                device_cls(wires=2, **{option_name: option_value})
+
+        with pytest.raises(ValueError, match="Unsupported rocQuantum PennyLane device option"):
+            device_cls(wires=2, unknown_option=True)
+
+    discovered_device = qml.device(
+        "lightning.rocq",
+        wires=1,
+        c_dtype=np.complex128,
+        seed="global",
+    )
+    assert discovered_device._lightning_compat_options["c_dtype"] is np.complex128
+
+
+def test_pennylane_batch_execute_does_not_batch_near_but_distinct_unitaries(monkeypatch):
+    pytest.importorskip("pennylane")
+    _install_fake_binding(monkeypatch)
+    for name in list(sys.modules):
+        if name.startswith("pennylane_rocq"):
+            sys.modules.pop(name)
+
+    import pennylane as qml
+
+    first_unitary = np.diag([np.exp(0.1j), 1.0]).astype(np.complex128)
+    second_unitary = np.diag([np.exp(0.100001j), 1.0]).astype(np.complex128)
+    dev = qml.device("lightning.rocq", wires=1)
+    circuits = [
+        qml.tape.QuantumScript(
+            [qml.QubitUnitary(unitary, wires=[0])],
+            [qml.expval(qml.PauliZ(0))],
+        )
+        for unitary in (first_unitary, second_unitary)
+    ]
+
+    before = len(_FakeQuantumSimulator.instances)
+    assert dev.batch_execute(circuits) == pytest.approx((0.5, 0.5))
+    sims = _FakeQuantumSimulator.instances[before:]
+    assert sims
+    assert sims[-1].batch_size() == 1
+    np.testing.assert_array_equal(sims[-1].matrices[0][0], second_unitary)
 
 
 def test_statevector_expectation_fallback_handles_y_phase():

@@ -9,25 +9,22 @@ the lifecycle of quantum jobs, including authentication, submission,
 status monitoring, and result retrieval.
 """
 
-import os
-from typing import Dict, Any
-
-from .base import (
-    RocqBackend,
-    BackendAuthenticationError,
-)
+from .base import BackendAuthenticationError, RocqBackend, _ApiKeyOpenQasmBackend
 
 # The base URL for the Pasqal API
 PASQAL_API_ENDPOINT = "https://api.pasqal.cloud"
 
 
-class PasqalBackend(RocqBackend):
+class PasqalBackend(_ApiKeyOpenQasmBackend):
     """
     A client for interacting with the Pasqal quantum computing hardware.
 
     This class implements the RocqBackend interface and provides a concrete
     method for executing quantum circuits on Pasqal's QPUs.
     """
+
+    api_key_environment_variable = "PASQAL_API_KEY"
+    api_key_provider_name = "Pasqal"
 
     def __init__(self, backend_name: str = "pasqal", api_endpoint: str = PASQAL_API_ENDPOINT):
         """
@@ -38,52 +35,3 @@ class PasqalBackend(RocqBackend):
             api_endpoint (str): The base URL for the Pasqal API.
         """
         super().__init__(backend_name=backend_name, api_endpoint=api_endpoint)
-        self.api_key: str | None = None
-
-    def authenticate(self) -> None:
-        """
-        Authenticates with the Pasqal API using an API key.
-
-        This method reads the API key from the `PASQAL_API_KEY` environment
-        variable.
-
-        Raises:
-            BackendAuthenticationError: If the `PASQAL_API_KEY` environment
-                                        variable is not set or is empty.
-        """
-        api_key = os.getenv("PASQAL_API_KEY")
-        if not api_key:
-            raise BackendAuthenticationError(
-                "Authentication failed: The 'PASQAL_API_KEY' environment variable "
-                "is not set. Please set it to your Pasqal API key."
-            )
-        self.api_key = api_key
-        print("Authentication successful.")
-
-    def _get_auth_headers(self) -> Dict[str, str]:
-        """Constructs the authorization headers required for API requests."""
-        if not self.api_key:
-            raise BackendAuthenticationError(
-                "Client is not authenticated. Please call authenticate() first."
-            )
-        return {"Authorization": f"ApiKey {self.api_key}"}
-
-    def _build_payload(self, circuit_representation: str, shots: int) -> Dict[str, Any]:
-        """
-        Constructs the provider-specific JSON payload for a Pasqal job request.
-
-        Args:
-            circuit_representation (str): The OpenQASM 3.0 string for the circuit.
-            shots (int): The number of execution shots.
-
-        Returns:
-            Dict[str, Any]: The JSON payload for the API request.
-        """
-        return {
-            "target": self.backend_name,
-            "shots": shots,
-            "body": {
-                "language": "OPENQASM",
-                "program": circuit_representation,
-            },
-        }

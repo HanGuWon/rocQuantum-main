@@ -78,6 +78,7 @@ from rocquantum.framework_runtime import (
     normalize_params,
     normalize_positive_integer,
     normalize_shots,
+    parameter_lists_match,
     qiskit_memory_from_samples,
     qiskit_sample_plan,
     statevector_to_little_endian_wires,
@@ -269,27 +270,6 @@ def _operation_runtime_params(op, matrix):
         if matrix is not None:
             return []
         raise
-
-
-def _parameter_value_matches(left, right):
-    try:
-        left_array = np.asarray(left)
-        right_array = np.asarray(right)
-        if left_array.shape or right_array.shape:
-            return left_array.shape == right_array.shape and np.allclose(left_array, right_array)
-    except (TypeError, ValueError):
-        pass
-
-    comparison = left == right
-    if isinstance(comparison, np.ndarray):
-        return bool(np.all(comparison))
-    return bool(comparison)
-
-
-def _parameter_lists_match(left, right):
-    if len(left) != len(right):
-        return False
-    return all(_parameter_value_matches(left_value, right_value) for left_value, right_value in zip(left, right))
 
 
 def _pauli_labels_commute(left, right):
@@ -2844,7 +2824,7 @@ class RocQuantumBackend(BackendV2):
                 continue
 
             first_params = params_by_circuit[0]
-            if any(not _parameter_lists_match(params, first_params) for params in params_by_circuit[1:]):
+            if any(not parameter_lists_match(params, first_params) for params in params_by_circuit[1:]):
                 raise NotImplementedError(
                     "Batched Qiskit execution only supports varying RX/RY/RZ, CRX/CRY/CRZ, "
                     f"fixed unitary/controlled-unitary operations, open-control controlled rotations/phase, "

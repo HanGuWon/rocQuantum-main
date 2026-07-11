@@ -14,6 +14,7 @@ except ImportError:
 from rocquantum.framework_runtime import (
     RocQuantumRuntime,
     matrix_to_little_endian_wires,
+    parameter_lists_match,
     sample_rows_from_statevector,
     samples_to_binary_rows,
     sparse_matrix_to_little_endian_wires,
@@ -1394,27 +1395,6 @@ def _apply_controlled_qubit_unitary(runtime, matrix, controls, targets, control_
             runtime.apply_operation("X", [wire_index])
 
 
-def _parameter_value_matches(left, right):
-    try:
-        left_array = np.asarray(left)
-        right_array = np.asarray(right)
-        if left_array.shape or right_array.shape:
-            return left_array.shape == right_array.shape and np.allclose(left_array, right_array)
-    except (TypeError, ValueError):
-        pass
-
-    comparison = left == right
-    if isinstance(comparison, np.ndarray):
-        return bool(np.all(comparison))
-    return bool(comparison)
-
-
-def _parameter_lists_match(left, right):
-    if len(left) != len(right):
-        return False
-    return all(_parameter_value_matches(left_value, right_value) for left_value, right_value in zip(left, right))
-
-
 def _apply_native_or_matrix(runtime, native_name, wire_indices, op):
     try:
         runtime.apply_operation(native_name, wire_indices)
@@ -2122,7 +2102,7 @@ def _apply_controlled_wrapper_batch(runtime, reference_op, wire_map, params_by_o
         ):
             return True
 
-    if any(not _parameter_lists_match(params, params_by_op[0]) for params in params_by_op[1:]):
+    if any(not parameter_lists_match(params, params_by_op[0]) for params in params_by_op[1:]):
         return False
     return _apply_controlled_wrapper(runtime, reference_op, wire_map, params=params_by_op[0])
 
@@ -3210,7 +3190,7 @@ def _apply_select_batch(runtime, reference_op, wire_map, params_by_op):
             ):
                 continue
         if any(params for params in op_params_by_batch):
-            if any(not _parameter_lists_match(params, op_params_by_batch[0]) for params in op_params_by_batch[1:]):
+            if any(not parameter_lists_match(params, op_params_by_batch[0]) for params in op_params_by_batch[1:]):
                 return False
             if _apply_controlled_selected_op(
                 runtime,
@@ -5951,7 +5931,7 @@ class RocQDevice(QubitDevice):
                 _apply_crot_batch(self._runtime, wire_indices, params_by_op)
                 continue
 
-            if any(not _parameter_lists_match(params, params_by_op[0]) for params in params_by_op[1:]):
+            if any(not parameter_lists_match(params, params_by_op[0]) for params in params_by_op[1:]):
                 return None
             try:
                 if _apply_static_batch_operation(

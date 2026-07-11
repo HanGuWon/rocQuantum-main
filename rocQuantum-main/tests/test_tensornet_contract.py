@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import unittest
 
 
@@ -69,6 +70,27 @@ _TENSOR_UTIL_HEADER = os.path.join(
     "include",
     "rocquantum",
     "rocTensorUtil.h",
+)
+_WORKSPACE_SOURCE = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipTensorNet",
+    "rocWorkspaceManager.cpp",
+)
+_TENSOR_UTIL_TEST = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipTensorNet",
+    "test_hipTensorNet_rocTensorUtil.cpp",
+)
+_SLICING_TEST = os.path.join(
+    _PROJECT_ROOT,
+    "rocquantum",
+    "src",
+    "hipTensorNet",
+    "test_hipTensorNet_slicing.cpp",
 )
 _STALE_PATHFINDER_SOURCE = os.path.join(_PROJECT_ROOT, "rocquantum", "src", "Pathfinder.cpp")
 _STALE_PATHFINDER_HEADER = os.path.join(
@@ -196,6 +218,84 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertNotIn("current implementation is a STUB", header)
         self.assertNotIn("Currently a placeholder", header)
         self.assertNotIn("ROCQ_STATUS_NOT_IMPLEMENTED for actual contraction logic", header)
+
+    def test_tensornet_build_includes_workspace_implementation(self):
+        with open(_TENSORNET_CMAKE, "r", encoding="utf-8") as f:
+            cmake = f.read()
+
+        target_sources = cmake.split("add_library(rocqsim_tensornet", 1)[1].split(")", 1)[0]
+        active_sources = {
+            line.split("#", 1)[0].strip()
+            for line in target_sources.splitlines()
+            if line.split("#", 1)[0].strip()
+        }
+        self.assertIn("rocWorkspaceManager.cpp", active_sources)
+
+    def test_tensor_stride_and_workspace_alignment_helpers_are_reused(self):
+        with open(_TENSOR_UTIL_HEADER, "r", encoding="utf-8") as f:
+            header = f.read()
+        with open(_WORKSPACE_SOURCE, "r", encoding="utf-8") as f:
+            workspace = f.read()
+
+        constructor_match = re.search(
+            r"rocTensor\s*\(\s*rocComplex\s*\*\s*data\b.*?(?=// Destructor)",
+            header,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(constructor_match)
+        constructor = constructor_match.group(0)
+        self.assertIn("calculate_strides();", constructor)
+        self.assertNotIn("strides_[0] = 1;", constructor)
+        self.assertRegex(
+            workspace,
+            r"size_t\s+align_up\s*\(\s*size_t\s+value\s*,\s*size_t\s+alignment\s*\)\s*noexcept",
+        )
+        self.assertEqual(
+            len(
+                re.findall(
+                    r"\balign_up\s*\(\s*current_offset_bytes_\s*,\s*alignment_\s*\)",
+                    workspace,
+                )
+            ),
+            2,
+        )
+        self.assertIn("#include <limits>", workspace)
+        self.assertIn("#include <string>", workspace)
+        self.assertIn(
+            "num_elements > std::numeric_limits<size_t>::max() / sizeof(rocComplex)",
+            workspace,
+        )
+        self.assertIn(
+            "value > std::numeric_limits<size_t>::max() - padding",
+            workspace,
+        )
+        self.assertIn("return std::numeric_limits<size_t>::max();", workspace)
+        self.assertIn("aligned_offset <= total_size_bytes_", workspace)
+        self.assertIn("requested_bytes <= total_size_bytes_ - aligned_offset", workspace)
+
+    def test_standalone_tensornet_tests_propagate_failure_counts(self):
+        for path in (_TENSOR_UTIL_TEST, _SLICING_TEST):
+            with self.subTest(path=path):
+                with open(path, "r", encoding="utf-8") as f:
+                    source = f.read()
+
+                self.assertIn("int RUN_ALL_TESTS()", source)
+                main_match = re.search(
+                    r"int\s+main\s*\(\s*\)\s*\{(?P<body>.*?)^\}",
+                    source,
+                    re.DOTALL | re.MULTILINE,
+                )
+                self.assertIsNotNone(main_match)
+                main_body = main_match.group("body")
+                self.assertRegex(
+                    main_body,
+                    r"const\s+int\s+failed_count\s*=\s*RUN_ALL_TESTS\s*\(\s*\)\s*;",
+                )
+                self.assertRegex(
+                    main_body,
+                    r"teardown_global_test_resources\s*\(\s*\)\s*;\s*return\s+failed_count\s*;",
+                )
+                self.assertNotRegex(main_body, r"return\s+0\s*;")
 
     def test_optimizer_and_memory_limit_are_not_silent(self):
         with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:

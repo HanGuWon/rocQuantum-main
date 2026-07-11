@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from importlib import import_module
 from unittest import mock
 
 
@@ -14,6 +15,31 @@ if _PROJECT_ROOT not in sys.path:
 
 
 class TestUnsupportedProviderBackends(unittest.TestCase):
+    def test_api_key_provider_modules_preserve_shared_exports_and_require_authentication(self):
+        base_module = import_module("rocquantum.backends.base")
+        providers = (
+            ("rocquantum.backends.ionq", "IonQBackend"),
+            ("rocquantum.backends.infleqtion", "InfleqtionBackend"),
+            ("rocquantum.backends.pasqal", "PasqalBackend"),
+        )
+        for module_name, backend_class_name in providers:
+            with self.subTest(module=module_name):
+                module = import_module(module_name)
+                self.assertEqual(module.BackendAuthenticationError.__name__, "BackendAuthenticationError")
+                self.assertEqual(module.BackendAuthenticationError.__module__, "rocquantum.backends.base")
+                self.assertEqual(module.RocqBackend.__name__, "RocqBackend")
+                self.assertEqual(module.RocqBackend.__module__, "rocquantum.backends.base")
+
+                backend = getattr(module, backend_class_name)()
+                with self.assertRaises(base_module.BackendAuthenticationError) as error:
+                    backend._get_auth_headers()
+                self.assertEqual(error.exception.__class__.__name__, "BackendAuthenticationError")
+                self.assertEqual(error.exception.__class__.__module__, "rocquantum.backends.base")
+                self.assertEqual(
+                    str(error.exception),
+                    "Client is not authenticated. Please call authenticate() first.",
+                )
+
     def test_list_backends_hides_skeleton_providers_by_default(self):
         from rocquantum.core import list_backends
 

@@ -1,15 +1,42 @@
 import pytest
 
-from rocquantum.backends.base import BackendAuthenticationError
-from rocquantum.backends.pasqal import PasqalBackend
+from rocquantum.backends.pasqal import PASQAL_API_ENDPOINT, PasqalBackend
 
 
-def test_pasqal_missing_api_key_fails_fast(monkeypatch):
-    monkeypatch.delenv("PASQAL_API_KEY", raising=False)
+def test_pasqal_defaults_are_stable():
     backend = PasqalBackend()
 
-    with pytest.raises(BackendAuthenticationError, match="PASQAL_API_KEY"):
+    assert backend.backend_name == "pasqal"
+    assert backend.api_endpoint == PASQAL_API_ENDPOINT
+
+
+@pytest.mark.parametrize("api_key", [None, ""])
+def test_pasqal_missing_api_key_fails_fast(monkeypatch, api_key):
+    from rocquantum.backends.base import BackendAuthenticationError
+
+    if api_key is None:
+        monkeypatch.delenv("PASQAL_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("PASQAL_API_KEY", api_key)
+    backend = PasqalBackend()
+
+    with pytest.raises(BackendAuthenticationError) as error:
         backend.authenticate()
+
+    assert str(error.value) == (
+        "Authentication failed: The 'PASQAL_API_KEY' environment variable is not set. "
+        "Please set it to your Pasqal API key."
+    )
+
+
+def test_pasqal_authentication_builds_api_key_header(monkeypatch, capsys):
+    monkeypatch.setenv("PASQAL_API_KEY", "pasqal-secret")
+    backend = PasqalBackend()
+
+    backend.authenticate()
+
+    assert backend._get_auth_headers() == {"Authorization": "ApiKey pasqal-secret"}
+    assert capsys.readouterr().out == "Authentication successful.\n"
 
 
 def test_pasqal_payload_shape_is_stable():

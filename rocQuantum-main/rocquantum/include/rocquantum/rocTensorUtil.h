@@ -43,13 +43,7 @@ struct rocTensor {
               bool mem_owned = false)
         : data_(data), dimensions_(dims), labels_(lbls), owned_(mem_owned) {
         if (calculate_strides_on_construct) {
-            if (!dimensions_.empty()) {
-                strides_.resize(dimensions_.size());
-                strides_[0] = 1;
-                for (size_t i = 1; i < dimensions_.size(); ++i) {
-                    strides_[i] = strides_[i-1] * dimensions_[i-1];
-                }
-            }
+            calculate_strides();
         }
     }
 
