@@ -116,6 +116,8 @@ __global__ void apply_four_qubit_generic_matrix_kernel(rocComplex* state,
                                                        const unsigned* targetQubitIndices_gpu,
                                                        const rocComplex* matrixDevice);
 
+namespace {
+
 __global__ void reduce_expectation_z_kernel(const rocComplex* state,
                                             size_t numElements,
                                             unsigned targetQubit,
@@ -180,6 +182,8 @@ __global__ void collapse_and_renorm_measure_kernel(rocComplex* state,
 __global__ void renormalize_state_kernel(rocComplex* state,
                                          unsigned numQubits,
                                          real_t d_sum_sq_mag_inv_sqrt);
+
+} // namespace
 
 __global__ void local_bit_swap_permutation_kernel(rocComplex* d_local_slice,
                                                   rocComplex* d_temp_buffer_for_slice,

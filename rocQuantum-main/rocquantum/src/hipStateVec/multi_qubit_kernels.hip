@@ -31,18 +31,18 @@ __device__ inline void apply_small_matrix_local(rocComplex* local_amps,
     }
 }
 
-// Kernel for applying an m-qubit generic matrix.
-// targetQubitIndices should be sorted for consistent index generation.
-// This kernel is designed to be somewhat general for small m (3 or 4).
-__global__ void apply_multi_qubit_generic_matrix_kernel(
+// Device helper for applying an m-qubit generic matrix.
+// targetQubitIndices order defines the matrix basis order and must contain unique indices.
+// This helper supports the small fixed-width wrapper kernels below (m = 2, 3, or 4).
+__device__ inline void apply_multi_qubit_generic_matrix_device(
     rocComplex* state,
     unsigned numQubits,         // Total number of qubits
     const unsigned* targetQubitIndices, // Array of m target qubit indices (GPU accessible)
-    unsigned m,                 // Number of target qubits (3 or 4)
+    unsigned m,                 // Number of target qubits (2, 3, or 4)
     const rocComplex* matrixDevice) { // 2^m x 2^m matrix on device (column-major)
 
     size_t N = 1ULL << numQubits;
-    unsigned matrix_dim = 1U << m; // 8 for m=3, 16 for m=4
+    unsigned matrix_dim = 1U << m; // 4 for m=2, 8 for m=3, 16 for m=4
 
     // Each thread will handle one block of 2^m states.
     // The number of such blocks is N / (2^m).
@@ -62,7 +62,7 @@ __global__ void apply_multi_qubit_generic_matrix_kernel(
     // unsigned long long non_target_qubits_mask = 0; // Not explicitly used later, but good for understanding
 
     // Pointers to targetQubitIndices must be accessible on device if kernel needs to read it per thread.
-    // For m=3,4 this is small enough to pass by value or reconstruct if needed, but array is more general.
+    // For m=2..4 this is small enough to load into registers, but the array keeps the helper general.
     // Assuming targetQubitIndices is small and can be loaded into registers or shared memory by the compiler.
     
     unsigned temp_target_indices[4]; // Max m=4
@@ -114,9 +114,8 @@ __global__ void apply_multi_qubit_generic_matrix_kernel(
     }
 }
 
-// Explicit versions for m=3 and m=4 that call the generic one.
+// Explicit global entry points call the shared device helper.
 // The compiler might inline this.
-// Alternatively, rocsvApplyMatrix can directly call apply_multi_qubit_generic_matrix_kernel with correct m.
 
 __global__ void apply_two_qubit_generic_matrix_kernel(
     rocComplex* state,
@@ -124,7 +123,7 @@ __global__ void apply_two_qubit_generic_matrix_kernel(
     const unsigned* targetQubitIndices_gpu, // GPU accessible array of 2 indices
     const rocComplex* matrixDevice) {       // 4x4 matrix on device
 
-    apply_multi_qubit_generic_matrix_kernel(state, numQubits, targetQubitIndices_gpu, 2, matrixDevice);
+    apply_multi_qubit_generic_matrix_device(state, numQubits, targetQubitIndices_gpu, 2, matrixDevice);
 }
 
 __global__ void apply_three_qubit_generic_matrix_kernel(
@@ -133,7 +132,7 @@ __global__ void apply_three_qubit_generic_matrix_kernel(
     const unsigned* targetQubitIndices_gpu, // GPU accessible array of 3 indices
     const rocComplex* matrixDevice) {       // 8x8 matrix on device
 
-    apply_multi_qubit_generic_matrix_kernel(state, numQubits, targetQubitIndices_gpu, 3, matrixDevice);
+    apply_multi_qubit_generic_matrix_device(state, numQubits, targetQubitIndices_gpu, 3, matrixDevice);
 }
 
 __global__ void apply_four_qubit_generic_matrix_kernel(
@@ -142,7 +141,7 @@ __global__ void apply_four_qubit_generic_matrix_kernel(
     const unsigned* targetQubitIndices_gpu, // GPU accessible array of 4 indices
     const rocComplex* matrixDevice) {       // 16x16 matrix on device
     
-    apply_multi_qubit_generic_matrix_kernel(state, numQubits, targetQubitIndices_gpu, 4, matrixDevice);
+    apply_multi_qubit_generic_matrix_device(state, numQubits, targetQubitIndices_gpu, 4, matrixDevice);
 }
 
 // Kernel to gather 2^m elements from their scattered positions in d_in_strided (full state vector)

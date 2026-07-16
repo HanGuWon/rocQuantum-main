@@ -29,6 +29,9 @@ STATEVEC_HEADER = os.path.join(
 STATEVEC_SOURCE = os.path.join(
     PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "hipStateVec.cpp"
 )
+MULTI_QUBIT_KERNELS = os.path.join(
+    PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "multi_qubit_kernels.hip"
+)
 PYPROJECT = os.path.join(PROJECT_ROOT, "pyproject.toml")
 README = os.path.join(PROJECT_ROOT, "README.md")
 ROCM_AUDIT = os.path.join(PROJECT_ROOT, "ROCM_INTEGRATION_AUDIT.md")
@@ -249,6 +252,35 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn(
             "set_source_files_properties(rocquantum/src/kernels.hip.cpp PROPERTIES LANGUAGE HIP)",
             root_cmake,
+        )
+
+    def test_native_kernel_entry_points_have_unambiguous_hip_linkage(self):
+        statevec_source = _read(STATEVEC_SOURCE)
+        multi_qubit_kernels = _read(MULTI_QUBIT_KERNELS)
+
+        internal_declarations = statevec_source.index(
+            "namespace {\n\n__global__ void reduce_expectation_z_kernel"
+        )
+        internal_declarations_end = statevec_source.index(
+            "} // namespace", internal_declarations
+        )
+        external_swap_declarations = statevec_source.index(
+            "__global__ void local_bit_swap_permutation_kernel"
+        )
+        self.assertLess(internal_declarations, internal_declarations_end)
+        self.assertLess(internal_declarations_end, external_swap_declarations)
+
+        self.assertIn(
+            "__device__ inline void apply_multi_qubit_generic_matrix_device(",
+            multi_qubit_kernels,
+        )
+        self.assertNotIn(
+            "__global__ void apply_multi_qubit_generic_matrix_kernel(",
+            multi_qubit_kernels,
+        )
+        self.assertEqual(
+            multi_qubit_kernels.count("apply_multi_qubit_generic_matrix_device(state"),
+            3,
         )
 
     def test_docs_record_current_rocm_support_boundary(self):
