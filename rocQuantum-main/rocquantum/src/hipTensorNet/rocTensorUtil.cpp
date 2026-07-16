@@ -405,7 +405,7 @@ rocqStatus_t rocTensorContractPair_internal(
         const rocComplex* b_slice = permutedB_tensor.data_ + k_begin;
 #ifdef ROCQ_PRECISION_DOUBLE
         blas_status_err = rocblas_zgemm(
-            blas_handle, ROCBLAS_OPERATION_NONE, ROCBLAS_OPERATION_NONE,
+            blas_handle, rocblas_operation_none, rocblas_operation_none,
             gemm_M, gemm_N, gemm_K_slice,
             reinterpret_cast<const rocblas_double_complex*>(&alpha),
             reinterpret_cast<const rocblas_double_complex*>(a_slice), gemm_M,
@@ -415,7 +415,7 @@ rocqStatus_t rocTensorContractPair_internal(
         );
 #else
         blas_status_err = rocblas_cgemm(
-            blas_handle, ROCBLAS_OPERATION_NONE, ROCBLAS_OPERATION_NONE,
+            blas_handle, rocblas_operation_none, rocblas_operation_none,
             gemm_M, gemm_N, gemm_K_slice,
             reinterpret_cast<const rocblas_float_complex*>(&alpha),
             reinterpret_cast<const rocblas_float_complex*>(a_slice), gemm_M,

@@ -398,11 +398,13 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
         if (result_tensor->data_ == source.data_) {
             return ROCQ_STATUS_SUCCESS;
         }
-        return status_from_hip(hipMemcpyAsync(result_tensor->data_,
-                                              source.data_,
-                                              static_cast<size_t>(element_count) * sizeof(rocComplex),
-                                              hipMemcpyDeviceToDevice,
-                                              stream));
+        const hipError_t copy_status = hipMemcpyAsync(
+            result_tensor->data_,
+            source.data_,
+            static_cast<size_t>(element_count) * sizeof(rocComplex),
+            hipMemcpyDeviceToDevice,
+            stream);
+        return copy_status == hipSuccess ? ROCQ_STATUS_SUCCESS : ROCQ_STATUS_HIP_ERROR;
     }
 
     std::map<int, util::rocTensor> active;

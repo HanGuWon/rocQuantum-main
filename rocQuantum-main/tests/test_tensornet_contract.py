@@ -212,6 +212,24 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertNotIn("if (dtype != ROC_DATATYPE_C64)", tensornet_source)
         self.assertNotIn("handle->dtype != ROC_DATATYPE_C64", tensornet_source)
 
+    def test_native_tensornet_uses_public_hip_and_rocblas_status_symbols(self):
+        with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
+            tensornet_source = f.read()
+        with open(_TENSOR_UTIL_SOURCE, "r", encoding="utf-8") as f:
+            tensor_util_source = f.read()
+
+        self.assertIn(
+            "const hipError_t copy_status = hipMemcpyAsync(",
+            tensornet_source,
+        )
+        self.assertIn(
+            "return copy_status == hipSuccess ? ROCQ_STATUS_SUCCESS : ROCQ_STATUS_HIP_ERROR;",
+            tensornet_source,
+        )
+        self.assertNotIn("status_from_hip(", tensornet_source)
+        self.assertEqual(tensor_util_source.count("rocblas_operation_none"), 4)
+        self.assertNotIn("ROCBLAS_OPERATION_NONE", tensor_util_source)
+
     def test_svd_binding_does_not_allocate_unused_workspace(self):
         with open(_BINDINGS_SOURCE, "r", encoding="utf-8") as f:
             bindings = f.read()
