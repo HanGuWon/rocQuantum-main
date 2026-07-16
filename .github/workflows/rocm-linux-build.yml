@@ -170,9 +170,15 @@ jobs:
             python3-pip \
             python3-venv \
             ripgrep \
-            pybind11-dev \
             rocblas-dev \
+            rocrand-dev \
             rocsolver-dev
+          python3 -m venv "${RUNNER_TEMP}/rocq-cmake-deps"
+          CMAKE_DEPS_PYTHON="${RUNNER_TEMP}/rocq-cmake-deps/bin/python"
+          "${CMAKE_DEPS_PYTHON}" -m pip install "pybind11==2.13.6"
+          PYBIND11_CMAKE_DIR="$("${CMAKE_DEPS_PYTHON}" -m pybind11 --cmakedir)"
+          test -f "${PYBIND11_CMAKE_DIR}/pybind11Config.cmake"
+          echo "PYBIND11_CMAKE_DIR=${PYBIND11_CMAKE_DIR}" >> "${GITHUB_ENV}"
 
       - name: Async Contract Gate
         run: bash scripts/check_async_contract.sh
@@ -185,6 +191,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=ON \
             -DROCQUANTUM_BUILD_NATIVE=ON \
+            -Dpybind11_DIR="${PYBIND11_CMAKE_DIR}" \
             -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
             -DCMAKE_HIP_ARCHITECTURES="${{ matrix.hip_architectures }}"
 
@@ -219,6 +226,7 @@ jobs:
             -DROCQUANTUM_BUILD_NATIVE=ON \
             -DROCQ_PRECISION_DOUBLE=ON \
             -DROCQUANTUM_TENSORNET_ENABLE_METIS=ON \
+            -Dpybind11_DIR="${PYBIND11_CMAKE_DIR}" \
             -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
             -DCMAKE_HIP_ARCHITECTURES="${{ matrix.hip_architectures }}"
           cmake --build build-c128 --parallel
@@ -243,7 +251,8 @@ jobs:
           set -euo pipefail
           python3 -m venv "${ARTIFACT_DIR}/native-wheel-build-venv"
           BUILD_PYTHON="${ARTIFACT_DIR}/native-wheel-build-venv/bin/python"
-          "${BUILD_PYTHON}" -m pip install --upgrade build pip scikit-build-core pybind11
+          "${BUILD_PYTHON}" -m pip install --upgrade \
+            build pip scikit-build-core "pybind11==2.13.6"
           PYBIND11_CMAKE_DIR="$("${BUILD_PYTHON}" -m pybind11 --cmakedir)"
           BASE_CMAKE_ARGS="${CMAKE_ARGS}"
           export CMAKE_ARGS="${BASE_CMAKE_ARGS} -DCMAKE_PREFIX_PATH=${PYBIND11_CMAKE_DIR};/opt/rocm"

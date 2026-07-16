@@ -447,9 +447,15 @@ class TestCMakeInstallConsumerSmoke(unittest.TestCase):
         for rocm_development_package in [
             "hiprand-dev",
             "rocblas-dev",
+            "rocrand-dev",
             "rocsolver-dev",
         ]:
             self.assertIn(rocm_development_package, workflow)
+        self.assertNotIn("pybind11-dev", workflow)
+        self.assertGreaterEqual(workflow.count('"pybind11==2.13.6"'), 2)
+        self.assertIn("PYBIND11_CMAKE_DIR", workflow)
+        self.assertIn("pybind11Config.cmake", workflow)
+        self.assertGreaterEqual(workflow.count('-Dpybind11_DIR="${PYBIND11_CMAKE_DIR}"'), 2)
         self.assertIn("integrations/qiskit-rocquantum-provider/tests/test_backend.py", workflow)
         self.assertIn("matrix.python-version == '3.10'", workflow)
         self.assertIn('if [ "${{ matrix.python-version }}" != "3.9" ]', workflow)
