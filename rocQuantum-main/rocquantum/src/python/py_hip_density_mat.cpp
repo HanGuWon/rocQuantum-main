@@ -1,4 +1,4 @@
-#include <pybind11/pybind11>
+#include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include <hip/hip_runtime.h>

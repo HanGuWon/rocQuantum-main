@@ -18,6 +18,11 @@ ROOT_CMAKE = os.path.join(PROJECT_ROOT, "CMakeLists.txt")
 PACKAGE_CONFIG_TEMPLATE = os.path.join(PROJECT_ROOT, "cmake", "rocQuantumConfig.cmake.in")
 PYTHON_ROCQ_CMAKE = os.path.join(PROJECT_ROOT, "python", "rocq", "CMakeLists.txt")
 LOW_LEVEL_BINDINGS = os.path.join(PROJECT_ROOT, "python", "rocq", "bindings.cpp")
+SIMULATOR_HEADER = os.path.join(PROJECT_ROOT, "include", "rocquantum", "QuantumSimulator.h")
+SIMULATOR_SOURCE = os.path.join(PROJECT_ROOT, "rocquantum", "src", "simulator.cpp")
+DENSITYMAT_PYTHON_BINDINGS = os.path.join(
+    PROJECT_ROOT, "rocquantum", "src", "python", "py_hip_density_mat.cpp"
+)
 STATEVEC_HEADER = os.path.join(
     PROJECT_ROOT, "rocquantum", "include", "rocquantum", "hipStateVec.h"
 )
@@ -163,6 +168,32 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn("rocsvGetStateInfo", state_source)
         self.assertIn("info.allocation_generation != state_generation_", bindings)
         self.assertNotIn("infer_batch_size_from_state_buffer", bindings)
+
+    def test_native_headers_and_read_only_observables_are_compile_safe(self):
+        densitymat_bindings = _read(DENSITYMAT_PYTHON_BINDINGS)
+        simulator_header = _read(SIMULATOR_HEADER)
+        simulator_source = _read(SIMULATOR_SOURCE)
+        state_header = _read(STATEVEC_HEADER)
+
+        self.assertIn("#include <pybind11/pybind11.h>", densitymat_bindings)
+        self.assertNotIn("#include <pybind11/pybind11>\n", densitymat_bindings)
+        self.assertIn("#include <hip/hip_complex.h>", state_header)
+
+        observable_methods = [
+            "expectation_value",
+            "expectation_pauli_string",
+            "expectation_pauli_string_batch",
+            "GetExpectationValue",
+            "GetExpectationPauliString",
+            "GetExpectationPauliStringBatch",
+        ]
+        for method in observable_methods:
+            escaped = re.escape(method)
+            self.assertRegex(simulator_header, rf"\b{escaped}\([^;]*\) const;")
+            self.assertRegex(
+                simulator_source,
+                rf"QuantumSimulator::{escaped}\([^{{]*\) const\s*{{",
+            )
 
     def test_root_cmake_activates_legacy_python_backend_owner(self):
         root_cmake = _read(ROOT_CMAKE)

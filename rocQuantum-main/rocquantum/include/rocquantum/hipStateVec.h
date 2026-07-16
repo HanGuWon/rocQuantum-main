@@ -1,7 +1,8 @@
 #ifndef HIPSTATEVEC_H
 #define HIPSTATEVEC_H
 
-#include <hip/hip_runtime.h> // For hipFloatComplex, hipDoubleComplex, hipError_t
+#include <hip/hip_complex.h>
+#include <hip/hip_runtime.h>
 #include <stddef.h>
 #include <stdint.h>
 

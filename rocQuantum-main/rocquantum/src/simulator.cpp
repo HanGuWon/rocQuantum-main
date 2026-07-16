@@ -1038,12 +1038,12 @@ std::vector<long long> QuantumSimulator::measure_batch(const std::vector<unsigne
     return out;
 }
 
-double QuantumSimulator::expectation_value(const std::string& pauli, unsigned target) {
+double QuantumSimulator::expectation_value(const std::string& pauli, unsigned target) const {
     return expectation_pauli_string(pauli, {target});
 }
 
 double QuantumSimulator::expectation_pauli_string(const std::string& pauli_string,
-                                                  const std::vector<unsigned>& targets) {
+                                                  const std::vector<unsigned>& targets) const {
     if (batch_size_ != 1) {
         throw std::invalid_argument(
             "expectation_pauli_string is only valid when batch_size is 1; use expectation_pauli_string_batch.");
@@ -1053,7 +1053,7 @@ double QuantumSimulator::expectation_pauli_string(const std::string& pauli_strin
 }
 
 std::vector<double> QuantumSimulator::expectation_pauli_string_batch(const std::string& pauli_string,
-                                                                     const std::vector<unsigned>& targets) {
+                                                                     const std::vector<unsigned>& targets) const {
     if (pauli_string.size() != targets.size()) {
         throw std::invalid_argument("Pauli string length must match target qubit count.");
     }
@@ -1694,7 +1694,7 @@ std::vector<long long> QuantumSimulator::MeasureBatch(const std::vector<unsigned
     return measure_batch(qubits, shots);
 }
 
-double QuantumSimulator::GetExpectationValue(const std::string& pauli, int target_qubit) {
+double QuantumSimulator::GetExpectationValue(const std::string& pauli, int target_qubit) const {
     if (target_qubit < 0) {
         throw std::out_of_range("Qubit index out of bounds for simulator instance.");
     }
@@ -1702,13 +1702,13 @@ double QuantumSimulator::GetExpectationValue(const std::string& pauli, int targe
 }
 
 double QuantumSimulator::GetExpectationPauliString(const std::string& pauli_string,
-                                                   const std::vector<unsigned>& targets) {
+                                                   const std::vector<unsigned>& targets) const {
     return expectation_pauli_string(pauli_string, targets);
 }
 
 std::vector<double> QuantumSimulator::GetExpectationPauliStringBatch(
     const std::string& pauli_string,
-    const std::vector<unsigned>& targets) {
+    const std::vector<unsigned>& targets) const {
     return expectation_pauli_string_batch(pauli_string, targets);
 }
 
