@@ -32,6 +32,12 @@ STATEVEC_SOURCE = os.path.join(
 MULTI_QUBIT_KERNELS = os.path.join(
     PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "multi_qubit_kernels.hip"
 )
+SWAP_KERNELS = os.path.join(
+    PROJECT_ROOT, "rocquantum", "src", "hipStateVec", "swap_kernels.hip"
+)
+TENSOR_UTIL_HEADER = os.path.join(
+    PROJECT_ROOT, "rocquantum", "include", "rocquantum", "rocTensorUtil.h"
+)
 PYPROJECT = os.path.join(PROJECT_ROOT, "pyproject.toml")
 README = os.path.join(PROJECT_ROOT, "README.md")
 ROCM_AUDIT = os.path.join(PROJECT_ROOT, "ROCM_INTEGRATION_AUDIT.md")
@@ -198,6 +204,9 @@ class TestRocmCompatibilityContract(unittest.TestCase):
                 rf"QuantumSimulator::{escaped}\([^{{]*\) const\s*{{",
             )
 
+        tensor_util_header = _read(TENSOR_UTIL_HEADER)
+        self.assertIn("#include <rocblas/rocblas.h>", tensor_util_header)
+
     def test_root_cmake_activates_legacy_python_backend_owner(self):
         root_cmake = _read(ROOT_CMAKE)
         python_cmake = _read(PYTHON_ROCQ_CMAKE)
@@ -257,6 +266,7 @@ class TestRocmCompatibilityContract(unittest.TestCase):
     def test_native_kernel_entry_points_have_unambiguous_hip_linkage(self):
         statevec_source = _read(STATEVEC_SOURCE)
         multi_qubit_kernels = _read(MULTI_QUBIT_KERNELS)
+        swap_kernels = _read(SWAP_KERNELS)
 
         internal_declarations = statevec_source.index(
             "namespace {\n\n__global__ void reduce_expectation_z_kernel"
@@ -282,6 +292,8 @@ class TestRocmCompatibilityContract(unittest.TestCase):
             multi_qubit_kernels.count("apply_multi_qubit_generic_matrix_device(state"),
             3,
         )
+        self.assertEqual(swap_kernels.count("atomicAdd("), 2)
+        self.assertNotIn("hipAtomicAdd(", swap_kernels)
 
     def test_docs_record_current_rocm_support_boundary(self):
         readme = _read(README)

@@ -8,6 +8,7 @@
 #include <stdexcept>    // For std::runtime_error, std::invalid_argument
 #include <hip/hip_runtime.h> // For rocComplex definition if not already included via hipStateVec.h
                            // Assuming rocComplex is hipFloatComplex or hipDoubleComplex
+#include <rocblas/rocblas.h>
 #include "rocquantum/hipStateVec.h" // For rocqStatus_t and rocComplex (if not defined above)
 
 
