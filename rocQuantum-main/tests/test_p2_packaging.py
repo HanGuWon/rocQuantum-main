@@ -443,7 +443,13 @@ class TestCMakeInstallConsumerSmoke(unittest.TestCase):
         self.assertIn("Verify minimum combined adapter contracts", workflow)
         self.assertIn('"pennylane==0.45.0"', workflow)
         self.assertIn('"qiskit==2.4.0"', workflow)
-        self.assertIn('"cirq-core==1.0.0"', workflow)
+        self.assertIn('"cirq-core==1.5.0"', workflow)
+        for rocm_development_package in [
+            "hiprand-dev",
+            "rocblas-dev",
+            "rocsolver-dev",
+        ]:
+            self.assertIn(rocm_development_package, workflow)
         self.assertIn("integrations/qiskit-rocquantum-provider/tests/test_backend.py", workflow)
         self.assertIn("matrix.python-version == '3.10'", workflow)
         self.assertIn('if [ "${{ matrix.python-version }}" != "3.9" ]', workflow)

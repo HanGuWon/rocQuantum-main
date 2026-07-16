@@ -103,8 +103,10 @@ jobs:
           python -m venv "${RUNNER_TEMP}/rocq-adapters-min"
           MIN_PYTHON="${RUNNER_TEMP}/rocq-adapters-min/bin/python"
           "${MIN_PYTHON}" -m pip install --upgrade pip
+          # Cirq < 1.5 constrains NumPy below 2, while PennyLane 0.45 requires
+          # NumPy 2 or newer. Cirq 1.5 is the first co-installable floor.
           "${MIN_PYTHON}" -m pip install dist/rocquantum-*.whl \
-            "qiskit==2.4.0" "pennylane==0.45.0" "cirq-core==1.0.0" \
+            "qiskit==2.4.0" "pennylane==0.45.0" "cirq-core==1.5.0" \
             scipy pytest boto3
           (cd "${RUNNER_TEMP}" && env -u PYTHONPATH "${MIN_PYTHON}" -c \
             "import cirq_rocm, pennylane_rocq, qiskit_rocquantum_provider")
@@ -161,13 +163,16 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             binutils \
             cmake \
+            hiprand-dev \
             libmetis-dev \
             ninja-build \
             python3-dev \
             python3-pip \
             python3-venv \
             ripgrep \
-            pybind11-dev
+            pybind11-dev \
+            rocblas-dev \
+            rocsolver-dev
 
       - name: Async Contract Gate
         run: bash scripts/check_async_contract.sh
