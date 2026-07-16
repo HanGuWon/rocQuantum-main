@@ -2,6 +2,7 @@
 #include "rocquantum/hipTensorNet_api.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <map>
 #include <new>
@@ -67,6 +68,16 @@ inline rocqStatus_t validate_optimizer_config(const hipTensorNetContractionOptim
             return ROCQ_STATUS_INVALID_VALUE;
     }
     if (config.num_slices < 0) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (config.pathfinder_algorithm == ROCTN_PATHFINDER_ALGO_KAHYPAR &&
+        (!std::isfinite(config.algo_config.kahypar_config.imbalance_factor) ||
+         config.algo_config.kahypar_config.imbalance_factor <= 0.0 ||
+         config.algo_config.kahypar_config.imbalance_factor >= 1.0)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (config.pathfinder_algorithm == ROCTN_PATHFINDER_ALGO_METIS &&
+        config.algo_config.metis_config.num_iterations <= 0) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
     return ROCQ_STATUS_SUCCESS;
@@ -343,13 +354,55 @@ rocqStatus_t TensorNetwork<T>::contract(const hipTensorNetContractionOptimizerCo
     if (initial_tensors_.empty()) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
+    if (result_tensor->data_) {
+        for (const util::rocTensor& input : initial_tensors_) {
+            if (result_tensor->data_ == input.data_) {
+                return ROCQ_STATUS_INVALID_VALUE;
+            }
+        }
+    }
 
     if (initial_tensors_.size() == 1) {
-        if (result_tensor->owned_ && result_tensor->data_) {
-            util::rocTensorFree(result_tensor);
+        const util::rocTensor& source = initial_tensors_[0];
+        long long element_count = 0;
+        try {
+            element_count = source.get_element_count();
+        } catch (const std::exception&) {
+            return ROCQ_STATUS_INVALID_VALUE;
         }
-        *result_tensor = initial_tensors_[0];
-        return ROCQ_STATUS_SUCCESS;
+        if (element_count <= 0 || !source.data_ ||
+            static_cast<unsigned long long>(element_count) >
+                std::numeric_limits<size_t>::max() / sizeof(rocComplex)) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        if (result_tensor->data_ && !result_tensor->owned_) {
+            if (result_tensor->dimensions_ != source.dimensions_) {
+                return ROCQ_STATUS_INVALID_VALUE;
+            }
+        } else {
+            if (result_tensor->owned_ && result_tensor->data_) {
+                rocqStatus_t free_status = util::rocTensorFree(result_tensor);
+                if (free_status != ROCQ_STATUS_SUCCESS) {
+                    return free_status;
+                }
+            }
+            result_tensor->dimensions_ = source.dimensions_;
+            result_tensor->labels_ = source.labels_;
+            result_tensor->calculate_strides();
+            rocqStatus_t allocate_status = util::rocTensorAllocate(result_tensor);
+            if (allocate_status != ROCQ_STATUS_SUCCESS) {
+                return allocate_status;
+            }
+        }
+        result_tensor->labels_ = source.labels_;
+        if (result_tensor->data_ == source.data_) {
+            return ROCQ_STATUS_SUCCESS;
+        }
+        return status_from_hip(hipMemcpyAsync(result_tensor->data_,
+                                              source.data_,
+                                              static_cast<size_t>(element_count) * sizeof(rocComplex),
+                                              hipMemcpyDeviceToDevice,
+                                              stream));
     }
 
     std::map<int, util::rocTensor> active;
@@ -566,6 +619,35 @@ rocqStatus_t rocTensorNetworkAddTensor(rocTensorNetworkHandle_t handle, const ro
     if (!handle || !handle->tn_instance || !tensor) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
+    const size_t rank = tensor->rank();
+    if (rank == 0 || !tensor->data_ || tensor->labels_.size() != rank ||
+        tensor->strides_.size() != rank) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    std::set<std::string> labels;
+    long long expected_stride = 1;
+    for (size_t mode = 0; mode < rank; ++mode) {
+        const long long dimension = tensor->dimensions_[mode];
+        if (dimension <= 0 || tensor->labels_[mode].empty() ||
+            !labels.insert(tensor->labels_[mode]).second ||
+            tensor->strides_[mode] != expected_stride) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        if (mode + 1 < rank &&
+            expected_stride > std::numeric_limits<long long>::max() / dimension) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        if (mode + 1 < rank) {
+            expected_stride *= dimension;
+        }
+    }
+    try {
+        if (tensor->get_element_count() <= 0) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    } catch (const std::exception&) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     handle->tn_instance->add_tensor(*tensor);
     return ROCQ_STATUS_SUCCESS;
 }
@@ -598,11 +680,11 @@ rocqStatus_t rocTensorNetworkContract(rocTensorNetworkHandle_t handle,
 rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
                           rocquantum::util::rocTensor* U,
                           rocquantum::util::rocTensor* S,
-                          rocquantum::util::rocTensor* V,
+                          rocquantum::util::rocTensor* Vh,
                           const rocquantum::util::rocTensor* A,
                           void* workspace) {
     (void)workspace;
-    if (!handle || !U || !S || !V || !A || !A->data_) {
+    if (!handle || !U || !S || !Vh || !A || !A->data_) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
     if (handle->dtype != ROC_TENSORNET_COMPILED_COMPLEX_DTYPE) {
@@ -642,7 +724,7 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
     if (status != ROCQ_STATUS_SUCCESS) {
         return status;
     }
-    status = ensure_output_tensor(V, {static_cast<long long>(n), static_cast<long long>(n)});
+    status = ensure_output_tensor(Vh, {static_cast<long long>(n), static_cast<long long>(n)});
     if (status != ROCQ_STATUS_SUCCESS) {
         return status;
     }
@@ -724,7 +806,7 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
                                                        d_singular_values,
                                                        reinterpret_cast<RocSolverComplex*>(U->data_),
                                                        m,
-                                                       reinterpret_cast<RocSolverComplex*>(V->data_),
+                                                       reinterpret_cast<RocSolverComplex*>(Vh->data_),
                                                        n,
                                                        d_superdiag,
                                                        rocblas_outofplace,
@@ -740,7 +822,7 @@ rocqStatus_t rocTensorSVD(rocTensorNetworkHandle_t handle,
                                                        d_singular_values,
                                                        reinterpret_cast<RocSolverComplex*>(U->data_),
                                                        m,
-                                                       reinterpret_cast<RocSolverComplex*>(V->data_),
+                                                       reinterpret_cast<RocSolverComplex*>(Vh->data_),
                                                        n,
                                                        d_superdiag,
                                                        rocblas_outofplace,

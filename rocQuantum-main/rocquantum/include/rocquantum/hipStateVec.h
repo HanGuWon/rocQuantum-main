@@ -54,6 +54,14 @@ typedef struct {
     size_t local_slice_elements;
 } rocsvDistributedInfo_t;
 
+typedef struct {
+    rocComplex* device_state;
+    unsigned num_qubits;
+    size_t batch_size;
+    size_t element_count;
+    uint64_t allocation_generation;
+} rocsvStateInfo_t;
+
 typedef enum {
     ROCSV_DISTRIBUTED_BACKEND_NONE = 0,
     ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK = 1,
@@ -79,6 +87,11 @@ rocqStatus_t rocsvCreate(rocsvHandle_t* handle);
  * @return rocqStatus_t Status of the operation.
  */
 rocqStatus_t rocsvDestroy(rocsvHandle_t handle);
+
+/**
+ * @brief Retrieves authoritative metadata for the handle-owned state allocation.
+ */
+rocqStatus_t rocsvGetStateInfo(rocsvHandle_t handle, rocsvStateInfo_t* info);
 
 /**
  * @brief Binds a user-provided stream to a handle.

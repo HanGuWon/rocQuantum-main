@@ -1,7 +1,16 @@
 """Canonical rocQuantum Python API."""
 
 from .backends import density_matrix_capabilities, distributed_capabilities
-from .noise import NoiseModel
+from .noise import (
+    AmplitudeDampingChannel,
+    BitFlipChannel,
+    DepolarizationChannel,
+    KrausChannel,
+    NoiseModel,
+    PhaseDamping,
+    PhaseDampingChannel,
+    PhaseFlipChannel,
+)
 from . import spin
 from .kernel import (
     QuantumKernel,
@@ -26,8 +35,36 @@ from .operator import (
     SparseHamiltonianOperator,
     SumOperator,
     get_expectation_value,
+    operator_to_matrix,
+)
+from .builder import (
+    BuilderQVector,
+    KernelBuilder,
+    KernelExpression,
+    MeasurementHandle,
+    QuakeValue,
+    make_kernel,
+)
+from .dynamics import (
+    EvolveResult,
+    IntermediateResultSave,
+    Schedule,
+    evolve,
+    evolve_async,
 )
 from .qvec import qvec
+from .results import AsyncResult, ObserveResult, SampleResult
+from .target import (
+    Target,
+    get_target,
+    get_targets,
+    has_target,
+    num_qpus,
+    reset_target,
+    set_target,
+    target,
+)
+from .tools import Resources, draw, estimate_resources, translate
 from .gates import (
     cnot,
     cphase,
@@ -41,6 +78,7 @@ from .gates import (
     cz,
     fredkin,
     h,
+    exp_pauli,
     mcx,
     p,
     phase,
@@ -61,6 +99,28 @@ from .gates import (
 
 __all__ = [
     "NoiseModel",
+    "KrausChannel",
+    "BitFlipChannel",
+    "PhaseFlipChannel",
+    "DepolarizationChannel",
+    "AmplitudeDampingChannel",
+    "PhaseDampingChannel",
+    "PhaseDamping",
+    "Target",
+    "get_targets",
+    "has_target",
+    "get_target",
+    "set_target",
+    "reset_target",
+    "num_qpus",
+    "target",
+    "SampleResult",
+    "ObserveResult",
+    "AsyncResult",
+    "Resources",
+    "estimate_resources",
+    "draw",
+    "translate",
     "spin",
     "density_matrix_capabilities",
     "distributed_capabilities",
@@ -72,6 +132,18 @@ __all__ = [
     "HermitianOperator",
     "SparseHamiltonianOperator",
     "SumOperator",
+    "operator_to_matrix",
+    "BuilderQVector",
+    "KernelBuilder",
+    "KernelExpression",
+    "MeasurementHandle",
+    "QuakeValue",
+    "make_kernel",
+    "Schedule",
+    "IntermediateResultSave",
+    "EvolveResult",
+    "evolve",
+    "evolve_async",
     "kernel",
     "compile_and_execute",
     "compile_and_execute_async",
@@ -86,6 +158,7 @@ __all__ = [
     "get_expectation_value",
     "qvec",
     "h",
+    "exp_pauli",
     "x",
     "y",
     "z",

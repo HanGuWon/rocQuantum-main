@@ -9,9 +9,11 @@ CONSUMER_SOURCE_DIR="${SOURCE_DIR}/cmake/install_consumer_smoke"
 
 cmake --install "${BUILD_DIR}" --prefix "${INSTALL_PREFIX}"
 
-cmake_args=(
-    "-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX}"
-)
+consumer_prefix_path="${INSTALL_PREFIX}"
+if [[ -n "${CMAKE_PREFIX_PATH:-}" ]]; then
+    consumer_prefix_path="${consumer_prefix_path};${CMAKE_PREFIX_PATH}"
+fi
+cmake_args=("-DCMAKE_PREFIX_PATH=${consumer_prefix_path}")
 
 if [[ -n "${CMAKE_HIP_COMPILER:-}" ]]; then
     cmake_args+=("-DCMAKE_HIP_COMPILER=${CMAKE_HIP_COMPILER}")
@@ -23,3 +25,4 @@ fi
 
 cmake -S "${CONSUMER_SOURCE_DIR}" -B "${CONSUMER_BUILD_DIR}" -G Ninja "${cmake_args[@]}"
 cmake --build "${CONSUMER_BUILD_DIR}" --parallel
+ctest --test-dir "${CONSUMER_BUILD_DIR}" --output-on-failure --no-tests=error

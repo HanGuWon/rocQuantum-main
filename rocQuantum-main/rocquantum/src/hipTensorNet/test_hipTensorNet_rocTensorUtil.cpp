@@ -850,6 +850,12 @@ bool test_TensorNetwork_contract_simple_chain() {
 
 
 int main() {
+    int device_count = 0;
+    if (hipGetDeviceCount(&device_count) != hipSuccess || device_count < 1) {
+        std::cerr << "No visible HIP device; skipping rocTensorUtil regression.\n";
+        return 77;
+    }
+
     setup_global_test_resources();
 
     ADD_TEST(test_rocTensor_struct);

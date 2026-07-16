@@ -1,16 +1,10 @@
-# Find GTest
-find_package(GTest REQUIRED)
-
-# Create the test executable
 add_executable(test_hipDensityMat test_hipDensityMat.cpp)
-
-# Link against hipDensityMat library, GTest, and HIP runtime
 target_link_libraries(test_hipDensityMat PRIVATE
     rocq_hip_density_mat
-    GTest::gtest_main
-    ${HIP_LIBRARIES}
+    hip::host
 )
-
-# Add the test to CTest
-include(GoogleTest)
-gtest_discover_tests(test_hipDensityMat)
+add_test(NAME HipDensityMatRegression COMMAND test_hipDensityMat)
+set_tests_properties(HipDensityMatRegression PROPERTIES
+    LABELS "native;single-gpu;densitymat"
+    SKIP_RETURN_CODE 77
+)

@@ -8,6 +8,7 @@ endif()
 include(GNUInstallDirs)
 
 add_library(rocqsim_tensornet ${ROCQUANTUM_COMPONENT_LIBRARY_TYPE}
+    TensorView.cpp
     rocTensorUtil.cpp
     rocWorkspaceManager.cpp
     hipTensorNet.cpp
@@ -16,6 +17,7 @@ add_library(rocqsim_tensornet ${ROCQUANTUM_COMPONENT_LIBRARY_TYPE}
 )
 add_library(rocquantum::tensornet ALIAS rocqsim_tensornet)
 
+set_source_files_properties(rocTensorUtil.cpp PROPERTIES LANGUAGE HIP)
 set_source_files_properties(rocTensorUtil_kernels.hip PROPERTIES LANGUAGE HIP)
 set_source_files_properties(PermutationKernels.hip PROPERTIES LANGUAGE HIP)
 
@@ -36,14 +38,22 @@ target_link_libraries(rocqsim_tensornet
 
 option(ROCQUANTUM_TENSORNET_ENABLE_METIS "Enable optional METIS pathfinder integration" OFF)
 if(ROCQUANTUM_TENSORNET_ENABLE_METIS)
-    find_path(METIS_INCLUDE_DIR metis.h)
-    find_library(METIS_LIBRARY NAMES metis)
-    if(NOT METIS_INCLUDE_DIR OR NOT METIS_LIBRARY)
-        message(FATAL_ERROR "ROCQUANTUM_TENSORNET_ENABLE_METIS=ON requires METIS headers and library")
+    if(NOT TARGET METIS::METIS)
+        find_path(ROCQUANTUM_METIS_INCLUDE_DIR NAMES metis.h)
+        find_library(ROCQUANTUM_METIS_LIBRARY NAMES metis)
+        if(NOT ROCQUANTUM_METIS_INCLUDE_DIR OR NOT ROCQUANTUM_METIS_LIBRARY)
+            message(FATAL_ERROR
+                "ROCQUANTUM_TENSORNET_ENABLE_METIS=ON requires METIS headers and library")
+        endif()
+        add_library(METIS::METIS UNKNOWN IMPORTED)
+        set_target_properties(METIS::METIS PROPERTIES
+            IMPORTED_LOCATION "${ROCQUANTUM_METIS_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${ROCQUANTUM_METIS_INCLUDE_DIR}"
+        )
     endif()
     target_compile_definitions(rocqsim_tensornet PRIVATE HAS_METIS=1)
-    target_include_directories(rocqsim_tensornet PRIVATE ${METIS_INCLUDE_DIR})
-    target_link_libraries(rocqsim_tensornet PUBLIC ${METIS_LIBRARY})
+    target_link_libraries(rocqsim_tensornet PUBLIC METIS::METIS)
+    set(ROCQUANTUM_BUILT_WITH_METIS ON PARENT_SCOPE)
 endif()
 
 option(ROCQUANTUM_TENSORNET_ENABLE_KAHYPAR "Enable optional KaHyPar pathfinder integration" OFF)
@@ -71,6 +81,9 @@ if(BUILD_TESTING)
     add_executable(test_contraction_regression test_hipTensorNet_contraction_regression.cpp)
     target_link_libraries(test_contraction_regression PRIVATE rocqsim_tensornet)
 
+    add_executable(test_svd_regression test_hipTensorNet_svd.cpp)
+    target_link_libraries(test_svd_regression PRIVATE rocqsim_tensornet)
+
     add_executable(
         benchmark_hipTensorNet_contraction
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../benchmarks/tensornet_contraction_benchmark.cpp
@@ -83,5 +96,16 @@ if(BUILD_TESTING)
     add_test(NAME RocTensorUtilTest COMMAND test_rocTensorUtil)
     add_test(NAME SlicingLogicTest COMMAND test_slicing)
     add_test(NAME HipTensorNetContractionRegression COMMAND test_contraction_regression)
+    add_test(NAME HipTensorNetSvdRegression COMMAND test_svd_regression)
     add_test(NAME PermutationKernelTest COMMAND test_permutation)
+    set_tests_properties(
+        RocTensorUtilTest
+        SlicingLogicTest
+        HipTensorNetContractionRegression
+        HipTensorNetSvdRegression
+        PermutationKernelTest
+        PROPERTIES
+            LABELS "native;single-gpu;tensornet"
+            SKIP_RETURN_CODE 77
+    )
 endif()

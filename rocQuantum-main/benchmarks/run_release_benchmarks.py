@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -30,12 +32,86 @@ def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _visible_device_filter_count() -> int | None:
+    counts: list[int] = []
+    for name in ("ROCR_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL"):
+        raw = os.environ.get(name)
+        if raw is None:
+            continue
+        if not raw.strip():
+            counts.append(0)
+            continue
+        tokens = {
+            token.strip()
+            for token in raw.split(",")
+            if token.strip() and token.strip() not in {"-1", "NoDevFiles"}
+        }
+        counts.append(len(tokens))
+    return min(counts) if counts else None
+
+
+def _rocm_smi_gpu_count() -> int | None:
+    try:
+        completed = subprocess.run(
+            ["rocm-smi", "-i"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    identifiers = set(re.findall(r"(?m)^GPU\[(\d+)\]", completed.stdout + completed.stderr))
+    return len(identifiers) if identifiers else None
+
+
+def _visible_rocm_gpu_count() -> tuple[int | None, str]:
+    filtered_count = _visible_device_filter_count()
+    physical_count = _rocm_smi_gpu_count()
+    if filtered_count is not None and physical_count is not None:
+        return min(filtered_count, physical_count), "rocm_smi+visibility_env"
+    if filtered_count is not None:
+        # A visibility list is configuration, not proof that every listed GPU
+        # exists. Without a topology probe it may prove zero hidden devices or
+        # the /dev/kfd-backed minimum of one, but never distributed topology.
+        return min(filtered_count, 1), "visibility_env_unverified_cap"
+    if physical_count is not None:
+        return physical_count, "rocm_smi"
+    return None, "unavailable"
+
+
 def _rocm_device_probe() -> dict[str, Any]:
     if os.name != "nt" and Path("/dev/kfd").exists():
-        return {"has_rocm_device": True, "device_probe": "actual_dev_kfd"}
+        gpu_count, gpu_count_probe = _visible_rocm_gpu_count()
+        # /dev/kfd proves at least one runtime endpoint when topology enumeration
+        # is unavailable, but never infer a second GPU for distributed evidence.
+        if gpu_count is None:
+            gpu_count = 1
+            gpu_count_probe = "dev_kfd_minimum"
+        return {
+            "has_rocm_device": gpu_count > 0,
+            "device_probe": "actual_dev_kfd" if gpu_count > 0 else "hidden_dev_kfd",
+            "gpu_count": gpu_count,
+            "gpu_count_probe": gpu_count_probe,
+        }
     if _env_truthy("ROCQ_BENCHMARK_ASSUME_ROCM_DEVICE"):
-        return {"has_rocm_device": True, "device_probe": "assumed_rocm_device"}
-    return {"has_rocm_device": False, "device_probe": "missing_dev_kfd"}
+        raw_count = os.environ.get("ROCQ_BENCHMARK_ASSUME_GPU_COUNT", "1")
+        try:
+            gpu_count = max(1, int(raw_count))
+        except ValueError:
+            gpu_count = 1
+        return {
+            "has_rocm_device": True,
+            "device_probe": "assumed_rocm_device",
+            "gpu_count": gpu_count,
+            "gpu_count_probe": "assumed_env",
+        }
+    return {
+        "has_rocm_device": False,
+        "device_probe": "missing_dev_kfd",
+        "gpu_count": 0,
+        "gpu_count_probe": "none",
+    }
 
 
 def _has_rocm_device() -> bool:
@@ -94,6 +170,8 @@ def _history_result_entry(result: dict[str, Any]) -> dict[str, Any]:
         "id": result.get("id"),
         "category": result.get("category"),
         "requires_rocm_device": result.get("requires_rocm_device"),
+        "gpu_count": result.get("gpu_count"),
+        "minimum_gpu_count": result.get("minimum_gpu_count"),
         "status": result.get("status"),
         "performance_evidence": result.get("performance_evidence"),
         "evidence_kind": result.get("evidence_kind"),
@@ -103,6 +181,7 @@ def _history_result_entry(result: dict[str, Any]) -> dict[str, Any]:
         "analysis_warning": result.get("analysis_warning"),
         "speedups": result.get("speedups"),
         "threshold_failures": result.get("threshold_failures"),
+        "failed_cases": result.get("failed_cases"),
         "trend_regressions": result.get("trend_regressions"),
     }
     return {key: value for key, value in entry.items() if value is not None}
@@ -117,6 +196,8 @@ def _history_run_entry(summary: dict[str, Any]) -> dict[str, Any]:
         "output_dir": summary.get("output_dir"),
         "has_rocm_device": summary.get("has_rocm_device"),
         "device_probe": summary.get("device_probe"),
+        "gpu_count": summary.get("gpu_count"),
+        "gpu_count_probe": summary.get("gpu_count_probe"),
         "has_native_performance_evidence": summary.get("has_native_performance_evidence"),
         "native_performance_evidence_count": summary.get("native_performance_evidence_count"),
         "native_performance_evidence_required": summary.get("native_performance_evidence_required"),
@@ -303,6 +384,7 @@ def format_benchmark_summary_markdown(summary: dict[str, Any]) -> str:
         "",
         f"- ROCm device detected: {_markdown_bool(bool(summary.get('has_rocm_device')))}",
         f"- ROCm device probe: `{summary.get('device_probe', '')}`",
+        f"- Visible ROCm GPU count: {summary.get('gpu_count', 0)} (`{summary.get('gpu_count_probe', '')}`)",
         f"- Native performance evidence: {_markdown_bool(bool(summary.get('has_native_performance_evidence')))}",
     ]
     if summary.get("native_performance_evidence_required"):
@@ -350,13 +432,21 @@ def format_benchmark_summary_markdown(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _skip_result(entry: dict[str, Any], output_path: Path, reason: str, executable: Path) -> dict[str, Any]:
+def _skip_result(
+    entry: dict[str, Any],
+    output_path: Path,
+    reason: str,
+    executable: Path,
+    gpu_count: int,
+) -> dict[str, Any]:
     payload = {
         "benchmark": entry["id"],
         "status": "skipped",
         "performance_evidence": False,
         "evidence_kind": "skip",
         "reason": reason,
+        "gpu_count": gpu_count,
+        "minimum_gpu_count": int(entry.get("minimum_gpu_count", 1)),
         "expected_executable": str(executable),
         "created_at_utc": _utc_now(),
     }
@@ -369,6 +459,8 @@ def _skip_result(entry: dict[str, Any], output_path: Path, reason: str, executab
         "performance_evidence": False,
         "evidence_kind": "skip",
         "reason": reason,
+        "gpu_count": gpu_count,
+        "minimum_gpu_count": int(entry.get("minimum_gpu_count", 1)),
         "output": str(output_path),
         "executable": str(executable),
         "duration_seconds": 0.0,
@@ -381,23 +473,77 @@ def _run_entry(
     output_dir: Path,
     has_device: bool,
     device_probe: str,
+    gpu_count: int,
 ) -> dict[str, Any]:
     output_path = output_dir / entry["output"]
     executable = _resolve_executable(build_dir, entry["executable"])
 
     if entry.get("requires_rocm_device", False) and not has_device:
-        return _skip_result(entry, output_path, "ROCm runtime device /dev/kfd is not available", executable)
+        return _skip_result(
+            entry,
+            output_path,
+            "ROCm runtime device /dev/kfd is not available",
+            executable,
+            gpu_count,
+        )
+    minimum_gpu_count = int(entry.get("minimum_gpu_count", 1))
+    if entry.get("requires_rocm_device", False) and gpu_count < minimum_gpu_count:
+        return _skip_result(
+            entry,
+            output_path,
+            f"benchmark requires at least {minimum_gpu_count} visible ROCm GPUs; detected {gpu_count}",
+            executable,
+            gpu_count,
+        )
     if not executable.exists():
-        return _skip_result(entry, output_path, "benchmark executable was not found", executable)
+        return _skip_result(entry, output_path, "benchmark executable was not found", executable, gpu_count)
 
     args = [str(executable)]
     for arg in entry.get("args", []):
         args.append(str(output_path) if arg == "{output}" else str(arg))
 
+    # A reused artifact directory must not let a previous successful payload
+    # stand in for output from this process invocation.
+    output_path.unlink(missing_ok=True)
     stdout_path = output_dir / f"{entry['id']}.stdout.txt"
     stderr_path = output_dir / f"{entry['id']}.stderr.txt"
     start = time.perf_counter()
-    completed = subprocess.run(args, text=True, capture_output=True, check=False)
+    timeout_seconds = entry.get("timeout_seconds", 900)
+    if (
+        not isinstance(timeout_seconds, (int, float))
+        or isinstance(timeout_seconds, bool)
+        or not math.isfinite(float(timeout_seconds))
+        or float(timeout_seconds) <= 0.0
+    ):
+        raise ValueError(f"benchmark {entry['id']} has invalid timeout_seconds")
+    timed_out = False
+    try:
+        completed = subprocess.run(
+            args,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=float(timeout_seconds),
+        )
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+
+        def _timeout_text(value: str | bytes | None) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="replace")
+            return value
+
+        completed = subprocess.CompletedProcess(
+            args=args,
+            returncode=124,
+            stdout=_timeout_text(exc.stdout),
+            stderr=(
+                _timeout_text(exc.stderr)
+                + f"\nbenchmark timed out after {float(timeout_seconds):g} seconds\n"
+            ),
+        )
     duration = time.perf_counter() - start
     stdout_path.write_text(completed.stdout, encoding="utf-8")
     stderr_path.write_text(completed.stderr, encoding="utf-8")
@@ -425,6 +571,8 @@ def _run_entry(
         "id": entry["id"],
         "category": entry.get("category"),
         "requires_rocm_device": bool(entry.get("requires_rocm_device", False)),
+        "gpu_count": gpu_count,
+        "minimum_gpu_count": minimum_gpu_count,
         "status": status,
         "performance_evidence": False,
         "evidence_kind": evidence_kind,
@@ -434,11 +582,97 @@ def _run_entry(
         "stderr": str(stderr_path),
         "executable": str(executable),
         "duration_seconds": duration,
+        "timeout_seconds": float(timeout_seconds),
+        "timed_out": timed_out,
     }
-    if output_missing:
+    if timed_out:
+        result["failure_reason"] = (
+            f"benchmark timed out after {float(timeout_seconds):g} seconds"
+        )
+    elif output_missing:
         result["failure_reason"] = "benchmark did not write its declared JSON output"
     try:
         payload = _read_json_object(output_path)
+        if entry.get("require_all_cases_success", False):
+            cases = payload.get("cases")
+            failed_cases: list[dict[str, Any]] = []
+            observed_case_names: list[str] = []
+            if not isinstance(cases, list) or not cases:
+                failed_cases.append({"name": "<cases>", "status": None})
+            else:
+                for index, case in enumerate(cases):
+                    if not isinstance(case, dict):
+                        failed_cases.append({"name": f"<case:{index}>", "status": None})
+                        continue
+                    case_name = case.get("name")
+                    if not isinstance(case_name, str) or not case_name:
+                        failed_cases.append({"name": f"<case:{index}:name>", "status": None})
+                    else:
+                        observed_case_names.append(case_name)
+                    case_status = case.get("status")
+                    if (
+                        not isinstance(case_status, int)
+                        or isinstance(case_status, bool)
+                        or case_status != 0
+                    ):
+                        failed_cases.append(
+                            {"name": str(case.get("name", f"<case:{index}>")), "status": case_status}
+                        )
+            required_cases = entry.get("required_cases", [])
+            if not isinstance(required_cases, list) or not all(
+                isinstance(name, str) and name for name in required_cases
+            ):
+                raise ValueError(f"benchmark {entry['id']} has malformed required_cases")
+            duplicate_case_names = sorted(
+                {name for name in observed_case_names if observed_case_names.count(name) > 1}
+            )
+            missing_case_names = sorted(set(required_cases) - set(observed_case_names))
+            unexpected_case_names = sorted(set(observed_case_names) - set(required_cases))
+            if len(set(required_cases)) != len(required_cases):
+                raise ValueError(f"benchmark {entry['id']} has duplicate required_cases")
+            if duplicate_case_names or missing_case_names or unexpected_case_names:
+                failed_cases.append({"name": "<case-set>", "status": None})
+                result["duplicate_case_names"] = duplicate_case_names
+                result["missing_case_names"] = missing_case_names
+                result["unexpected_case_names"] = unexpected_case_names
+            required_case_metrics = entry.get("required_case_metrics", [])
+            if not isinstance(required_case_metrics, list) or not all(
+                isinstance(metric, str) and metric for metric in required_case_metrics
+            ) or len(set(required_case_metrics)) != len(required_case_metrics):
+                raise ValueError(f"benchmark {entry['id']} has malformed required_case_metrics")
+            invalid_case_metrics: list[dict[str, Any]] = []
+            if isinstance(cases, list):
+                for index, case in enumerate(cases):
+                    if not isinstance(case, dict):
+                        continue
+                    for metric in required_case_metrics:
+                        value = case.get(metric)
+                        if (
+                            not isinstance(value, (int, float))
+                            or isinstance(value, bool)
+                            or not math.isfinite(float(value))
+                            or float(value) < 0.0
+                        ):
+                            invalid_case_metrics.append(
+                                {
+                                    "name": str(case.get("name", f"<case:{index}>")),
+                                    "metric": metric,
+                                    "value": value,
+                                }
+                            )
+            if invalid_case_metrics:
+                failed_cases.append({"name": "<case-metrics>", "status": None})
+                result["invalid_case_metrics"] = invalid_case_metrics
+            if failed_cases:
+                result["status"] = "failed"
+                result["failed_cases"] = failed_cases
+                reason = "one or more required benchmark cases failed or were malformed"
+                if result.get("failure_reason"):
+                    result["failure_reason"] = f"{result['failure_reason']}; {reason}"
+                else:
+                    result["failure_reason"] = reason
+            else:
+                result["validated_case_count"] = len(cases)
         thresholds = _speedup_thresholds(entry)
         speedups = extract_case_speedups(payload, thresholds=thresholds)
         if speedups:
@@ -496,6 +730,7 @@ def run(
     output_dir.mkdir(parents=True, exist_ok=True)
     device_probe = _rocm_device_probe()
     has_device = bool(device_probe["has_rocm_device"])
+    gpu_count = int(device_probe.get("gpu_count", 1 if has_device else 0))
     results = [
         _run_entry(
             entry,
@@ -503,6 +738,7 @@ def run(
             output_dir=output_dir,
             has_device=has_device,
             device_probe=str(device_probe["device_probe"]),
+            gpu_count=gpu_count,
         )
         for entry in manifest["benchmarks"]
     ]
@@ -520,6 +756,8 @@ def run(
         "output_dir": str(output_dir),
         "has_rocm_device": has_device,
         "device_probe": device_probe["device_probe"],
+        "gpu_count": gpu_count,
+        "gpu_count_probe": device_probe.get("gpu_count_probe", "unspecified"),
         "has_native_performance_evidence": False,
         "native_performance_evidence_count": 0,
         "native_performance_evidence_required": (

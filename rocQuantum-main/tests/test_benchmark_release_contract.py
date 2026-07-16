@@ -34,6 +34,18 @@ def _load_runner_module():
 
 
 class TestBenchmarkReleaseContract(unittest.TestCase):
+    def test_visibility_environment_alone_never_proves_multi_gpu_topology(self):
+        runner = _load_runner_module()
+        with mock.patch.dict(
+            os.environ,
+            {"HIP_VISIBLE_DEVICES": "0,1", "ROCR_VISIBLE_DEVICES": "0,1,2"},
+            clear=False,
+        ), mock.patch.object(runner, "_rocm_smi_gpu_count", return_value=None):
+            gpu_count, probe = runner._visible_rocm_gpu_count()
+
+        self.assertEqual(gpu_count, 1)
+        self.assertEqual(probe, "visibility_env_unverified_cap")
+
     def test_manifest_covers_release_benchmark_axes(self):
         with open(MANIFEST, "r", encoding="utf-8") as f:
             manifest = json.load(f)
@@ -45,6 +57,16 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("distributed_reduction_rccl_vs_host", ids)
         self.assertIn("tensornet_contraction", ids)
         self.assertIn("densitymat_channel_sampling", ids)
+        self.assertTrue(
+            all(entry.get("require_all_cases_success") is True for entry in manifest["benchmarks"])
+        )
+        self.assertTrue(all(entry.get("required_cases") for entry in manifest["benchmarks"]))
+        self.assertTrue(all(entry.get("required_case_metrics") for entry in manifest["benchmarks"]))
+        self.assertTrue(all(entry.get("timeout_seconds", 0) > 0 for entry in manifest["benchmarks"]))
+        self.assertEqual(
+            by_id["distributed_reduction_rccl_vs_host"]["minimum_gpu_count"],
+            2,
+        )
         self.assertEqual(
             by_id["distributed_reduction_rccl_vs_host"]["speedup_thresholds"],
             {
@@ -85,7 +107,6 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                 capture_output=True,
                 check=False,
             )
-
             self.assertEqual(completed.returncode, 0, completed.stderr)
             summary_path = os.path.join(output_dir, "benchmark-summary.json")
             self.assertTrue(os.path.exists(summary_path))
@@ -372,6 +393,276 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("Native performance evidence required: yes", markdown)
         self.assertIn("All declared native benchmark evidence required: yes", markdown)
 
+    def test_release_runner_rejects_failed_case_even_when_process_exits_zero(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_benchmark.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "payload = {'cases': [\n"
+                "    {'name': 'fast_path', 'status': 0},\n"
+                "    {'name': 'fallback', 'status': 1},\n"
+                "]}\n"
+                "with open(sys.argv[1], 'w', encoding='utf-8') as f:\n"
+                "    json.dump(payload, f)\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_partial_failure",
+                                "category": "statevec",
+                                "executable": sys.executable,
+                                "output": "fake-partial-failure.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": True,
+                                "require_all_cases_success": True,
+                                "required_cases": ["fast_path", "fallback"],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                runner,
+                "_rocm_device_probe",
+                return_value={
+                    "has_rocm_device": True,
+                    "device_probe": "actual_dev_kfd",
+                    "gpu_count": 1,
+                    "gpu_count_probe": "test",
+                },
+            ):
+                summary = runner.run(
+                    manifest_path=manifest_path,
+                    build_dir=tmp_path / "build",
+                    output_dir=tmp_path / "artifacts",
+                    require_native_performance_evidence=True,
+                )
+
+        result = summary["results"][0]
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["performance_evidence"])
+        self.assertEqual(result["failed_cases"], [{"name": "fallback", "status": 1}])
+        self.assertIn("required benchmark cases failed", result["failure_reason"])
+        self.assertIn("native_performance_evidence_failure", summary)
+
+    def test_release_runner_rejects_missing_duplicate_and_unexpected_case_names(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_case_set.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "json.dump({'cases': ["
+                "{'name': 'expected', 'status': 0}, "
+                "{'name': 'expected', 'status': 0}, "
+                "{'name': 'rogue', 'status': 0}]}, "
+                "open(sys.argv[1], 'w', encoding='utf-8'))\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_case_set",
+                                "category": "statevec",
+                                "executable": sys.executable,
+                                "output": "fake-case-set.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": True,
+                                "require_all_cases_success": True,
+                                "required_cases": ["expected", "missing"],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(
+                runner,
+                "_rocm_device_probe",
+                return_value={
+                    "has_rocm_device": True,
+                    "device_probe": "actual_dev_kfd",
+                    "gpu_count": 1,
+                    "gpu_count_probe": "test",
+                },
+            ):
+                result = runner.run(
+                    manifest_path=manifest_path,
+                    build_dir=tmp_path / "build",
+                    output_dir=tmp_path / "artifacts",
+                )["results"][0]
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["duplicate_case_names"], ["expected"])
+        self.assertEqual(result["missing_case_names"], ["missing"])
+        self.assertEqual(result["unexpected_case_names"], ["rogue"])
+
+    def test_release_runner_rejects_non_numeric_case_metrics(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_benchmark = tmp_path / "fake_metric.py"
+            fake_benchmark.write_text(
+                "import json, sys\n"
+                "json.dump({'cases': [{'name': 'timed', 'status': 0, "
+                "'ms_per_trial': True}]}, open(sys.argv[1], 'w', encoding='utf-8'))\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_metric",
+                                "category": "statevec",
+                                "executable": sys.executable,
+                                "output": "fake-metric.json",
+                                "args": [str(fake_benchmark), "{output}"],
+                                "requires_rocm_device": True,
+                                "require_all_cases_success": True,
+                                "required_cases": ["timed"],
+                                "required_case_metrics": ["ms_per_trial"],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(
+                runner,
+                "_rocm_device_probe",
+                return_value={
+                    "has_rocm_device": True,
+                    "device_probe": "actual_dev_kfd",
+                    "gpu_count": 1,
+                    "gpu_count_probe": "test",
+                },
+            ):
+                result = runner.run(
+                    manifest_path=manifest_path,
+                    build_dir=tmp_path / "build",
+                    output_dir=tmp_path / "artifacts",
+                )["results"][0]
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["invalid_case_metrics"][0]["metric"], "ms_per_trial")
+
+    def test_release_runner_records_benchmark_timeout(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_timeout",
+                                "category": "statevec",
+                                "executable": sys.executable,
+                                "output": "fake-timeout.json",
+                                "args": ["{output}"],
+                                "requires_rocm_device": True,
+                                "timeout_seconds": 0.01,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            timeout = subprocess.TimeoutExpired(
+                cmd=[sys.executable], timeout=0.01, output="partial stdout"
+            )
+            with mock.patch.object(
+                runner,
+                "_rocm_device_probe",
+                return_value={
+                    "has_rocm_device": True,
+                    "device_probe": "actual_dev_kfd",
+                    "gpu_count": 1,
+                    "gpu_count_probe": "test",
+                },
+            ), mock.patch.object(runner.subprocess, "run", side_effect=timeout):
+                result = runner.run(
+                    manifest_path=manifest_path,
+                    build_dir=tmp_path / "build",
+                    output_dir=tmp_path / "artifacts",
+                )["results"][0]
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["returncode"], 124)
+        self.assertTrue(result["timed_out"])
+        self.assertIn("timed out", result["failure_reason"])
+
+    def test_release_runner_requires_two_visible_gpus_for_distributed_evidence(self):
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmarks": [
+                            {
+                                "id": "fake_distributed",
+                                "category": "distributed",
+                                "executable": sys.executable,
+                                "output": "fake-distributed.json",
+                                "args": ["{output}"],
+                                "requires_rocm_device": True,
+                                "minimum_gpu_count": 2,
+                                "require_all_cases_success": True,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                runner,
+                "_rocm_device_probe",
+                return_value={
+                    "has_rocm_device": True,
+                    "device_probe": "actual_dev_kfd",
+                    "gpu_count": 1,
+                    "gpu_count_probe": "test",
+                },
+            ):
+                summary = runner.run(
+                    manifest_path=manifest_path,
+                    build_dir=tmp_path / "build",
+                    output_dir=tmp_path / "artifacts",
+                    require_all_native_benchmark_evidence=True,
+                )
+
+        result = summary["results"][0]
+        self.assertEqual(result["status"], "skipped")
+        self.assertFalse(result["performance_evidence"])
+        self.assertEqual(result["gpu_count"], 1)
+        self.assertEqual(result["minimum_gpu_count"], 2)
+        self.assertIn("at least 2 visible ROCm GPUs", result["reason"])
+        self.assertEqual(summary["native_performance_evidence_missing_benchmarks"], ["fake_distributed"])
+        self.assertIn("all_native_benchmark_evidence_failure", summary)
+
     def test_release_runner_can_require_all_declared_native_benchmark_evidence(self):
         runner = _load_runner_module()
         with tempfile.TemporaryDirectory() as tmp:
@@ -472,11 +763,17 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            artifact_dir = tmp_path / "artifacts"
+            artifact_dir.mkdir()
+            (artifact_dir / "missing.json").write_text(
+                json.dumps({"cases": [{"name": "stale", "status": 0}]}),
+                encoding="utf-8",
+            )
 
             summary = runner.run(
                 manifest_path=manifest_path,
                 build_dir=tmp_path / "build",
-                output_dir=tmp_path / "artifacts",
+                output_dir=artifact_dir,
             )
 
             completed = subprocess.run(
@@ -495,10 +792,12 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
                 capture_output=True,
                 check=False,
             )
+            output_payload = Path(summary["results"][0]["output"]).read_text(encoding="utf-8")
 
         result = summary["results"][0]
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["failure_reason"], "benchmark did not write its declared JSON output")
+        self.assertNotIn("stale", output_payload)
         self.assertEqual(completed.returncode, 1, completed.stdout)
 
     def test_release_runner_fails_unanalyzable_json_output(self):
@@ -802,6 +1101,31 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("benchmark_hipTensorNet_contraction", tensornet)
         self.assertIn("benchmark_hipDensityMat_channel_sampling", density)
 
+    def test_native_benchmark_process_status_requires_every_case_to_pass(self):
+        benchmark_sources = [
+            "statevec_core_benchmark.cpp",
+            "distributed_reduction_benchmark.cpp",
+            "tensornet_contraction_benchmark.cpp",
+            "densitymat_channel_benchmark.cpp",
+        ]
+        sources = {
+            name: Path(PROJECT_ROOT, "benchmarks", name).read_text(encoding="utf-8")
+            for name in benchmark_sources
+        }
+
+        for name in [
+            "statevec_core_benchmark.cpp",
+            "tensornet_contraction_benchmark.cpp",
+            "densitymat_channel_benchmark.cpp",
+        ]:
+            self.assertIn("bool all_success = true", sources[name])
+            self.assertIn("return all_success ? 0 : 1", sources[name])
+            self.assertNotIn("any_success", sources[name])
+        self.assertIn(
+            "results[0].status == 0 && results[1].status == 0",
+            sources["distributed_reduction_benchmark.cpp"],
+        )
+
     def test_distributed_benchmark_covers_rccl_dense_sparse_and_generic_matrix_paths(self):
         with open(DISTRIBUTED_BENCHMARK, "r", encoding="utf-8") as f:
             source = f.read()
@@ -834,7 +1158,13 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("GITHUB_STEP_SUMMARY", combined)
         self.assertIn("--fail-on-error", combined)
         self.assertGreaterEqual(combined.count("--require-native-performance-evidence"), 2)
-        self.assertGreaterEqual(combined.count("--require-all-native-benchmark-evidence"), 2)
+        self.assertGreaterEqual(combined.count("--require-all-native-benchmark-evidence"), 1)
+        with open(workflow_paths[1], "r", encoding="utf-8") as f:
+            runtime_workflow = f.read()
+        with open(workflow_paths[2], "r", encoding="utf-8") as f:
+            nightly_workflow = f.read()
+        self.assertNotIn("--require-all-native-benchmark-evidence", runtime_workflow)
+        self.assertIn("--require-all-native-benchmark-evidence", nightly_workflow)
         self.assertIn("--history-path", combined)
         self.assertGreaterEqual(combined.count("set -o pipefail"), 3)
         self.assertIn("actions/cache/restore@v4", combined)
@@ -864,9 +1194,10 @@ class TestBenchmarkReleaseContract(unittest.TestCase):
         self.assertIn("--require-native-performance-evidence", readme)
         self.assertIn("--require-all-native-benchmark-evidence", readme)
         self.assertIn("--baseline-summary", readme)
-        self.assertIn("self-hosted ROCm workflows restore the previous benchmark summary and bounded history", readme)
-        self.assertIn("successful native", readme)
-        self.assertIn("no native-evidence gate failure", readme)
+        self.assertIn("self-hosted ROCm runtime workflow restores the previous benchmark summary and bounded history", readme)
+        self.assertIn("requires at least one passed native benchmark", readme)
+        self.assertIn("two-or-more-GPU nightly", readme)
+        self.assertIn("every declared native benchmark must pass", readme)
         self.assertIn("dense expectation, sparse moments, and generic matrix", readme)
 
 

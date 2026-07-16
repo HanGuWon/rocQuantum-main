@@ -207,6 +207,23 @@ def _coerce_complex64_matrix(matrix: np.ndarray) -> np.ndarray:
     return np.asarray(matrix, dtype=np.complex64, order="C")
 
 
+def _statevector_complex_dtype() -> np.dtype:
+    raw_dtype = getattr(hip_backend, "COMPILED_COMPLEX_DTYPE", "complex64")
+    # Old bindings and lightweight test doubles may not expose the contract.
+    # Their historical ABI is C64; current bindings expose an exact string.
+    if not isinstance(raw_dtype, str):
+        raw_dtype = "complex64"
+    if raw_dtype not in {"complex64", "complex128"}:
+        raise RuntimeError(
+            "_rocq_hip_backend.COMPILED_COMPLEX_DTYPE must be complex64 or complex128."
+        )
+    return np.dtype(raw_dtype)
+
+
+def _coerce_statevector_complex_matrix(matrix: np.ndarray) -> np.ndarray:
+    return np.asarray(matrix, dtype=_statevector_complex_dtype(), order="C")
+
+
 def _format_sample_counts(
     raw_results: Iterable[int],
     width: int,
@@ -401,8 +418,9 @@ def _normalize_operation_matrix(
             raise ValueError(f"{op_name} matrix must contain finite numeric values.")
         normalized.append(scalar)
 
-    matrix_array = np.asarray(normalized, dtype=np.complex64).reshape(raw_matrix.shape)
-    return normalized_targets, np.ascontiguousarray(matrix_array, dtype=np.complex64)
+    compiled_dtype = _statevector_complex_dtype()
+    matrix_array = np.asarray(normalized, dtype=compiled_dtype).reshape(raw_matrix.shape)
+    return normalized_targets, np.ascontiguousarray(matrix_array, dtype=compiled_dtype)
 
 
 def _finalize_expectation(value: complex):
@@ -1502,7 +1520,7 @@ class _HipStateVectorState:
                 self._d_state,
                 self._num_qubits,
                 targets,
-                _coerce_complex64_matrix(matrix),
+                _coerce_statevector_complex_matrix(matrix),
             )
         else:
             value = _statevector_expectation_matrix(self.get_state_vector(), matrix, targets, self._num_qubits)
@@ -1516,7 +1534,7 @@ class _HipStateVectorState:
                 self._handle,
                 self._d_state,
                 self._num_qubits,
-                np.asarray(data, dtype=np.complex64, order="C"),
+                np.asarray(data, dtype=_statevector_complex_dtype(), order="C"),
                 [int(index) for index in indices],
                 [int(offset) for offset in indptr],
                 shape[0],

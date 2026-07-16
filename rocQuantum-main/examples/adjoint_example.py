@@ -1,56 +1,30 @@
+"""Show the current adjoint boundary and an explicit inverse circuit."""
+
 import numpy as np
-# Assuming rocq.api is in the python path
-import rocq.api as rocq
 
-def run_adjoint_example():
-    """
-    Demonstrates creating a kernel and generating its adjoint via the compiler.
-    """
-    print("=======================================")
-    print("= Adjoint Generation Example          =")
-    print("=======================================")
+import rocq
 
-    # 1. Define a simple quantum kernel as an MLIR function string.
-    # This kernel applies S gate, then H gate to qubit 0.
-    # The adjoint should be H, then S-dagger.
-    kernel_name = "sh_kernel"
-    # Note: This is just the function, not a full module.
-    # The rocq.adjoint function will wrap it in a module for compilation.
-    mlir_func_string = f"""
-  func.func @{kernel_name}() {{
-    %q0 = quantum.alloc_qubit
-    quantum.gate "s" (%q0)
-    quantum.gate "h" (%q0)
-    quantum.dealloc_qubit %q0
-    return
-  }}
-"""
-    
-    print("\nOriginal Kernel MLIR Function:")
-    print(mlir_func_string)
 
-    # Create a Kernel object
-    sh_kernel = rocq.Kernel(name=kernel_name, mlir_string=mlir_func_string)
+@rocq.kernel
+def gate_then_explicit_inverse():
+    q = rocq.qvec(1)
+    rocq.s(q[0])
+    rocq.h(q[0])
+    # The release-wired generic adjoint transform is not available yet.
+    rocq.h(q[0])
+    rocq.sdg(q[0])
 
-    # 2. Generate the adjoint of the kernel by calling the Python API.
-    # This invokes the C++ compiler, runs the AdjointGenerationPass,
-    # and returns a new kernel with the transformed MLIR.
-    print("\nCalling rocq.adjoint() to generate the adjoint kernel...")
-    
-    try:
-        adjoint_kernel_module = rocq.adjoint(sh_kernel)
-        
-        print("\nSUCCESS: Adjoint kernel module generated.")
-        print("The MLIR module below now contains both the original and the new .adj function.")
-        print("Note the reversed gate order and the 'is_adjoint' attribute in the .adj function.")
-        print("----------------------------------------------------")
-        print(adjoint_kernel_module.mlir_string)
-        print("----------------------------------------------------")
 
-    except Exception as e:
-        print(f"An error occurred during adjoint generation: {e}")
-        print("This may be due to a missing build step for the C++ compiler and bindings.")
+def main():
+    capabilities = rocq.compiler_capabilities()
+    adjoint = capabilities["transform_pipeline"]["adjoint_generation"]
+    print("Release-wired adjoint generation:", adjoint["release_wired"])
+    print(gate_then_explicit_inverse.mlir())
+
+    state = rocq.get_state(gate_then_explicit_inverse, backend="state_vector")
+    np.testing.assert_allclose(state, np.array([1.0, 0.0]), atol=1e-6)
+    print("The explicit inverse returned the register to |0>.")
 
 
 if __name__ == "__main__":
-    run_adjoint_example()
+    main()

@@ -204,6 +204,7 @@ struct rocsvInternalHandle {
     unsigned numQubits = 0;
     rocComplex* d_state = nullptr;
     bool ownsState = false;
+    uint64_t stateGeneration = 0;
     void* pinnedBuffer = nullptr;
     size_t pinnedBufferBytes = 0;
     rocqDeviceMemHandler_t memHandler{nullptr, nullptr, nullptr};
@@ -5713,6 +5714,26 @@ rocqStatus_t rocsvDestroy(rocsvHandle_t handle) {
     return ROCQ_STATUS_SUCCESS;
 }
 
+rocqStatus_t rocsvGetStateInfo(rocsvHandle_t handle, rocsvStateInfo_t* info) {
+    if (!handle || !info || !handle->d_state || !handle->ownsState) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    size_t elements_per_state = 0;
+    size_t total_elements = 0;
+    if (!compute_state_element_count(handle->numQubits,
+                                     handle->batchSize,
+                                     &elements_per_state,
+                                     &total_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    info->device_state = handle->d_state;
+    info->num_qubits = handle->numQubits;
+    info->batch_size = handle->batchSize;
+    info->element_count = total_elements;
+    info->allocation_generation = handle->stateGeneration;
+    return ROCQ_STATUS_SUCCESS;
+}
+
 rocqStatus_t rocsvSetStream(rocsvHandle_t handle, hipStream_t stream) {
     if (!handle) {
         return ROCQ_STATUS_INVALID_VALUE;
@@ -5858,6 +5879,7 @@ rocqStatus_t rocsvAllocateState(rocsvHandle_t handle,
         }
         handle->d_state = nullptr;
         handle->ownsState = false;
+        ++handle->stateGeneration;
     }
 
     void* allocated_ptr = nullptr;
@@ -5872,6 +5894,7 @@ rocqStatus_t rocsvAllocateState(rocsvHandle_t handle,
 
     handle->d_state = static_cast<rocComplex*>(allocated_ptr);
     handle->ownsState = true;
+    ++handle->stateGeneration;
     return ROCQ_STATUS_SUCCESS;
 }
 
@@ -5893,6 +5916,7 @@ rocqStatus_t rocsvFreeState(rocsvHandle_t handle) {
     handle->ownsState = false;
     handle->numQubits = 0;
     handle->batchSize = 1;
+    ++handle->stateGeneration;
     return ROCQ_STATUS_SUCCESS;
 }
 

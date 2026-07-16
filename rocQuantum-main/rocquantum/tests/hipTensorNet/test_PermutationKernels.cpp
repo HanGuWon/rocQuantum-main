@@ -175,6 +175,12 @@ bool run_test_case(const std::string& test_name, const std::vector<long long>& d
 // =================================================================
 
 int main() {
+    int device_count = 0;
+    if (hipGetDeviceCount(&device_count) != hipSuccess || device_count < 1) {
+        std::cerr << "No visible HIP device; skipping permutation-kernel regression.\n";
+        return 77;
+    }
+
     int tests_passed = 0;
     int tests_total = 0;
 

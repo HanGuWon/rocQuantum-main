@@ -64,6 +64,11 @@ _TENSORNET_CMAKE = os.path.join(
     "hipTensorNet",
     "CMakeLists.txt",
 )
+_PACKAGE_CONFIG_TEMPLATE = os.path.join(
+    _PROJECT_ROOT,
+    "cmake",
+    "rocQuantumConfig.cmake.in",
+)
 _TENSOR_UTIL_HEADER = os.path.join(
     _PROJECT_ROOT,
     "rocquantum",
@@ -175,6 +180,21 @@ class TestTensorNetContract(unittest.TestCase):
         self.assertNotIn("launch_permute_tensor<rocComplex>(T*", source)
         self.assertNotIn("launch_permute_tensor<rocDoubleComplex>(T*", source)
 
+    def test_permutation_cleanup_gotos_do_not_cross_block_initialization(self):
+        with open(_TENSOR_UTIL_SOURCE, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        first_cleanup_jump = source.index("goto perm_cleanup")
+        self.assertLess(source.index("const unsigned int threads_per_block"), first_cleanup_jump)
+        self.assertLess(source.index("unsigned int num_blocks = 0"), first_cleanup_jump)
+
+    def test_public_tensor_view_implementation_is_linked_into_tensornet(self):
+        with open(_TENSORNET_CMAKE, "r", encoding="utf-8") as f:
+            cmake = f.read()
+
+        self.assertIn("TensorView.cpp", cmake)
+        self.assertNotIn("AccumulationKernels.hip.cpp", cmake)
+
     def test_dtype_support_is_build_precision_gated(self):
         with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
             tensornet_source = f.read()
@@ -200,7 +220,8 @@ class TestTensorNetContract(unittest.TestCase):
         with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
             source = f.read()
 
-        self.assertIn("rocTensorSVD(handle.get(), &U, &S, &V, &A, nullptr)", bindings)
+        self.assertIn("rocTensorSVD(handle.get(), &U, &S, &Vh, &A, nullptr)", bindings)
+        self.assertIn("returning (U, S, Vh)", bindings)
         self.assertNotIn("DeviceBuffer workspace(1, 1)", bindings)
         self.assertIn("Reserved for future rocSOLVER workspace control", header)
         self.assertIn("(void)workspace", source)
@@ -238,7 +259,7 @@ class TestTensorNetContract(unittest.TestCase):
             workspace = f.read()
 
         constructor_match = re.search(
-            r"rocTensor\s*\(\s*rocComplex\s*\*\s*data\b.*?(?=// Destructor)",
+            r"rocTensor\s*\(\s*rocComplex\s*\*\s*data\b.*?(?=\s*~rocTensor\s*\()",
             header,
             re.DOTALL,
         )
@@ -325,15 +346,26 @@ class TestTensorNetContract(unittest.TestCase):
     def test_optional_metis_build_guard_and_runtime_partitioning(self):
         with open(_TENSORNET_CMAKE, "r", encoding="utf-8") as f:
             cmake = f.read()
+        with open(_PACKAGE_CONFIG_TEMPLATE, "r", encoding="utf-8") as f:
+            package_config = f.read()
         with open(_TENSORNET_SOURCE, "r", encoding="utf-8") as f:
             source = f.read()
 
         self.assertIn("ROCQUANTUM_TENSORNET_ENABLE_METIS", cmake)
-        self.assertIn("find_path(METIS_INCLUDE_DIR metis.h)", cmake)
-        self.assertIn("find_library(METIS_LIBRARY NAMES metis)", cmake)
+        self.assertIn("find_path(ROCQUANTUM_METIS_INCLUDE_DIR NAMES metis.h)", cmake)
+        self.assertIn("find_library(ROCQUANTUM_METIS_LIBRARY NAMES metis)", cmake)
         self.assertIn("message(FATAL_ERROR", cmake)
         self.assertIn("HAS_METIS=1", cmake)
-        self.assertIn("target_link_libraries(rocqsim_tensornet PUBLIC ${METIS_LIBRARY})", cmake)
+        self.assertIn("target_link_libraries(rocqsim_tensornet PUBLIC METIS::METIS)", cmake)
+        self.assertNotIn("PUBLIC ${METIS_LIBRARY}", cmake)
+        self.assertIn("ROCQUANTUM_BUILT_WITH_METIS ON PARENT_SCOPE", cmake)
+        self.assertIn(
+            "set(rocQuantum_BUILT_WITH_METIS @ROCQUANTUM_BUILT_WITH_METIS@)",
+            package_config,
+        )
+        self.assertIn("if(rocQuantum_BUILT_WITH_METIS", package_config)
+        self.assertIn("add_library(METIS::METIS UNKNOWN IMPORTED)", package_config)
+        self.assertIn("rocQuantum_NOT_FOUND_MESSAGE", package_config)
 
         self.assertIn("#include <metis.h>", source)
         self.assertIn("metis_partition_active_tensors", source)

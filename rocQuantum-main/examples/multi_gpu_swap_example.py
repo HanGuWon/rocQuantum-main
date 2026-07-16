@@ -1,21 +1,26 @@
-import rocq
+"""Exercise SWAP locally and report the separate multi-GPU evidence boundary."""
+
 import numpy as np
 
-# Create a simulator
-sim = rocq.Simulator()
+import rocq
 
-# Create a multi-GPU circuit
-circuit = rocq.Circuit(num_qubits=3, simulator=sim, multi_gpu=True)
 
-# Apply some gates
-circuit.h(0)
-circuit.cx(0, 1)
+@rocq.kernel
+def local_swap():
+    q = rocq.qvec(3)
+    rocq.x(q[0])
+    rocq.swap(q[0], q[2])
 
-# Swap qubit 0 and 2
-circuit.swap(0, 2)
 
-# Measure qubit 0
-outcome, prob = circuit.measure(0)
+def main():
+    capabilities = rocq.distributed_capabilities()
+    print("Distributed scope:", capabilities["execution_scope"])
+    print("Hardware probe performed:", capabilities["hardware_evidence"]["probe_performed"])
 
-# Print the result
-print(f"Measured outcome: {outcome} with probability {prob}")
+    state = rocq.get_state(local_swap, backend="state_vector")
+    assert int(np.argmax(np.abs(state))) == 4
+    print("Local SWAP verified; this is not multi-GPU runtime proof.")
+
+
+if __name__ == "__main__":
+    main()

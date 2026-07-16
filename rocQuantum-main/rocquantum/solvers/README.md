@@ -5,6 +5,38 @@ This package is an experimental, minimal higher-level layer over the canonical
 
 Current supported subset:
 
+- `vqe()` provides the CUDA-QX-style functional return contract
+  `(energy, optimal_parameters, observe_trace)`.  Trace entries are immutable
+  `ObserveIteration` values classified by `ObserveExecutionType`.  Registered
+  optimizer names are exactly `cobyla` and `lbfgs`; a SciPy-compatible
+  `minimize` callable or object with `minimize()` may also be supplied.  A
+  CUDA-QX-style callable that accepts one parameter vector is adapted to a
+  composable `QuantumKernel` independently of that argument's Python name.
+  When `optimizer=scipy.optimize.minimize`, the documented top-level `method`,
+  `jac`, `callback`, and `options` keywords are validated and forwarded. A
+  non-`None` `shots` value fails closed because canonical `rocq.observe()` does
+  not yet expose sampled expectation values.
+- `qaoa()` accepts arbitrary real Pauli-sum problem and reference Hamiltonians,
+  uses the default transverse-X mixer when none is supplied, implements shared
+  `2 * p`, per-term full, and optional counterdiabatic-RY parameterizations,
+  and returns a tuple-unpackable `QAOAResult` whose final configuration is a
+  canonical `rocq.SampleResult`.  Its Pauli evolution uses
+  the canonical CUDA-Q convention `exp_pauli(theta, P) = exp(+i theta P)`.
+- `get_operator_pool("qaoa", num_qubits=n)` generates the CUDA-QX QAOA pool:
+  all one-qubit X/Y terms and all two-qubit XX, YY, YZ, ZY, XY, YX, XZ, ZX
+  terms.
+- `adapt_vqe()` is a single-process host reference implementation.  It selects
+  the largest pool gradient, grows the ansatz dynamically, supports warm/cold
+  starts and convergence controls, and deliberately uses central finite
+  differences so weighted or multi-term generators are not assigned an
+  invalid two-point parameter-shift rule.  Shot-based and MQPU/MPI execution
+  remain unsupported.
+- `jordan_wigner()` transforms precomputed one- and two-body integrals and
+  accepts the official `tol` spelling as an alias for `tolerance`;
+  `MolecularHamiltonian.from_integrals()` retains immutable integral metadata.
+  Geometry/XYZ/PySCF construction fails explicitly through `create_molecule()`;
+  it is not represented as implemented.
+
 - `rocquantum.solvers.solver_capabilities()` and the package-level
   `capabilities()` alias expose the experimental supported/unsupported solver
   contract, entry points, optional SciPy dependency, execution scope,
@@ -16,7 +48,12 @@ Current supported subset:
 - `VQE_Solver.solve()` is quiet by default for library and batch use; pass
   `verbose=True` to print start/finish progress messages. The `verbose`
   option must be a boolean.
-- `VQE_Solver.estimate_gradient()` supports `parameter_shift` and `finite_diff`;
+- `VQE_Solver.estimate_gradient()` supports `parameter_shift` and finite
+  differences. Exact two-evaluation parameter shift is used only when circuit
+  recording proves that a host parameter controls one RX/RY/RZ/P angle with
+  affine coefficient +1 or -1. Scaled, shared, nonlinear, controlled, or opaque
+  recorded parameterizations emit a warning and use a precision-safe four-point
+  centered derivative instead;
   scalar single-parameter inputs are normalized to one-element vectors for
   gradient and optimizer entry points, and gradient probes do not mutate the
   optimizer `intermediate_results` trace. VQE objective, optimizer initial
@@ -104,6 +141,6 @@ print(result["optimal_energy"], result["optimal_parameters"])
 print(result["optimal_cut_value"])
 ```
 
-For production-grade workflows, this layer still needs richer operator algebra,
-native adjoint differentiation, optimizer integration tests on ROCm runners,
-and broader algorithm coverage.
+For production-grade workflows, this layer still needs native adjoint
+differentiation, ROCm hardware validation, geometry/PySCF and Bravyi-Kitaev
+chemistry paths, UCC state preparation, and distributed MQPU/MPI execution.

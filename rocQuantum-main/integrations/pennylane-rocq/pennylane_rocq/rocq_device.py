@@ -3944,7 +3944,7 @@ class RocQDevice(QubitDevice):
     short_name = "rocquantum.qpu"
     author = "rocQuantum contributors"
     version = "0.1.0"
-    pennylane_requires = ">=0.30"
+    pennylane_requires = ">=0.45,<0.46"
 
     operations = (
         set(PENNYLANE_TO_ROCQ_GATES.keys())

@@ -3,6 +3,8 @@
 Audit date: 2026-04-05
 Refresh date: 2026-06-10
 
+Historical-snapshot notice (2026-07-15): this document preserves the original ROCm policy analysis. For current capability evidence, use `CURRENT_STATE_AUDIT.md` and `FEATURE_TRUTH_MATRIX.md`. Since the snapshot, the project added a clean host-only wheel/install lane, canonical example tests, and clearer native/host build separation. No AMD GPU was available for the refresh, so none of those changes establishes native ROCm execution or performance.
+
 ## External ROCm Ground Truth
 
 Official sources checked:
@@ -21,20 +23,20 @@ The official AMD docs inspected in this pass showed AMD Instinct `MI355X` / `gfx
 
 ## Current ROCm Integration Depth
 
-Maturity assessment: `PARTIAL`, early productization stage
+Evidence assessment: native source is present, host packaging/contracts are tested, and actual-device ROCm maturity is unverified in this refresh.
 
 What is wired:
 
-- Root `CMakeLists.txt` requires CMake `3.21`, enables the CMake HIP language, and consumes ROCm packages through official config-package targets: `hip` / `hip::host`, `hiprand`, `roc::rocblas`, and `roc::rocsolver`.
+- Root `CMakeLists.txt` requires CMake `3.21`; `ROCQUANTUM_BUILD_NATIVE=ON` enables the CMake HIP language and consumes official ROCm config-package targets, while the default host-only packaging path does not discover HIP.
 - Native component libraries are built from `rocquantum/src/hipStateVec`, `rocquantum/src/hipTensorNet`, and `rocquantum/src/hipDensityMat`.
 - `hipStateVec` optionally looks for RCCL via `rocquantum/src/hipStateVec/CMakeLists.txt`, preferring the official `rccl` CMake target and retaining `rccl::rccl` / library-variable fallbacks for older layouts.
-- CI builds inside ROCm containers, can execute tensor-network GPU regressions if `/dev/kfd` is present, and now uploads release benchmark JSON artifacts.
+- CI definitions include separate host fast checks and self-hosted ROCm runtime/evidence jobs. Their presence is source evidence; a retained green native artifact is still required for execution proof.
 
 What is missing or weak:
 
 - The default architecture policy covers only Tier 1 datacenter targets (`gfx950`, `gfx942`, `gfx90a`); Radeon/workstation targets require explicit user override.
 - No release-grade ROCm/GPU matrix is fully proven across all target families.
-- Python packaging is split across inconsistent module names and version metadata.
+- Host-only wheel metadata, installation, imports, and CLI checks are coherent; canonical and legacy runtime/binding names remain split.
 - Install/export is improved but still needs downstream consumption tests across ROCm installs.
 - CI proves more than the original audit did, but full statevector/density/distributed runtime coverage still depends on ROCm self-hosted runners.
 
@@ -51,8 +53,8 @@ This section is about what the repo can defend today from code and CI, not what 
 | Native CMake floor | CMake `3.21` for HIP language support |
 | ROCm CMake package style | Official config packages and imported targets: `hip` / `hip::host`, `roc::rocblas`, `roc::rocsolver`, optional `rccl` |
 | GPU architecture policy | `gfx950;gfx942;gfx90a` by default; older ROCm lane uses `gfx942;gfx90a` |
-| Runtime GPU proof | TensorNet smoke plus benchmark artifact registry; broader runtime coverage still pending |
-| Multi-GPU proof | MultiGPUTests and RCCL benchmark hooks exist, but release-grade multi-GPU CI proof is still partial |
+| Runtime GPU proof | Evidence harnesses exist, but no retained green native artifact was reviewed locally |
+| Multi-GPU proof | MultiGPUTests and RCCL benchmark hooks exist as source; actual cross-device proof is pending |
 
 ## Recommended Compatibility Policy
 
@@ -64,7 +66,7 @@ This is the proposed release policy after the audit, not a claim that the repo a
 - CMake: `3.21` or newer
 - GPU architectures: `gfx950`, `gfx942`, `gfx90a`
 - OS: Linux x86_64
-- Python: `3.10`, `3.11`, `3.12`
+- Host package: Python `3.9` through `3.13`; native binding support across that range remains a target, not actual-device evidence
 
 Rationale:
 
@@ -93,16 +95,15 @@ Rationale:
 
 ### Python packaging
 
-- `pyproject.toml` and `setup.py` disagree on package identity and version.
-- `setup.py` assumes library outputs under `build/`, while CI builds under `build-ci/`.
-- One active binding name is `rocquantum_bind`; another is `_rocq_hip_backend`; the repo does not present one supported answer.
-- `rocq_hip` is imported by top-level `rocq/backends.py`, but no root build hook was found for it.
+- A clean host-only PEP 517 wheel, isolated install, installed imports, and CLI help now pass with `ROCQUANTUM_BUILD_NATIVE=OFF`.
+- Native packaging remains a separate, unverified path: scikit-build wheels opt in with `ROCQ_BUILD_NATIVE=1`, while direct CMake builds use `ROCQUANTUM_BUILD_NATIVE=ON` on a ROCm host.
+- `rocq` is the canonical Python surface, but `rocquantum_bind`, `_rocq_hip_backend`, `rocq_hip`, and legacy `python/rocq` ownership still need consolidation.
 
 ### CI and validation
 
-- There is no first-party ROCm runtime suite covering statevector, density matrix, expectations, and multi-GPU smoke.
+- First-party labeled CTest definitions now cover StateVec, DensityMat, TensorNet contraction/SVD, and an RCCL-required inter-rank multi-GPU smoke, but no retained successful actual-device run was available for this audit.
 - There is no GPU-generation matrix proving behavior across more than one architectural family.
-- There is no wheel build, package publish, or install-tree consumption test.
+- Host wheel build/install/import tests now exist. Native wheel publishing and actual-ROCm install-tree consumption remain unverified.
 
 ### Multi-GPU
 
@@ -115,10 +116,10 @@ Rationale:
 ### Source and packaging lane
 
 - Ubuntu latest
-- Python `3.10`, `3.11`, `3.12`
-- `pip install -e .`
-- import smoke
-- source contract tests
+- Python `3.9` through `3.13` for core/Cirq 1.x; tested Qiskit coverage starts at Python 3.10 with `qiskit>=2.4,<3`, and fully contract-tested PennyLane coverage starts at Python 3.11 with `pennylane>=0.45,<0.46`
+- clean `python -m build --wheel` producing `py3-none-any`
+- inspect/install the wheel and verify imports/CLI outside the source tree
+- copy and run all 19 examples outside the repository with `PYTHONPATH` removed
 
 ### Native ROCm lane
 
@@ -149,7 +150,8 @@ For serious Linux ROCm builds:
 cmake -S . -B build-ci -G Ninja \
   -DBUILD_TESTING=ON \
   -DROCQUANTUM_BUILD_BINDINGS=ON \
-  -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc \
+  -DROCQUANTUM_BUILD_NATIVE=ON \
+  -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
   -DCMAKE_HIP_ARCHITECTURES="gfx950;gfx942;gfx90a"
 ```
 
@@ -159,7 +161,8 @@ For best-effort older lane:
 cmake -S . -B build-ci -G Ninja \
   -DBUILD_TESTING=ON \
   -DROCQUANTUM_BUILD_BINDINGS=ON \
-  -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc \
+  -DROCQUANTUM_BUILD_NATIVE=ON \
+  -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
   -DCMAKE_HIP_ARCHITECTURES="gfx942;gfx90a"
 ```
 
@@ -167,17 +170,17 @@ cmake -S . -B build-ci -G Ninja \
 
 Separate current truth from forward policy:
 
-- Current repo-verified minimum from CI: ROCm `6.2.2`
+- Conservative configured CI baseline: ROCm `6.2.2` (not locally device-verified)
 - Recommended future minimum policy: ROCm `6.4.0`
 - Recommended minimum release-grade GPU architecture: `gfx90a`
 
 ## Release Readiness Checklist
 
-- Unify Python package identity, versioning, and binding name
+- Preserve the clean host-only package gate; unify remaining runtime/binding identities
 - Add explicit HIP architecture matrix to CI and build docs
 - Keep CMake at `3.21+` and use ROCm config-package targets (`hip::host`, `roc::rocblas`, `roc::rocsolver`, optional `rccl`)
 - Validate the install/export package config from an installed ROCm tree
-- Add runtime tests for statevector, density matrix, expectations, and multi-GPU smoke
+- Execute the registered StateVec, DensityMat, TensorNet, expectation, and multi-GPU regressions on real ROCm runners and retain the artifacts
 - Publish a single Linux-first support statement
 - Stop implying Windows release support until a real Windows ROCm path is validated
 

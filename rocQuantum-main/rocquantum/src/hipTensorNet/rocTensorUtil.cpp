@@ -69,8 +69,32 @@ rocqStatus_t rocTensorPermute(
         return ROCQ_STATUS_NOT_IMPLEMENTED;
     }
 
-    long long total_elements = input_tensor->get_element_count();
-    if (total_elements != output_tensor->get_element_count()) {
+    const size_t rank = input_tensor->rank();
+    std::vector<bool> seen(rank, false);
+    bool identity_permutation = true;
+    for (size_t new_mode = 0; new_mode < rank; ++new_mode) {
+        const int old_mode = host_permutation_map[new_mode];
+        if (old_mode < 0 || static_cast<size_t>(old_mode) >= rank ||
+            seen[static_cast<size_t>(old_mode)]) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        identity_permutation = identity_permutation &&
+            static_cast<size_t>(old_mode) == new_mode;
+        seen[static_cast<size_t>(old_mode)] = true;
+        if (output_tensor->dimensions_[new_mode] !=
+            input_tensor->dimensions_[static_cast<size_t>(old_mode)]) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+    long long total_elements = 0;
+    long long output_elements = 0;
+    try {
+        total_elements = input_tensor->get_element_count();
+        output_elements = output_tensor->get_element_count();
+    } catch (const std::exception&) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (total_elements != output_elements) {
         return ROCQ_STATUS_INVALID_VALUE;
     }
     if (total_elements == 0) {
@@ -86,7 +110,40 @@ rocqStatus_t rocTensorPermute(
              return ROCQ_STATUS_INVALID_VALUE;
     }
     if (output_tensor->strides_.empty() && output_tensor->rank() > 0) {
-        output_tensor->calculate_strides();
+        try {
+            output_tensor->calculate_strides();
+        } catch (const std::exception&) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    } else if (output_tensor->strides_.size() != output_tensor->rank()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    auto has_canonical_strides = [](const rocTensor& tensor) {
+        if (tensor.strides_.size() != tensor.rank()) {
+            return false;
+        }
+        long long expected = 1;
+        for (size_t mode = 0; mode < tensor.rank(); ++mode) {
+            const long long dimension = tensor.dimensions_[mode];
+            if (dimension < 0 || tensor.strides_[mode] != expected) {
+                return false;
+            }
+            if (mode + 1 < tensor.rank()) {
+                if (dimension != 0 &&
+                    expected > std::numeric_limits<long long>::max() / dimension) {
+                    return false;
+                }
+                expected *= dimension;
+            }
+        }
+        return true;
+    };
+    if (!has_canonical_strides(*input_tensor) || !has_canonical_strides(*output_tensor)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (input_tensor->data_ == output_tensor->data_) {
+        return identity_permutation ? ROCQ_STATUS_SUCCESS : ROCQ_STATUS_INVALID_VALUE;
     }
 
 
@@ -100,6 +157,8 @@ rocqStatus_t rocTensorPermute(
 
     rocqStatus_t status = ROCQ_STATUS_SUCCESS;
     hipError_t hip_err;
+    const unsigned int threads_per_block = 256;
+    unsigned int num_blocks = 0;
 
     hip_err = hipMalloc(&d_input_dims, num_modes * sizeof(long long));
     if (hip_err != hipSuccess) { status = ROCQ_STATUS_ALLOCATION_FAILED; goto perm_cleanup; }
@@ -126,8 +185,7 @@ rocqStatus_t rocTensorPermute(
     hip_err = hipMemcpy(d_permutation_map_gpu, host_permutation_map.data(), num_modes * sizeof(int), hipMemcpyHostToDevice);
     if (hip_err != hipSuccess) { status = ROCQ_STATUS_HIP_ERROR; goto perm_cleanup; }
 
-    unsigned int threads_per_block = 256;
-    unsigned int num_blocks = (total_elements + threads_per_block - 1) / threads_per_block;
+    num_blocks = (total_elements + threads_per_block - 1) / threads_per_block;
     if (total_elements > 0 && num_blocks == 0) num_blocks = 1;
     else if (total_elements == 0) num_blocks = 0;
 
@@ -177,6 +235,14 @@ rocqStatus_t rocTensorContractPair_internal(
 
 
     long long M = 1, N = 1, K = 1;
+    auto multiply_dimension = [](long long& accumulator, long long dimension) {
+        if (dimension < 0 ||
+            (dimension != 0 && accumulator > std::numeric_limits<long long>::max() / dimension)) {
+            return false;
+        }
+        accumulator *= dimension;
+        return true;
+    };
     std::vector<int> permA_map_new_idx_is_old_idx;
     std::vector<int> permB_map_new_idx_is_old_idx;
 
@@ -185,24 +251,45 @@ rocqStatus_t rocTensorContractPair_internal(
 
     std::vector<bool> is_mode_A_contracted(tensorA->rank(), false);
     std::vector<bool> is_mode_B_contracted(tensorB->rank(), false);
+    std::vector<bool> is_mode_A_result(tensorA->rank(), false);
+    std::vector<bool> is_mode_B_result(tensorB->rank(), false);
     std::vector<int> contracted_modes_A_orig_indices;
     std::vector<int> contracted_modes_B_orig_indices;
 
 
     for(const auto& p : contracted_mode_pairs_A_B) {
+        if (p.first < 0 || p.second < 0 ||
+            static_cast<size_t>(p.first) >= tensorA->rank() ||
+            static_cast<size_t>(p.second) >= tensorB->rank() ||
+            is_mode_A_contracted[static_cast<size_t>(p.first)] ||
+            is_mode_B_contracted[static_cast<size_t>(p.second)] ||
+            tensorA->dimensions_[static_cast<size_t>(p.first)] !=
+                tensorB->dimensions_[static_cast<size_t>(p.second)]) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
         is_mode_A_contracted[p.first] = true;
         contracted_modes_A_orig_indices.push_back(p.first);
         is_mode_B_contracted[p.second] = true;
         contracted_modes_B_orig_indices.push_back(p.second);
-        K *= tensorA->dimensions_[p.first];
+        if (!multiply_dimension(K, tensorA->dimensions_[p.first])) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
     }
 
     // Order for permuted A: [uncontracted_A_modes (M part), contracted_A_modes (K part)]
     // result_A_modes_initial_order contains original indices of uncontracted A modes
     for(int mode_idx : result_A_modes_initial_order) {
+        if (mode_idx < 0 || static_cast<size_t>(mode_idx) >= tensorA->rank() ||
+            is_mode_A_contracted[static_cast<size_t>(mode_idx)] ||
+            is_mode_A_result[static_cast<size_t>(mode_idx)]) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        is_mode_A_result[static_cast<size_t>(mode_idx)] = true;
         permA_map_new_idx_is_old_idx.push_back(mode_idx);
         dimsA_permuted_vec.push_back(tensorA->dimensions_[mode_idx]);
-        M *= tensorA->dimensions_[mode_idx];
+        if (!multiply_dimension(M, tensorA->dimensions_[mode_idx])) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
     }
     for(int mode_idx : contracted_modes_A_orig_indices) {
         permA_map_new_idx_is_old_idx.push_back(mode_idx);
@@ -215,20 +302,45 @@ rocqStatus_t rocTensorContractPair_internal(
         dimsB_permuted_vec.push_back(tensorB->dimensions_[mode_idx]);
     }
     for(int mode_idx : result_B_modes_initial_order) {
+        if (mode_idx < 0 || static_cast<size_t>(mode_idx) >= tensorB->rank() ||
+            is_mode_B_contracted[static_cast<size_t>(mode_idx)] ||
+            is_mode_B_result[static_cast<size_t>(mode_idx)]) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+        is_mode_B_result[static_cast<size_t>(mode_idx)] = true;
         permB_map_new_idx_is_old_idx.push_back(mode_idx);
         dimsB_permuted_vec.push_back(tensorB->dimensions_[mode_idx]);
-        N *= tensorB->dimensions_[mode_idx];
+        if (!multiply_dimension(N, tensorB->dimensions_[mode_idx])) {
+            return ROCQ_STATUS_INVALID_VALUE;
+        }
+    }
+
+    if (permA_map_new_idx_is_old_idx.size() != tensorA->rank() ||
+        permB_map_new_idx_is_old_idx.size() != tensorB->rank()) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+
+    if (M < 0 || N < 0 || (M != 0 && N > std::numeric_limits<long long>::max() / M)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    long long result_element_count = 0;
+    try {
+        result_element_count = result_tensor->get_element_count();
+    } catch (const std::exception&) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    if (result_element_count != M * N) {
+        return ROCQ_STATUS_INVALID_VALUE;
     }
 
     if (M == 0 || N == 0 || K == 0) {
-        if (M * N != result_tensor->get_element_count() && result_tensor->get_element_count() !=0 ) return ROCQ_STATUS_INVALID_VALUE;
-        if (result_tensor->data_ && result_tensor->get_element_count() > 0) {
+        if (result_tensor->data_ && result_element_count > 0) {
             return status_from_hip(
                 hipMemsetAsync(result_tensor->data_,
                                0,
-                               result_tensor->get_element_count() * sizeof(rocComplex),
+                               static_cast<size_t>(result_element_count) * sizeof(rocComplex),
                                stream));
-        } else if (result_tensor->get_element_count() == 0) {
+        } else if (result_element_count == 0) {
              return ROCQ_STATUS_SUCCESS; // Contracting to a 0-element tensor
         }
     }

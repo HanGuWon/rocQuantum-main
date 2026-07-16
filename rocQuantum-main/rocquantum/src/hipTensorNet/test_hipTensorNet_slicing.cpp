@@ -208,6 +208,12 @@ bool test_slicing_execution_correctness() {
 
 
 int main() {
+    int device_count = 0;
+    if (hipGetDeviceCount(&device_count) != hipSuccess || device_count < 1) {
+        std::cerr << "No visible HIP device; skipping TensorNet slicing regression.\n";
+        return 77;
+    }
+
     setup_global_test_resources();
     ADD_TEST(test_slicing_execution_correctness);
     const int failed_count = RUN_ALL_TESTS();

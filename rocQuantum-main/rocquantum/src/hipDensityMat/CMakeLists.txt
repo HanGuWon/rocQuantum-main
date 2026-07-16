@@ -13,6 +13,8 @@ add_library(rocq_hip_density_mat ${ROCQUANTUM_COMPONENT_LIBRARY_TYPE}
 )
 add_library(rocquantum::densitymat ALIAS rocq_hip_density_mat)
 
+set_source_files_properties(hipDensityMat.cpp PROPERTIES LANGUAGE HIP)
+
 target_include_directories(rocq_hip_density_mat
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../include>
@@ -41,6 +43,11 @@ install(
 )
 
 if(BUILD_TESTING)
+    add_subdirectory(
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/hipDensityMat
+        ${CMAKE_CURRENT_BINARY_DIR}/tests
+    )
+
     add_executable(
         benchmark_hipDensityMat_channel_sampling
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../benchmarks/densitymat_channel_benchmark.cpp

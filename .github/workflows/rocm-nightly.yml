@@ -47,6 +47,7 @@ jobs:
             cmake --version || true
             ninja --version || true
             hipcc --version || true
+            /opt/rocm/llvm/bin/clang++ --version || true
             rocminfo || true
             rocm-smi || true
             ls -l /dev/kfd || true
@@ -59,17 +60,42 @@ jobs:
           set -o pipefail
           bash scripts/probe_rocm_runtime.sh 2>&1 | tee "${ARTIFACT_DIR}/rocm-runtime-probe.log"
 
+      - name: Require at least two visible GPUs
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
+        run: |
+          set -euo pipefail
+          if ! command -v rocm-smi >/dev/null 2>&1; then
+            echo "rocm-smi is required to prove the multi-GPU runner topology." | tee "${ARTIFACT_DIR}/gpu-count.log" >&2
+            exit 1
+          fi
+          GPU_COUNT="$(rocm-smi -i 2>/dev/null | sed -n 's/^GPU\[\([0-9]\+\)\].*/\1/p' | sort -u | wc -l | tr -d ' ')"
+          echo "visible_gpu_count=${GPU_COUNT}" | tee "${ARTIFACT_DIR}/gpu-count.log"
+          if [ "${GPU_COUNT}" -lt 2 ]; then
+            echo "The rocm-multigpu nightly requires at least two visible GPUs." | tee -a "${ARTIFACT_DIR}/gpu-count.log" >&2
+            exit 1
+          fi
+
       - name: Configure
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
         run: |
           set -o pipefail
-          HIPCC_PATH="$(command -v hipcc)"
+          rocminfo > "${ARTIFACT_DIR}/rocminfo-configure.log"
+          GPU_ARCH="$(awk '/^[[:space:]]*Name:[[:space:]]*gfx[0-9A-Za-z]+/ { print $2; exit }' "${ARTIFACT_DIR}/rocminfo-configure.log")"
+          if [ -z "${GPU_ARCH}" ]; then
+            echo "Unable to determine a gfx architecture from rocminfo." >&2
+            exit 1
+          fi
+          echo "Configuring for ${GPU_ARCH}." | tee "${ARTIFACT_DIR}/gpu-architecture.log"
           cmake -S . -B build-rocm-nightly -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=ON \
             -DROCQUANTUM_BUILD_BINDINGS=OFF \
-            -DCMAKE_HIP_COMPILER="${HIPCC_PATH}" \
+            -DROCQUANTUM_BUILD_NATIVE=ON \
+            -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
+            -DCMAKE_HIP_ARCHITECTURES="${GPU_ARCH}" \
+            -DCMAKE_PREFIX_PATH=/opt/rocm \
             2>&1 | tee "${ARTIFACT_DIR}/configure.log"
 
       - name: Build
@@ -82,16 +108,15 @@ jobs:
       - name: Run multi-GPU + runtime smoke tests
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-nightly
-          TEST_REGEX: MultiGPUTests|HipTensorNetContractionRegression
         run: |
           set -o pipefail
           if ctest --help | grep -q -- "--output-junit"; then
-            ctest --test-dir build-rocm-nightly --output-on-failure \
+            ctest --test-dir build-rocm-nightly --output-on-failure --no-tests=error \
               --output-junit "${ARTIFACT_DIR}/ctest-nightly.junit.xml" \
-              -R "${TEST_REGEX}" \
+              -L native \
               2>&1 | tee "${ARTIFACT_DIR}/ctest-nightly.log"
           else
-            ctest --test-dir build-rocm-nightly --output-on-failure -R "${TEST_REGEX}" \
+            ctest --test-dir build-rocm-nightly --output-on-failure --no-tests=error -L native \
               2>&1 | tee "${ARTIFACT_DIR}/ctest-nightly.log"
           fi
 
@@ -101,7 +126,7 @@ jobs:
         run: |
           START_TIME="$(date +%s)"
           set -o pipefail
-          ctest --test-dir build-rocm-nightly --output-on-failure -R HipTensorNetContractionRegression \
+          ctest --test-dir build-rocm-nightly --output-on-failure --no-tests=error -R HipTensorNetContractionRegression \
             2>&1 | tee "${ARTIFACT_DIR}/perf-smoke.log"
           END_TIME="$(date +%s)"
           DURATION="$((END_TIME - START_TIME))"
@@ -114,7 +139,7 @@ jobs:
           if command -v rocprof >/dev/null 2>&1; then
             set -o pipefail
             rocprof --hip-trace --stats -o "${ARTIFACT_DIR}/rocprof-hiptensornet.csv" \
-              ctest --test-dir build-rocm-nightly --output-on-failure -R HipTensorNetContractionRegression \
+              ctest --test-dir build-rocm-nightly --output-on-failure --no-tests=error -R HipTensorNetContractionRegression \
               2>&1 | tee "${ARTIFACT_DIR}/rocprof-run.log"
           else
             echo "rocprof not available on runner" | tee "${ARTIFACT_DIR}/rocprof-run.log"

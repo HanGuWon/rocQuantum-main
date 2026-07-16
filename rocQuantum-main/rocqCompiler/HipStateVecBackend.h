@@ -27,6 +27,10 @@ private:
     size_t batch_size;
     bool is_initialized;
 
+public:
+    // Internal dispatch surface. These members are public only so the
+    // translation-unit-local immutable dispatch tables can name their member
+    // pointer types; they are not part of the installed rocQuantum API.
     using GateHandler = void (HipStateVecBackend::*)(const std::vector<unsigned>&);
     using ParamGateHandler = void (HipStateVecBackend::*)(double, const std::vector<unsigned>&);
 

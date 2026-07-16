@@ -55,6 +55,8 @@ class TestRcclDistributedContract(unittest.TestCase):
         self.assertIn("ROCQ_HAVE_RCCL=1", cmake)
         self.assertIn("TARGET rccl", cmake)
         self.assertIn("target_link_libraries(hipStateVec PUBLIC rccl)", cmake)
+        self.assertIn("TARGET roc::rccl", cmake)
+        self.assertIn("target_link_libraries(hipStateVec PUBLIC roc::rccl)", cmake)
         self.assertIn("rccl::rccl", cmake)
         self.assertIn("benchmark_hipStateVec_distributed_reductions", cmake)
 

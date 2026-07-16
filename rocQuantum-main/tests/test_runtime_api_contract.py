@@ -7,6 +7,7 @@ import sys
 import unittest
 import importlib
 from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 from unittest import mock
 
 import numpy as np
@@ -386,7 +387,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             rocq.cphase(0.75, q[1], q[0])
 
         fake_backend = _FakeBackend()
-        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+        with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend):
             rocq.execute(phase_gates, backend="state_vector")
 
         recorded = [(op.name.lower(), op.targets, op.params) for op in fake_backend.ops]
@@ -608,7 +609,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         operator = PauliOperator("Z0")
 
-        with mock.patch("rocq.kernel.observe", return_value=1.25) as patched_observe:
+        with mock.patch.object(rocq_kernel_module, "observe", return_value=1.25) as patched_observe:
             result = get_expectation_value(prep_state, operator, backend="state_vector")
 
         self.assertEqual(result, 1.25)
@@ -622,7 +623,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             rocq.cnot(q[0], q[1])
 
         fake_backend = _FakeBackend()
-        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+        with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend):
             result = rocq.execute(bell, backend="state_vector")
 
         self.assertEqual(result, "fake-state")
@@ -636,17 +637,17 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             rocq.h(q[0])
 
         fake_backend = _FakeBackend()
-        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend) as patched_get_backend:
+        with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend) as patched_get_backend:
             rocq.execute(prep_state, backend="state_vector", enable_fusion=False)
         patched_get_backend.assert_called_once_with("state_vector", 1, enable_fusion=False)
 
         fake_backend = _FakeBackend()
-        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend) as patched_get_backend:
+        with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend) as patched_get_backend:
             rocq.sample(prep_state, 8, backend="state_vector", enable_fusion=True)
         patched_get_backend.assert_called_once_with("state_vector", 1, enable_fusion=True)
 
         fake_backend = _FakeBackend()
-        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend) as patched_get_backend:
+        with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend) as patched_get_backend:
             rocq.observe(
                 prep_state,
                 PauliOperator("Z0"),
@@ -663,7 +664,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         fake_backend = _FakeBackend()
         with ThreadPoolExecutor(max_workers=1) as executor:
-            with mock.patch("rocq.kernel.get_backend", return_value=fake_backend) as patched_get_backend:
+            with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend) as patched_get_backend:
                 future = rocq.execute_async(
                     prep_state,
                     backend="state_vector",
@@ -737,7 +738,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             rocq.cnot(q[0], q[1])
 
         fake_backend = _FakeBackend()
-        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+        with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend):
             result = rocq.get_state(bell, backend="state_vector")
 
         self.assertEqual(result, "fake-state")
@@ -751,7 +752,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             rocq.cnot(q[0], q[1])
 
         fake_backend = _FakeBackend()
-        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+        with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend):
             result = rocq.sample(bell, 32, backend="state_vector", qubits=[0])
 
         self.assertEqual(result, {"0": 32})
@@ -766,7 +767,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         for invalid_shots in (0, -1, 2.5, True, "4"):
             with self.subTest(shots=invalid_shots):
-                with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+                with mock.patch.object(rocq_kernel_module, "get_backend") as patched_get_backend:
                     with self.assertRaisesRegex(ValueError, "shots must be"):
                         rocq.sample(prep_state, invalid_shots, backend="state_vector")
                 patched_get_backend.assert_not_called()
@@ -780,7 +781,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         invalid_qubits = ([2], [-1], [0, 0], [True], [1.5], [], "01")
         for qubits in invalid_qubits:
             with self.subTest(qubits=qubits):
-                with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+                with mock.patch.object(rocq_kernel_module, "get_backend") as patched_get_backend:
                     with self.assertRaises((TypeError, ValueError)):
                         rocq.sample(prep_state, 8, backend="state_vector", qubits=qubits)
                 patched_get_backend.assert_not_called()
@@ -916,7 +917,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                     rocq.qvec(1)
                     rocq.h(target)
 
-                with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+                with mock.patch.object(rocq_kernel_module, "get_backend") as patched_get_backend:
                     with self.assertRaisesRegex(ValueError, "Gate target"):
                         rocq.execute(bad_target, backend="state_vector")
                 patched_get_backend.assert_not_called()
@@ -937,7 +938,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                     q = rocq.qvec(3)
                     apply_gate(q)
 
-                with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+                with mock.patch.object(rocq_kernel_module, "get_backend") as patched_get_backend:
                     with self.assertRaisesRegex(ValueError, "target qubits must be distinct"):
                         rocq.execute(bad_gate, backend="state_vector")
                 patched_get_backend.assert_not_called()
@@ -948,7 +949,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             q = rocq.qvec(1)
             rocq.mcx([], q[0])
 
-        with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+        with mock.patch.object(rocq_kernel_module, "get_backend") as patched_get_backend:
             with self.assertRaisesRegex(ValueError, "at least 2 target"):
                 rocq.execute(missing_mcx_control, backend="state_vector")
         patched_get_backend.assert_not_called()
@@ -963,7 +964,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                     q = rocq.qvec(1)
                     rocq.rx(angle, q[0])
 
-                with mock.patch("rocq.kernel.get_backend") as patched_get_backend:
+                with mock.patch.object(rocq_kernel_module, "get_backend") as patched_get_backend:
                     with self.assertRaisesRegex(ValueError, "Gate parameter"):
                         rocq.execute(bad_parameter, backend="state_vector")
                 patched_get_backend.assert_not_called()
@@ -1166,6 +1167,65 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Pauli observable qubit index 1"):
             stabilizer_backend.expectation(invalid_operator)
 
+    def test_c128_statevector_contract_preserves_compiled_numpy_dtype(self):
+        from rocq.backends import _HipStateVectorState
+
+        calls = []
+
+        class _Status:
+            SUCCESS = "success"
+
+        class _FakeC128HipBackend:
+            COMPILED_COMPLEX_DTYPE = "complex128"
+            rocqStatus = _Status
+
+            @staticmethod
+            def create_device_matrix_from_numpy(matrix):
+                calls.append(("upload", matrix.dtype))
+                return "device-matrix"
+
+            @staticmethod
+            def apply_matrix(*_args):
+                return "success"
+
+            @staticmethod
+            def get_expectation_matrix(_handle, _state, _nq, _targets, matrix):
+                calls.append(("dense", matrix.dtype))
+                return 1.0 + 0.0j
+
+            @staticmethod
+            def get_sparse_matrix_moments(
+                _handle, _state, _nq, data, _indices, _indptr, _rows, _cols
+            ):
+                calls.append(("sparse", data.dtype))
+                return 1.0 + 0.0j, 1.0 + 0.0j
+
+        state = _HipStateVectorState.__new__(_HipStateVectorState)
+        state._handle = object()
+        state._d_state = object()
+        state._num_qubits = 1
+        dense = HermitianOperator(np.diag([1.0, -1.0]), targets=[0])
+        sparse = SparseHamiltonianOperator(
+            data=np.array([1.0, -1.0], dtype=np.complex64),
+            indices=np.array([0, 1], dtype=np.int64),
+            indptr=np.array([0, 1, 2], dtype=np.int64),
+            shape=(2, 2),
+        )
+
+        with mock.patch("rocq.backends.hip_backend", _FakeC128HipBackend()):
+            state.apply_matrix([0], np.eye(2, dtype=np.complex64))
+            self.assertEqual(state.expectation(dense), 1.0)
+            self.assertEqual(state.expectation(sparse), 1.0)
+
+        self.assertEqual(
+            calls,
+            [
+                ("upload", np.dtype(np.complex128)),
+                ("dense", np.dtype(np.complex128)),
+                ("sparse", np.dtype(np.complex128)),
+            ],
+        )
+
     def test_observe_uses_backend_expectation(self):
         @kernel
         def prep_state():
@@ -1174,7 +1234,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         operator = PauliOperator("Z0")
         fake_backend = _FakeBackend()
-        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+        with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend):
             result = rocq.observe(prep_state, operator, backend="state_vector")
 
         self.assertEqual(result, 1.25)
@@ -1190,7 +1250,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         fake_backend = _FakeBackend()
         with ThreadPoolExecutor(max_workers=1) as executor:
-            with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+            with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend):
                 future = rocq.execute_async(bell, backend="state_vector", executor=executor)
                 self.assertIsInstance(future, Future)
                 result = future.result(timeout=5)
@@ -1207,7 +1267,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
 
         fake_backend = _FakeBackend()
         with ThreadPoolExecutor(max_workers=1) as executor:
-            with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+            with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend):
                 future = rocq.get_state_async(bell, backend="state_vector", executor=executor)
                 self.assertIsInstance(future, Future)
                 result = future.result(timeout=5)
@@ -1225,7 +1285,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         operator = PauliOperator("Z0 Z1")
         fake_backend = _FakeBackend()
         with ThreadPoolExecutor(max_workers=1) as executor:
-            with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+            with mock.patch.object(rocq_kernel_module, "get_backend", return_value=fake_backend):
                 sample_future = rocq.sample_async(
                     bell,
                     7,
@@ -1427,31 +1487,254 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             q = rocq.qvec(1)
             rocq.h(q[0])
 
-        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None):
-            with self.assertRaisesRegex(RuntimeError, "ROCQUANTUM_BUILD_BINDINGS=ON"):
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None), mock.patch.object(
+            rocq_kernel_module, "_find_rocq_translate", return_value=None
+        ):
+            with self.assertRaisesRegex(RuntimeError, "rocq-translate"):
                 prep_state.qir()
 
+    def test_qir_uses_installed_translator_without_rocm_binding(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        completed = rocq_kernel_module.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='define void @prep_state() #0 { ret void }\n!0 = !{i32 1, !"qir_major_version", i32 2}\n',
+            stderr="",
+        )
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None), mock.patch.object(
+            rocq_kernel_module,
+            "_find_rocq_translate",
+            return_value="/opt/rocq/bin/rocq-translate",
+        ), mock.patch.object(
+            rocq_kernel_module.subprocess, "run", return_value=completed
+        ) as run:
+            qir = prep_state.qir()
+
+        self.assertIn("qir_major_version", qir)
+        command = run.call_args.args[0]
+        self.assertEqual(
+            command,
+            [
+                "/opt/rocq/bin/rocq-translate",
+                "--num-qubits=1",
+                "--profile=qir-v2-static",
+                "-",
+            ],
+        )
+        self.assertIn('"quantum.h"', run.call_args.kwargs["input"])
+        self.assertTrue(run.call_args.kwargs["text"])
+        self.assertTrue(run.call_args.kwargs["capture_output"])
+        self.assertFalse(run.call_args.kwargs["check"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 60)
+
+    def test_qir_translator_failure_is_actionable(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        completed = rocq_kernel_module.subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="unsupported quantum op"
+        )
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None), mock.patch.object(
+            rocq_kernel_module, "_find_rocq_translate", return_value="rocq-translate"
+        ), mock.patch.object(
+            rocq_kernel_module.subprocess, "run", return_value=completed
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "unsupported quantum op.*Supported canonical MLIR gates"
+            ):
+                prep_state.qir()
+
+    def test_qir_base_profile_is_forwarded_to_installed_translator(self):
+        @kernel
+        def measured_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        completed = rocq_kernel_module.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='define i64 @measured_state() { ret i64 0 }\n',
+            stderr="",
+        )
+        with mock.patch.object(
+            rocq_kernel_module, "rocquantum_bind", None
+        ), mock.patch.object(
+            rocq_kernel_module,
+            "_find_rocq_translate",
+            return_value="/opt/rocq/bin/rocq-translate",
+        ), mock.patch.object(
+            rocq_kernel_module.subprocess, "run", return_value=completed
+        ) as run:
+            measured_state.qir(qir_profile="qir-v2-base")
+
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "/opt/rocq/bin/rocq-translate",
+                "--num-qubits=1",
+                "--profile=qir-v2-base",
+                "-",
+            ],
+        )
+
+    def test_qir_rejects_unknown_profile_before_compiler_discovery(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        with mock.patch.object(rocq_kernel_module, "_find_rocq_translate") as find:
+            with self.assertRaisesRegex(ValueError, "Unsupported QIR profile"):
+                prep_state.qir(qir_profile="adaptive")
+        find.assert_not_called()
+
+    def test_compiler_artifact_uses_installed_translator_and_returns_bytes(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        payload = b"BC\xc0\xde\x00\x01"
+
+        def run_translator(command, **kwargs):
+            output_path = Path(command[command.index("-o") + 1])
+            output_path.write_bytes(payload)
+            return rocq_kernel_module.subprocess.CompletedProcess(
+                args=command, returncode=0, stdout="", stderr=""
+            )
+
+        with mock.patch.object(
+            rocq_kernel_module, "rocquantum_bind", None
+        ), mock.patch.object(
+            rocq_kernel_module,
+            "_find_rocq_translate",
+            return_value="/opt/rocq/bin/rocq-translate",
+        ), mock.patch.object(
+            rocq_kernel_module.subprocess,
+            "run",
+            side_effect=run_translator,
+        ) as run:
+            artifact = prep_state.emit_artifact(
+                kind="llvm-bc",
+                optimization_level=2,
+                cache_dir="compiler-cache",
+            )
+
+        self.assertEqual(artifact, payload)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:6], [
+            "/opt/rocq/bin/rocq-translate",
+            "--num-qubits=1",
+            "--profile=qir-v2-static",
+            "--emit=llvm-bc",
+            "-O2",
+            "-o",
+        ])
+        self.assertEqual(command[-3:], ["--cache-dir", "compiler-cache", "-"])
+        self.assertIn('"quantum.h"', run.call_args.kwargs["input"])
+        self.assertTrue(run.call_args.kwargs["text"])
+
+    def test_compiler_artifact_prefers_binary_safe_native_binding(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        calls = []
+
+        class _FakeCompiler:
+            def __init__(self, num_qubits):
+                calls.append(("init", num_qubits))
+
+            def emit_artifact(self, mlir, kind, optimization_level, profile):
+                calls.append(("emit", mlir, kind, optimization_level, profile))
+                return bytearray(b"native-object")
+
+        fake_binding = mock.Mock()
+        fake_binding.MLIRCompiler = _FakeCompiler
+        fake_binding.MLIR_COMPILER_QIR_EMISSION_ENABLED = True
+        fake_binding.MLIR_COMPILER_ARTIFACT_EMISSION_ENABLED = True
+
+        with mock.patch.object(
+            rocq_kernel_module, "rocquantum_bind", fake_binding
+        ), mock.patch.object(
+            rocq_kernel_module, "_find_rocq_translate", return_value=None
+        ) as find:
+            artifact = prep_state.emit_artifact(
+                kind="object", optimization_level=3
+            )
+
+        self.assertEqual(artifact, b"native-object")
+        self.assertEqual(calls[0], ("init", 1))
+        self.assertEqual(calls[1][2:], ("object", 3, "qir-v2-static"))
+        find.assert_not_called()
+
+    def test_compiler_artifact_validation_is_fail_closed(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        for invalid in (True, -1, 4, 1.5):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "optimization_level"):
+                    prep_state.emit_artifact(optimization_level=invalid)
+        with self.assertRaisesRegex(ValueError, "artifact kind"):
+            prep_state.emit_artifact(kind="executable")
+        with self.assertRaisesRegex(ValueError, "four-block"):
+            prep_state.emit_artifact(
+                kind="llvm-bc",
+                optimization_level=1,
+                qir_profile="qir-v2-base",
+            )
+        with self.assertRaisesRegex(ValueError, "cache_dir"):
+            prep_state.emit_artifact(cache_dir="")
+
     def test_compiler_capabilities_expose_partial_supported_subset(self):
-        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None):
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None), mock.patch.object(
+            rocq_kernel_module, "_find_rocq_translate", return_value=None
+        ):
             capabilities = rocq.compiler_capabilities()
 
         self.assertEqual(capabilities["status"], "partial")
         self.assertFalse(capabilities["binding_available"])
         self.assertFalse(capabilities["mlir_runtime_available"])
         self.assertEqual(capabilities["mlir_runtime_kind"], "missing_binding")
+        self.assertFalse(capabilities["qir_emission_available"])
+        self.assertEqual(capabilities["qir_emission_kind"], "unavailable")
+        self.assertFalse(capabilities["rocq_translate_available"])
+        self.assertFalse(capabilities["gpu_execution_available"])
+        self.assertIsNone(capabilities["qir_profile"])
+        self.assertFalse(capabilities["artifact_emission_available"])
+        self.assertEqual(capabilities["artifact_emission_kind"], "unavailable")
+        self.assertEqual(
+            capabilities["artifact_kinds"],
+            ["llvm-ir", "llvm-bc", "object"],
+        )
+        self.assertFalse(capabilities["artifact_cache"]["available"])
         self.assertEqual(capabilities["default_backend"], "hip_statevec")
         self.assertEqual(capabilities["supported_backends"], ["hip_statevec"])
+        self.assertEqual(
+            capabilities["qir_profiles"],
+            ["qir-v2-static", "qir-v2-base"],
+        )
         self.assertIn("Supported canonical MLIR gates", capabilities["supported_subset"])
         self.assertEqual(
             capabilities["supported_gate_groups"]["parametric_single_qubit"],
             ["rx", "ry", "rz", "p"],
         )
         self.assertIn(
-            "mid-circuit measurement",
+            "mid-circuit measurement and measurement-driven classical control flow",
             capabilities["unsupported_features"],
         )
         self.assertIn(
-            "release-wired TableGen dialect/op generation",
+            "QIR control-array lowering for variadic MCX",
             capabilities["unsupported_features"],
         )
         self.assertIn(
@@ -1463,9 +1746,20 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["dialect_definition"]["legacy_scaffold_source_tree"],
             "rocquantum/include/rocquantum/Dialect and rocquantum/src/rocqCompiler",
         )
-        self.assertFalse(capabilities["dialect_definition"]["release_tablegen_ops"])
-        self.assertFalse(capabilities["dialect_definition"]["release_wired"])
+        self.assertTrue(capabilities["dialect_definition"]["release_tablegen_ops"])
+        self.assertTrue(capabilities["dialect_definition"]["release_wired"])
+        self.assertEqual(capabilities["dialect_definition"]["required_llvm_mlir"], "22.1.x")
         self.assertFalse(capabilities["dialect_definition"]["legacy_scaffold_release_linked"])
+        self.assertTrue(
+            capabilities["transform_pipeline"]["quantum_to_qir_v2"]["release_wired"]
+        )
+        self.assertFalse(
+            capabilities["transform_pipeline"]["quantum_to_qir_v2"]["gpu_required"]
+        )
+        self.assertEqual(
+            capabilities["transform_pipeline"]["quantum_to_qir_v2"]["profile"],
+            "qir-v2-static",
+        )
         self.assertEqual(
             capabilities["transform_pipeline"]["adjoint_generation"]["source_tree"],
             "rocquantum/src/rocqCompiler/Transforms/AdjointGeneration.cpp",
@@ -1479,17 +1773,52 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         )
         self.assertIn("DisabledRuntimeMLIRCompiler", capabilities["mlir_runtime_note"])
 
+    def test_compiler_capabilities_expose_cli_only_qir(self):
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None), mock.patch.object(
+            rocq_kernel_module,
+            "_find_rocq_translate",
+            return_value="/opt/rocq/bin/rocq-translate",
+        ):
+            capabilities = rocq.compiler_capabilities()
+
+        self.assertFalse(capabilities["binding_available"])
+        self.assertFalse(capabilities["mlir_runtime_available"])
+        self.assertTrue(capabilities["qir_emission_available"])
+        self.assertEqual(capabilities["qir_emission_kind"], "rocq_translate_cli")
+        self.assertTrue(capabilities["artifact_emission_available"])
+        self.assertEqual(
+            capabilities["artifact_emission_kind"], "rocq_translate_cli"
+        )
+        self.assertTrue(capabilities["artifact_cache"]["available"])
+        self.assertTrue(capabilities["rocq_translate_available"])
+        self.assertFalse(capabilities["gpu_execution_available"])
+        self.assertEqual(capabilities["qir_profile"], "qir-v2-static")
+
     def test_compiler_capabilities_distinguish_binding_from_linked_mlir_runtime(self):
         disabled_binding = mock.Mock()
         disabled_binding.MLIR_COMPILER_ENABLED = False
         disabled_binding.MLIR_COMPILER_RUNTIME_KIND = "disabled_runtime_guard"
+        disabled_binding.MLIR_COMPILER_QIR_EMISSION_ENABLED = False
+        disabled_binding.MLIR_COMPILER_ARTIFACT_EMISSION_ENABLED = False
+        disabled_binding.MLIR_COMPILER_GPU_EXECUTION_ENABLED = False
+        disabled_binding.MLIR_COMPILER_QIR_PROFILE = None
         enabled_binding = mock.Mock()
         enabled_binding.MLIR_COMPILER_ENABLED = True
-        enabled_binding.MLIR_COMPILER_RUNTIME_KIND = "linked_runtime"
+        enabled_binding.MLIR_COMPILER_RUNTIME_KIND = (
+            "qir_v2_static_base_and_hip_execution"
+        )
+        enabled_binding.MLIR_COMPILER_QIR_EMISSION_ENABLED = True
+        enabled_binding.MLIR_COMPILER_ARTIFACT_EMISSION_ENABLED = True
+        enabled_binding.MLIR_COMPILER_GPU_EXECUTION_ENABLED = True
+        enabled_binding.MLIR_COMPILER_QIR_PROFILE = "qir-v2-static"
 
-        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", disabled_binding):
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", disabled_binding), mock.patch.object(
+            rocq_kernel_module, "_find_rocq_translate", return_value=None
+        ):
             disabled = rocq.compiler_capabilities()
-        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", enabled_binding):
+        with mock.patch.object(rocq_kernel_module, "rocquantum_bind", enabled_binding), mock.patch.object(
+            rocq_kernel_module, "_find_rocq_translate", return_value=None
+        ):
             enabled = rocq.compiler_capabilities()
 
         self.assertTrue(disabled["binding_available"])
@@ -1497,7 +1826,16 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertEqual(disabled["mlir_runtime_kind"], "disabled_runtime_guard")
         self.assertTrue(enabled["binding_available"])
         self.assertTrue(enabled["mlir_runtime_available"])
-        self.assertEqual(enabled["mlir_runtime_kind"], "linked_runtime")
+        self.assertEqual(
+            enabled["mlir_runtime_kind"],
+            "qir_v2_static_base_and_hip_execution",
+        )
+        self.assertTrue(enabled["qir_emission_available"])
+        self.assertEqual(enabled["qir_emission_kind"], "native_binding")
+        self.assertTrue(enabled["artifact_emission_available"])
+        self.assertEqual(enabled["artifact_emission_kind"], "native_binding")
+        self.assertTrue(enabled["gpu_execution_available"])
+        self.assertEqual(enabled["qir_profile"], "qir-v2-static")
 
     def test_qir_error_string_is_not_returned_as_qir(self):
         @kernel
@@ -1506,7 +1844,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             rocq.h(q[0])
 
         class _FakeCompiler:
-            def __init__(self, num_qubits, backend):
+            def __init__(self, num_qubits, backend=None):
                 self.num_qubits = num_qubits
                 self.backend = backend
 
@@ -1520,6 +1858,29 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Supported canonical MLIR gates"):
                 prep_state.qir()
 
+    def test_qir_empty_or_non_text_payload_is_rejected(self):
+        @kernel
+        def prep_state():
+            q = rocq.qvec(1)
+            rocq.h(q[0])
+
+        for invalid_payload in ("", "   ", b"not-text", None):
+            class _FakeCompiler:
+                def __init__(self, num_qubits, backend=None):
+                    pass
+
+                def emit_qir(self, mlir):
+                    return invalid_payload
+
+            fake_binding = mock.Mock()
+            fake_binding.MLIRCompiler = _FakeCompiler
+
+            with self.subTest(payload=invalid_payload), mock.patch.object(
+                rocq_kernel_module, "rocquantum_bind", fake_binding
+            ):
+                with self.assertRaisesRegex(RuntimeError, "empty or non-text"):
+                    prep_state.qir()
+
     def test_qir_runtime_failure_is_augmented(self):
         @kernel
         def prep_state():
@@ -1527,7 +1888,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             rocq.h(q[0])
 
         class _FakeCompiler:
-            def __init__(self, num_qubits, backend):
+            def __init__(self, num_qubits, backend=None):
                 pass
 
             def emit_qir(self, mlir):

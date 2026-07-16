@@ -7,7 +7,7 @@ if(NOT TARGET rocqsim_tensornet)
 endif()
 
 if(NOT TARGET pybind11::module)
-    find_package(pybind11 CONFIG REQUIRED)
+    find_package(pybind11 2.10 CONFIG REQUIRED)
 endif()
 
 if(NOT DEFINED ROCQUANTUM_PUBLIC_INCLUDE_DIR)

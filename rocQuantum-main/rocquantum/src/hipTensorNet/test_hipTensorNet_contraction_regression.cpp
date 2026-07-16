@@ -42,6 +42,12 @@ bool check_rocblas(rocblas_status status, const char* what) {
 } // namespace
 
 int main() {
+    int device_count = 0;
+    if (hipGetDeviceCount(&device_count) != hipSuccess || device_count < 1) {
+        std::cerr << "No visible HIP device; skipping TensorNet contraction regression.\n";
+        return 77;
+    }
+
     hipStream_t stream = nullptr;
     rocblas_handle blas = nullptr;
     rocTensorNetworkHandle_t tn = nullptr;
@@ -58,7 +64,8 @@ int main() {
         hipStreamDestroy(stream);
         return 1;
     }
-    if (!check_status(rocTensorNetworkCreate(&tn, ROC_DATATYPE_C64), "rocTensorNetworkCreate")) {
+    if (!check_status(rocTensorNetworkCreate(&tn, ROC_TENSORNET_COMPILED_COMPLEX_DTYPE),
+                      "rocTensorNetworkCreate")) {
         rocblas_destroy_handle(blas);
         hipStreamDestroy(stream);
         return 1;

@@ -12,6 +12,8 @@ This suite is dependency-aware:
   with an explicit ROCm CI verification path.
 """
 
+from __future__ import annotations
+
 import math
 import os
 import sys
@@ -46,7 +48,7 @@ def _compiler_disabled_reason(exc: RuntimeError) -> str | None:
     if "MLIR compiler support is disabled" not in str(exc):
         return None
     return (
-        "rocquantum_bind was built without the experimental rocqCompiler MLIR runtime; "
+        "rocquantum_bind was built without the optional canonical rocqCompiler runtime; "
         f"default binding diagnostic was: {exc}"
     )
 
@@ -91,7 +93,9 @@ class TestCompilerE2EFlow(unittest.TestCase):
         if rocquantum_bind is None:
             self.skipTest(_compiler_skip_reason())
 
-        compiler = rocquantum_bind.MLIRCompiler(kernel_obj.num_qubits, "hip_statevec")
+        # QIR emission is deliberately GPU-independent.  Do not construct the
+        # HIP execution backend merely to exercise the offline compiler path.
+        compiler = rocquantum_bind.MLIRCompiler(kernel_obj.num_qubits)
         try:
             qir = compiler.emit_qir(mlir)
         except RuntimeError as exc:

@@ -1,22 +1,16 @@
+"""Report the honest canonical boundary for hipTensorNet."""
+
 import rocq
-import numpy as np
 
-# Create a simulator
-sim = rocq.Simulator()
 
-# Create a tensor network
-tn = rocq.TensorNetwork(simulator=sim)
+def main():
+    print("rocq runtime status:", rocq.runtime_capabilities()["status"])
+    print("Canonical TensorNetwork constructor: unavailable")
+    print(
+        "Use the native hipTensorNet C++ tests for source-level development. "
+        "A stable Python TensorNetwork API has not been released yet."
+    )
 
-# Create tensors
-tensor_a = np.random.rand(2, 2).astype(np.complex64)
-tensor_b = np.random.rand(2, 2).astype(np.complex64)
 
-# Add tensors to the network
-tn.add_tensor(tensor_a, ["a", "b"])
-tn.add_tensor(tensor_b, ["b", "c"])
-
-# Contract the network
-result = tn.contract()
-
-# Print the result
-print(result)
+if __name__ == "__main__":
+    main()

@@ -255,11 +255,11 @@ int main(int argc, char** argv) {
 
     write_json(*out, qubits, trials, shots, results);
 
-    bool any_success = false;
+    bool all_success = true;
     for (const CaseResult& result : results) {
-        any_success = any_success || result.status == 0;
+        all_success = all_success && result.status == 0;
     }
 
     rocsvDestroy(handle);
-    return any_success ? 0 : 1;
+    return all_success ? 0 : 1;
 }

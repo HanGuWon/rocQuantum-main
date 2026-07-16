@@ -19,7 +19,7 @@ endif()
 add_library(hipStateVec ${ROCQUANTUM_COMPONENT_LIBRARY_TYPE} ${HIPSTATEVEC_SRC})
 add_library(rocquantum::statevec ALIAS hipStateVec)
 
-set_source_files_properties(${HIPSTATEVEC_SRC} PROPERTIES HIP_SOURCE_TYPE "kernels")
+set_source_files_properties(hipStateVec.cpp PROPERTIES LANGUAGE HIP)
 
 target_include_directories(hipStateVec
     PUBLIC
@@ -44,6 +44,9 @@ find_package(rccl QUIET)
 if(rccl_FOUND AND TARGET rccl)
     target_compile_definitions(hipStateVec PRIVATE ROCQ_HAVE_RCCL=1)
     target_link_libraries(hipStateVec PUBLIC rccl)
+elseif(rccl_FOUND AND TARGET roc::rccl)
+    target_compile_definitions(hipStateVec PRIVATE ROCQ_HAVE_RCCL=1)
+    target_link_libraries(hipStateVec PUBLIC roc::rccl)
 elseif(rccl_FOUND AND TARGET rccl::rccl)
     target_compile_definitions(hipStateVec PRIVATE ROCQ_HAVE_RCCL=1)
     target_link_libraries(hipStateVec PUBLIC rccl::rccl)
@@ -66,7 +69,20 @@ install(
 if(BUILD_TESTING)
     add_executable(test_hipStateVec_multi_gpu test_hipStateVec_multi_gpu.cpp)
     target_link_libraries(test_hipStateVec_multi_gpu PRIVATE hipStateVec hip::host)
-    add_test(NAME MultiGPUTests COMMAND test_hipStateVec_multi_gpu)
+    add_test(NAME StateVecSingleGpuSmoke COMMAND test_hipStateVec_multi_gpu)
+    add_test(
+        NAME MultiGPUTests
+        COMMAND test_hipStateVec_multi_gpu --require-multi-gpu
+    )
+    set_tests_properties(StateVecSingleGpuSmoke PROPERTIES
+        ENVIRONMENT "HIP_VISIBLE_DEVICES=0"
+        LABELS "native;single-gpu;statevec"
+        SKIP_RETURN_CODE 77
+    )
+    set_tests_properties(MultiGPUTests PROPERTIES
+        ENVIRONMENT "ROCQ_REQUIRE_RCCL=1"
+        LABELS "native;multi-gpu;statevec;rccl;inter-rank"
+    )
 
     add_executable(
         benchmark_hipStateVec_distributed_reductions

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import math
+import os
+import shutil
+import subprocess
+import tempfile
 import threading
-from concurrent.futures import Executor, Future, ThreadPoolExecutor
+from concurrent.futures import Executor, ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 from numbers import Integral, Real
-from typing import Callable, Dict, List, Optional
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Union
 
 from .backends import (
     _DENSITY_MATRIX_MAX_DENSE_OBSERVABLE_TARGETS,
@@ -18,6 +24,8 @@ from .backends import (
     _validate_positive_integer,
 )
 from .qvec import qvec
+from .results import AsyncResult, ObserveResult, SampleResult
+from .target import resolve_backend_name
 
 try:
     import rocquantum_bind
@@ -32,6 +40,7 @@ _COMPILER_BINDING_MISSING_MESSAGE = (
 _COMPILER_SUPPORTED_MLIR_SUBSET = (
     "Supported canonical MLIR gates: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, "
     "CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, and CRX/CRY/CRZ/CP."
+    " Offline QIR emission also supports terminal MZ result operations."
 )
 _COMPILER_SUPPORTED_GATE_GROUPS = {
     "allocation": ("qalloc",),
@@ -39,32 +48,58 @@ _COMPILER_SUPPORTED_GATE_GROUPS = {
     "fixed_multi_qubit": ("cnot", "cz", "swap", "ccx", "mcx", "cswap"),
     "parametric_single_qubit": ("rx", "ry", "rz", "p"),
     "parametric_controlled": ("crx", "cry", "crz", "cp"),
+    "terminal_measurement": ("mz",),
 }
 _COMPILER_SUPPORTED_BACKENDS = ("hip_statevec",)
+_COMPILER_SUPPORTED_QIR_PROFILES = ("qir-v2-static", "qir-v2-base")
+_COMPILER_SUPPORTED_ARTIFACT_KINDS = ("llvm-ir", "llvm-bc", "object")
 _COMPILER_UNSUPPORTED_FEATURES = (
-    "mid-circuit measurement",
-    "classical control flow",
-    "kernel arguments in emitted MLIR",
+    "mid-circuit measurement and measurement-driven classical control flow",
+    "native typed function arguments/results and classical SSA",
     "noise channels",
     "arbitrary unitary/matrix operations",
-    "release-linked default MLIR runtime",
-    "release-wired TableGen dialect/op generation",
+    "QIR control-array lowering for variadic MCX",
+    "dynamic QIR qubit/result management",
+    "C++/Python AST source frontend parity with nvq++",
+    "ORC JIT and a runnable QIS symbol-linking runtime",
+    "external pass-plugin loading ABI",
     "release-wired adjoint-generation pass pipeline",
+)
+_COMPILER_QIR_MISSING_MESSAGE = (
+    "QIR emission requires either a rocquantum_bind build with "
+    "ROCQUANTUM_ENABLE_MLIR_COMPILER=ON or the GPU-independent "
+    "rocq-translate executable on PATH (or in ROCQ_TRANSLATE_EXECUTABLE). "
+    "ROCm and an AMD GPU are not required for rocq-translate."
+)
+_COMPILER_ARTIFACT_MISSING_MESSAGE = (
+    "Compiler artifact emission requires either a rocquantum_bind build with "
+    "ROCQUANTUM_ENABLE_MLIR_COMPILER=ON or the GPU-independent rocq-translate "
+    "executable on PATH (or in ROCQ_TRANSLATE_EXECUTABLE)."
 )
 _COMPILER_DIALECT_DEFINITION = {
     "active_source_tree": "rocqCompiler/",
     "legacy_scaffold_source_tree": "rocquantum/include/rocquantum/Dialect and rocquantum/src/rocqCompiler",
-    "release_tablegen_ops": False,
-    "release_wired": False,
+    "release_tablegen_ops": True,
+    "release_wired": True,
+    "required_llvm_mlir": "22.1.x",
+    "build_option": "ROCQUANTUM_ENABLE_MLIR_COMPILER",
     "legacy_scaffold_release_linked": False,
     "note": (
-        "The canonical source-level compiler MVP emits and parses a narrow textual "
-        "MLIR subset through rocqCompiler/, while the older rocquantum/Dialect "
-        "scaffold is not release-linked and must not be treated as CUDA-Q-style "
-        "compiler/runtime parity."
+        "rocqCompiler/ owns the release-wired TableGen dialect, direct Quantum-to-QIR "
+        "pass, and CPU-only rocq-opt/rocq-translate tools. The older rocquantum/Dialect "
+        "tree remains an excluded legacy scaffold and is not CUDA-Q compiler parity."
     ),
 }
 _COMPILER_TRANSFORM_PIPELINE = {
+    "quantum_to_qir_v2": {
+        "source_tree": "rocqCompiler/passes/QuantumToQIRPass.cpp",
+        "release_wired": True,
+        "native_runtime_entry_point": True,
+        "profile": "qir-v2-static",
+        "llvm_verified": True,
+        "gpu_required": False,
+        "tools": ["rocq-opt", "rocq-translate"],
+    },
     "adjoint_generation": {
         "source_tree": "rocquantum/src/rocqCompiler/Transforms/AdjointGeneration.cpp",
         "legacy_scaffold_only": True,
@@ -72,6 +107,126 @@ _COMPILER_TRANSFORM_PIPELINE = {
         "native_runtime_entry_point": False,
     },
 }
+
+
+def _find_rocq_translate() -> Optional[str]:
+    """Find the optional GPU-independent compiler CLI without executing it."""
+
+    configured = os.environ.get("ROCQ_TRANSLATE_EXECUTABLE")
+    if configured:
+        return shutil.which(configured)
+    return shutil.which("rocq-translate")
+
+
+def _binding_qir_emission_available() -> bool:
+    if rocquantum_bind is None or not hasattr(rocquantum_bind, "MLIRCompiler"):
+        return False
+    return bool(
+        getattr(rocquantum_bind, "MLIR_COMPILER_QIR_EMISSION_ENABLED", True)
+    )
+
+
+def _binding_artifact_emission_available() -> bool:
+    if not _binding_qir_emission_available():
+        return False
+    compiler_type = getattr(rocquantum_bind, "MLIRCompiler", None)
+    return bool(
+        getattr(
+            rocquantum_bind,
+            "MLIR_COMPILER_ARTIFACT_EMISSION_ENABLED",
+            compiler_type is not None and hasattr(compiler_type, "emit_artifact"),
+        )
+    )
+
+
+def _run_rocq_translate(
+    command: List[str],
+    mlir_code: str,
+    operation: str,
+):
+    try:
+        result = subprocess.run(
+            command,
+            input=mlir_code,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(
+            f"{operation} could not run rocq-translate: {exc}. "
+            f"{_COMPILER_SUPPORTED_MLIR_SUBSET}"
+        ) from exc
+    if result.returncode != 0:
+        diagnostic = result.stderr.strip() or "no diagnostic was written"
+        raise RuntimeError(
+            f"{operation} failed through rocq-translate "
+            f"(exit {result.returncode}): {diagnostic}. "
+            f"{_COMPILER_SUPPORTED_MLIR_SUBSET}"
+        )
+    return result
+
+
+def _emit_qir_with_cli(
+    mlir_code: str,
+    num_qubits: int,
+    executable: str,
+    profile: str = "qir-v2-static",
+) -> str:
+    command = [
+        executable,
+        f"--num-qubits={num_qubits}",
+        f"--profile={profile}",
+        "-",
+    ]
+    result = _run_rocq_translate(command, mlir_code, "QIR emission")
+    qir = result.stdout
+    if not qir.strip() or qir.lstrip().startswith("Error:"):
+        raise RuntimeError(
+            "rocq-translate returned an empty or error-sentinel QIR payload. "
+            f"{_COMPILER_SUPPORTED_MLIR_SUBSET}"
+        )
+    return qir
+
+
+def _emit_artifact_with_cli(
+    mlir_code: str,
+    num_qubits: int,
+    executable: str,
+    profile: str,
+    kind: str,
+    optimization_level: int,
+    cache_dir: Optional[Union[str, os.PathLike]] = None,
+) -> bytes:
+    suffix = {"llvm-ir": ".ll", "llvm-bc": ".bc", "object": ".o"}[kind]
+    with tempfile.TemporaryDirectory(prefix="rocq-artifact-") as directory:
+        output_path = Path(directory, "kernel" + suffix)
+        command = [
+            executable,
+            f"--num-qubits={num_qubits}",
+            f"--profile={profile}",
+            f"--emit={kind}",
+            f"-O{optimization_level}",
+            "-o",
+            str(output_path),
+        ]
+        if cache_dir is not None:
+            command.extend(["--cache-dir", os.fspath(cache_dir)])
+        command.append("-")
+        _run_rocq_translate(command, mlir_code, "Compiler artifact emission")
+        try:
+            payload = output_path.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(
+                "rocq-translate reported success but its artifact could not be read: "
+                f"{exc}"
+            ) from exc
+    if not payload:
+        raise RuntimeError("rocq-translate returned an empty compiler artifact.")
+    return payload
+
+
 _RUNTIME_EXECUTION_ENTRY_POINTS = (
     "execute",
     "get_state",
@@ -114,6 +269,13 @@ _RUNTIME_SUPPORTED_FEATURES = (
     "density-matrix noise model execution",
     "experimental Clifford stabilizer Pauli propagation backend",
     "partial compiler execution entry point with compiler_capabilities() boundary metadata",
+    "ContextVar-based local target selection with explicit backend override",
+    "dict/float-compatible result wrappers and Future-compatible AsyncResult.get()",
+    "CUDA-Q-style shots_count sampling alias with a 1000-shot default",
+    "single-logical-QPU qpu_id=0 validation on asynchronous entry points",
+    "typed host-specialized make_kernel builder and parameter expressions",
+    "static resource estimation, drawing, and fail-closed textual translation",
+    "small-system CPU reference Schrodinger/Lindblad dynamics",
 )
 _RUNTIME_UNSUPPORTED_FEATURES = (
     "native HIP-stream futures",
@@ -124,8 +286,11 @@ _RUNTIME_UNSUPPORTED_FEATURES = (
 )
 _RUNTIME_ASYNC_EXECUTION = {
     "future_type": "concurrent.futures.Future",
+    "wrapper_type": "rocq.AsyncResult",
     "submission": "host_threadpool",
+    "preserves_submission_context": True,
     "preserves_backend_validation": True,
+    "accepted_qpu_ids": [0],
     "native_hip_stream_future": False,
     "multi_qpu_scheduler": False,
     "distributed_scheduler": False,
@@ -134,6 +299,8 @@ _RUNTIME_ASYNC_EXECUTION = {
 _BUILD_LOCK = threading.RLock()
 _ASYNC_EXECUTOR_LOCK = threading.Lock()
 _ASYNC_EXECUTOR: Optional[ThreadPoolExecutor] = None
+_MISSING_SHOTS = object()
+_DEFAULT_SHOTS_COUNT = 1000
 
 
 def _get_default_async_executor() -> ThreadPoolExecutor:
@@ -147,9 +314,12 @@ def _get_default_async_executor() -> ThreadPoolExecutor:
         return _ASYNC_EXECUTOR
 
 
-def _submit_async(callback: Callable[[], object], executor: Optional[Executor] = None) -> Future:
+def _submit_async(
+    callback: Callable[[], object], executor: Optional[Executor] = None
+) -> AsyncResult:
     submitter = executor if executor is not None else _get_default_async_executor()
-    return submitter.submit(callback)
+    context = copy_context()
+    return AsyncResult(submitter.submit(context.run, callback))
 
 
 def compiler_capabilities() -> Dict[str, object]:
@@ -159,6 +329,33 @@ def compiler_capabilities() -> Dict[str, object]:
     mlir_runtime_available = bool(
         getattr(rocquantum_bind, "MLIR_COMPILER_ENABLED", False)
     ) if binding_available else False
+    binding_qir_available = _binding_qir_emission_available()
+    binding_artifact_available = _binding_artifact_emission_available()
+    translator = _find_rocq_translate()
+    qir_emission_available = binding_qir_available or translator is not None
+    artifact_emission_available = (
+        binding_artifact_available or translator is not None
+    )
+    gpu_execution_available = bool(
+        getattr(
+            rocquantum_bind,
+            "MLIR_COMPILER_GPU_EXECUTION_ENABLED",
+            mlir_runtime_available,
+        )
+    ) if binding_available else False
+    if binding_qir_available:
+        qir_profile = getattr(
+            rocquantum_bind,
+            "MLIR_COMPILER_QIR_PROFILE",
+            "qir-v2-static",
+        )
+        qir_emission_kind = "native_binding"
+    elif translator is not None:
+        qir_profile = "qir-v2-static"
+        qir_emission_kind = "rocq_translate_cli"
+    else:
+        qir_profile = None
+        qir_emission_kind = "unavailable"
     if binding_available:
         mlir_runtime_kind = str(
             getattr(
@@ -174,6 +371,28 @@ def compiler_capabilities() -> Dict[str, object]:
         "binding_available": binding_available,
         "mlir_runtime_available": mlir_runtime_available,
         "mlir_runtime_kind": mlir_runtime_kind,
+        "qir_emission_available": qir_emission_available,
+        "qir_emission_kind": qir_emission_kind,
+        "artifact_emission_available": artifact_emission_available,
+        "artifact_emission_kind": (
+            "native_binding"
+            if binding_artifact_available
+            else "rocq_translate_cli"
+            if translator is not None
+            else "unavailable"
+        ),
+        "artifact_kinds": list(_COMPILER_SUPPORTED_ARTIFACT_KINDS),
+        "artifact_optimization_levels": [0, 1, 2, 3],
+        "artifact_cache": {
+            "available": translator is not None,
+            "kind": "content_addressed_cli" if translator is not None else "unavailable",
+            "compiler_fingerprinted": True,
+            "corruption_policy": "fail_closed",
+        },
+        "rocq_translate_available": translator is not None,
+        "gpu_execution_available": gpu_execution_available,
+        "qir_profile": qir_profile,
+        "qir_profiles": list(_COMPILER_SUPPORTED_QIR_PROFILES),
         "default_backend": "hip_statevec",
         "supported_backends": list(_COMPILER_SUPPORTED_BACKENDS),
         "supported_subset": _COMPILER_SUPPORTED_MLIR_SUBSET,
@@ -188,10 +407,27 @@ def compiler_capabilities() -> Dict[str, object]:
             for key, value in _COMPILER_TRANSFORM_PIPELINE.items()
         },
         "mlir_runtime_note": (
-            "Compiler execution requires rocquantum_bind.MLIRCompiler with the "
-            "experimental rocqCompiler MLIR stack linked; default builds may expose "
-            "a fail-fast DisabledRuntimeMLIRCompiler instead."
+            "QIR emission is available in the optional LLVM/MLIR 22.1 compiler build "
+            "and can run without an AMD GPU via the offline MLIRCompiler constructor "
+            "or the installed rocq-translate CLI fallback. "
+            "HIP compile-and-execute remains device-dependent; default Python bindings "
+            "may expose a fail-fast DisabledRuntimeMLIRCompiler. LLVM bitcode and "
+            "host PIC objects are offline artifacts with unresolved QIS/runtime symbols, "
+            "not runnable executables."
         ),
+        "python_dynamic_builder": {
+            "entry_point": "rocq.make_kernel",
+            "typed_arguments": True,
+            "argument_expressions": True,
+            "device_kernel_composition": "static_inlining",
+            "adjoint_synthesis": "canonical_gate_inverse",
+            "controlled_synthesis": "supported_canonical_subset",
+            "terminal_measurement": True,
+            "measurement_mlir": True,
+            "specialization_kind": "host_gate_ir",
+            "native_mlir_jit": False,
+            "measurement_control_flow": False,
+        },
     }
 
 
@@ -218,6 +454,14 @@ def runtime_capabilities() -> Dict[str, object]:
             "enable_fusion": (
                 "Optional boolean accepted by state_vector execute/get_state/sample/"
                 "observe and their host-side async wrappers."
+            ),
+            "shots_count": (
+                "CUDA-Q-style keyword alias for sample/sample_async; defaults to 1000 "
+                "when neither the legacy shots argument nor shots_count is supplied."
+            ),
+            "qpu_id": (
+                "Async entry points accept only qpu_id=0 because the local runtime "
+                "does not implement a multi-QPU scheduler."
             ),
         },
         "environment_switches": {
@@ -336,6 +580,33 @@ def _validate_boolean(value, name: str) -> bool:
     return value
 
 
+def _validate_qpu_id(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError("qpu_id must be the non-negative integer 0.")
+    normalized = int(value)
+    if normalized != 0:
+        raise ValueError(
+            "The canonical local runtime exposes one logical QPU; qpu_id must be 0."
+        )
+    return normalized
+
+
+def _normalize_sample_invocation(shots, args, shots_count):
+    if shots_count is None:
+        resolved_shots = (
+            _DEFAULT_SHOTS_COUNT
+            if shots is _MISSING_SHOTS
+            else _validate_positive_integer(shots, "shots")
+        )
+        return resolved_shots, tuple(args)
+
+    resolved_shots = _validate_positive_integer(shots_count, "shots_count")
+    kernel_args = tuple(args)
+    if shots is not _MISSING_SHOTS:
+        kernel_args = (shots, *kernel_args)
+    return resolved_shots, kernel_args
+
+
 def _validate_compiler_backend(backend) -> str:
     if not isinstance(backend, str):
         raise ValueError(
@@ -356,6 +627,24 @@ class QuantumKernel:
         self.num_qubits = 0
         self._last_context: Optional[_KernelBuildContext] = None
 
+    def __call__(self, *args, **kwargs):
+        """Inline this kernel while another kernel is being recorded.
+
+        CUDA-Q kernels are composable: a parameter-vector callable can invoke a
+        separately decorated ansatz kernel.  The eager rocq recorder can support
+        that host-specialized subset by replaying the wrapped Python function into
+        the *current* build context.  Launching a kernel from ordinary host code is
+        intentionally still explicit through execute/sample/observe/get_state.
+        """
+
+        if _KernelBuildContext._active is None:
+            raise RuntimeError(
+                "Direct QuantumKernel calls are only valid while recording another "
+                "@rocq.kernel; use execute(), sample(), observe(), or get_state() "
+                "for host execution."
+            )
+        return self._func(*args, **kwargs)
+
     def build(self, *args, **kwargs) -> _KernelBuildContext:
         with _BUILD_LOCK:
             ctx = _KernelBuildContext()
@@ -370,12 +659,18 @@ class QuantumKernel:
             self.num_qubits = ctx._next_qubit_index
             return ctx
 
-    def _prepare_backend(self, backend: str, *args, enable_fusion: Optional[bool] = None, **kwargs):
+    def _prepare_backend(
+        self,
+        backend: Optional[str],
+        *args,
+        enable_fusion: Optional[bool] = None,
+        **kwargs,
+    ):
         ctx = self.build(*args, **kwargs)
         if ctx._next_qubit_index == 0:
             raise ValueError("Kernel did not allocate any qubits.")
         backend_impl = get_backend(
-            backend,
+            resolve_backend_name(backend),
             ctx._next_qubit_index,
             enable_fusion=enable_fusion,
         )
@@ -521,24 +816,170 @@ class QuantumKernel:
             f'}}'
         )
 
-    def qir(self, *args, **kwargs) -> str:
-        if rocquantum_bind is None:
-            raise RuntimeError(_COMPILER_BINDING_MISSING_MESSAGE)
+    def qir(
+        self,
+        *args,
+        qir_profile: str = "qir-v2-static",
+        **kwargs,
+    ) -> str:
+        if qir_profile not in _COMPILER_SUPPORTED_QIR_PROFILES:
+            raise ValueError(
+                f"Unsupported QIR profile '{qir_profile}'. Supported profiles are: "
+                f"{list(_COMPILER_SUPPORTED_QIR_PROFILES)}."
+            )
         mlir_code = self.mlir(*args, **kwargs)
-        compiler = rocquantum_bind.MLIRCompiler(self.num_qubits, "hip_statevec")
+        if not _binding_qir_emission_available():
+            translator = _find_rocq_translate()
+            if translator is None:
+                raise RuntimeError(_COMPILER_QIR_MISSING_MESSAGE)
+            return _emit_qir_with_cli(
+                mlir_code,
+                self.num_qubits,
+                translator,
+                qir_profile,
+            )
+
+        # QIR emission is compiler-only and must not construct a HIP backend.
+        compiler = rocquantum_bind.MLIRCompiler(self.num_qubits)
         try:
-            qir = compiler.emit_qir(mlir_code)
+            qir = (
+                compiler.emit_qir(mlir_code)
+                if qir_profile == "qir-v2-static"
+                else compiler.emit_qir(mlir_code, qir_profile)
+            )
         except RuntimeError as exc:
             raise RuntimeError(
                 "QIR emission failed through rocquantum_bind.MLIRCompiler. "
                 f"{_COMPILER_SUPPORTED_MLIR_SUBSET} Original error: {exc}"
             ) from exc
-        if isinstance(qir, str) and qir.startswith("Error:"):
+        if not isinstance(qir, str) or not qir.strip():
+            raise RuntimeError(
+                "rocquantum_bind.MLIRCompiler.emit_qir() returned an empty or "
+                "non-text payload."
+            )
+        if qir.lstrip().startswith("Error:"):
             raise RuntimeError(
                 "QIR emission failed in rocquantum_bind.MLIRCompiler.emit_qir(): "
                 f"{qir} {_COMPILER_SUPPORTED_MLIR_SUBSET}"
             )
         return qir
+
+    def emit_artifact(
+        self,
+        *args,
+        kind: str = "llvm-bc",
+        optimization_level: int = 0,
+        qir_profile: str = "qir-v2-static",
+        cache_dir: Optional[Union[str, os.PathLike]] = None,
+        **kwargs,
+    ) -> bytes:
+        """Emit verified LLVM IR, bitcode, or a host relocatable object.
+
+        The returned payload is always ``bytes``. Host objects intentionally
+        retain unresolved QIS/runtime symbols and need a separate QIR runtime
+        linker; they are not directly executable programs.
+        """
+
+        if not isinstance(kind, str) or kind not in _COMPILER_SUPPORTED_ARTIFACT_KINDS:
+            raise ValueError(
+                f"Unsupported compiler artifact kind '{kind}'. Supported kinds are: "
+                f"{list(_COMPILER_SUPPORTED_ARTIFACT_KINDS)}."
+            )
+        if (
+            isinstance(optimization_level, bool)
+            or not isinstance(optimization_level, Integral)
+            or int(optimization_level) < 0
+            or int(optimization_level) > 3
+        ):
+            raise ValueError("optimization_level must be an integer from 0 through 3.")
+        normalized_optimization_level = int(optimization_level)
+        if qir_profile not in _COMPILER_SUPPORTED_QIR_PROFILES:
+            raise ValueError(
+                f"Unsupported QIR profile '{qir_profile}'. Supported profiles are: "
+                f"{list(_COMPILER_SUPPORTED_QIR_PROFILES)}."
+            )
+        if (
+            qir_profile == "qir-v2-base"
+            and kind != "object"
+            and normalized_optimization_level != 0
+        ):
+            raise ValueError(
+                "qir-v2-base LLVM IR and bitcode require optimization_level=0 "
+                "because generic LLVM optimization does not preserve the required "
+                "four-block profile contract."
+            )
+        if cache_dir is not None:
+            try:
+                normalized_cache_dir = os.fspath(cache_dir)
+            except TypeError as exc:
+                raise TypeError("cache_dir must be a filesystem path or None.") from exc
+            if not normalized_cache_dir:
+                raise ValueError("cache_dir must not be an empty path.")
+        else:
+            normalized_cache_dir = None
+
+        mlir_code = self.mlir(*args, **kwargs)
+        if _binding_artifact_emission_available() and normalized_cache_dir is None:
+            compiler = rocquantum_bind.MLIRCompiler(self.num_qubits)
+            try:
+                payload = compiler.emit_artifact(
+                    mlir_code,
+                    kind,
+                    normalized_optimization_level,
+                    qir_profile,
+                )
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    "Compiler artifact emission failed through "
+                    "rocquantum_bind.MLIRCompiler. "
+                    f"{_COMPILER_SUPPORTED_MLIR_SUBSET} Original error: {exc}"
+                ) from exc
+            if not isinstance(payload, (bytes, bytearray, memoryview)):
+                raise RuntimeError(
+                    "rocquantum_bind.MLIRCompiler.emit_artifact() returned a "
+                    "non-binary payload."
+                )
+            result = bytes(payload)
+            if not result:
+                raise RuntimeError(
+                    "rocquantum_bind.MLIRCompiler.emit_artifact() returned an "
+                    "empty payload."
+                )
+            return result
+
+        translator = _find_rocq_translate()
+        if translator is None:
+            raise RuntimeError(_COMPILER_ARTIFACT_MISSING_MESSAGE)
+        return _emit_artifact_with_cli(
+            mlir_code,
+            self.num_qubits,
+            translator,
+            qir_profile,
+            kind,
+            normalized_optimization_level,
+            normalized_cache_dir,
+        )
+
+    def estimate_resources(self, *args, **kwargs):
+        """Estimate resources for one specialization of this kernel."""
+
+        from .tools import estimate_resources
+
+        return estimate_resources(self, *args, **kwargs)
+
+    def draw(self, *args, **kwargs) -> str:
+        """Return a compact text representation of this kernel."""
+
+        from .tools import draw
+
+        return draw(self, *args, **kwargs)
+
+    def translate(self, format: str, *args, **kwargs) -> str:
+        """Translate this kernel to a supported textual format."""
+
+        from .tools import translate
+
+        return translate(self, format, *args, **kwargs)
 
     def compile_and_execute(
         self,
@@ -567,11 +1008,13 @@ class QuantumKernel:
         *args,
         compiler_backend: str = "hip_statevec",
         strict: bool = True,
+        qpu_id: int = 0,
         executor: Optional[Executor] = None,
         **kwargs,
-    ) -> Future:
+    ) -> AsyncResult:
         """Submit compile-and-execute work to a host-side Future."""
 
+        _validate_qpu_id(qpu_id)
         return _submit_async(
             lambda: self.compile_and_execute(
                 *args,
@@ -585,7 +1028,7 @@ class QuantumKernel:
     def execute(
         self,
         *args,
-        backend: str = "state_vector",
+        backend: Optional[str] = None,
         noise_model=None,
         enable_fusion: Optional[bool] = None,
         **kwargs,
@@ -602,7 +1045,7 @@ class QuantumKernel:
     def get_state(
         self,
         *args,
-        backend: str = "state_vector",
+        backend: Optional[str] = None,
         noise_model=None,
         enable_fusion: Optional[bool] = None,
         **kwargs,
@@ -620,14 +1063,16 @@ class QuantumKernel:
     def execute_async(
         self,
         *args,
-        backend: str = "state_vector",
+        backend: Optional[str] = None,
         noise_model=None,
         enable_fusion: Optional[bool] = None,
+        qpu_id: int = 0,
         executor: Optional[Executor] = None,
         **kwargs,
-    ) -> Future:
+    ) -> AsyncResult:
         """Submit execution work to a host-side Future."""
 
+        _validate_qpu_id(qpu_id)
         return _submit_async(
             lambda: self.execute(
                 *args,
@@ -642,14 +1087,16 @@ class QuantumKernel:
     def get_state_async(
         self,
         *args,
-        backend: str = "state_vector",
+        backend: Optional[str] = None,
         noise_model=None,
         enable_fusion: Optional[bool] = None,
+        qpu_id: int = 0,
         executor: Optional[Executor] = None,
         **kwargs,
-    ) -> Future:
+    ) -> AsyncResult:
         """Submit state readback work to a host-side Future."""
 
+        _validate_qpu_id(qpu_id)
         return _submit_async(
             lambda: self.get_state(
                 *args,
@@ -663,44 +1110,53 @@ class QuantumKernel:
 
     def sample(
         self,
-        shots: int,
+        shots=_MISSING_SHOTS,
         *args,
-        backend: str = "state_vector",
+        shots_count=None,
+        backend: Optional[str] = None,
         qubits=None,
         noise_model=None,
         enable_fusion: Optional[bool] = None,
         **kwargs,
     ):
-        shots = _validate_positive_integer(shots, "shots")
-        ctx = self.build(*args, **kwargs)
+        resolved_shots, kernel_args = _normalize_sample_invocation(
+            shots, args, shots_count
+        )
+        ctx = self.build(*kernel_args, **kwargs)
         if ctx._next_qubit_index == 0:
             raise ValueError("Kernel did not allocate any qubits.")
         sample_qubits = _normalize_sample_qubits(qubits, ctx._next_qubit_index)
         backend_impl = get_backend(
-            backend,
+            resolve_backend_name(backend),
             ctx._next_qubit_index,
             enable_fusion=enable_fusion,
         )
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
-        return backend_impl.sample(shots, qubits=sample_qubits)
+        return SampleResult(
+            backend_impl.sample(resolved_shots, qubits=sample_qubits)
+        )
 
     def sample_async(
         self,
-        shots: int,
+        shots=_MISSING_SHOTS,
         *args,
-        backend: str = "state_vector",
+        shots_count=None,
+        backend: Optional[str] = None,
         qubits=None,
         noise_model=None,
         enable_fusion: Optional[bool] = None,
+        qpu_id: int = 0,
         executor: Optional[Executor] = None,
         **kwargs,
-    ) -> Future:
+    ) -> AsyncResult:
         """Submit sampling work to a host-side Future."""
 
+        _validate_qpu_id(qpu_id)
         return _submit_async(
             lambda: self.sample(
                 shots,
                 *args,
+                shots_count=shots_count,
                 backend=backend,
                 qubits=qubits,
                 noise_model=noise_model,
@@ -714,7 +1170,7 @@ class QuantumKernel:
         self,
         operator,
         *args,
-        backend: str = "state_vector",
+        backend: Optional[str] = None,
         noise_model=None,
         enable_fusion: Optional[bool] = None,
         **kwargs,
@@ -728,20 +1184,22 @@ class QuantumKernel:
             **kwargs,
         )
         backend_impl.run_ops(ctx.ops, noise_model=noise_model)
-        return backend_impl.expectation(operator)
+        return ObserveResult(backend_impl.expectation(operator))
 
     def observe_async(
         self,
         operator,
         *args,
-        backend: str = "state_vector",
+        backend: Optional[str] = None,
         noise_model=None,
         enable_fusion: Optional[bool] = None,
+        qpu_id: int = 0,
         executor: Optional[Executor] = None,
         **kwargs,
-    ) -> Future:
+    ) -> AsyncResult:
         """Submit expectation work to a host-side Future."""
 
+        _validate_qpu_id(qpu_id)
         return _submit_async(
             lambda: self.observe(
                 operator,
@@ -762,7 +1220,7 @@ def kernel(func):
 def execute(
     kernel_obj: QuantumKernel,
     *args,
-    backend: str = "state_vector",
+    backend: Optional[str] = None,
     noise_model=None,
     enable_fusion: Optional[bool] = None,
     **kwargs,
@@ -781,7 +1239,7 @@ def execute(
 def get_state(
     kernel_obj: QuantumKernel,
     *args,
-    backend: str = "state_vector",
+    backend: Optional[str] = None,
     noise_model=None,
     enable_fusion: Optional[bool] = None,
     **kwargs,
@@ -819,15 +1277,17 @@ def compile_and_execute_async(
     *args,
     compiler_backend: str = "hip_statevec",
     strict: bool = True,
+    qpu_id: int = 0,
     executor: Optional[Executor] = None,
     **kwargs,
-) -> Future:
+) -> AsyncResult:
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("compile_and_execute_async() expects a QuantumKernel instance.")
     return kernel_obj.compile_and_execute_async(
         *args,
         compiler_backend=compiler_backend,
         strict=strict,
+        qpu_id=qpu_id,
         executor=executor,
         **kwargs,
     )
@@ -835,9 +1295,10 @@ def compile_and_execute_async(
 
 def sample(
     kernel_obj: QuantumKernel,
-    shots: int,
+    shots=_MISSING_SHOTS,
     *args,
-    backend: str = "state_vector",
+    shots_count=None,
+    backend: Optional[str] = None,
     qubits=None,
     noise_model=None,
     enable_fusion: Optional[bool] = None,
@@ -848,6 +1309,7 @@ def sample(
     return kernel_obj.sample(
         shots,
         *args,
+        shots_count=shots_count,
         backend=backend,
         qubits=qubits,
         noise_model=noise_model,
@@ -859,12 +1321,13 @@ def sample(
 def execute_async(
     kernel_obj: QuantumKernel,
     *args,
-    backend: str = "state_vector",
+    backend: Optional[str] = None,
     noise_model=None,
     enable_fusion: Optional[bool] = None,
+    qpu_id: int = 0,
     executor: Optional[Executor] = None,
     **kwargs,
-) -> Future:
+) -> AsyncResult:
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("execute_async() expects a QuantumKernel instance.")
     return kernel_obj.execute_async(
@@ -872,6 +1335,7 @@ def execute_async(
         backend=backend,
         noise_model=noise_model,
         enable_fusion=enable_fusion,
+        qpu_id=qpu_id,
         executor=executor,
         **kwargs,
     )
@@ -880,12 +1344,13 @@ def execute_async(
 def get_state_async(
     kernel_obj: QuantumKernel,
     *args,
-    backend: str = "state_vector",
+    backend: Optional[str] = None,
     noise_model=None,
     enable_fusion: Optional[bool] = None,
+    qpu_id: int = 0,
     executor: Optional[Executor] = None,
     **kwargs,
-) -> Future:
+) -> AsyncResult:
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("get_state_async() expects a QuantumKernel instance.")
     return kernel_obj.get_state_async(
@@ -893,6 +1358,7 @@ def get_state_async(
         backend=backend,
         noise_model=noise_model,
         enable_fusion=enable_fusion,
+        qpu_id=qpu_id,
         executor=executor,
         **kwargs,
     )
@@ -900,24 +1366,28 @@ def get_state_async(
 
 def sample_async(
     kernel_obj: QuantumKernel,
-    shots: int,
+    shots=_MISSING_SHOTS,
     *args,
-    backend: str = "state_vector",
+    shots_count=None,
+    backend: Optional[str] = None,
     qubits=None,
     noise_model=None,
     enable_fusion: Optional[bool] = None,
+    qpu_id: int = 0,
     executor: Optional[Executor] = None,
     **kwargs,
-) -> Future:
+) -> AsyncResult:
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("sample_async() expects a QuantumKernel instance.")
     return kernel_obj.sample_async(
         shots,
         *args,
+        shots_count=shots_count,
         backend=backend,
         qubits=qubits,
         noise_model=noise_model,
         enable_fusion=enable_fusion,
+        qpu_id=qpu_id,
         executor=executor,
         **kwargs,
     )
@@ -927,7 +1397,7 @@ def observe(
     kernel_obj: QuantumKernel,
     operator,
     *args,
-    backend: str = "state_vector",
+    backend: Optional[str] = None,
     noise_model=None,
     enable_fusion: Optional[bool] = None,
     **kwargs,
@@ -948,12 +1418,13 @@ def observe_async(
     kernel_obj: QuantumKernel,
     operator,
     *args,
-    backend: str = "state_vector",
+    backend: Optional[str] = None,
     noise_model=None,
     enable_fusion: Optional[bool] = None,
+    qpu_id: int = 0,
     executor: Optional[Executor] = None,
     **kwargs,
-) -> Future:
+) -> AsyncResult:
     if not isinstance(kernel_obj, QuantumKernel):
         raise TypeError("observe_async() expects a QuantumKernel instance.")
     return kernel_obj.observe_async(
@@ -962,6 +1433,7 @@ def observe_async(
         backend=backend,
         noise_model=noise_model,
         enable_fusion=enable_fusion,
+        qpu_id=qpu_id,
         executor=executor,
         **kwargs,
     )

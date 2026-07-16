@@ -15,11 +15,14 @@ import numpy as np
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LEGACY_ROOT = os.path.join(_PROJECT_ROOT, "python", "rocq")
 _API_PATH = os.path.join(_LEGACY_ROOT, "api.py")
+_BINDINGS_PATH = os.path.join(_LEGACY_ROOT, "bindings.cpp")
 
 
 def _fake_backend(with_fusion=True):
     backend = types.ModuleType("_rocq_hip_backend")
     backend.calls = []
+    backend.COMPILED_COMPLEX_DTYPE = "complex64"
+    backend.COMPILED_COMPLEX_ITEMSIZE = 8
 
     class _Status:
         SUCCESS = 0
@@ -135,6 +138,47 @@ def _make_circuit(module):
     circuit._is_dirty = False
     circuit._fusion_engine = None
     return circuit
+
+
+class TestLegacyCompiledPrecision(unittest.TestCase):
+    def test_c128_binding_dtype_controls_readback_and_matrix_inputs(self):
+        backend = _fake_backend()
+        backend.COMPILED_COMPLEX_DTYPE = "complex128"
+        backend.COMPILED_COMPLEX_ITEMSIZE = 16
+        uploaded = []
+
+        def create_device_matrix(array):
+            uploaded.append(np.array(array, copy=True))
+            return "device-matrix"
+
+        backend.create_device_matrix_from_numpy = create_device_matrix
+        backend.apply_matrix = lambda *args: backend.rocqStatus.SUCCESS
+        backend.apply_controlled_matrix = lambda *args: backend.rocqStatus.SUCCESS
+        module = _load_legacy_api(backend)
+
+        self.assertEqual(module.COMPILED_COMPLEX_DTYPE, np.dtype(np.complex128))
+        self.assertEqual(
+            module._validate_statevector_readback([1, 0], 1).dtype,
+            np.dtype(np.complex128),
+        )
+        self.assertEqual(
+            module._validate_statevector_batch_readback([1, 0, 0, 1], 2, 1).dtype,
+            np.dtype(np.complex128),
+        )
+
+        simulator = _make_simulator(module)
+        simulator.create_device_matrix(np.eye(2, dtype=np.complex64))
+        circuit = _make_circuit(module)
+        circuit.simulator = simulator
+        circuit.apply_unitary([0], np.eye(2, dtype=np.complex64))
+        circuit.apply_controlled_unitary([0], [1], np.eye(2, dtype=np.complex64))
+        self.assertEqual([array.dtype for array in uploaded], [np.dtype(np.complex128)] * 3)
+
+        with open(_BINDINGS_PATH, "r", encoding="utf-8") as f:
+            bindings = f.read()
+        self.assertIn('m.attr("COMPILED_COMPLEX_DTYPE") = py::str("complex128")', bindings)
+        self.assertIn('m.attr("COMPILED_COMPLEX_ITEMSIZE")', bindings)
+        self.assertIn("real and mixed dtypes are rejected", bindings)
 
 
 class TestLegacyCircuitGateFusion(unittest.TestCase):

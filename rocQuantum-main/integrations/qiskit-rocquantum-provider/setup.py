@@ -15,9 +15,9 @@ setup(
     long_description=compatibility_long_description("qiskit-rocquantum-provider"),
     long_description_content_type="text/markdown",
     packages=find_packages(),
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     install_requires=[
-        "qiskit>=0.45",
+        "qiskit>=2.4,<3",
         "numpy",
     ],
     classifiers=[

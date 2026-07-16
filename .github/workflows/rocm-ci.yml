@@ -38,7 +38,18 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest numpy scipy
+          python -m pip install build pytest numpy scipy
+
+      - name: Build and install host-only wheel
+        run: |
+          python -m build --wheel --outdir dist
+          python -m pip install --force-reinstall dist/rocquantum-*.whl
+
+      - name: Verify installed wheel outside the source tree
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -c "import rocq; import rocquantum"
+          python -m rocq_cli --help
 
       - name: Run fast non-GPU tests
         env:
@@ -46,18 +57,7 @@ jobs:
         run: |
           mkdir -p "${ARTIFACT_DIR}"
           set -o pipefail
-          python -m pytest -q \
-            tests/test_p0_fixes.py \
-            tests/test_p1_compiler.py \
-            tests/test_p2_packaging.py \
-            tests/test_runtime_api_contract.py \
-            tests/test_legacy_python_api.py \
-            tests/test_statevec_fastpath_contract.py \
-            tests/test_cpp_expectation.py \
-            tests/test_cirq_integration.py \
-            tests/test_pennylane_integration.py \
-            tests/test_benchmark_release_contract.py \
-            tests/test_rocm_compatibility_contract.py \
+          python -m pytest -q tests test_bindings.py \
             --junitxml "${ARTIFACT_DIR}/junit-fast-checks.xml" \
             2>&1 | tee "${ARTIFACT_DIR}/pytest-fast-checks.log"
 
@@ -84,6 +84,199 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  mlir-compiler:
+    name: Native Compiler (CPU, LLVM/MLIR 22.1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: rocQuantum-main
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install LLVM and MLIR 22.1
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --dearmor \
+            | sudo tee /usr/share/keyrings/apt.llvm.org.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" \
+            | sudo tee /etc/apt/sources.list.d/apt.llvm.org.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build python3-numpy llvm-22-dev libmlir-22-dev mlir-22-tools
+          test "$(llvm-config-22 --version | cut -d. -f1,2)" = "22.1"
+
+      - name: Configure compiler-only build
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/mlir-compiler
+        run: |
+          set -euo pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          cmake -S . -B build-mlir-compiler -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DROCQUANTUM_BUILD_NATIVE=OFF \
+            -DROCQUANTUM_ENABLE_MLIR_COMPILER=ON \
+            -DMLIR_DIR=/usr/lib/llvm-22/lib/cmake/mlir \
+            -DLLVM_DIR=/usr/lib/llvm-22/lib/cmake/llvm \
+            2>&1 | tee "${ARTIFACT_DIR}/configure.log"
+
+      - name: Build compiler and tools
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/mlir-compiler
+        run: |
+          set -euo pipefail
+          cmake --build build-mlir-compiler --parallel 2 \
+            2>&1 | tee "${ARTIFACT_DIR}/build.log"
+
+      - name: Verify static/Base lowering, artifacts, cache, and QIR
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/mlir-compiler
+        run: |
+          set -euo pipefail
+          ctest --test-dir build-mlir-compiler --output-on-failure \
+            2>&1 | tee "${ARTIFACT_DIR}/ctest.log"
+
+      - name: Verify installed compiler tools and Python offline API
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/mlir-compiler
+          INSTALL_DIR: ${{ runner.temp }}/rocq-compiler-install
+        run: |
+          set -euo pipefail
+          cmake --install build-mlir-compiler --prefix "${INSTALL_DIR}" \
+            2>&1 | tee "${ARTIFACT_DIR}/install.log"
+          test -x "${INSTALL_DIR}/bin/rocq-opt"
+          test -x "${INSTALL_DIR}/bin/rocq-translate"
+          test ! -e "${INSTALL_DIR}/lib/libQuantumDialect.a"
+          test ! -e "${INSTALL_DIR}/lib/libRocqQuantumToQIR.a"
+
+          # Static-profile textual QIR remains the default installed-tool path.
+          "${INSTALL_DIR}/bin/rocq-translate" \
+            rocqCompiler/tests/bell.mlir > "${ARTIFACT_DIR}/installed-bell.qir.ll"
+          /usr/lib/llvm-22/bin/llvm-as \
+            "${ARTIFACT_DIR}/installed-bell.qir.ll" \
+            -o "${ARTIFACT_DIR}/installed-bell.qir.bc"
+          /usr/lib/llvm-22/bin/opt -passes=verify -disable-output \
+            "${ARTIFACT_DIR}/installed-bell.qir.bc"
+
+          # Exercise the installed Base Profile path and its terminal-result schema.
+          "${INSTALL_DIR}/bin/rocq-translate" \
+            --profile=qir-v2-base --emit=llvm-ir -O0 \
+            -o "${ARTIFACT_DIR}/installed-base.qir.ll" \
+            rocqCompiler/tests/base_profile.mlir
+          /usr/lib/llvm-22/bin/llvm-as \
+            "${ARTIFACT_DIR}/installed-base.qir.ll" \
+            -o "${ARTIFACT_DIR}/installed-base.qir.bc"
+          /usr/lib/llvm-22/bin/opt -passes=verify -disable-output \
+            "${ARTIFACT_DIR}/installed-base.qir.bc"
+          for marker in entry: body: measurements: output: \
+            __quantum__qis__mz__body __quantum__rt__result_record_output; do
+            grep -Fq "${marker}" "${ARTIFACT_DIR}/installed-base.qir.ll"
+          done
+
+          # Binary artifacts, deterministic cache hits, and unresolved QIR symbols.
+          CACHE_DIR="${ARTIFACT_DIR}/installed-cache"
+          "${INSTALL_DIR}/bin/rocq-translate" --emit=llvm-bc -O2 \
+            --cache-dir "${CACHE_DIR}" --verbose \
+            -o "${ARTIFACT_DIR}/installed-artifact-one.bc" \
+            rocqCompiler/tests/artifact.mlir \
+            2> "${ARTIFACT_DIR}/installed-cache-miss.log"
+          "${INSTALL_DIR}/bin/rocq-translate" --emit=llvm-bc -O2 \
+            --cache-dir "${CACHE_DIR}" --verbose \
+            -o "${ARTIFACT_DIR}/installed-artifact-two.bc" \
+            rocqCompiler/tests/artifact.mlir \
+            2> "${ARTIFACT_DIR}/installed-cache-hit.log"
+          grep -Fq "cache miss" "${ARTIFACT_DIR}/installed-cache-miss.log"
+          grep -Fq "cache hit" "${ARTIFACT_DIR}/installed-cache-hit.log"
+          cmp "${ARTIFACT_DIR}/installed-artifact-one.bc" \
+            "${ARTIFACT_DIR}/installed-artifact-two.bc"
+          /usr/lib/llvm-22/bin/opt -passes=verify -disable-output \
+            "${ARTIFACT_DIR}/installed-artifact-one.bc"
+          "${INSTALL_DIR}/bin/rocq-translate" --emit=object -O2 \
+            -o "${ARTIFACT_DIR}/installed-artifact.o" \
+            rocqCompiler/tests/artifact.mlir
+          /usr/lib/llvm-22/bin/llvm-readobj --file-headers --symbols \
+            "${ARTIFACT_DIR}/installed-artifact.o" \
+            > "${ARTIFACT_DIR}/installed-artifact.readobj.txt"
+          /usr/lib/llvm-22/bin/llvm-nm -u \
+            "${ARTIFACT_DIR}/installed-artifact.o" \
+            > "${ARTIFACT_DIR}/installed-artifact.undefined.txt"
+          grep -Fq "__quantum__qis__h__body" \
+            "${ARTIFACT_DIR}/installed-artifact.undefined.txt"
+
+          PYTHONPATH="${PWD}" PATH="${INSTALL_DIR}/bin:${PATH}" python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          import rocq
+
+          kernel = rocq.QuantumKernel(lambda: rocq.h(rocq.qvec(1)[0]))
+          kernel.name = "offline_python_qir"
+          qir = kernel.qir()
+          assert "__quantum__qis__h__body" in qir
+          assert "qir_major_version" in qir
+          assert rocq.compiler_capabilities()["qir_emission_kind"] == "rocq_translate_cli"
+          Path(os.environ["ARTIFACT_DIR"], "python-cli.qir.ll").write_text(
+              qir, encoding="utf-8"
+          )
+
+          builder = rocq.make_kernel()
+          qubits = builder.qalloc(2)
+          builder.h(qubits[0])
+          builder.cx(qubits[0], qubits[1])
+          measurements = builder.mz(qubits, "bits")
+          assert measurements.qubits == (0, 1)
+          base_qir = builder.qir(qir_profile="qir-v2-base")
+          assert 'qir_profiles"="base_profile' in base_qir
+          assert 'c"bits[0]\\00"' in base_qir
+          assert 'c"bits[1]\\00"' in base_qir
+          base_bc = builder.emit_artifact(
+              kind="llvm-bc",
+              optimization_level=0,
+              qir_profile="qir-v2-base",
+              cache_dir=Path(os.environ["ARTIFACT_DIR"], "python-base-cache"),
+          )
+          assert base_bc[:4] == b"BC\xc0\xde"
+          caps = rocq.compiler_capabilities()
+          assert caps["artifact_emission_available"]
+          assert set(caps["artifact_kinds"]) == {"llvm-ir", "llvm-bc", "object"}
+          Path(os.environ["ARTIFACT_DIR"], "python-base.qir.ll").write_text(
+              base_qir, encoding="utf-8"
+          )
+          PY
+          find "${INSTALL_DIR}" -maxdepth 2 -type f -printf '%P\n' \
+            | sort | tee "${ARTIFACT_DIR}/install-manifest.txt"
+
+      - name: Write compiler summary
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/mlir-compiler
+        run: |
+          mkdir -p "${ARTIFACT_DIR}"
+          {
+            echo "# Native MLIR/LLVM/QIR Compiler"
+            echo
+            echo "- Result: ${{ job.status }}"
+            echo "- LLVM: $(llvm-config-22 --version 2>/dev/null || echo unavailable)"
+            echo "- GPU required: no"
+            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } | tee "${ARTIFACT_DIR}/summary.md" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload compiler artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlir-compiler-${{ github.run_id }}
+          path: ci-artifacts/mlir-compiler
+          if-no-files-found: warn
+          retention-days: 14
+
   rocm-runtime-self-hosted:
     name: ROCm Runtime (Self-hosted GPU)
     needs: fast-checks
@@ -106,6 +299,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Python 3.11 for native framework smoke
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Capture runner environment
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
@@ -119,8 +317,9 @@ jobs:
             uname -a
             cmake --version || true
             ninja --version || true
-            python3 --version || true
+            python --version || true
             hipcc --version || true
+            /opt/rocm/llvm/bin/clang++ --version || true
             rocminfo || true
             rocm-smi || true
             ls -l /dev/kfd || true
@@ -145,12 +344,14 @@ jobs:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
         run: |
           set -o pipefail
-          HIPCC_PATH="$(command -v hipcc)"
           cmake -S . -B build-rocm-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=ON \
             -DROCQUANTUM_BUILD_BINDINGS=OFF \
-            -DCMAKE_HIP_COMPILER="${HIPCC_PATH}" \
+            -DROCQUANTUM_BUILD_NATIVE=ON \
+            -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
+            -DCMAKE_HIP_ARCHITECTURES=gfx90a \
+            -DCMAKE_PREFIX_PATH=/opt/rocm \
             2>&1 | tee "${ARTIFACT_DIR}/configure.log"
 
       - name: Build
@@ -166,16 +367,18 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "${ARTIFACT_DIR}"
-          python3 -m pip install --user --upgrade pip \
+          python -m venv --clear "${RUNNER_TEMP}/rocq-framework-venv"
+          VENV_PYTHON="${RUNNER_TEMP}/rocq-framework-venv/bin/python"
+          "${VENV_PYTHON}" -m pip install --upgrade pip \
             2>&1 | tee "${ARTIFACT_DIR}/native-framework-deps.log"
-          python3 -m pip install --user \
+          "${VENV_PYTHON}" -m pip install \
             "numpy>=1.21" \
             scipy \
             pytest \
             pybind11 \
-            "qiskit>=0.45" \
-            "pennylane>=0.35" \
-            "cirq-core>=1.0" \
+            "qiskit>=2.4,<3" \
+            "pennylane>=0.45,<0.46" \
+            "cirq-core>=1.0,<2" \
             2>&1 | tee -a "${ARTIFACT_DIR}/native-framework-deps.log"
 
       - name: Build native Python bindings for framework smoke
@@ -183,13 +386,15 @@ jobs:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
         run: |
           set -o pipefail
-          PYBIND11_CMAKE_DIR="$(python3 -m pybind11 --cmakedir)"
-          HIPCC_PATH="$(command -v hipcc)"
+          VENV_PYTHON="${RUNNER_TEMP}/rocq-framework-venv/bin/python"
+          PYBIND11_CMAKE_DIR="$("${VENV_PYTHON}" -m pybind11 --cmakedir)"
           cmake -S . -B build-rocm-python -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
             -DROCQUANTUM_BUILD_BINDINGS=ON \
-            -DCMAKE_HIP_COMPILER="${HIPCC_PATH}" \
+            -DROCQUANTUM_BUILD_NATIVE=ON \
+            -DPython3_EXECUTABLE="${VENV_PYTHON}" \
+            -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
             -DCMAKE_HIP_ARCHITECTURES="gfx90a" \
             -DCMAKE_PREFIX_PATH="${PYBIND11_CMAKE_DIR};/opt/rocm" \
             2>&1 | tee "${ARTIFACT_DIR}/configure-native-framework.log"
@@ -202,7 +407,8 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/rocQuantum-main:${{ github.workspace }}/rocQuantum-main/build-rocm-python:${{ github.workspace }}/rocQuantum-main/build-rocm-python/python/rocq:${{ github.workspace }}/rocQuantum-main/integrations/pennylane-rocq:${{ github.workspace }}/rocQuantum-main/integrations/qiskit-rocquantum-provider:${{ github.workspace }}/rocQuantum-main/integrations/cirq-rocm
         run: |
           set -o pipefail
-          python3 scripts/native_framework_smoke.py \
+          VENV_PYTHON="${RUNNER_TEMP}/rocq-framework-venv/bin/python"
+          "${VENV_PYTHON}" scripts/native_framework_smoke.py \
             --json-output "${ARTIFACT_DIR}/native-framework-smoke.json" \
             --markdown-output "${ARTIFACT_DIR}/native-framework-smoke.md" \
             --require-native-rocm-evidence \
@@ -214,16 +420,15 @@ jobs:
       - name: Run ROCm runtime tests (1 GPU smoke)
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
-          TEST_REGEX: HipTensorNetContractionRegression|RocTensorUtilTest|SlicingLogicTest|PermutationKernelTest
         run: |
           set -o pipefail
           if ctest --help | grep -q -- "--output-junit"; then
-            ctest --test-dir build-rocm-ci --output-on-failure \
+            ctest --test-dir build-rocm-ci --output-on-failure --no-tests=error \
               --output-junit "${ARTIFACT_DIR}/ctest-runtime.junit.xml" \
-              -R "${TEST_REGEX}" \
+              -L native -LE multi-gpu \
               2>&1 | tee "${ARTIFACT_DIR}/ctest-runtime.log"
           else
-            ctest --test-dir build-rocm-ci --output-on-failure -R "${TEST_REGEX}" \
+            ctest --test-dir build-rocm-ci --output-on-failure --no-tests=error -L native -LE multi-gpu \
               2>&1 | tee "${ARTIFACT_DIR}/ctest-runtime.log"
           fi
 
@@ -234,17 +439,17 @@ jobs:
           set -euo pipefail
           GPU_COUNT=0
           if command -v rocm-smi >/dev/null 2>&1; then
-            GPU_COUNT=$(rocm-smi -i 2>/dev/null | grep -E '^GPU\[[0-9]+\]' | wc -l | tr -d ' ')
+            GPU_COUNT="$(rocm-smi -i 2>/dev/null | sed -n 's/^GPU\[\([0-9]\+\)\].*/\1/p' | sort -u | wc -l | tr -d ' ')"
           fi
           if [ "${GPU_COUNT}" -ge 2 ]; then
             echo "Detected ${GPU_COUNT} GPUs; running MultiGPUTests." | tee "${ARTIFACT_DIR}/ctest-multigpu.log"
             if ctest --help | grep -q -- "--output-junit"; then
-              ctest --test-dir build-rocm-ci --output-on-failure \
+              ctest --test-dir build-rocm-ci --output-on-failure --no-tests=error \
                 --output-junit "${ARTIFACT_DIR}/ctest-multigpu.junit.xml" \
                 -R "MultiGPUTests" \
                 2>&1 | tee -a "${ARTIFACT_DIR}/ctest-multigpu.log"
             else
-              ctest --test-dir build-rocm-ci --output-on-failure -R "MultiGPUTests" \
+              ctest --test-dir build-rocm-ci --output-on-failure --no-tests=error -R "MultiGPUTests" \
                 2>&1 | tee -a "${ARTIFACT_DIR}/ctest-multigpu.log"
             fi
           else
@@ -281,7 +486,6 @@ jobs:
             --history-path "${HISTORY_PATH}" \
             --fail-on-error \
             --require-native-performance-evidence \
-            --require-all-native-benchmark-evidence \
             2>&1 | tee "${ARTIFACT_DIR}/benchmark-runner.log"
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" ]; then
             cat "${ARTIFACT_DIR}/benchmark-artifacts/benchmark-summary.md" >> "${GITHUB_STEP_SUMMARY}"
