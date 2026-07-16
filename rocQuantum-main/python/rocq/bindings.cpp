@@ -2,6 +2,7 @@
 #include <pybind11/complex.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
+#include "rocquantum/GateFusion.h"
 #include "rocquantum/hipStateVec.h"
 #include "rocquantum/hipTensorNet.h" // Include new header
 #include "rocquantum/hipTensorNet_api.h"

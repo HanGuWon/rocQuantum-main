@@ -160,6 +160,7 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn("DeviceBuffer allocation size overflows size_t", bindings)
 
         self.assertIn("class GateFusionBinding", bindings)
+        self.assertIn('#include "rocquantum/GateFusion.h"', bindings)
         gate_fusion_body = bindings.split("class GateFusionBinding", 1)[1].split("};", 1)[0]
         self.assertIn('"GateFusion.process_queue"', gate_fusion_body)
         self.assertLess(
@@ -187,6 +188,11 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn("#include <pybind11/pybind11.h>", densitymat_bindings)
         self.assertNotIn("#include <pybind11/pybind11>\n", densitymat_bindings)
         self.assertIn("#include <hip/hip_complex.h>", state_header)
+        self.assertIn("typedef double rocqReal_t;", state_header)
+        self.assertIn("typedef float rocqReal_t;", state_header)
+        self.assertIn("#define ROCQ_REAL_EPSILON", state_header)
+        self.assertNotRegex(state_header, r"typedef\s+(?:double|float)\s+real_t\b")
+        self.assertNotRegex(state_header, r"\bconst\s+real_t\s+REAL_EPSILON\b")
 
         observable_methods = [
             "expectation_value",

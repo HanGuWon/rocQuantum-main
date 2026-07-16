@@ -58,6 +58,7 @@ class TestDensityMatContract(unittest.TestCase):
             compat = f.read()
 
         self.assertIn("hipDensityMatChannel_t", header)
+        self.assertIn("#include <hip/hip_complex.h>", header)
         self.assertIn("HIPDENSITYMAT_MAX_QUBITS", header)
         self.assertIn("HIPDENSITYMAT_MAX_DENSE_OBSERVABLE_TARGETS", header)
         self.assertIn("HIPDENSITYMAT_MAX_KRAUS_TARGETS", header)

@@ -1,10 +1,18 @@
+#include <rocquantum/hipDensityMat.hpp>
+
 #include <rocquantum/QuantumSimulator.h>
 #include <rocquantum/hipDensityMat.h>
 #include <rocquantum/hipStateVec.h>
 #include <rocquantum/hipTensorNet.h>
 #include <rocquantum/hipTensorNet_api.h>
 
+#ifdef ROCQ_EXPECT_METIS
+#include <metis.h>
+#endif
+
 int main() {
+    static_assert(sizeof(hipComplex) == 2 * sizeof(float),
+                  "DensityMat consumer ABI must use complex64");
     static_assert(ROCSV_DISTRIBUTED_BACKEND_RCCL == 2, "distributed backend enum is visible");
 
     using CoreSymbol = unsigned (rocquantum::QuantumSimulator::*)() const noexcept;

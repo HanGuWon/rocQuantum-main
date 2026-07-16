@@ -11,14 +11,16 @@
 typedef hipFloatComplex rocFloatComplex;
 typedef hipDoubleComplex rocDoubleComplex;
 
+// Keep the scalar alias and tolerance prefixed. METIS and other HPC headers
+// expose their own ABI-specific `real_t` in the global namespace.
 #ifdef ROCQ_PRECISION_DOUBLE
-    typedef rocDoubleComplex rocComplex;
-    typedef double real_t;
-    const real_t REAL_EPSILON = 1e-12;
+typedef rocDoubleComplex rocComplex;
+typedef double rocqReal_t;
+#define ROCQ_REAL_EPSILON 1e-12
 #else
-    typedef rocFloatComplex rocComplex;
-    typedef float real_t;
-    const real_t REAL_EPSILON = 1e-6f;
+typedef rocFloatComplex rocComplex;
+typedef float rocqReal_t;
+#define ROCQ_REAL_EPSILON 1e-6f
 #endif
 
 // Opaque handle for hipStateVec resources

@@ -181,7 +181,7 @@ __global__ void collapse_and_renorm_measure_kernel(rocComplex* state,
 
 __global__ void renormalize_state_kernel(rocComplex* state,
                                          unsigned numQubits,
-                                         real_t d_sum_sq_mag_inv_sqrt);
+                                         rocqReal_t d_sum_sq_mag_inv_sqrt);
 
 } // namespace
 
@@ -499,7 +499,7 @@ inline double clamp_probability(double p) {
 }
 
 inline bool is_effectively_zero(double x) {
-    return std::abs(x) <= static_cast<double>(REAL_EPSILON);
+    return std::abs(x) <= static_cast<double>(ROCQ_REAL_EPSILON);
 }
 
 inline bool is_power_of_two_int(int value) {
@@ -3570,14 +3570,14 @@ __global__ void collapse_and_renorm_measure_kernel(rocComplex* state,
             state[idx] = make_complex(0.0, 0.0);
             continue;
         }
-        state[idx].x = static_cast<real_t>(static_cast<double>(state[idx].x) * invNorm);
-        state[idx].y = static_cast<real_t>(static_cast<double>(state[idx].y) * invNorm);
+        state[idx].x = static_cast<rocqReal_t>(static_cast<double>(state[idx].x) * invNorm);
+        state[idx].y = static_cast<rocqReal_t>(static_cast<double>(state[idx].y) * invNorm);
     }
 }
 
 __global__ void renormalize_state_kernel(rocComplex* state,
                                          unsigned numQubits,
-                                         real_t invNorm) {
+                                         rocqReal_t invNorm) {
     const size_t num_elements = size_t{1} << numQubits;
     const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
@@ -7739,7 +7739,7 @@ rocqStatus_t rocsvMeasure(rocsvHandle_t handle,
                                        handle->distributedStreams[static_cast<size_t>(rank)],
                                        handle->distributedSlices[static_cast<size_t>(rank)],
                                        handle->numLocalQubitsPerGpu,
-                                       static_cast<real_t>(inv_norm));
+                                       static_cast<rocqReal_t>(inv_norm));
                     status = check_last_hip_error();
                     if (status != ROCQ_STATUS_SUCCESS) {
                         return status;
