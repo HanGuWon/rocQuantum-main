@@ -441,6 +441,14 @@ class TestCMakeInstallConsumerSmoke(unittest.TestCase):
         self.assertIn('test "${EXAMPLE_COUNT}" -eq 19', workflow)
         self.assertIn("Verify minimum Qiskit adapter import", workflow)
         self.assertIn("Verify minimum combined adapter contracts", workflow)
+        rocm_build_job = workflow.split("\n  build:\n", 1)[1]
+        self.assertIn("Install checkout dependency", rocm_build_job)
+        self.assertIn("working-directory: /tmp", rocm_build_job)
+        self.assertIn("apt-get install -y --no-install-recommends git", rocm_build_job)
+        self.assertLess(
+            rocm_build_job.index("Install checkout dependency"),
+            rocm_build_job.index("- name: Checkout"),
+        )
         self.assertIn('"pennylane==0.45.0"', workflow)
         self.assertIn('"qiskit==2.4.0"', workflow)
         self.assertIn('"cirq-core==1.5.0"', workflow)

@@ -154,6 +154,12 @@ jobs:
         shell: bash
         working-directory: rocQuantum-main
     steps:
+      - name: Install checkout dependency
+        working-directory: /tmp
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git
+
       - name: Checkout
         uses: actions/checkout@v4
 
