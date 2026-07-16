@@ -745,13 +745,14 @@ bool test_TensorNetwork_contract_simple_chain_internal(bool use_external_workspa
         ext_ws = new rocquantum::util::WorkspaceManager(1024 * 1024 * 8, test_stream); // 8MB workspace
     }
 
-    rocquantum::TensorNetwork tn(ext_ws, test_stream); // Pass stream if constructor takes it
+    rocquantum::TensorNetwork<rocComplex> tn(ext_ws, test_stream);
     tn.add_tensor(tensorA); // tensorA is copied by value (metadata), data is view
     tn.add_tensor(tensorB);
     tn.add_tensor(tensorC);
 
     rocquantum::util::rocTensor result_tensor_gpu;
-    rocqStatus_t status = tn.contract(&result_tensor_gpu, blas_handle, test_stream);
+    hipTensorNetContractionOptimizerConfig_t config = {};
+    rocqStatus_t status = tn.contract(&config, &result_tensor_gpu, blas_handle, test_stream);
     ASSERT_EQ(status, ROCQ_STATUS_SUCCESS, "tn_chain.contract_status");
     HIP_ASSERT(hipStreamSynchronize(test_stream));
 

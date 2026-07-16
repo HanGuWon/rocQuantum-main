@@ -6,6 +6,7 @@
 #include <numeric>      // For std::accumulate
 #include <limits>
 #include <stdexcept>    // For std::runtime_error, std::invalid_argument
+#include <utility>
 #include <hip/hip_runtime.h> // For rocComplex definition if not already included via hipStateVec.h
                            // Assuming rocComplex is hipFloatComplex or hipDoubleComplex
 #include <rocblas/rocblas.h>
@@ -303,6 +304,21 @@ rocqStatus_t rocTensorPermute(
     const rocTensor* input_tensor,
     const std::vector<int>& host_permutation_map,
     hipStream_t stream = 0);
+
+/**
+ * @brief Parses the two-input einsum subset accepted by rocTensorContractWithRocBLAS.
+ *
+ * @return true when the specification and tensor dimensions are compatible.
+ */
+bool parse_simple_einsum_spec(
+    const std::string& spec,
+    const rocTensor* tensorA,
+    const rocTensor* tensorB,
+    std::vector<std::pair<int, int>>& contracted_pairs_A_B,
+    std::vector<int>& result_A_modes_order,
+    std::vector<int>& result_B_modes_order,
+    std::vector<long long>& result_dims,
+    std::vector<std::string>& result_labels);
 
 
 /**

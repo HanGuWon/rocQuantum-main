@@ -251,12 +251,23 @@ class TestTensorNetContract(unittest.TestCase):
             source = f.read()
 
         self.assertIn("parse_simple_einsum_spec", source)
+        self.assertIn("bool parse_simple_einsum_spec(", header)
         self.assertIn("rocTensorContractPair_internal", source)
         self.assertIn("simplified einsum parser plus rocBLAS GEMM", header)
         self.assertIn("rocTensorContractPair_internal", header)
         self.assertNotIn("current implementation is a STUB", header)
         self.assertNotIn("Currently a placeholder", header)
         self.assertNotIn("ROCQ_STATUS_NOT_IMPLEMENTED for actual contraction logic", header)
+
+        with open(_TENSOR_UTIL_TEST, "r", encoding="utf-8") as f:
+            native_test = f.read()
+        self.assertIn("TensorNetwork<rocComplex> tn(ext_ws, test_stream);", native_test)
+        self.assertNotIn("TensorNetwork tn(ext_ws, test_stream)", native_test)
+        self.assertIn("hipTensorNetContractionOptimizerConfig_t config = {};", native_test)
+        self.assertIn(
+            "tn.contract(&config, &result_tensor_gpu, blas_handle, test_stream)",
+            native_test,
+        )
 
     def test_tensornet_build_includes_workspace_implementation(self):
         with open(_TENSORNET_CMAKE, "r", encoding="utf-8") as f:
