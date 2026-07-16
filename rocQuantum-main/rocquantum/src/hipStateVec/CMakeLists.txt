@@ -33,7 +33,7 @@ target_link_libraries(hipStateVec
     PUBLIC
         hip::host
         roc::rocblas
-        hiprand::hiprand
+        hip::hiprand
 )
 
 if(ROCQUANTUM_ENABLE_SYNC_DEBUG)

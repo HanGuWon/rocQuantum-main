@@ -191,7 +191,8 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn("hip::host", combined)
         self.assertIn("roc::rocblas", combined)
         self.assertIn("roc::rocsolver", combined)
-        self.assertIn("hiprand::hiprand", combined)
+        self.assertIn("hip::hiprand", combined)
+        self.assertNotIn("hiprand::hiprand", combined)
         self.assertIn("TARGET rccl", combined)
         self.assertIn("target_link_libraries(hipStateVec PUBLIC rccl)", combined)
 
