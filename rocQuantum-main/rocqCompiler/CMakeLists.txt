@@ -125,7 +125,9 @@ find_package(Threads REQUIRED)
 add_library(rocqCompiler STATIC
   CompilerArtifacts.cpp
   MLIRCompiler.cpp
+  QIRExecutionEngine.cpp
   QIRProfile.cpp
+  ReferenceStateVecBackend.cpp
 )
 add_library(rocquantum::compiler ALIAS rocqCompiler)
 add_dependencies(rocqCompiler RocqQuantumIncGen RocqCompilerPassIncGen)
@@ -139,6 +141,7 @@ target_link_libraries(rocqCompiler
   RocqQuantumToQIR
   PRIVATE
   MLIRIR
+  MLIRExecutionEngine
   MLIRLLVMToLLVMIRTranslation
   MLIRParser
   MLIRPass
@@ -152,8 +155,15 @@ else()
   llvm_map_components_to_libnames(ROCQ_COMPILER_LLVM_LIBS
     bitwriter
     core
+    executionengine
+    jitlink
     nativecodegen
+    object
+    orcjit
+    orcshared
+    orctargetprocess
     passes
+    runtimedyld
     support
     target
     targetparser
@@ -243,8 +253,19 @@ target_compile_definitions(rocq-translate PRIVATE
 )
 target_link_libraries(rocq-translate PRIVATE rocqCompilerTooling)
 
+add_executable(rocq-run tools/rocq-run.cpp)
+target_include_directories(rocq-run PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/..
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_BINARY_DIR}
+)
+target_compile_definitions(rocq-run PRIVATE
+  ROCQ_VERSION="${ROCQ_TRANSLATE_VERSION}"
+)
+target_link_libraries(rocq-run PRIVATE rocqCompiler)
+
 include(GNUInstallDirs)
-install(TARGETS rocq-opt rocq-translate
+install(TARGETS rocq-opt rocq-translate rocq-run
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
@@ -258,6 +279,26 @@ if(BUILD_TESTING)
   )
   target_link_libraries(rocq-compiler-smoke PRIVATE rocqCompiler)
   add_test(NAME rocq.compiler.smoke COMMAND rocq-compiler-smoke)
+
+  add_executable(rocq-reference-statevec-smoke
+    tests/ReferenceStateVecBackendSmoke.cpp)
+  target_include_directories(rocq-reference-statevec-smoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  target_link_libraries(rocq-reference-statevec-smoke PRIVATE rocqCompiler)
+  add_test(NAME rocq.compiler.reference-statevec-smoke
+    COMMAND rocq-reference-statevec-smoke)
+
+  add_test(
+    NAME rocq.compiler.run-cli
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNNER=$<TARGET_FILE:rocq-run>
+      -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/bell_state.mlir
+      -DBASE_INPUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/base_profile.mlir
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/CheckRocqRun.cmake
+  )
 
   add_executable(rocq-compiler-artifacts-smoke
     tests/CompilerArtifactsSmoke.cpp)

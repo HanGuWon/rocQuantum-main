@@ -65,10 +65,13 @@ class TestLoweringCoverage(unittest.TestCase):
         self.assertIn('"t__adj"', src)
         self.assertIn('"r1__body"', src)
 
-    def test_nonstandard_mcx_fails_closed(self):
+    def test_mcx_lowers_when_fixed_and_fails_closed_when_wide(self):
         src = self._read_direct_pass()
-        self.assertIn("UnsupportedMcx", src)
-        self.assertIn("requires control-array lowering", src)
+        self.assertIn("DecomposeMcx", src)
+        self.assertIn("operands.size() == 2", src)
+        self.assertIn("operands.size() == 3", src)
+        self.assertIn("more than two controls requires QIR", src)
+        self.assertIn("control-array lowering and runtime support", src)
 
 
 class TestCompileAndExecuteContract(unittest.TestCase):
@@ -77,40 +80,34 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
 
-    def test_compile_and_execute_dispatches_supported_subset(self):
-        path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "MLIRCompiler.cpp")
-        with open(path, "r", encoding="utf-8") as f:
-            src = f.read()
+    def test_compile_and_execute_uses_qir_orc_jit(self):
+        compiler = self._read("rocqCompiler", "MLIRCompiler.cpp")
+        execution_engine = self._read(
+            "rocqCompiler", "QIRExecutionEngine.cpp"
+        )
+        cmake = self._read("rocqCompiler", "CMakeLists.txt")
 
-        self.assertNotIn("return {};", src)
-        self.assertNotIn("not yet implemented", src)
-        self.assertIn("extractExecutableOps", src)
-        self.assertIn("backend->initialize(num_qubits)", src)
-        self.assertIn("backend->apply_gate", src)
-        self.assertIn("backend->apply_parametrized_gate", src)
-        self.assertIn("backend->get_state_vector", src)
-        self.assertIn("unsupported quantum op", src)
-        self.assertIn("quantum.rx", src)
-        self.assertIn("quantum.ry", src)
-        self.assertIn("quantum.rz", src)
-        self.assertIn("quantum.p", src)
-        self.assertIn("quantum.crx", src)
-        self.assertIn("quantum.cry", src)
-        self.assertIn("quantum.crz", src)
-        self.assertIn("quantum.cp", src)
-        self.assertIn("quantum.cz", src)
-        self.assertIn("quantum.swap", src)
-        self.assertIn("quantum.cnot", src)
-        self.assertIn("quantum.ccx", src)
-        self.assertIn("quantum.mcx", src)
-        self.assertIn("quantum.cswap", src)
-        self.assertIn("quantum.tdg", src)
-        self.assertIn("std::isfinite", src)
-        self.assertIn("angle must be finite", src)
-        self.assertIn("std::numeric_limits<unsigned>::max()", src)
-        self.assertIn("qalloc size exceeds the supported compiler range", src)
-        self.assertIn("validateDistinctTargets", src)
-        self.assertIn("qubit operands must be distinct", src)
+        self.assertNotIn("extractExecutableOps", compiler)
+        self.assertNotIn("backend->apply_gate", compiler)
+        self.assertNotIn("backend->apply_parametrized_gate", compiler)
+        self.assertIn("analyzeQuantumModuleForQIR", compiler)
+        self.assertIn("buildQIRPipeline", compiler)
+        self.assertIn("QIRExecutionEngine::executeStatic", compiler)
+
+        self.assertIn("ExecutionEngine::create", execution_engine)
+        self.assertIn("translateModuleToLLVMIR", execution_engine)
+        self.assertIn("finalizeAndVerifyQIRModule", execution_engine)
+        self.assertIn("registerSymbols", execution_engine)
+        self.assertIn("__quantum__qis__h__body", execution_engine)
+        self.assertIn("__quantum__qis__cnot__body", execution_engine)
+        self.assertIn("__quantum__qis__rx__body", execution_engine)
+        self.assertIn("thread_local ActiveExecution", execution_engine)
+        self.assertIn("backend_.initialize", execution_engine)
+        self.assertIn("backend.get_state_vector", execution_engine)
+
+        self.assertIn("QIRExecutionEngine.cpp", cmake)
+        self.assertIn("MLIRExecutionEngine", cmake)
+        self.assertIn("orcjit", cmake)
 
     def test_binding_documents_compile_and_execute_mvp(self):
         path = os.path.join(_PROJECT_ROOT, "bindings.cpp")
@@ -121,16 +118,22 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("MLIR_COMPILER_ENABLED", src)
         self.assertIn("MLIR_COMPILER_QIR_EMISSION_ENABLED", src)
         self.assertIn("MLIR_COMPILER_ARTIFACT_EMISSION_ENABLED", src)
+        self.assertIn("MLIR_COMPILER_QIR_JIT_ENABLED", src)
+        self.assertIn("MLIR_COMPILER_CPU_EXECUTION_ENABLED", src)
         self.assertIn("MLIR_COMPILER_GPU_EXECUTION_ENABLED", src)
         self.assertIn("MLIR_COMPILER_QIR_PROFILE", src)
         self.assertIn("MLIR_COMPILER_RUNTIME_KIND", src)
-        self.assertIn("qir_v2_static_base_and_hip_execution", src)
+        self.assertIn(
+            "qir_v2_static_jit_cpu_and_hip_execution_base_emission", src
+        )
         self.assertIn("MLIR_COMPILER_ARTIFACT_KINDS", src)
         self.assertIn('def("emit_artifact"', src)
         self.assertIn("disabled_runtime_guard", src)
         self.assertIn("DisabledRuntimeMLIRCompiler", src)
         self.assertIn("MLIR compiler support is disabled", src)
-        self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP", src)
+        self.assertIn("supported measurement-free MLIR subset", src)
+        self.assertIn("in-process JIT", src)
+        self.assertIn("cpu_statevec or hip_statevec backend", src)
         self.assertIn("Unsupported ops raise actionable diagnostics", src)
         self.assertNotIn("Stub API", src)
 
@@ -158,10 +161,12 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("add_library(rocqCompiler STATIC", src)
         self.assertIn("add_executable(rocq-opt", src)
         self.assertIn("add_executable(rocq-translate", src)
+        self.assertIn("add_executable(rocq-run", src)
         self.assertIn("CompilerArtifacts.cpp", src)
         self.assertIn("rocqCompilerTooling", src)
         self.assertIn("ROCQ_COMPILER_FINGERPRINT", src)
         self.assertIn("rocq.compiler.artifact-cli", src)
+        self.assertIn("rocq.compiler.run-cli", src)
 
     def test_cpu_ci_builds_release_pinned_compiler(self):
         workflow_path = os.path.join(

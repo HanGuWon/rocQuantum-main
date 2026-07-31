@@ -20,25 +20,85 @@ class Target:
     ``backend`` is the canonical backend name understood by
     :func:`rocq.backends.get_backend`.  ``num_qpus()`` deliberately returns
     one for the current local runtime; it is capability metadata, not a
-    hardware discovery result.
+    hardware discovery result.  The remaining metadata mirrors the commonly
+    inspected CUDA-Q target surface while retaining rocQuantum's existing
+    ``name`` and ``backend`` attributes.
     """
 
     name: str
     backend: str
     _num_qpus: int = 1
+    description: str = ""
+    precision: str = "fp32"
+    simulator: str = ""
+    remote: bool = False
+    emulated: bool = False
+    platform: str = "default"
 
     def num_qpus(self) -> int:
         """Return the number of logical QPUs exposed by this target."""
 
         return self._num_qpus
 
+    def is_remote(self) -> bool:
+        """Return whether execution is delegated to a remote service."""
+
+        return self.remote
+
+    def is_emulated(self) -> bool:
+        """Return whether a physical target is running in emulation mode."""
+
+        return self.emulated
+
+    def get_precision(self) -> str:
+        """Return the simulator precision as ``"fp32"`` or ``"fp64"``."""
+
+        return self.precision
+
 
 _TARGETS: Dict[str, Target] = {
-    "state_vector": Target("state_vector", "state_vector"),
-    "density_matrix": Target("density_matrix", "density_matrix"),
-    "stabilizer": Target("stabilizer", "stabilizer"),
-    "tableau": Target("tableau", "tableau"),
-    "clifford": Target("clifford", "clifford"),
+    "state_vector": Target(
+        "state_vector",
+        "state_vector",
+        description="Native ROCm state-vector simulator backed by hipStateVec.",
+        precision="fp32",
+        simulator="hipstatevec",
+    ),
+    "qpp-cpu": Target(
+        "qpp-cpu",
+        "qpp-cpu",
+        description="NumPy CPU reference state-vector simulator.",
+        precision="fp64",
+        simulator="numpy",
+    ),
+    "density_matrix": Target(
+        "density_matrix",
+        "density_matrix",
+        description="Native ROCm density-matrix simulator.",
+        precision="fp32",
+        simulator="rocq-hip-density-matrix",
+    ),
+    "stabilizer": Target(
+        "stabilizer",
+        "stabilizer",
+        description="Local Clifford stabilizer simulator.",
+        precision="fp64",
+        simulator="rocq-stabilizer",
+    ),
+    "tableau": Target(
+        "tableau",
+        "tableau",
+        description="Alias for the local Clifford stabilizer simulator.",
+        precision="fp64",
+        simulator="rocq-stabilizer",
+    ),
+    "clifford": Target(
+        "clifford",
+        "clifford",
+        description="Alias for the local Clifford stabilizer simulator.",
+        precision="fp64",
+        simulator="rocq-stabilizer",
+    ),
 }
 _DEFAULT_TARGET = _TARGETS["state_vector"]
 _ACTIVE_TARGET: ContextVar[Target] = ContextVar(

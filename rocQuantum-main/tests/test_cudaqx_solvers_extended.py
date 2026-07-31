@@ -246,8 +246,12 @@ def test_qaoa_parameter_counts_and_operator_pool_match_cudaqx_contract():
         "X0Z1",
         "Z0X1",
     }
-    with pytest.raises(ValueError, match="only the 'qaoa'"):
-        get_operator_pool("uccsd", num_qubits=2)
+    uccsd_pool = get_operator_pool(
+        "uccsd", num_qubits=4, num_electrons=2
+    )
+    assert len(uccsd_pool) == 3
+    with pytest.raises(ValueError, match="unknown operator pool"):
+        get_operator_pool("not-a-pool", num_qubits=2)
     with pytest.raises(ValueError, match="non-negative integer"):
         get_operator_pool("qaoa", num_qubits=True)
 
@@ -410,7 +414,9 @@ def test_jordan_wigner_matches_independent_tiny_dense_fermion_oracle():
     np.testing.assert_allclose(actual, expected, atol=1.0e-12)
 
 
-def test_molecular_hamiltonian_preserves_integrals_and_pyscf_fails_closed():
+def test_molecular_hamiltonian_preserves_integrals_and_pyscf_fails_closed(
+    monkeypatch,
+):
     molecular = MolecularHamiltonian.from_integrals(
         np.asarray([[1.0]]),
         core_energy=0.2,
@@ -443,5 +449,18 @@ def test_molecular_hamiltonian_preserves_integrals_and_pyscf_fails_closed():
         jordan_wigner([1.0, 2.0])
     with pytest.raises(ValueError, match="finite"):
         jordan_wigner(np.asarray([[np.nan]]))
-    with pytest.raises(NotImplementedError, match="geometry/PySCF"):
-        create_molecule([("H", (0.0, 0.0, 0.0))])
+    import rocquantum.solvers.chemistry as chemistry_module
+
+    def missing_pyscf(module_name):
+        raise ModuleNotFoundError(
+            f"No module named '{module_name}'", name="pyscf"
+        )
+
+    monkeypatch.setattr(chemistry_module, "import_module", missing_pyscf)
+    with pytest.raises(ImportError, match=r"rocquantum\[chemistry\]"):
+        create_molecule(
+            [("H", (0.0, 0.0, 0.0))],
+            "sto-3g",
+            0,
+            0,
+        )

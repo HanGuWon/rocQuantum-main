@@ -15,6 +15,7 @@
 #ifdef ROCQUANTUM_ENABLE_MLIR_COMPILER
 #include "rocqCompiler/MLIRCompiler.h"
 #include "rocqCompiler/QuantumBackend.h"
+#include "rocqCompiler/ReferenceStateVecBackend.h"
 #endif
 #include "rocquantum/QuantumSimulator.h"
 
@@ -988,6 +989,8 @@ PYBIND11_MODULE(rocquantum_bind, m) {
     m.attr("MLIR_COMPILER_ENABLED") = py::bool_(true);
     m.attr("MLIR_COMPILER_QIR_EMISSION_ENABLED") = py::bool_(true);
     m.attr("MLIR_COMPILER_ARTIFACT_EMISSION_ENABLED") = py::bool_(true);
+    m.attr("MLIR_COMPILER_QIR_JIT_ENABLED") = py::bool_(true);
+    m.attr("MLIR_COMPILER_CPU_EXECUTION_ENABLED") = py::bool_(true);
     m.attr("MLIR_COMPILER_GPU_EXECUTION_ENABLED") = py::bool_(true);
     m.attr("MLIR_COMPILER_QIR_PROFILE") = "qir-v2-static";
     m.attr("MLIR_COMPILER_QIR_PROFILES") =
@@ -995,14 +998,16 @@ PYBIND11_MODULE(rocquantum_bind, m) {
     m.attr("MLIR_COMPILER_ARTIFACT_KINDS") =
         py::make_tuple("llvm-ir", "llvm-bc", "object");
     m.attr("MLIR_COMPILER_RUNTIME_KIND") =
-        "qir_v2_static_base_and_hip_execution";
+        "qir_v2_static_jit_cpu_and_hip_execution_base_emission";
     py::class_<rocq::MLIRCompiler>(m, "MLIRCompiler")
         .def(py::init<unsigned>(),
              py::arg("num_qubits") = 0,
              "Creates an offline MLIR/QIR compiler without constructing a HIP backend. "
              "A zero qubit count is inferred from quantum.qalloc.")
         .def(py::init([](unsigned num_qubits, const std::string& backend_name) {
-            auto backend = rocq::create_backend(backend_name);
+            auto backend = backend_name == "cpu_statevec"
+                               ? rocq::create_reference_backend()
+                               : rocq::create_backend(backend_name);
             return std::make_unique<rocq::MLIRCompiler>(num_qubits, std::move(backend));
         }),
              py::arg("num_qubits"),
@@ -1014,9 +1019,10 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              },
              py::arg("mlir"),
              py::arg("args") = py::dict(),
-             "Executes the supported MLIR subset (qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP) "
-             "through the selected backend and returns the final state vector. "
-             "Unsupported ops raise actionable diagnostics.")
+             "Lowers the supported measurement-free MLIR subset to verified "
+             "QIR, executes it through the in-process JIT and selected "
+             "cpu_statevec or hip_statevec backend, and returns the final "
+             "state vector. Unsupported ops raise actionable diagnostics.")
         .def("emit_qir", &rocq::MLIRCompiler::emit_qir,
              py::arg("mlir"),
              py::arg("profile") = "qir-v2-static",
@@ -1049,6 +1055,8 @@ PYBIND11_MODULE(rocquantum_bind, m) {
     m.attr("MLIR_COMPILER_ENABLED") = py::bool_(false);
     m.attr("MLIR_COMPILER_QIR_EMISSION_ENABLED") = py::bool_(false);
     m.attr("MLIR_COMPILER_ARTIFACT_EMISSION_ENABLED") = py::bool_(false);
+    m.attr("MLIR_COMPILER_QIR_JIT_ENABLED") = py::bool_(false);
+    m.attr("MLIR_COMPILER_CPU_EXECUTION_ENABLED") = py::bool_(false);
     m.attr("MLIR_COMPILER_GPU_EXECUTION_ENABLED") = py::bool_(false);
     m.attr("MLIR_COMPILER_QIR_PROFILE") = py::none();
     m.attr("MLIR_COMPILER_QIR_PROFILES") = py::tuple(0);
@@ -1057,7 +1065,7 @@ PYBIND11_MODULE(rocquantum_bind, m) {
     py::class_<DisabledRuntimeMLIRCompiler>(m, "MLIRCompiler")
         .def(py::init<unsigned, std::string>(),
              py::arg("num_qubits"),
-             py::arg("backend_name") = "hip_statevec",
+             py::arg("backend_name") = "cpu_statevec",
              "Records a requested MLIR compiler configuration. The default build does not link "
              "the optional canonical rocqCompiler MLIR runtime.")
         .def_property_readonly("num_qubits", &DisabledRuntimeMLIRCompiler::num_qubits)
@@ -1070,8 +1078,11 @@ PYBIND11_MODULE(rocquantum_bind, m) {
              py::arg("mlir"),
              py::arg("args") = py::dict(),
              "Fails fast when the default binding is built without the optional canonical "
-             "rocqCompiler MLIR runtime. Supported source subset: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, "
-             "CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP.")
+             "rocqCompiler MLIR runtime. The linked compiler lowers the "
+             "measurement-free qir-v2-static subset: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, "
+             "CNOT/CZ/SWAP/CCX/CSWAP, one- and two-control MCX, RX/RY/RZ/P, "
+             "CRX/CRY/CRZ/CP. MCX with three or more controls and Base/Adaptive "
+             "measurement execution fail closed.")
         .def("emit_qir", &DisabledRuntimeMLIRCompiler::emit_qir,
              py::arg("mlir"),
              py::arg("profile") = "qir-v2-static",

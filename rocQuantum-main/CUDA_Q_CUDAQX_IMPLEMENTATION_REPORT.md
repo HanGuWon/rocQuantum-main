@@ -1,6 +1,6 @@
 # CUDA-Q / CUDA-QX 비교 및 GPU 독립 구현 보고서
 
-기준일: 2026-07-16
+기준일: 2026-07-31
 
 ## 결론
 
@@ -22,17 +22,22 @@ CUDA-QX 계층도 MaxCut 전용 QAOA, 제한된 VQE, 3-qubit repetition helper�
   terminal-MZ Base Profile QIR
 - LLVM IR/bitcode/generic-host PIC relocatable object 출력, 명시적 static/base pipeline,
   strict `rocq-translate`, content-addressed self-validating artifact cache
+- measurement-free static QIR을 실행하는 LLVM ORC JIT/QIS bridge, deterministic CPU
+  reference state-vector backend, 설치형 `rocq-run`, ROCm 독립 `qpp-cpu` Python target
 - 검증된 Kraus 및 built-in noise channel 객체
 - CUDA-Q 규약 `exp(+i theta P)` Pauli exponential과 dense operator 변환
 - 소규모 CPU Schrodinger/Lindblad dynamics 및 host async wrapper
-- functional VQE, 범용 real-Pauli QAOA, ADAPT-VQE, operator pool, 제한적 chemistry/Jordan-Wigner 계층
+- functional VQE, 범용 real-Pauli QAOA, ADAPT-VQE, registry operator pool, PySCF 기반
+  restricted chemistry/Jordan-Wigner, CUDA-QX 순서의 UCCSD pool/state preparation
 - QEC Code/Decoder registry, repetition/Steane metadata, LUT/BP decoder, code-capacity sampling
 
 이 결과는 큰 GPU 독립 기능 격차를 줄이지만 CUDA-Q 또는 CUDA-QX 전체 parity는 아니다.
-네이티브 lowering과 offline artifact 출력은 이제 존재하지만, native typed SSA/helper
+네이티브 lowering, offline artifact 출력, measurement-free static JIT은 이제 존재하지만,
+native typed SSA/helper
 function/return, mid-circuit measurement/reset/`read_result`, branch/loop/adaptive control,
-arbitrary multi-control, runnable ORC-QIS bridge, HIP-stream future, multi-QPU scheduler,
-GPU 가속 solver/QEC, surface-code/DEM/tensor-network/realtime QEC는 여전히 남아 있다.
+3-control 이상 MCX, Base/adaptive result runtime, 일반 target/plugin runtime, HIP-stream future,
+multi-QPU scheduler, GPU 가속 solver/QEC,
+surface-code/DEM/tensor-network/realtime QEC는 여전히 남아 있다.
 host object는 미해결 QIS/runtime symbol을 가진 linker 입력일 뿐 실행 파일이 아니다.
 
 ## 조사 기준
@@ -90,7 +95,11 @@ CUDA-Q는 Quake/CC dialect, 변환 pass, LLVM/QIR lowering과 target runtime을 
 - `rocqCompiler/CMakeLists.txt`는 LLVM/MLIR 22.1.x를 기본 고정하고 TableGen
   `!quantum.qubit` / `!quantum.result` / `quantum.mz`, direct Quantum-to-LLVM/QIR conversion,
   explicit `rocq-qir-static-pipeline` / `rocq-qir-base-pipeline`, `rocq-opt`,
-  `rocq-translate`와 compiler artifact/cache/CLI CTest를 소유한다.
+  `rocq-translate`, `rocq-run`과 compiler artifact/cache/JIT/CLI CTest를 소유한다.
+- `compile_and_execute()`는 accepted measurement-free source를 static QIR로 낮추고 LLVM
+  검증 후 MLIR `ExecutionEngine`/LLVM ORC JIT에서 실행한다. 등록된 QIS callback만을 통해
+  `cpu_statevec` 또는 `hip_statevec` backend에 도달하며, composite gate와 1/2-control MCX도
+  source replay가 아니라 QIR decomposition을 실행한다.
 - offline `MLIRCompiler(num_qubits)`는 HIP backend를 만들지 않는다. `qir-v2-static`은
   measurement-free `custom` profile을 유지하고, `qir-v2-base`는 unique non-empty label을
   가진 terminal MZ를 initialize/body/measurements/output과 result-record calls로 형성한다.
@@ -105,17 +114,21 @@ CUDA-Q는 Quake/CC dialect, 변환 pass, LLVM/QIR lowering과 target runtime을 
   determinism violation을 fail-closed한다. 신뢰된 cache directory의 authenticity
   boundary는 아니다.
 - canonical Python `QuantumKernel.qir()` / `emit_artifact()`는 compiler binding 또는
-  설치된 `rocq-translate`를 사용한다. 설치되는 compiler surface는 `rocq-opt`와
-  `rocq-translate`뿐이며 C++ compiler library/header/cache/pipeline API는 build-tree-only다.
+  설치된 `rocq-translate`를 사용한다. 설치되는 compiler surface는 `rocq-opt`,
+  `rocq-translate`, CPU 실행용 `rocq-run`이며 C++ compiler
+  library/header/cache/pipeline API는 build-tree-only다.
 - 공식 apt.llvm.org LLVM/MLIR 22.1.8로 configure/build/CTest/clean-install 및 설치 도구의
-  Python fallback까지 로컬에서 통과했다. 이는 `host-contract-tested` 근거이며 AMD GPU
-  실행 근거는 아니다.
+  Python fallback까지 로컬에서 통과했다. 전체 12개 compiler CTest와 설치된
+  `rocq-run`의 Bell-state 파일/stdin 수치 검증도 통과했다. 이는
+  `host-contract-tested` 근거이며 AMD GPU 실행 근거는 아니다.
 
-따라서 과거의 build-graph, terminal-MZ QIR, offline object/cache P0는 닫혔다. 남은 큰
+따라서 과거의 build-graph, terminal-MZ QIR, static ORC JIT/QIS bridge,
+offline object/cache P0는 닫혔다. 남은 큰
 격차는 native typed SSA argument/return/helper function, mid-circuit reset/`read_result`와
-adaptive branch/loop, quantum-aware 최적화 pass군, arbitrary multi-control, runnable
-ORC-QIS/link runtime, dynamic runtime ABI, multi-QPU scheduling 및 HIP device 검증이다.
-`compile_and_execute()`도 여전히 좁은 gate subset이며 measurement result를 실행하지 않는다.
+adaptive branch/loop, quantum-aware 최적화 pass군, arbitrary multi-control,
+Base/adaptive result runtime, general target/plugin ABI, multi-QPU scheduling 및 HIP device
+검증이다. `compile_and_execute()`는 실제 static-QIR JIT이지만 여전히 좁은
+measurement-free gate subset이며 measurement result를 실행하지 않는다.
 
 ### Runtime / target / execution result
 
@@ -197,9 +210,12 @@ AMD GPU 없이 가능한 통합 검증을 완료했다.
 - 변경 Python 파일 Ruff 검사, `compileall`, `git diff --check`를 통과했다.
 - PEP 517로 `rocquantum-0.1.0-py3-none-any.whl`을 실제 빌드했고, 새 builder/dynamics,
   solver, QEC 모듈이 wheel에 포함됨과 소스 트리 밖 isolated import smoke를 확인했다.
-- LLVM/MLIR 22.1 compiler CTest는 static/Base QIR, explicit pipeline, deterministic
-  IR/bitcode/object, strict CLI, cache hit/miss/corruption을 검증했다. `llvm-as`/`opt`와
+- LLVM/MLIR 22.1 compiler CTest 12/12는 static ORC JIT/QIS dispatch, CPU Bell/MCX 수치,
+  lifecycle/concurrency, static/Base QIR, explicit pipeline, deterministic IR/bitcode/object,
+  strict CLI, cache hit/miss/corruption을 검증했다. `llvm-as`/`opt`와
   `llvm-dis`/`llvm-readobj`/`llvm-nm`이 해당 artifact를 독립 검사했다.
+- 실제 PySCF 2.14/Linux H₂/STO-3G에서 RHF/FCI, 2전자 sector 고유값, UCCSD VQE=FCI를
+  검증했고 chemistry vertical 8/8이 통과했다.
 - mock backend 결과는 native ROCm correctness/performance 증거가 아니라 CPU 계약·수치
   oracle로만 사용했다.
 
@@ -209,8 +225,10 @@ AMD GPU 없이 가능한 통합 검증을 완료했다.
    value semantics과 Python/C++ source frontend 연결.
 2. **P0 — dynamic quantum semantics:** mid-circuit measurement/reset, `read_result`,
    classical branch/loop trajectory, adaptive/full runtime profile, `run` result contract.
-3. **P0/P1 — runnable compiler runtime:** ORC 또는 동등한 linker, QIS/runtime symbol bridge,
-   executable lifecycle과 target packaging. 현재 object/cache는 offline artifact 기능이다.
+3. **P0/P1 — broader compiler runtime:** Base/adaptive measurement/result ABI, typed helper
+   functions/calls, general target/plugin lifecycle, reusable compiler/pass SDK. 현재 static ORC
+   JIT/QIS bridge와 `rocq-run`은 measurement-free bounded subset이고 object/cache는 offline
+   artifact 기능이다.
 4. **P1 — runtime scheduling:** true QPU discovery, `qpu_id` routing, HIP-stream async,
    broadcast/batch execution, MPI/multi-node scheduler.
 5. **P1 — finite-shot observe/noise:** term grouping, shot allocation, seed/reproducibility,

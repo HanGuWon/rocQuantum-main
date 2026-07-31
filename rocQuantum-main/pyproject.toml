@@ -30,8 +30,9 @@ pennylane = ["pennylane>=0.45,<0.46; python_version >= '3.11'"]
 qiskit = ["qiskit>=2.4,<3; python_version >= '3.10'"]
 cirq = ["cirq-core>=1.0,<2"]
 solvers = ["scipy>=1.10"]
+chemistry = ["pyscf>=2.3"]
 dev = ["pytest>=7.0", "numpy>=1.21", "tomli>=2.0; python_version < '3.11'"]
-all = ["rocquantum[backends,pennylane,qiskit,cirq,solvers,dev]"]
+all = ["rocquantum[backends,pennylane,qiskit,cirq,solvers,chemistry,dev]"]
 
 [project.scripts]
 rocq = "rocq_cli:main"

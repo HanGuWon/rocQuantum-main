@@ -283,12 +283,16 @@ class TestPyprojectExists(unittest.TestCase):
         optional = data["project"]["optional-dependencies"]
         self.assertIn("cirq-core>=1.0,<2", optional["cirq"])
         self.assertIn("scipy>=1.10", optional["solvers"])
+        self.assertIn("pyscf>=2.3", optional["chemistry"])
         self.assertIn("qiskit>=2.4,<3; python_version >= '3.10'", optional["qiskit"])
         self.assertEqual(
             optional["pennylane"],
             ["pennylane>=0.45,<0.46; python_version >= '3.11'"],
         )
-        self.assertIn("rocquantum[backends,pennylane,qiskit,cirq,solvers,dev]", optional["all"])
+        self.assertIn(
+            "rocquantum[backends,pennylane,qiskit,cirq,solvers,chemistry,dev]",
+            optional["all"],
+        )
 
     def test_integration_setup_py_files_are_compatibility_installers(self):
         for name, setup_path in _INTEGRATION_SETUP_FILES.items():

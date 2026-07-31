@@ -2,7 +2,6 @@
 
 from .qaoa import (
     QAOAResult,
-    get_operator_pool,
     get_num_qaoa_parameters,
     make_maxcut_qaoa_kernel,
     maxcut_cost_operator,
@@ -11,6 +10,13 @@ from .qaoa import (
 )
 from .adapt import adapt_vqe
 from .chemistry import MolecularHamiltonian, create_molecule, jordan_wigner
+from . import stateprep
+from .operator_pools import (
+    get_available_operator_pools,
+    get_operator_pool,
+    operator_pool,
+    register_operator_pool,
+)
 from .vqe_solver import (
     ObserveExecutionType,
     ObserveIteration,
@@ -29,8 +35,13 @@ _SOLVER_ENTRY_POINTS = (
     "adapt_vqe",
     "qaoa",
     "get_operator_pool",
+    "get_available_operator_pools",
     "jordan_wigner",
     "MolecularHamiltonian.from_integrals",
+    "create_molecule",
+    "stateprep.uccsd",
+    "stateprep.get_num_uccsd_parameters",
+    "stateprep.get_uccsd_excitations",
     "make_maxcut_qaoa_kernel",
     "get_num_qaoa_parameters",
     "maxcut_cost_operator",
@@ -48,8 +59,10 @@ _SOLVER_SUPPORTED_FEATURES = (
     "generic real Pauli-sum QAOA with custom mixer, full and counterdiabatic parameterizations",
     "tuple-unpackable QAOA result with canonical SampleResult final configuration",
     "single-process finite-difference ADAPT-VQE reference workflow",
-    "CUDA-QX QAOA operator pool generation",
+    "registry-backed CUDA-QX QAOA and UCCSD operator pool generation",
     "Jordan-Wigner transformation from precomputed one- and two-body integrals",
+    "optional PySCF restricted full-space RHF/ROHF molecular construction",
+    "CUDA-QX-ordered UCCSD excitation enumeration and CPU-reference state preparation",
     "MaxCut QAOA H/CNOT/RZ/RX ansatz construction",
     "CUDA-QX-style QAOA parameter-count helper for the supported gamma/beta ansatz",
     "weighted MaxCut cost operator construction",
@@ -60,8 +73,8 @@ _SOLVER_SUPPORTED_FEATURES = (
 )
 
 _SOLVER_UNSUPPORTED_FEATURES = (
-    "geometry/XYZ/PySCF chemistry Hamiltonian builders",
-    "Bravyi-Kitaev and production UCC state-preparation families",
+    "active-space, unrestricted-integral, correlated-orbital, and non-PySCF chemistry workflows",
+    "Bravyi-Kitaev and generalized or production-optimized UCC state-preparation families",
     "shot-based VQE and ADAPT-VQE expectation estimation",
     "production optimizer suite or hybrid workflow scheduler",
     "GPU-resident native adjoint differentiation",
@@ -88,7 +101,9 @@ _SOLVER_FEATURE_STATUS = {
     "generic_qaoa": "host_reference_verified",
     "adapt_vqe": "host_reference_verified_single_process",
     "jordan_wigner_precomputed_integrals": "host_reference_verified",
-    "geometry_pyscf_driver": "unimplemented",
+    "geometry_pyscf_driver": "optional_dependency_restricted_full_space_reference",
+    "uccsd_operator_pool": "host_reference_verified",
+    "uccsd_stateprep": "host_reference_verified",
     "mqpu_mpi": "unimplemented",
     "native_rocm_performance": "rocm_accelerated_unverified",
     "cuda_vendor_specific_workflows": "unsupported_vendor_specific",
@@ -111,6 +126,7 @@ def solver_capabilities():
         "feature_status": dict(_SOLVER_FEATURE_STATUS),
         "optional_dependencies": {
             "scipy": "required only when using the default SciPyOptimizer",
+            "pyscf": "required only by create_molecule()",
         },
         "docs": "rocquantum/solvers/README.md",
         "performance_note": (
@@ -137,13 +153,17 @@ __all__ = [
     "adapt_vqe",
     "capabilities",
     "create_molecule",
+    "get_available_operator_pools",
     "get_operator_pool",
     "get_num_qaoa_parameters",
     "jordan_wigner",
     "make_maxcut_qaoa_kernel",
     "maxcut_cost_operator",
+    "operator_pool",
     "qaoa",
+    "register_operator_pool",
     "solver_capabilities",
     "solve_maxcut_qaoa",
+    "stateprep",
     "vqe",
 ]

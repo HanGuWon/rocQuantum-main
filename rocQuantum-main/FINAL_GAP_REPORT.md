@@ -2,7 +2,7 @@
 
 Audit date: 2026-04-05
 
-Evidence refresh: 2026-07-15
+Evidence refresh: 2026-07-31
 
 - Current positioning: **ROCm-native simulation SDK with a CUDA-Q-inspired Python API**.
 - Released baselines: cuQuantum SDK `26.06.0` (including cuPauliProp and cuStabilizer), CUDA-Q `0.15.0`, and CUDA-QX `0.6.0`.
@@ -29,7 +29,7 @@ Goal checkpoint (2026-06-16; GPU-independent evidence revalidated 2026-07-15):
 
 - GitHub API triage showed no open pull requests in `HanGuWon/rocQuantum-main`; the first page of pull requests contained 17 closed PRs.
 - The local `main` branch was aligned with `origin/main` after the latest Qiskit provider option-contract commit.
-- Clean, version-scoped host suites passed across the full Python range from the final source tree: Python 3.9 reported `480 passed, 401 skipped`, Python 3.10 reported `659 passed, 225 skipped, 457 subtests passed`, and each of Python 3.11, 3.12, and 3.13 reported `872 passed, 15 skipped, 457 subtests passed`. The larger skip counts below 3.11 are the intentionally unavailable Qiskit/PennyLane lanes; modern-lane skips are credential-, native compiler-, or ROCm-hardware-bound. The final universal `py3-none-any` wheel was inspected to exclude native/source artifacts, then passed fresh external imports, CLI help, and all 19 copied examples on Python 3.9, 3.12, and 3.13.
+- The 2026-07-16 version-scoped host sweep passed across Python 3.9-3.13: Python 3.9 reported `480 passed, 401 skipped`, Python 3.10 reported `659 passed, 225 skipped, 457 subtests passed`, and each of Python 3.11, 3.12, and 3.13 reported `872 passed, 15 skipped, 457 subtests passed`. The current 2026-07-31 Python 3.11 source tree reports `991 passed, 10 skipped, 22 warnings, 512 subtests passed`; the new PySCF path is independently exercised on Linux. The larger historical skip counts below 3.11 are the intentionally unavailable Qiskit/PennyLane lanes; modern-lane skips are optional-dependency-, credential-, native compiler-, or ROCm-hardware-bound. The universal `py3-none-any` wheel was inspected to exclude native/source artifacts, then passed fresh external imports, CLI help, and all 19 copied examples on Python 3.9, 3.12, and 3.13.
 - The native Python boundary now has host-auditable ownership and ABI contracts: C64/C128 NumPy conversion is explicit, state buffers are tied to authoritative handle metadata and allocation generations, matrix buffers are dimension/byte checked before native dispatch, and GateFusion revalidates its retained state on every queue execution. Tensor objects use RAII and validate dimensions, strides, labels, permutations, result capacity, and aliasing; the DensityMat holder and temporary device matrices are exception-safe.
 - Native CI now builds and externally imports separate C64 and C128 wheels, validates their exported dtype/itemsize with a device-free round trip, and checks the combined C128/METIS installed consumer. These are source-defined gates, not locally executed ROCm evidence.
 - The release benchmark runner now rejects stale output, timeouts, duplicate/missing/unexpected cases, non-finite or boolean metrics, missing required metrics, and wrong topology/backend evidence. The distributed benchmark independently requires at least two GPUs and reports the exact RCCL or host-fallback backend.
@@ -59,7 +59,7 @@ Full row-by-row matrix: `FEATURE_TRUTH_MATRIX.md`
 | --- | --- | --- |
 | HIP simulator source | `source-present` | State-vector, tensor-network, and limited density-matrix implementations exist; actual-device verification remains pending |
 | Python runtime contracts | `host-contract-tested` | CPU/mock tests exercise the canonical API, validation, fallbacks, and selected integrations; this is not HIP evidence |
-| Native MLIR/LLVM/QIR compiler | `host-contract-tested` | The official LLVM/MLIR 22.1.8 release-gated configure/build/CTest/clean-install path and the installed-tool Python fallback pass locally; generated dialect/pass, CPU-only tools, static QIR 2 metadata, LLVM verification, and RecordingBackend tests exist. The first retained hosted CI artifact and HIP device execution remain pending, and this is not CUDA-Q parity |
+| Native MLIR/LLVM/QIR compiler | `host-contract-tested` | The official LLVM/MLIR 22.1.8 release-gated configure/build/CTest path passes locally; generated dialect/pass, static/Base QIR, LLVM verification, offline artifacts/cache, and an in-process static-QIR LLVM ORC JIT with registered QIS callbacks exist. Recording and deterministic CPU state-vector tests cover decomposition, Bell/bounded-MCX numerics, lifecycle errors, and concurrent engines. Base remains emission-only; the first retained hosted CI artifact and HIP device execution remain pending, and this is not CUDA-Q parity |
 | Multi-GPU / distributed | `source-present` | Single-node scaffolding exists and multi-node requests fail explicitly; no local multi-GPU verification is available |
 | Host packaging / imports | `host-contract-tested` | Clean host-only wheel build, isolated install, installed imports, and CLI help pass without HIP discovery |
 | Native packaging / install / export | `source-present` | Relocatable extension RPATHs, fresh-environment native-wheel `readelf`/`ldd`/import checks, symbol-resolving install consumers, release-header filtering, and C64/C128 ABI gates are defined in ROCm CI, but no retained green ROCm artifact was available locally |
@@ -93,7 +93,7 @@ Recommended compatibility plan:
 
 Compared with the official CUDA-Q baseline (`https://nvidia.github.io/cuda-quantum/latest/`), the largest gaps are:
 
-- no release-wired GPU-backed compile-and-execute loop by default; offline static QIR emission is now release-wired
+- the optional compiler-enabled binding now has a release-wired static-QIR JIT for CPU or HIP backends, but the default host wheel does not enable it and the HIP path remains actual-device-unverified
 - no fully unified compiler/runtime/kernel story; the default bindings now separate the canonical runtime compiler guard from the legacy conceptual MLIR holder
 - only a narrow mid-circuit measurement and classical-control story: Qiskit simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, loop-local `break_loop` / `continue_loop`, and `switch_case` sampling trajectories work, but estimator/statevector dynamic semantics remain open
 - no broad arbitrary-operator expectation coverage beyond the supported Pauli, dense Hermitian / Qiskit dense Operator, and full-state CSR sparse paths
@@ -105,7 +105,7 @@ What the repo does have:
 - context-local target/result/async APIs and fail-closed single-QPU semantics
 - a typed host-specialized `make_kernel` builder, Pauli exponentials, inspection/translation tools, and CPU dynamics
 - some native observable kernels in the backend
-- one canonical optional generated-dialect/direct-QIR compiler path, with the incompatible legacy scaffold and simulator-intermediate experiment excluded from the release lowering
+- one canonical optional generated-dialect/direct-QIR compiler path with in-process static-QIR ORC/QIS execution, with the incompatible legacy scaffold and simulator-intermediate experiment excluded from the release lowering
 
 What it lacks is the integration layer that makes those pieces act like CUDA-Q rather than a collection of subsystems.
 
@@ -140,7 +140,7 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 
 ## Top 10 Missing Or Misleading Areas
 
-1. The optional compiler graph now builds generated MLIR dialects, a direct static QIR 2 lowering, tools, and CPU-only validation against official LLVM/MLIR 22.1.8. The installed `rocq-translate` also gives the canonical Python API a GPU-independent QIR fallback when the native binding omits the compiler. `compile_and_execute()` still has a narrow HIP subset, the default binding remains compiler-disabled unless explicitly enabled, and the stack is not a full CUDA-Q-style compiler runtime.
+1. The optional compiler graph now builds generated MLIR dialects, direct static/Base QIR 2 lowering, tools, and CPU-only validation against official LLVM/MLIR 22.1.8. `compile_and_execute()` lowers the measurement-free static subset to verified QIR, runs it through MLIR's LLVM ORC JIT, and reaches `cpu_statevec` or `hip_statevec` through registered QIS callbacks; the CPU reference path is numerically tested. The installed `rocq-translate` remains a GPU-independent emission fallback when the native binding omits the compiler. Base/adaptive execution, typed SSA/functions, MCX above two controls, and actual HIP device evidence remain absent; the default host binding remains compiler-disabled unless explicitly enabled, and this is not a full CUDA-Q-style compiler runtime.
 2. Multi-GPU support is partial and previously overclaimed.
 3. Native expectations exist but the public API story is split and misleading.
 4. Two divergent Python stacks exist without one canonical answer.
@@ -170,14 +170,14 @@ This is a P2 area. It should not be used to market parity while P0 and P1 remain
 
 ### Remaining P0 / P1
 
-- Close the compiler/runtime gap rather than claim CUDA-Q parity
+- Broaden the bounded static JIT into typed, Base/adaptive, and general target-runtime support
 - Unify Python surfaces
 - Preserve the clean host-only wheel/install gate and execute the source-defined native wheel/install/export gates on a ROCm builder
 - Execute and retain green native ROCm runtime/benchmark artifacts from the configured CI
 
 ### P2
 
-- Complete compiler-driven runtime
+- Complete compiler-driven runtime beyond the static-QIR ORC/QIS subset
 - Expand distributed execution
 - Accelerate and broaden the experimental solver/QEC reference layer with GPU gradients, chemistry/state-preparation/GQE, surface/DEM/TN/realtime QEC, and distributed workflows
 

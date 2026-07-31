@@ -38,7 +38,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build pytest numpy scipy
+          python -m pip install build pytest numpy scipy "pyscf>=2.3"
 
       - name: Build and install host-only wheel
         run: |
@@ -135,7 +135,7 @@ jobs:
           cmake --build build-mlir-compiler --parallel 2 \
             2>&1 | tee "${ARTIFACT_DIR}/build.log"
 
-      - name: Verify static/Base lowering, artifacts, cache, and QIR
+      - name: Verify static JIT, static/Base lowering, artifacts, cache, and QIR
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/mlir-compiler
         run: |
@@ -143,7 +143,7 @@ jobs:
           ctest --test-dir build-mlir-compiler --output-on-failure \
             2>&1 | tee "${ARTIFACT_DIR}/ctest.log"
 
-      - name: Verify installed compiler tools and Python offline API
+      - name: Verify installed compiler tools, CPU JIT, and Python offline API
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/mlir-compiler
           INSTALL_DIR: ${{ runner.temp }}/rocq-compiler-install
@@ -153,8 +153,29 @@ jobs:
             2>&1 | tee "${ARTIFACT_DIR}/install.log"
           test -x "${INSTALL_DIR}/bin/rocq-opt"
           test -x "${INSTALL_DIR}/bin/rocq-translate"
+          test -x "${INSTALL_DIR}/bin/rocq-run"
           test ! -e "${INSTALL_DIR}/lib/libQuantumDialect.a"
           test ! -e "${INSTALL_DIR}/lib/libRocqQuantumToQIR.a"
+
+          # The installed CPU runner executes verified static QIR through ORC/QIS.
+          "${INSTALL_DIR}/bin/rocq-run" rocqCompiler/tests/bell_state.mlir \
+            > "${ARTIFACT_DIR}/installed-bell.state.json"
+          python3 - "${ARTIFACT_DIR}/installed-bell.state.json" <<'PY'
+          import json
+          import math
+          import sys
+
+          payload = json.loads(open(sys.argv[1], encoding="utf-8").read())
+          assert payload["schema"] == "rocq-state-vector-v1"
+          assert payload["backend"] == "cpu_statevec"
+          assert payload["num_qubits"] == 2
+          assert len(payload["amplitudes"]) == 4
+          expected = 1.0 / math.sqrt(2.0)
+          assert abs(payload["amplitudes"][0]["real"] - expected) < 1.0e-12
+          assert abs(payload["amplitudes"][3]["real"] - expected) < 1.0e-12
+          assert payload["amplitudes"][1] == {"real": 0, "imag": 0}
+          assert payload["amplitudes"][2] == {"real": 0, "imag": 0}
+          PY
 
           # Static-profile textual QIR remains the default installed-tool path.
           "${INSTALL_DIR}/bin/rocq-translate" \

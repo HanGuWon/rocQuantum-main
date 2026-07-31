@@ -125,7 +125,7 @@ class TestCompilerE2EFlow(unittest.TestCase):
         self.assertIn("__quantum__qis__z__body", qir)
         self.assertIn("__quantum__qis__cnot__body", qir)
 
-    def test_compile_and_execute_bell_or_actionable_diagnostic(self):
+    def test_compile_and_execute_bell_through_cpu_qir_jit(self):
         kernel_obj = self._build_bell_kernel()
         mlir = kernel_obj.mlir()
 
@@ -133,29 +133,25 @@ class TestCompilerE2EFlow(unittest.TestCase):
             self.skipTest(_compiler_skip_reason())
 
         try:
-            compiler = rocquantum_bind.MLIRCompiler(kernel_obj.num_qubits, "hip_statevec")
+            compiler = rocquantum_bind.MLIRCompiler(
+                kernel_obj.num_qubits, "cpu_statevec"
+            )
             state = compiler.compile_and_execute(mlir, {"strict": True})
         except RuntimeError as exc:
-            msg = str(exc).lower()
-            actionable_tokens = [
-                "disabled",
-                "mlir compiler support",
-                "not yet implemented",
-                "compile_and_execute",
-                "hipstatevec",
-                "rocm",
-                "failed",
-            ]
-            self.assertTrue(
-                any(token in msg for token in actionable_tokens),
-                msg=f"Non-actionable runtime diagnostic: {exc}",
-            )
-            return
+            disabled_reason = _compiler_disabled_reason(exc)
+            if disabled_reason:
+                self.skipTest(disabled_reason)
+            raise
 
         self.assertEqual(len(state), 4)
         norm = sum(abs(amplitude) ** 2 for amplitude in state)
         self.assertTrue(math.isfinite(norm))
         self.assertAlmostEqual(norm, 1.0, places=6)
+        bell_amplitude = 1.0 / math.sqrt(2.0)
+        self.assertAlmostEqual(state[0].real, bell_amplitude, places=6)
+        self.assertAlmostEqual(state[3].real, bell_amplitude, places=6)
+        self.assertAlmostEqual(abs(state[1]), 0.0, places=6)
+        self.assertAlmostEqual(abs(state[2]), 0.0, places=6)
 
 
 class TestPythonPublicAPIFlow(unittest.TestCase):

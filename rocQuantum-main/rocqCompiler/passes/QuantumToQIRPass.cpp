@@ -55,7 +55,7 @@ enum class GateKind {
     DecomposeCz,
     DecomposeSwap,
     DecomposeCcx,
-    UnsupportedMcx,
+    DecomposeMcx,
     DecomposeCswap,
     DirectRx,
     DirectRy,
@@ -87,7 +87,7 @@ constexpr std::array<GateSpec, 22> kGateSpecs{{
     {"quantum.cz", GateKind::DecomposeCz, 2, false},
     {"quantum.swap", GateKind::DecomposeSwap, 2, false},
     {"quantum.ccx", GateKind::DecomposeCcx, 3, false},
-    {"quantum.mcx", GateKind::UnsupportedMcx, 2, false},
+    {"quantum.mcx", GateKind::DecomposeMcx, 2, false},
     {"quantum.cswap", GateKind::DecomposeCswap, 3, false},
     {"quantum.rx", GateKind::DirectRx, 1, true},
     {"quantum.ry", GateKind::DirectRy, 1, true},
@@ -354,7 +354,11 @@ public:
         ::llvm::ArrayRef<::mlir::Value> operands,
         ::mlir::ConversionPatternRewriter& rewriter) const override {
         auto module = operation->getParentOfType<::mlir::ModuleOp>();
-        if (!module || operands.size() != spec_.arity) {
+        const bool has_valid_minimum_arity =
+            spec_.kind == GateKind::DecomposeMcx
+                ? operands.size() >= spec_.arity
+                : operands.size() == spec_.arity;
+        if (!module || !has_valid_minimum_arity) {
             return rewriter.notifyMatchFailure(operation, "invalid gate parent or operand arity");
         }
 
@@ -418,10 +422,25 @@ public:
         case GateKind::DecomposeCcx:
             result = emitCcx(rewriter, module, location, operands[0], operands[1], operands[2]);
             break;
-        case GateKind::UnsupportedMcx:
-            operation->emitError(
-                "quantum.mcx has no fixed QIR v2 body signature; decompose it before QIR emission");
-            return ::mlir::failure();
+        case GateKind::DecomposeMcx:
+            if (operands.size() == 2) {
+                result = emitCnot(
+                    rewriter, module, location, operands[0], operands[1]);
+            } else if (operands.size() == 3) {
+                result = emitCcx(
+                    rewriter,
+                    module,
+                    location,
+                    operands[0],
+                    operands[1],
+                    operands[2]);
+            } else {
+                operation->emitError(
+                    "quantum.mcx with more than two controls requires QIR "
+                    "control-array lowering and runtime support");
+                return ::mlir::failure();
+            }
+            break;
         case GateKind::DecomposeCswap:
             result = emitCnot(rewriter, module, location, operands[2], operands[1]);
             if (::mlir::succeeded(result)) {
@@ -755,16 +774,22 @@ private:
                 "QIR Base Profile requires every unitary gate to precede all measurements",
                 diagnostic);
         }
-        if (spec->kind == GateKind::UnsupportedMcx) {
-            return fail(&operation,
-                        "quantum.mcx requires control-array lowering and is not yet supported "
-                        "by the QIR v2 profile",
-                        diagnostic);
+        if (spec->kind == GateKind::DecomposeMcx &&
+            operation.getNumOperands() > 3) {
+            return fail(
+                &operation,
+                "quantum.mcx with more than two controls requires QIR "
+                "control-array lowering and runtime support",
+                diagnostic);
         }
-        if (operation.getNumOperands() != spec->arity) {
+        const bool has_valid_arity =
+            spec->kind == GateKind::DecomposeMcx
+                ? operation.getNumOperands() >= spec->arity
+                : operation.getNumOperands() == spec->arity;
+        if (!has_valid_arity) {
             return fail(&operation,
-                        ::llvm::Twine("operation '") + name +
-                            "' has the wrong qubit operand arity",
+                         ::llvm::Twine("operation '") + name +
+                             "' has the wrong qubit operand arity",
                         diagnostic);
         }
 

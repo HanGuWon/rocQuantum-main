@@ -1709,6 +1709,8 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertFalse(capabilities["qir_emission_available"])
         self.assertEqual(capabilities["qir_emission_kind"], "unavailable")
         self.assertFalse(capabilities["rocq_translate_available"])
+        self.assertFalse(capabilities["qir_jit_available"])
+        self.assertFalse(capabilities["cpu_execution_available"])
         self.assertFalse(capabilities["gpu_execution_available"])
         self.assertIsNone(capabilities["qir_profile"])
         self.assertFalse(capabilities["artifact_emission_available"])
@@ -1718,8 +1720,11 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             ["llvm-ir", "llvm-bc", "object"],
         )
         self.assertFalse(capabilities["artifact_cache"]["available"])
-        self.assertEqual(capabilities["default_backend"], "hip_statevec")
-        self.assertEqual(capabilities["supported_backends"], ["hip_statevec"])
+        self.assertEqual(capabilities["default_backend"], "cpu_statevec")
+        self.assertEqual(
+            capabilities["supported_backends"],
+            ["cpu_statevec", "hip_statevec"],
+        )
         self.assertEqual(
             capabilities["qir_profiles"],
             ["qir-v2-static", "qir-v2-base"],
@@ -1734,7 +1739,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             capabilities["unsupported_features"],
         )
         self.assertIn(
-            "QIR control-array lowering for variadic MCX",
+            "QIR control-array lowering for variadic MCX with three or more controls",
             capabilities["unsupported_features"],
         )
         self.assertIn(
@@ -1771,7 +1776,8 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertFalse(
             capabilities["transform_pipeline"]["adjoint_generation"]["native_runtime_entry_point"]
         )
-        self.assertIn("DisabledRuntimeMLIRCompiler", capabilities["mlir_runtime_note"])
+        self.assertIn("in-process ORC JIT", capabilities["mlir_runtime_note"])
+        self.assertIn("Base Profile QIR emission", capabilities["mlir_runtime_note"])
 
     def test_compiler_capabilities_expose_cli_only_qir(self):
         with mock.patch.object(rocq_kernel_module, "rocquantum_bind", None), mock.patch.object(
@@ -1800,15 +1806,19 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         disabled_binding.MLIR_COMPILER_RUNTIME_KIND = "disabled_runtime_guard"
         disabled_binding.MLIR_COMPILER_QIR_EMISSION_ENABLED = False
         disabled_binding.MLIR_COMPILER_ARTIFACT_EMISSION_ENABLED = False
+        disabled_binding.MLIR_COMPILER_QIR_JIT_ENABLED = False
+        disabled_binding.MLIR_COMPILER_CPU_EXECUTION_ENABLED = False
         disabled_binding.MLIR_COMPILER_GPU_EXECUTION_ENABLED = False
         disabled_binding.MLIR_COMPILER_QIR_PROFILE = None
         enabled_binding = mock.Mock()
         enabled_binding.MLIR_COMPILER_ENABLED = True
         enabled_binding.MLIR_COMPILER_RUNTIME_KIND = (
-            "qir_v2_static_base_and_hip_execution"
+            "qir_v2_static_jit_cpu_and_hip_execution_base_emission"
         )
         enabled_binding.MLIR_COMPILER_QIR_EMISSION_ENABLED = True
         enabled_binding.MLIR_COMPILER_ARTIFACT_EMISSION_ENABLED = True
+        enabled_binding.MLIR_COMPILER_QIR_JIT_ENABLED = True
+        enabled_binding.MLIR_COMPILER_CPU_EXECUTION_ENABLED = True
         enabled_binding.MLIR_COMPILER_GPU_EXECUTION_ENABLED = True
         enabled_binding.MLIR_COMPILER_QIR_PROFILE = "qir-v2-static"
 
@@ -1828,12 +1838,14 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
         self.assertTrue(enabled["mlir_runtime_available"])
         self.assertEqual(
             enabled["mlir_runtime_kind"],
-            "qir_v2_static_base_and_hip_execution",
+            "qir_v2_static_jit_cpu_and_hip_execution_base_emission",
         )
         self.assertTrue(enabled["qir_emission_available"])
         self.assertEqual(enabled["qir_emission_kind"], "native_binding")
         self.assertTrue(enabled["artifact_emission_available"])
         self.assertEqual(enabled["artifact_emission_kind"], "native_binding")
+        self.assertTrue(enabled["qir_jit_available"])
+        self.assertTrue(enabled["cpu_execution_available"])
         self.assertTrue(enabled["gpu_execution_available"])
         self.assertEqual(enabled["qir_profile"], "qir-v2-static")
 
@@ -1925,7 +1937,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
             result = rocq.compile_and_execute(bell, strict=False)
 
         self.assertEqual(result, [1.0, 0.0, 0.0, 0.0])
-        self.assertEqual(calls[0], ("init", 2, "hip_statevec"))
+        self.assertEqual(calls[0], ("init", 2, "cpu_statevec"))
         self.assertEqual(calls[1][2], {"strict": False})
         self.assertIn('"quantum.cnot"', calls[1][1])
 
@@ -1958,7 +1970,7 @@ class TestCanonicalRuntimeSurface(unittest.TestCase):
                 )
                 self.assertEqual(future.result(timeout=5), [0.0, 1.0, 0.0, 0.0])
 
-        self.assertEqual(calls[0], ("init", 2, "hip_statevec"))
+        self.assertEqual(calls[0], ("init", 2, "cpu_statevec"))
         self.assertEqual(calls[1][2], {"strict": False})
 
     def test_compile_and_execute_rejects_non_boolean_strict_option(self):

@@ -1,5 +1,6 @@
 from concurrent.futures import Future, ThreadPoolExecutor
 import importlib
+import os
 from unittest import mock
 
 import numpy as np
@@ -43,6 +44,7 @@ def _one_qubit_kernel():
 def test_target_registry_context_and_explicit_backend_compatibility():
     assert [target.name for target in rocq.get_targets()] == [
         "state_vector",
+        "qpp-cpu",
         "density_matrix",
         "stabilizer",
         "tableau",
@@ -53,6 +55,18 @@ def test_target_registry_context_and_explicit_backend_compatibility():
     assert rocq.get_target().name == "state_vector"
     assert rocq.num_qpus() == 1
     assert rocq.get_target().num_qpus() == 1
+
+    cpu_target = rocq.get_target("qpp-cpu")
+    assert cpu_target.backend == "qpp-cpu"
+    assert cpu_target.description == "NumPy CPU reference state-vector simulator."
+    assert cpu_target.precision == "fp64"
+    assert cpu_target.get_precision() == "fp64"
+    assert cpu_target.simulator == "numpy"
+    assert cpu_target.platform == "default"
+    assert cpu_target.remote is False
+    assert cpu_target.emulated is False
+    assert cpu_target.is_remote() is False
+    assert cpu_target.is_emulated() is False
 
     with rocq.target("density_matrix") as selected:
         assert selected is rocq.get_target()
@@ -71,6 +85,46 @@ def test_target_registry_context_and_explicit_backend_compatibility():
     with mock.patch.object(kernel_module, "get_backend", return_value=fake_backend) as factory:
         rocq.execute(_one_qubit_kernel, backend="stabilizer")
         factory.assert_called_once_with("stabilizer", 1, enable_fusion=None)
+
+
+@rocq.kernel
+def _bell_kernel():
+    q = rocq.qvec(2)
+    rocq.h(q[0])
+    rocq.cnot(q[0], q[1])
+
+
+def test_qpp_cpu_executes_samples_and_observes_without_mock_opt_in():
+    with (
+        mock.patch("rocq.backends.hip_backend", None),
+        mock.patch.dict(os.environ, {"ROCQ_ENABLE_MOCK_BACKENDS": ""}),
+    ):
+        with rocq.target("qpp-cpu"):
+            state = rocq.execute(_bell_kernel)
+            zz = rocq.observe(
+                _bell_kernel,
+                rocq.PauliOperator("Z0 Z1"),
+            )
+            with mock.patch(
+                "rocq.backends.np.random.choice",
+                return_value=np.array([0, 3, 0, 3], dtype=np.uint64),
+            ):
+                samples = rocq.sample(_bell_kernel, 4)
+
+        with pytest.raises(RuntimeError, match="requires the native Python module"):
+            rocq.execute(_bell_kernel, backend="state_vector")
+
+    np.testing.assert_allclose(
+        state,
+        np.array(
+            [1 / np.sqrt(2), 0, 0, 1 / np.sqrt(2)],
+            dtype=np.complex128,
+        ),
+        atol=1e-12,
+    )
+    assert state.dtype == np.complex128
+    assert zz == pytest.approx(1.0)
+    assert samples == {"00": 2, "11": 2}
 
 
 @pytest.mark.parametrize("invalid", ["", "unknown", None, True])

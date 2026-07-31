@@ -1,6 +1,6 @@
 # Native MLIR/LLVM/QIR Compiler Status
 
-Status date: 2026-07-16
+Status date: 2026-07-31
 
 The optional `rocqCompiler/` graph is now a real CPU-buildable compiler path rather than an
 unreachable source fragment. It is deliberately narrower than CUDA-Q: it compiles rocQuantum's
@@ -18,7 +18,9 @@ rocq QuantumKernel textual MLIR
   -> MLIR LLVM-IR translation
   -> QIR 2 profile shaping, entry attributes, and module flags
   -> project structural verifier and LLVM verifier
-  -> LLVM IR, binary bitcode, or a generic-host PIC relocatable object
+  -> offline: LLVM IR, binary bitcode, or a generic-host PIC relocatable object
+  -> qir-v2-static execution: MLIR ExecutionEngine / LLVM ORC JIT
+       -> registered QIS callbacks -> QuantumBackend -> final state vector
 ```
 
 The supported compiler build is independent of HIP:
@@ -39,6 +41,7 @@ The canonical targets are:
 - `rocqCompilerTooling`: content-addressed cache implementation used by the CLI
 - `rocq-opt`: parse/round-trip/pass driver
 - `rocq-translate`: strict MLIR-to-QIR/artifact driver
+- `rocq-run`: installed measurement-free static-QIR runner using `cpu_statevec`
 
 The incompatible legacy `rocquantum/include/rocquantum/Dialect` tree is not linked. The simulator
 intermediate dialect is retained only behind `ROCQ_COMPILER_BUILD_EXPERIMENTAL_SIMULATOR_DIALECT`;
@@ -60,6 +63,7 @@ Implemented behavior:
 - H/X/Y/Z/S/S-adjoint/T/T-adjoint/CNOT and RX/RY/RZ/R1 use arity-correct QIS declarations
 - CZ and SWAP are decomposed to H/CNOT
 - CCX uses a no-ancilla Clifford+T decomposition
+- one-control MCX lowers to CNOT and two-control MCX uses the CCX decomposition
 - CSWAP uses CNOT plus the CCX decomposition
 - CRX/CRY/CRZ/CP are decomposed to single-qubit rotations/phases and CNOT
 - `qir-v2-static` receives `entry_point`, `qir_profiles="custom"`,
@@ -84,8 +88,8 @@ Fail-closed boundaries:
 - classical branches/loops and adaptive execution
 - native typed SSA function arguments/returns, helper functions, and multiple source functions
 - dynamic qubit/result management
-- variadic MCX control-array ABI
-- arbitrary multi-control synthesis
+- MCX with three or more controls, pending a QIR control-array ABI/runtime
+- arbitrary multi-control synthesis beyond the documented one- and two-control MCX subset
 - unknown operations, wrong arities, duplicate qubits, invalid qalloc, and non-finite angles
 
 ## Artifact, Optimization, Pipeline, And Cache Contract
@@ -99,8 +103,12 @@ Fail-closed boundaries:
   through `-O3` for either profile
 
 Objects are linker inputs, not runnable programs. They intentionally retain unresolved QIS/runtime
-symbols; no ORC JIT or QIS symbol-linking runtime is provided. The profile-preserving QIR
-interchange contract applies to IR/bitcode, not to an optimized native object after lowering.
+symbols. Separately, `compile_and_execute()` translates verified `qir-v2-static` LLVM-dialect IR
+in process, creates an MLIR `ExecutionEngine` backed by LLVM ORC, registers the supported QIS
+symbols, and forwards those callbacks to a `QuantumBackend`. That bounded JIT does not turn the
+offline object format into a linked executable or provide a general QIR runtime. The
+profile-preserving QIR interchange contract applies to IR/bitcode, not to an optimized native
+object after lowering.
 
 `rocq-opt` registers `rocq-qir-static-pipeline` and `rocq-qir-base-pipeline` explicitly. Their
 generic canonicalization/CSE cleanup respects quantum operation effects but is not described as
@@ -127,13 +135,17 @@ emit QIR/compiler artifacts on a machine with no AMD GPU. `QuantumKernel.qir()` 
 installed `rocq-translate` through `PATH` / `ROCQ_TRANSLATE_EXECUTABLE` and send MLIR over stdin
 through a non-shell subprocess. Supplying `cache_dir` intentionally uses the CLI cache contract.
 
-`MLIRCompiler(num_qubits, backend)` and `compile_and_execute()` remain the separate execution
-boundary. The current `hip_statevec` backend still requires a native ROCm build and an AMD device.
-Terminal `quantum.mz` is an offline QIR result operation, not a supported
-`compile_and_execute()` measurement path. Capability reporting exposes artifact emission and GPU
-execution separately.
+`MLIRCompiler(num_qubits, backend)` and `compile_and_execute()` are the execution boundary.
+Measurement-free `qir-v2-static` source is structurally validated, lowered to LLVM/QIR, verified,
+JIT-compiled in process, and executed through registered H/X/Y/Z/S/S-adjoint/T/T-adjoint/CNOT and
+RX/RY/RZ/R1 QIS callbacks. Higher supported gates reach the backend through their verified QIR
+decompositions rather than source-operation replay. `cpu_statevec` is a small deterministic host
+reference backend and needs no AMD GPU; `hip_statevec` still requires a native ROCm build and AMD
+device. Terminal `quantum.mz` / `qir-v2-base` remains emission-only and is rejected by
+`compile_and_execute()`. Capability reporting exposes offline artifacts, static QIR JIT, CPU
+reference execution, and HIP execution separately.
 
-Only `rocq-opt` and `rocq-translate` are installed. `QuantumDialect`, `RocqQuantumToQIR`,
+Only `rocq-opt`, `rocq-translate`, and `rocq-run` are installed. `QuantumDialect`, `RocqQuantumToQIR`,
 `rocqCompiler`, `rocqCompilerTooling`, their headers, and the `rocquantum::compiler` alias remain
 build-tree-only; this work does not expose a supported installed/exported compiler C++ SDK.
 
@@ -147,21 +159,28 @@ configured with the release gate intact (no `ROCQUANTUM_ALLOW_UNSUPPORTED_MLIR` 
 - all dialect/type/op/pass TableGen outputs were generated
 - dialect, direct conversion, compiler/tooling libraries, both tools, and all compiler test
   executables compiled and linked
-- the registered compiler CTests passed, covering static and terminal-MZ Base Profile QIR, explicit
-  pipeline selection/rejection, CPU `RecordingBackend` execution order, deterministic IR/bitcode/
-  generic-host object emission, parallel object emission, strict CLI parsing/I/O, cache miss/hit,
-  corrupt-entry rejection, and LLVM artifact inspection
+- the final release-pinned build passed all 12 registered compiler CTests, covering static and
+  terminal-MZ Base Profile QIR, explicit pipeline selection/rejection, LLVM ORC execution,
+  QIS-to-backend dispatch, QIR decomposition rather than source replay, deterministic CPU
+  state-vector Bell and bounded-MCX results, callback/initialization failure cleanup, concurrent
+  per-thread execution contexts, deterministic IR/bitcode/generic-host object emission, parallel
+  object emission, strict CLI parsing/I/O, cache miss/hit, corrupt-entry rejection, and LLVM
+  artifact inspection
+- the final compiler smoke, which includes two concurrent independent JIT engines, passed 10
+  consecutive repeat-until-fail runs
 - generated static and Base IR/bitcode was accepted by in-process `verifyModule`, `llvm-as`,
   `llvm-dis`, and `opt -passes=verify`; `llvm-readobj` / `llvm-nm` verified relocatable host objects
   and their unresolved QIS symbols
-- a clean install prefix contained only the two compiler tools plus the existing Python CLI,
-  and installed `rocq-translate` emitted static/Base QIR and offline artifacts accepted by the
-  applicable LLVM 22.1 tools
+- a clean install prefix contained only the three compiler tools plus the existing Python CLI;
+  installed `rocq-run` inferred the Bell fixture's two-qubit allocation and emitted the verified
+  `rocq-state-vector-v1` JSON state, while installed `rocq-translate` emitted static/Base QIR and
+  offline artifacts accepted by the applicable LLVM 22.1 tools
 - canonical Python `QuantumKernel.qir()` successfully used that installed translator with no
   `rocquantum_bind`; builder terminal-measurement MLIR reached the Base Profile path, and capability
   reporting identified the fallback as `rocq_translate_cli`
 
-This is LLVM/MLIR 22.1 host compiler evidence, not ROCm execution evidence. The CPU GitHub
+This is LLVM/MLIR 22.1 host compiler and CPU-reference runtime evidence, not ROCm execution
+evidence. The CPU GitHub
 workflow now defines the same 22.1 compiler-only build and retains configure/build/CTest logs;
 the first green hosted artifact is still pending. HIP execution still needs an AMD runner.
 
@@ -178,18 +197,21 @@ It does not establish CUDA-Q parity. Major remaining items include:
   runtime semantics; terminal MZ Base emission does not provide these
 - quantum-aware canonicalization/optimization/decomposition pass libraries beyond the explicit
   effect-safe lowering pipelines
-- runnable ORC JIT/QIS symbol bridge, executable linking, pass plugins, and installed compiler
-  SDK/target/backend packaging; object generation and the CLI cache do not close this runtime gap
-- arbitrary multi-control lowering beyond the documented canonical subset
+- Base/adaptive result runtime semantics, general executable linking, pass plugins, and installed
+  compiler SDK/target/backend packaging; the static ORC/QIS bridge does not close these gaps
+- arbitrary multi-control lowering beyond one- and two-control MCX
 - dynamic/full-profile runtime ABI and multi-QPU scheduling
 - a retained hosted LLVM/MLIR 22.1 CI artifact and native ROCm binding/device validation
 
 ## Primary Reference Baselines
 
-- [CUDA-Q LLVM/MLIR 22.1 build graph](https://github.com/NVIDIA/cuda-quantum/blob/cbc4798e9f0593e17b56ebbec765da60a588554e/CMakeLists.txt#L502-L635)
-- [CUDA-Q direct QIR conversion pipeline](https://github.com/NVIDIA/cuda-quantum/blob/cbc4798e9f0593e17b56ebbec765da60a588554e/cudaq/lib/Optimizer/CodeGen/ConvertToQIRAPI.cpp#L2656-L2834)
+- [CUDA-Q LLVM/MLIR 22.1 build graph](https://github.com/NVIDIA/cuda-quantum/blob/e8cf932e6b2769dce5763ccf6acc2aa4cf891b7d/CMakeLists.txt)
+- [CUDA-Q in-process MLIR/LLVM JIT](https://github.com/NVIDIA/cuda-quantum/blob/e8cf932e6b2769dce5763ccf6acc2aa4cf891b7d/runtime/internal/compiler/JIT.cpp)
+- [CUDA-Q QIS/runtime bridge](https://github.com/NVIDIA/cuda-quantum/blob/e8cf932e6b2769dce5763ccf6acc2aa4cf891b7d/runtime/nvqir/NVQIR.cpp)
+- [CUDA-Q direct QIR conversion pipeline](https://github.com/NVIDIA/cuda-quantum/blob/e8cf932e6b2769dce5763ccf6acc2aa4cf891b7d/cudaq/lib/Optimizer/CodeGen/ConvertToQIRAPI.cpp)
 - [LLVM standalone dialect example](https://github.com/llvm/llvm-project/tree/def143a6c624dc9b991ebfdfec5c36a7084171eb/mlir/examples/standalone)
 - [MLIR dialect conversion](https://mlir.llvm.org/docs/DialectConversion/)
 - [Official LLVM Debian/Ubuntu packages](https://apt.llvm.org/)
-- [QIR 2 version compatibility](https://github.com/qir-alliance/qir-spec/blob/a406067ba76e3381b6dd0c87b2702588840c6245/specification/README.md#version-compatibility)
-- [QIR Base Profile](https://github.com/qir-alliance/qir-spec/blob/a406067ba76e3381b6dd0c87b2702588840c6245/specification/profiles/Base_Profile.md)
+- [QIR 2 version compatibility](https://github.com/qir-alliance/qir-spec/blob/f5647346542d5a65225c3eb349847fe4df01d1b2/specification/README.md#version-compatibility)
+- [QIR Base Profile](https://github.com/qir-alliance/qir-spec/blob/f5647346542d5a65225c3eb349847fe4df01d1b2/specification/profiles/Base_Profile.md)
+- [QIR Adaptive Profile](https://github.com/qir-alliance/qir-spec/blob/f5647346542d5a65225c3eb349847fe4df01d1b2/specification/profiles/Adaptive_Profile.md)

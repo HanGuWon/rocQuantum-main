@@ -2,18 +2,18 @@
 
 Audit date: 2026-04-05
 
-Evidence refresh: 2026-07-16
+Evidence refresh: 2026-07-31
 
 The current target is a **ROCm-native simulation SDK with a CUDA-Q-inspired Python API**. Priorities below deliberately separate work that can be completed without an AMD GPU from evidence that must wait for an actual ROCm device. Official comparison baselines are cuQuantum SDK `26.06.0`, CUDA-Q `0.15.0`, and CUDA-QX `0.6.0`.
 
-Completed in the 2026-07-15/16 GPU-independent pass: clean host-only wheel/install/import/CLI checks; CPU and ROCm CI job separation; canonicalization and subprocess execution of all 19 examples; conversion of capability documents to the evidence ladder; host-specialized Python builder call/adjoint/limited-control/terminal-measurement contracts; and a CPU-buildable TableGen/MLIR/LLVM/QIR compiler path with static-custom plus labeled terminal-MZ Base Profile output, deterministic IR/bitcode/generic-host object artifacts, explicit pipelines, and a content-addressed self-validating cache. These results do not promote any native HIP claim, provide a runnable QIS runtime, or turn the build-tree compiler libraries into an installed C++ SDK.
+Completed in the GPU-independent pass through 2026-07-31: clean host-only wheel/install/import/CLI checks; CPU and ROCm CI job separation; canonicalization and subprocess execution of all 19 examples; conversion of capability documents to the evidence ladder; host-specialized Python builder call/adjoint/limited-control/terminal-measurement contracts; and a CPU-buildable TableGen/MLIR/LLVM/QIR compiler path with static-custom plus labeled terminal-MZ Base Profile output, an in-process static-QIR LLVM ORC JIT/QIS-to-backend bridge, deterministic CPU reference state-vector execution, deterministic IR/bitcode/generic-host object artifacts, explicit pipelines, and a content-addressed self-validating cache. These results do not promote any native HIP claim, provide Base/adaptive runtime semantics or a general QIR runtime, or turn the build-tree compiler libraries into an installed C++ SDK.
 
 ## Top 10 Gaps
 
 1. Obtain retained single-GPU correctness artifacts; this cannot be completed on the current host.
 2. Consolidate or clearly demote duplicate Python and binding surfaces so one public API owns execution, sampling, observation, and errors.
 3. Build broader CPU-reference and property/differential tests for state-vector layout, controls, adjoints, collapse, sampling distributions, and observables.
-4. Expand the now-working static-custom/terminal-MZ compiler into native typed SSA/helper functions/returns, mid-circuit reset/`read_result`, branch/loop/adaptive semantics, arbitrary multi-control, and a runnable ORC-QIS/target runtime without treating offline objects or the cache as execution parity.
+4. Expand the now-working static-custom JIT and terminal-MZ emission path into native typed SSA/helper functions/returns, mid-circuit reset/`read_result`, branch/loop/adaptive semantics, Base/adaptive target runtime support, and arbitrary multi-control without treating offline objects, the cache, or the bounded static QIS bridge as full execution parity.
 5. Define honest product scope for TensorNet using explicit descriptor, workspace, dtype, gradient, slicing, and size-limit contracts.
 6. Define the cuDensityMat comparison boundary for operators, actions, callbacks, dynamics, batching, gradients, and distributed execution.
 7. Prove true inter-rank behavior on multiple AMD GPUs; source scaffolding and zero-device skips do not qualify.
@@ -59,8 +59,9 @@ Scope: strengthen correctness contracts that can be completed on a CPU host.
 
 Scope: perform architecture expansion and actual-device verification after P0/P1 are stable.
 
-- Complete compiler/runtime integration beyond static-custom and terminal-MZ Base Profile emission:
-  native typed SSA/functions, adaptive control, and a runnable QIS-linked runtime
+- Complete compiler/runtime integration beyond the static-custom JIT and terminal-MZ Base emission:
+  native typed SSA/functions, adaptive control, Base/result runtime support, and a general
+  target/backend runtime
 - Expand distributed execution beyond the current partial single-node scaffolding
 - Run retained single-GPU, multi-GPU, and performance evidence gates on suitable AMD hardware
 - Build dedicated cuPauliProp/cuStabilizer analogues only if brought into scope
@@ -77,6 +78,7 @@ Scope: perform architecture expansion and actual-device verification after P0/P1
 | Explicit product scope | README states the ROCm-native simulation SDK / CUDA-Q-inspired API position and excluded components | Keep product wording and version-pinned baselines consistent |
 | Host builder composition/synthesis | `call` / `apply_call` static inlining, supported-gate adjoint, limited canonical control, and terminal `mz` / `mx` / `my` are CPU-contract-tested | `tests/test_cudaq_builder_composition.py` plus fail-closed negative cases |
 | Native terminal-MZ QIR | Generated `!quantum.result` / `quantum.mz` and `qir-v2-base` output are checked independently from the default static-custom profile | Project structural verifier, explicit pipeline tests, `llvm-as`, and `opt -passes=verify` |
+| Static QIR ORC execution | Measurement-free static QIR is JIT-compiled in process and reaches `QuantumBackend` only through registered QIS callbacks | LLVM/MLIR 22.1 compiler smoke covers callback order, QIR decomposition, Bell/bounded-MCX CPU numerics, lifecycle failures, and concurrent engine isolation |
 | Offline compiler artifacts/cache | Deterministic LLVM IR/bitcode/generic-host PIC objects, strict CLI behavior, and content-addressed self-validating cache are CPU-contract-tested | Compiler artifact/cache/CLI CTests; Base IR/bitcode remains `-O0` |
 
 ## P1 Backlog
@@ -93,7 +95,7 @@ Scope: perform architecture expansion and actual-device verification after P0/P1
 
 | Item | Why It Is P2 | Acceptance |
 | --- | --- | --- |
-| Broaden compiler-driven runtime | Static-custom and terminal-MZ Base QIR plus offline artifacts/cache are real, but far narrower than CUDA-Q | Add native typed SSA arguments/results/helper functions, mid-circuit reset/`read_result`, branches/loops, adaptive/dynamic runtime profiles, arbitrary multi-control, and a runnable ORC-QIS target runtime with retained 22.1 CI evidence |
+| Broaden compiler-driven runtime | Static-custom ORC/QIS execution, terminal-MZ Base emission, and offline artifacts/cache are real, but far narrower than CUDA-Q | Add native typed SSA arguments/results/helper functions, mid-circuit reset/`read_result`, branches/loops, Base/adaptive/dynamic runtime profiles, MCX above two controls, a general target/runtime plugin surface, and retained 22.1 CI evidence |
 | Complete distributed multi-GPU | Requires deeper runtime design and test infrastructure | Distributed gates, measurement, and sampling are proven on multi-GPU runners |
 | Add CUDA-QX-style solver/QEC libraries | Higher-level scope should not mask base gaps | Any expanded solver/QEC scope has CPU-reference tests and later actual-device evidence |
 | Broaden provider/integration maturity | Secondary to local ROCm credibility | Native and remote adapter guarantees are explicit and tested |
@@ -126,9 +128,10 @@ python3 benchmarks/run_release_benchmarks.py --build-dir build-ci --output-dir b
 ./build-ci/rocquantum/src/hipStateVec/benchmark_hipStateVec_distributed_reductions --output distributed-reductions.json
 ```
 
-The compiler-only CMake/CTest and artifact commands require Linux plus LLVM/MLIR 22.1 but not ROCm
-or an AMD GPU. Base Profile LLVM IR/bitcode must remain at `-O0`; generic-host relocatable objects
-may use `-O0` through `-O3` but retain unresolved QIS/runtime symbols and are not runnable programs.
-Only `rocq-opt` and `rocq-translate` install; compiler libraries/headers/cache and pipeline APIs are
+The compiler-only CMake/CTest, CPU reference JIT, and artifact commands require Linux plus
+LLVM/MLIR 22.1 but not ROCm or an AMD GPU. Base Profile LLVM IR/bitcode must remain at `-O0`;
+generic-host relocatable objects may use `-O0` through `-O3` but retain unresolved QIS/runtime
+symbols and are not runnable programs—the static in-process JIT registers QIS separately. Only
+the compiler command-line tools install; compiler libraries/headers/cache and pipeline APIs are
 build-tree-only. The native simulator and benchmark commands require a Linux ROCm environment that
 is not available in this shell.

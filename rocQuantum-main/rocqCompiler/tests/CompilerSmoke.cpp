@@ -1,10 +1,14 @@
 #include "rocqCompiler/MLIRCompiler.h"
+#include "rocqCompiler/ReferenceStateVecBackend.h"
 
+#include <atomic>
+#include <cmath>
 #include <complex>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -50,6 +54,45 @@ public:
     std::vector<std::string> events;
 };
 
+class PartiallyInitializingBackend final : public rocq::QuantumBackend {
+public:
+    void initialize(unsigned) override {
+        ++initialize_calls;
+        throw std::runtime_error("synthetic backend initialization failure");
+    }
+    void apply_gate(const std::string&, const std::vector<unsigned>&) override {}
+    void apply_parametrized_gate(
+        const std::string&, double, const std::vector<unsigned>&) override {}
+    std::vector<std::complex<double>> get_state_vector() override {
+        return {};
+    }
+    void destroy() override {
+        ++destroy_calls;
+    }
+
+    unsigned initialize_calls = 0;
+    unsigned destroy_calls = 0;
+};
+
+class ThrowingGateBackend final : public rocq::QuantumBackend {
+public:
+    void initialize(unsigned) override {}
+    void apply_gate(
+        const std::string&, const std::vector<unsigned>&) override {
+        throw std::runtime_error("synthetic QIS callback failure");
+    }
+    void apply_parametrized_gate(
+        const std::string&, double, const std::vector<unsigned>&) override {}
+    std::vector<std::complex<double>> get_state_vector() override {
+        return {};
+    }
+    void destroy() override {
+        ++destroy_calls;
+    }
+
+    unsigned destroy_calls = 0;
+};
+
 const char* kBellModule = R"mlir(
 module {
   func.func @bell() {
@@ -71,11 +114,43 @@ module {
 }
 )mlir";
 
-const char* kUnsupportedMcxModule = R"mlir(
+const char* kCzModule = R"mlir(
 module {
-  func.func @bad() {
+  func.func @cz_decomposition() {
+    %q0, %q1 = "quantum.qalloc"() {size = 2 : i64} : () -> (!quantum.qubit, !quantum.qubit)
+    "quantum.cz"(%q0, %q1) : (!quantum.qubit, !quantum.qubit) -> ()
+    return
+  }
+}
+)mlir";
+
+const char* kTwoOperandMcxModule = R"mlir(
+module {
+  func.func @mcx_one_control() {
     %q0, %q1 = "quantum.qalloc"() {size = 2 : i64} : () -> (!quantum.qubit, !quantum.qubit)
     "quantum.mcx"(%q0, %q1) : (!quantum.qubit, !quantum.qubit) -> ()
+    return
+  }
+}
+)mlir";
+
+const char* kThreeOperandMcxModule = R"mlir(
+module {
+  func.func @mcx_two_controls() {
+    %q0, %q1, %q2 = "quantum.qalloc"() {size = 3 : i64} : () -> (!quantum.qubit, !quantum.qubit, !quantum.qubit)
+    "quantum.x"(%q0) : (!quantum.qubit) -> ()
+    "quantum.x"(%q1) : (!quantum.qubit) -> ()
+    "quantum.mcx"(%q0, %q1, %q2) : (!quantum.qubit, !quantum.qubit, !quantum.qubit) -> ()
+    return
+  }
+}
+)mlir";
+
+const char* kUnsupportedWideMcxModule = R"mlir(
+module {
+  func.func @wide_mcx() {
+    %q0, %q1, %q2, %q3 = "quantum.qalloc"() {size = 4 : i64} : () -> (!quantum.qubit, !quantum.qubit, !quantum.qubit, !quantum.qubit)
+    "quantum.mcx"(%q0, %q1, %q2, %q3) : (!quantum.qubit, !quantum.qubit, !quantum.qubit, !quantum.qubit) -> ()
     return
   }
 }
@@ -280,8 +355,23 @@ int main() {
             },
             "cannot drive classical or quantum operations");
 
+        const std::string one_control_mcx_qir =
+            offline.emit_qir(kTwoOperandMcxModule);
+        requireContains(one_control_mcx_qir, "__quantum__qis__cnot__body");
+        requireNotContains(one_control_mcx_qir, "__quantum__qis__mcx");
+
+        rocq::MLIRCompiler three_qubit_offline(/*num_qubits=*/3);
+        const std::string two_control_mcx_qir =
+            three_qubit_offline.emit_qir(kThreeOperandMcxModule);
+        requireContains(two_control_mcx_qir, "__quantum__qis__h__body");
+        requireContains(two_control_mcx_qir, "__quantum__qis__t__body");
+        requireContains(two_control_mcx_qir, "__quantum__qis__cnot__body");
+        requireNotContains(two_control_mcx_qir, "__quantum__qis__mcx");
+
+        rocq::MLIRCompiler four_qubit_offline(/*num_qubits=*/4);
         requireThrowsContaining(
-            [&] { offline.emit_qir(kUnsupportedMcxModule); }, "mcx");
+            [&] { four_qubit_offline.emit_qir(kUnsupportedWideMcxModule); },
+            "control-array lowering");
         requireThrowsContaining(
             [&] { offline.emit_qir(kDuplicateTargetModule); }, "distinct");
         requireThrowsContaining(
@@ -297,7 +387,7 @@ int main() {
         if (recording->initialized_qubits != 2 || recording->events.size() != 2 ||
             recording->events[0] != "h:0" || recording->events[1] != "cnot:0,1" ||
             state.size() != 2) {
-            throw std::runtime_error("RecordingBackend dispatch contract failed");
+            throw std::runtime_error("QIR JIT RecordingBackend dispatch contract failed");
         }
 
         auto rotation_backend = std::make_unique<RecordingBackend>();
@@ -309,8 +399,134 @@ int main() {
             rotation_recording->events.size() != 1 ||
             rotation_recording->events[0] != "rx:0.500000:0") {
             throw std::runtime_error(
-                "RecordingBackend parameter dispatch contract failed");
+                "QIR JIT RecordingBackend parameter dispatch contract failed");
         }
+
+        auto decomposition_backend = std::make_unique<RecordingBackend>();
+        auto* decomposition_recording = decomposition_backend.get();
+        rocq::MLIRCompiler decomposition_executor(
+            /*num_qubits=*/2, std::move(decomposition_backend));
+        decomposition_executor.compile_and_execute(kCzModule, {});
+        if (decomposition_recording->events !=
+            std::vector<std::string>{"h:1", "cnot:0,1", "h:1"}) {
+            throw std::runtime_error(
+                "compile_and_execute bypassed the QIR CZ decomposition");
+        }
+
+        auto mcx_backend = std::make_unique<RecordingBackend>();
+        auto* mcx_recording = mcx_backend.get();
+        rocq::MLIRCompiler mcx_executor(
+            /*num_qubits=*/2, std::move(mcx_backend));
+        mcx_executor.compile_and_execute(kTwoOperandMcxModule, {});
+        if (mcx_recording->events !=
+            std::vector<std::string>{"cnot:0,1"}) {
+            throw std::runtime_error(
+                "one-control MCX did not lower through the QIR CNOT body");
+        }
+
+        rocq::MLIRCompiler numerical_executor(
+            /*num_qubits=*/2, rocq::create_reference_backend());
+        const auto bell_state =
+            numerical_executor.compile_and_execute(kBellModule, {});
+        const auto bell_amplitude = 1.0 / std::sqrt(2.0);
+        if (bell_state.size() != 4 ||
+            std::abs(bell_state[0] - std::complex<double>{bell_amplitude, 0.0}) >
+                1.0e-12 ||
+            std::abs(bell_state[1]) > 1.0e-12 ||
+            std::abs(bell_state[2]) > 1.0e-12 ||
+            std::abs(bell_state[3] - std::complex<double>{bell_amplitude, 0.0}) >
+                1.0e-12) {
+            throw std::runtime_error(
+                "QIR JIT CPU reference-backend Bell state is incorrect");
+        }
+
+        rocq::MLIRCompiler mcx_numerical_executor(
+            /*num_qubits=*/3, rocq::create_reference_backend());
+        const auto mcx_state = mcx_numerical_executor.compile_and_execute(
+            kThreeOperandMcxModule, {});
+        if (mcx_state.size() != 8 ||
+            std::abs(mcx_state[7] - std::complex<double>{1.0, 0.0}) >
+                1.0e-12) {
+            throw std::runtime_error(
+                "two-control MCX QIR decomposition produced the wrong state");
+        }
+
+        requireThrowsContaining(
+            [&] { executor.compile_and_execute(kBaseProfileModule, {}); },
+            "qir-v2-base");
+
+        auto failing_backend = std::make_unique<PartiallyInitializingBackend>();
+        auto* failing_backend_observer = failing_backend.get();
+        rocq::MLIRCompiler failing_executor(
+            /*num_qubits=*/2, std::move(failing_backend));
+        requireThrowsContaining(
+            [&] { failing_executor.compile_and_execute(kBellModule, {}); },
+            "synthetic backend initialization failure");
+        if (failing_backend_observer->initialize_calls != 1 ||
+            failing_backend_observer->destroy_calls != 2) {
+            throw std::runtime_error(
+                "partially initialized backend was not deterministically cleaned up");
+        }
+
+        auto throwing_backend = std::make_unique<ThrowingGateBackend>();
+        auto* throwing_backend_observer = throwing_backend.get();
+        rocq::MLIRCompiler throwing_executor(
+            /*num_qubits=*/2, std::move(throwing_backend));
+        requireThrowsContaining(
+            [&] { throwing_executor.compile_and_execute(kBellModule, {}); },
+            "synthetic QIS callback failure");
+        if (throwing_backend_observer->destroy_calls != 2) {
+            throw std::runtime_error(
+                "backend was not cleaned up after a QIS callback failure");
+        }
+
+        std::atomic<unsigned> ready_threads{0};
+        std::atomic<bool> start_threads{false};
+        std::exception_ptr first_thread_failure;
+        std::exception_ptr second_thread_failure;
+        std::vector<std::complex<double>> first_thread_state;
+        std::vector<std::complex<double>> second_thread_state;
+        auto run_concurrent = [&](std::vector<std::complex<double>>& result,
+                                  std::exception_ptr& failure) {
+            ++ready_threads;
+            while (!start_threads.load()) {
+                std::this_thread::yield();
+            }
+            try {
+                rocq::MLIRCompiler concurrent_executor(
+                    /*num_qubits=*/2, rocq::create_reference_backend());
+                result =
+                    concurrent_executor.compile_and_execute(kBellModule, {});
+            } catch (...) {
+                failure = std::current_exception();
+            }
+        };
+        std::thread first_thread(
+            run_concurrent,
+            std::ref(first_thread_state),
+            std::ref(first_thread_failure));
+        std::thread second_thread(
+            run_concurrent,
+            std::ref(second_thread_state),
+            std::ref(second_thread_failure));
+        while (ready_threads.load() != 2) {
+            std::this_thread::yield();
+        }
+        start_threads = true;
+        first_thread.join();
+        second_thread.join();
+        if (first_thread_failure) {
+            std::rethrow_exception(first_thread_failure);
+        }
+        if (second_thread_failure) {
+            std::rethrow_exception(second_thread_failure);
+        }
+        if (first_thread_state != bell_state ||
+            second_thread_state != bell_state) {
+            throw std::runtime_error(
+                "concurrent QIR JIT executions crossed backend contexts");
+        }
+
         requireThrowsContaining(
             [&] { executor.compile_and_execute(kBellModule, {{"kernel_argument", true}}); },
             "kernel argument binding");

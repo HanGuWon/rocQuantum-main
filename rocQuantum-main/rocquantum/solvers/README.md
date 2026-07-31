@@ -22,9 +22,10 @@ Current supported subset:
   and returns a tuple-unpackable `QAOAResult` whose final configuration is a
   canonical `rocq.SampleResult`.  Its Pauli evolution uses
   the canonical CUDA-Q convention `exp_pauli(theta, P) = exp(+i theta P)`.
-- `get_operator_pool("qaoa", num_qubits=n)` generates the CUDA-QX QAOA pool:
-  all one-qubit X/Y terms and all two-qubit XX, YY, YZ, ZY, XY, YX, XZ, ZX
-  terms.
+- `get_operator_pool()` dispatches through a named registry.  The built-in
+  `"qaoa"` pool contains all one-qubit X/Y terms and all two-qubit XX, YY, YZ,
+  ZY, XY, YX, XZ, ZX terms.  The built-in `"uccsd"` pool follows CUDA-QX
+  0.6.0's interleaved-spin excitation ordering and Pauli coefficients.
 - `adapt_vqe()` is a single-process host reference implementation.  It selects
   the largest pool gradient, grows the ansatz dynamically, supports warm/cold
   starts and convergence controls, and deliberately uses central finite
@@ -34,8 +35,16 @@ Current supported subset:
 - `jordan_wigner()` transforms precomputed one- and two-body integrals and
   accepts the official `tol` spelling as an alias for `tolerance`;
   `MolecularHamiltonian.from_integrals()` retains immutable integral metadata.
-  Geometry/XYZ/PySCF construction fails explicitly through `create_molecule()`;
-  it is not represented as implemented.
+  `create_molecule()` accepts an atom sequence or XYZ path and lazily uses the
+  optional PySCF dependency for a restricted, full-space RHF/ROHF calculation,
+  interleaved spin-orbital integrals, and optional FCI reference energy.
+  Active spaces, unrestricted integrals, correlated-orbital workflows, and
+  non-Jordan-Wigner mappings fail explicitly.
+- `stateprep.get_uccsd_excitations()` and
+  `stateprep.get_num_uccsd_parameters()` expose CUDA-QX-ordered UCCSD metadata.
+  `stateprep.uccsd()` records a backend-independent CPU-reference ansatz using
+  canonical `rocq.exp_pauli()` operations. It is a correctness path, not a
+  production-optimized UCC implementation.
 
 - `rocquantum.solvers.solver_capabilities()` and the package-level
   `capabilities()` alias expose the experimental supported/unsupported solver
@@ -97,6 +106,10 @@ Current supported subset:
 
 Install `rocquantum[solvers]` when using the default `SciPyOptimizer`; the
 base package keeps SciPy optional for users that provide their own optimizer.
+Install `rocquantum[chemistry]` to enable the PySCF-backed
+`create_molecule()` adapter.  The examples below explicitly select
+`backend="qpp-cpu"` so they run without ROCm; the solver APIs retain the
+project's GPU-first `state_vector` default for compatibility.
 
 Minimal VQE example:
 
@@ -113,7 +126,7 @@ def ansatz(theta):
     rocq.rx(theta, q[0])
 
 
-solver = VQE_Solver(backend="state_vector")
+solver = VQE_Solver(backend="qpp-cpu")
 energy = solver.evaluate_energy(
     PauliOperator("Z0"),
     ansatz,
@@ -136,11 +149,13 @@ result = solve_maxcut_qaoa(
     edges=[(0, 1, 1.0)],
     layers=1,
     initial_params=np.zeros(parameter_count),
+    backend="qpp-cpu",
 )
 print(result["optimal_energy"], result["optimal_parameters"])
 print(result["optimal_cut_value"])
 ```
 
 For production-grade workflows, this layer still needs native adjoint
-differentiation, ROCm hardware validation, geometry/PySCF and Bravyi-Kitaev
-chemistry paths, UCC state preparation, and distributed MQPU/MPI execution.
+differentiation, ROCm hardware validation, active-space and Bravyi-Kitaev
+chemistry paths, production-optimized generalized UCC families, and
+distributed MQPU/MPI execution.

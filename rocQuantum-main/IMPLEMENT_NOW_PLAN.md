@@ -2,7 +2,7 @@
 
 Audit date: 2026-04-05
 
-Historical-plan notice (2026-07-15): this is the original low-blast-radius implementation plan, not the current backlog. `TOP_GAPS_AND_PRIORITIES.md` is the current priority list. The host-only packaging gate, example canonicalization, and evidence-stage documentation have since been completed; native ROCm validation remains pending because no AMD GPU is available.
+Historical-plan notice (updated 2026-07-31): this is the original low-blast-radius implementation plan, not the current backlog. `TOP_GAPS_AND_PRIORITIES.md` is the current priority list. The host-only packaging gate, example canonicalization, evidence-stage documentation, and measurement-free static-QIR ORC JIT/CPU reference path have since been completed; Base/adaptive runtime breadth and native ROCm validation remain pending.
 
 ## 1. Compiler/runtime MVP execution path
 

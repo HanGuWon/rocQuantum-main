@@ -33,24 +33,28 @@ except ImportError:
     rocquantum_bind = None
 
 _COMPILER_BINDING_MISSING_MESSAGE = (
-    "rocquantum_bind is required for compiler execution. Build rocQuantum with "
-    "ROCQUANTUM_BUILD_BINDINGS=ON on a ROCm host, then retry. The Python "
-    "compiler path is partial and covers only the canonical core-gate MLIR subset."
+    "rocquantum_bind with ROCQUANTUM_ENABLE_MLIR_COMPILER=ON is required for "
+    "in-process compiler execution. The cpu_statevec execution target does not "
+    "require an AMD GPU; the combined Python extension currently still requires "
+    "a native ROCm SDK build. The compiler path covers the canonical "
+    "measurement-free QIR gate subset."
 )
 _COMPILER_SUPPORTED_MLIR_SUBSET = (
     "Supported canonical MLIR gates: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, "
-    "CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, and CRX/CRY/CRZ/CP."
+    "CNOT/CZ/SWAP/CCX/CSWAP, MCX with one or two controls, "
+    "RX/RY/RZ/P, and CRX/CRY/CRZ/CP."
     " Offline QIR emission also supports terminal MZ result operations."
 )
 _COMPILER_SUPPORTED_GATE_GROUPS = {
     "allocation": ("qalloc",),
     "fixed_single_qubit": ("h", "x", "y", "z", "s", "sdg", "t", "tdg"),
-    "fixed_multi_qubit": ("cnot", "cz", "swap", "ccx", "mcx", "cswap"),
+    "fixed_multi_qubit": ("cnot", "cz", "swap", "ccx", "cswap"),
+    "bounded_multi_control": ("mcx[1-control]", "mcx[2-control]"),
     "parametric_single_qubit": ("rx", "ry", "rz", "p"),
     "parametric_controlled": ("crx", "cry", "crz", "cp"),
     "terminal_measurement": ("mz",),
 }
-_COMPILER_SUPPORTED_BACKENDS = ("hip_statevec",)
+_COMPILER_SUPPORTED_BACKENDS = ("cpu_statevec", "hip_statevec")
 _COMPILER_SUPPORTED_QIR_PROFILES = ("qir-v2-static", "qir-v2-base")
 _COMPILER_SUPPORTED_ARTIFACT_KINDS = ("llvm-ir", "llvm-bc", "object")
 _COMPILER_UNSUPPORTED_FEATURES = (
@@ -58,10 +62,10 @@ _COMPILER_UNSUPPORTED_FEATURES = (
     "native typed function arguments/results and classical SSA",
     "noise channels",
     "arbitrary unitary/matrix operations",
-    "QIR control-array lowering for variadic MCX",
+    "QIR control-array lowering for variadic MCX with three or more controls",
     "dynamic QIR qubit/result management",
     "C++/Python AST source frontend parity with nvq++",
-    "ORC JIT and a runnable QIS symbol-linking runtime",
+    "QIR Base/Adaptive measurement and result-recording JIT runtime",
     "external pass-plugin loading ABI",
     "release-wired adjoint-generation pass pipeline",
 )
@@ -241,6 +245,7 @@ _RUNTIME_EXECUTION_ENTRY_POINTS = (
 )
 _RUNTIME_SUPPORTED_BACKENDS = (
     "state_vector",
+    "qpp-cpu",
     "density_matrix",
     "stabilizer",
     "tableau",
@@ -270,6 +275,7 @@ _RUNTIME_SUPPORTED_FEATURES = (
     "experimental Clifford stabilizer Pauli propagation backend",
     "partial compiler execution entry point with compiler_capabilities() boundary metadata",
     "ContextVar-based local target selection with explicit backend override",
+    "ROCm-independent qpp-cpu reference state-vector execution",
     "dict/float-compatible result wrappers and Future-compatible AsyncResult.get()",
     "CUDA-Q-style shots_count sampling alias with a 1000-shot default",
     "single-logical-QPU qpu_id=0 validation on asynchronous entry points",
@@ -343,6 +349,20 @@ def compiler_capabilities() -> Dict[str, object]:
             mlir_runtime_available,
         )
     ) if binding_available else False
+    cpu_execution_available = bool(
+        getattr(
+            rocquantum_bind,
+            "MLIR_COMPILER_CPU_EXECUTION_ENABLED",
+            False,
+        )
+    ) if binding_available else False
+    qir_jit_available = bool(
+        getattr(
+            rocquantum_bind,
+            "MLIR_COMPILER_QIR_JIT_ENABLED",
+            False,
+        )
+    ) if binding_available else False
     if binding_qir_available:
         qir_profile = getattr(
             rocquantum_bind,
@@ -390,10 +410,12 @@ def compiler_capabilities() -> Dict[str, object]:
             "corruption_policy": "fail_closed",
         },
         "rocq_translate_available": translator is not None,
+        "qir_jit_available": qir_jit_available,
+        "cpu_execution_available": cpu_execution_available,
         "gpu_execution_available": gpu_execution_available,
         "qir_profile": qir_profile,
         "qir_profiles": list(_COMPILER_SUPPORTED_QIR_PROFILES),
-        "default_backend": "hip_statevec",
+        "default_backend": "cpu_statevec",
         "supported_backends": list(_COMPILER_SUPPORTED_BACKENDS),
         "supported_subset": _COMPILER_SUPPORTED_MLIR_SUBSET,
         "supported_gate_groups": {
@@ -407,13 +429,14 @@ def compiler_capabilities() -> Dict[str, object]:
             for key, value in _COMPILER_TRANSFORM_PIPELINE.items()
         },
         "mlir_runtime_note": (
-            "QIR emission is available in the optional LLVM/MLIR 22.1 compiler build "
-            "and can run without an AMD GPU via the offline MLIRCompiler constructor "
-            "or the installed rocq-translate CLI fallback. "
-            "HIP compile-and-execute remains device-dependent; default Python bindings "
-            "may expose a fail-fast DisabledRuntimeMLIRCompiler. LLVM bitcode and "
-            "host PIC objects are offline artifacts with unresolved QIS/runtime symbols, "
-            "not runnable executables."
+            "The optional LLVM/MLIR 22.1 compiler lowers measurement-free kernels "
+            "to verified qir-v2-static and executes that lowered module through an "
+            "in-process ORC JIT with explicit QIS-to-QuantumBackend callbacks. "
+            "cpu_statevec provides a GPU-independent numerical reference target; "
+            "hip_statevec remains device-dependent. Base Profile QIR emission is "
+            "verified but its measurement/result runtime is not yet executable. "
+            "Exported bitcode and host objects intentionally retain unresolved "
+            "QIS/runtime symbols for an external QIR runtime linker."
         ),
         "python_dynamic_builder": {
             "entry_point": "rocq.make_kernel",
@@ -425,7 +448,7 @@ def compiler_capabilities() -> Dict[str, object]:
             "terminal_measurement": True,
             "measurement_mlir": True,
             "specialization_kind": "host_gate_ir",
-            "native_mlir_jit": False,
+            "native_mlir_jit": qir_jit_available,
             "measurement_control_flow": False,
         },
     }
@@ -984,7 +1007,7 @@ class QuantumKernel:
     def compile_and_execute(
         self,
         *args,
-        compiler_backend: str = "hip_statevec",
+        compiler_backend: str = "cpu_statevec",
         strict: bool = True,
         **kwargs,
     ):
@@ -1006,7 +1029,7 @@ class QuantumKernel:
     def compile_and_execute_async(
         self,
         *args,
-        compiler_backend: str = "hip_statevec",
+        compiler_backend: str = "cpu_statevec",
         strict: bool = True,
         qpu_id: int = 0,
         executor: Optional[Executor] = None,
@@ -1258,7 +1281,7 @@ def get_state(
 def compile_and_execute(
     kernel_obj: QuantumKernel,
     *args,
-    compiler_backend: str = "hip_statevec",
+    compiler_backend: str = "cpu_statevec",
     strict: bool = True,
     **kwargs,
 ):
@@ -1275,7 +1298,7 @@ def compile_and_execute(
 def compile_and_execute_async(
     kernel_obj: QuantumKernel,
     *args,
-    compiler_backend: str = "hip_statevec",
+    compiler_backend: str = "cpu_statevec",
     strict: bool = True,
     qpu_id: int = 0,
     executor: Optional[Executor] = None,
