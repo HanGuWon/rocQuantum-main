@@ -44,6 +44,12 @@ ROCM_AUDIT = os.path.join(PROJECT_ROOT, "ROCM_INTEGRATION_AUDIT.md")
 FEATURE_MATRIX = os.path.join(PROJECT_ROOT, "FEATURE_TRUTH_MATRIX.md")
 ROCM_CI_SETUP = os.path.join(REPO_ROOT, "ROCM_CI_SETUP.md")
 ROCM_PROBE = os.path.join(PROJECT_ROOT, "scripts", "probe_rocm_runtime.sh")
+ROCM_HARDWARE_VALIDATION = os.path.join(
+    PROJECT_ROOT, "scripts", "run_rocm_hardware_validation.sh"
+)
+NATIVE_COMPILER_GPU_SMOKE = os.path.join(
+    PROJECT_ROOT, "scripts", "native_compiler_gpu_smoke.py"
+)
 ROCM_CI_WORKFLOW = os.path.join(REPO_ROOT, ".github", "workflows", "rocm-ci.yml")
 ROCM_LINUX_WORKFLOW = os.path.join(REPO_ROOT, ".github", "workflows", "rocm-linux-build.yml")
 ROCM_NIGHTLY_WORKFLOW = os.path.join(REPO_ROOT, ".github", "workflows", "rocm-nightly.yml")
@@ -81,6 +87,7 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn("project(rocQuantum VERSION 0.1.0 LANGUAGES NONE)", cmake)
         self.assertIn("project(rocQuantum VERSION 0.1.0 LANGUAGES CXX HIP)", cmake)
         self.assertIn("option(ROCQUANTUM_BUILD_NATIVE", cmake)
+        self.assertIn("option(ROCQUANTUM_REQUIRE_RCCL", cmake)
         self.assertIn("if(NOT ROCQUANTUM_BUILD_NATIVE)", cmake)
         self.assertIn("find_package(hip CONFIG REQUIRED)", cmake)
         self.assertIn(
@@ -244,6 +251,12 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertNotIn("hiprand::hiprand", combined)
         self.assertIn("TARGET rccl", combined)
         self.assertIn("target_link_libraries(hipStateVec PUBLIC rccl)", combined)
+        self.assertIn("ROCQUANTUM_RCCL_AVAILABLE", combined)
+        self.assertIn(
+            "if(ROCQUANTUM_REQUIRE_RCCL AND NOT ROCQUANTUM_RCCL_AVAILABLE)",
+            combined,
+        )
+        self.assertIn("RCCL development", combined)
 
     def test_cpp_sources_with_hip_kernels_are_compiled_as_hip(self):
         statevec_cmake = _read(COMPONENT_CMAKES[0])
@@ -358,10 +371,15 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn("set -euo pipefail", probe)
         self.assertIn("require_command hipcc", probe)
         self.assertIn("require_command rocminfo", probe)
-        self.assertIn("require_command rocm-smi", probe)
+        self.assertIn("command -v amd-smi", probe)
+        self.assertIn("command -v rocm-smi", probe)
         self.assertIn("cmake_hip_compiler", probe)
         self.assertIn("/llvm/bin/clang++", probe)
         self.assertIn("[[ ! -e /dev/kfd ]]", probe)
+        self.assertIn("[[ ! -d /dev/dri ]]", probe)
+        self.assertIn('find -L "${rocm_root}"', probe)
+        self.assertIn("visible_gpu_count", probe)
+        self.assertIn("gpu_architectures", probe)
         self.assertIn("exit 1", probe)
         self.assertIn("ROCm runtime prerequisites are missing", probe)
         self.assertGreaterEqual(workflows.count("scripts/probe_rocm_runtime.sh"), 2)
@@ -385,6 +403,30 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         linux_workflow = _read(ROCM_LINUX_WORKFLOW)
         for python_version in ['"3.9"', '"3.10"', '"3.11"', '"3.12"', '"3.13"']:
             self.assertIn(python_version, linux_workflow)
+
+    def test_hardware_validation_is_fail_closed_and_evidence_bundled(self):
+        runner = _read(ROCM_HARDWARE_VALIDATION)
+        compiler_smoke = _read(NATIVE_COMPILER_GPU_SMOKE)
+
+        self.assertIn("set -Eeuo pipefail", runner)
+        self.assertGreaterEqual(runner.count("-DROCQUANTUM_REQUIRE_RCCL=ON"), 3)
+        self.assertIn("visible_gpu_count", runner)
+        self.assertIn("gpu_architectures", runner)
+        self.assertIn("-DROCQ_PRECISION_DOUBLE=ON", runner)
+        self.assertIn("-DROCQUANTUM_ENABLE_MLIR_COMPILER=ON", runner)
+        self.assertIn("scripts/native_compiler_gpu_smoke.py", runner)
+        self.assertIn("--require-native-rocm-evidence", runner)
+        self.assertIn("--require-all-native-benchmark-evidence", runner)
+        self.assertIn("--require-multi-gpu", runner)
+        self.assertIn("tar -czf", runner)
+        self.assertIn("if ! tar -czf", runner)
+
+        self.assertIn('Path("/dev/kfd").exists()', compiler_smoke)
+        self.assertIn('"MLIR_COMPILER_ENABLED"', compiler_smoke)
+        self.assertIn('"MLIR_COMPILER_GPU_EXECUTION_ENABLED"', compiler_smoke)
+        self.assertIn('compiler_backend="hip_statevec"', compiler_smoke)
+        self.assertIn("strict=True", compiler_smoke)
+        self.assertNotIn("actionable_tokens", compiler_smoke)
 
     def test_native_ctest_graph_has_explicit_evidence_gates(self):
         component_cmake = "\n".join(
@@ -446,10 +488,27 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn("rocm-runtime-self-hosted:", workflow)
         self.assertIn("needs: fast-checks", workflow)
         self.assertIn("github.event.pull_request.head.repo.fork == false", workflow)
-        for label in ["self-hosted", "linux", "x64", "rocm", "rocm-gpu", "gfx90a"]:
+        for label in ["self-hosted", "linux", "x64", "rocm", "rocm-gpu"]:
             self.assertIn(f"- {label}", workflow)
+        runtime_job = workflow.split("  rocm-runtime-self-hosted:", 1)[1]
+        runtime_labels = runtime_job.split("    timeout-minutes:", 1)[0]
+        self.assertNotIn("- gfx90a", runtime_labels)
         self.assertIn("Probe ROCm runtime prerequisites", workflow)
         self.assertIn("bash scripts/probe_rocm_runtime.sh", workflow)
+        self.assertGreaterEqual(
+            workflow.count("-DROCQUANTUM_REQUIRE_RCCL=ON"),
+            2,
+        )
+        self.assertIn("Export detected ROCm GPU architectures", workflow)
+        self.assertIn('echo "GPU_ARCH=${GPU_ARCH}" >> "${GITHUB_ENV}"', workflow)
+        self.assertGreaterEqual(
+            workflow.count('"${ARTIFACT_DIR}/rocm-runtime-probe.log"'),
+            2,
+        )
+        self.assertGreaterEqual(
+            workflow.count('-DCMAKE_HIP_ARCHITECTURES="${GPU_ARCH}"'),
+            2,
+        )
         self.assertIn("Run ROCm runtime tests (1 GPU smoke)", workflow)
         self.assertIn("-L native -LE multi-gpu", workflow)
         self.assertIn("Run distributed MultiGPUTests when >= 2 GPUs", workflow)
@@ -457,8 +516,12 @@ class TestRocmCompatibilityContract(unittest.TestCase):
 
         nightly = _read(ROCM_NIGHTLY_WORKFLOW)
         self.assertIn("Require at least two visible GPUs", nightly)
+        self.assertIn("-DROCQUANTUM_REQUIRE_RCCL=ON", nightly)
         self.assertIn("visible_gpu_count", nightly)
+        self.assertIn('"${ARTIFACT_DIR}/rocm-runtime-probe.log"', nightly)
         self.assertIn('if [ "${GPU_COUNT}" -lt 2 ]', nightly)
+        self.assertIn("amd-smi metric", nightly)
+        self.assertNotIn("command -v amdsmi", nightly)
         self.assertIn("actions/upload-artifact@v4", workflow)
         self.assertIn("rocm-runtime-${{ github.run_id }}", workflow)
 

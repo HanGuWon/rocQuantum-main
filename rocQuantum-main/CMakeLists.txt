@@ -68,6 +68,8 @@ option(ROCQUANTUM_BUILD_COMPONENTS_SHARED "Build component libraries as shared l
 option(ROCQ_PRECISION_DOUBLE
        "Build StateVec and TensorNet public APIs/kernels with complex128 precision." OFF)
 option(ROCQUANTUM_ENABLE_SYNC_DEBUG "Enable debug stream synchronization in enqueue APIs." OFF)
+option(ROCQUANTUM_REQUIRE_RCCL
+       "Fail configuration when the RCCL development package is unavailable." OFF)
 if(ROCQUANTUM_BUILD_COMPONENTS_SHARED)
     set(ROCQUANTUM_COMPONENT_LIBRARY_TYPE SHARED)
 else()

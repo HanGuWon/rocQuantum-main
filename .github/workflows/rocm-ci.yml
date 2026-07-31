@@ -287,7 +287,6 @@ jobs:
       - x64
       - rocm
       - rocm-gpu
-      - gfx90a
     timeout-minutes: 90
     defaults:
       run:
@@ -321,6 +320,7 @@ jobs:
             hipcc --version || true
             /opt/rocm/llvm/bin/clang++ --version || true
             rocminfo || true
+            amd-smi list || true
             rocm-smi || true
             ls -l /dev/kfd || true
           } | tee "${ARTIFACT_DIR}/runner-env.log"
@@ -331,6 +331,23 @@ jobs:
         run: |
           set -o pipefail
           bash scripts/probe_rocm_runtime.sh 2>&1 | tee "${ARTIFACT_DIR}/rocm-runtime-probe.log"
+
+      - name: Export detected ROCm GPU architectures
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
+        run: |
+          set -euo pipefail
+          GPU_ARCH="$(
+            awk -F= '/^gpu_architectures=/ { value=$2 } END { print value }' \
+              "${ARTIFACT_DIR}/rocm-runtime-probe.log"
+          )"
+          if [ -z "${GPU_ARCH}" ]; then
+            echo "The ROCm probe did not report a GPU architecture." >&2
+            exit 1
+          fi
+          echo "GPU_ARCH=${GPU_ARCH}" >> "${GITHUB_ENV}"
+          echo "Detected ROCm GPU architecture(s): ${GPU_ARCH}" \
+            | tee "${ARTIFACT_DIR}/gpu-architectures.log"
 
       - name: Async contract gate
         env:
@@ -349,8 +366,9 @@ jobs:
             -DBUILD_TESTING=ON \
             -DROCQUANTUM_BUILD_BINDINGS=OFF \
             -DROCQUANTUM_BUILD_NATIVE=ON \
+            -DROCQUANTUM_REQUIRE_RCCL=ON \
             -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
-            -DCMAKE_HIP_ARCHITECTURES=gfx90a \
+            -DCMAKE_HIP_ARCHITECTURES="${GPU_ARCH}" \
             -DCMAKE_PREFIX_PATH=/opt/rocm \
             2>&1 | tee "${ARTIFACT_DIR}/configure.log"
 
@@ -393,9 +411,10 @@ jobs:
             -DBUILD_TESTING=OFF \
             -DROCQUANTUM_BUILD_BINDINGS=ON \
             -DROCQUANTUM_BUILD_NATIVE=ON \
+            -DROCQUANTUM_REQUIRE_RCCL=ON \
             -DPython3_EXECUTABLE="${VENV_PYTHON}" \
             -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
-            -DCMAKE_HIP_ARCHITECTURES="gfx90a" \
+            -DCMAKE_HIP_ARCHITECTURES="${GPU_ARCH}" \
             -DCMAKE_PREFIX_PATH="${PYBIND11_CMAKE_DIR};/opt/rocm" \
             2>&1 | tee "${ARTIFACT_DIR}/configure-native-framework.log"
           cmake --build build-rocm-python --parallel \
@@ -437,9 +456,13 @@ jobs:
           ARTIFACT_DIR: ${{ github.workspace }}/ci-artifacts/rocm-runtime
         run: |
           set -euo pipefail
-          GPU_COUNT=0
-          if command -v rocm-smi >/dev/null 2>&1; then
-            GPU_COUNT="$(rocm-smi -i 2>/dev/null | sed -n 's/^GPU\[\([0-9]\+\)\].*/\1/p' | sort -u | wc -l | tr -d ' ')"
+          GPU_COUNT="$(
+            awk -F= '/^visible_gpu_count=/ { value=$2 } END { print value }' \
+              "${ARTIFACT_DIR}/rocm-runtime-probe.log"
+          )"
+          if [[ ! "${GPU_COUNT}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "The ROCm probe did not report a valid GPU count." >&2
+            exit 1
           fi
           if [ "${GPU_COUNT}" -ge 2 ]; then
             echo "Detected ${GPU_COUNT} GPUs; running MultiGPUTests." | tee "${ARTIFACT_DIR}/ctest-multigpu.log"
@@ -528,7 +551,7 @@ jobs:
             echo "# ROCm Runtime (Self-hosted GPU)"
             echo
             echo "- Result: ${{ job.status }}"
-            echo "- Runner labels: self-hosted,linux,x64,rocm,rocm-gpu,gfx90a"
+            echo "- Runner labels: self-hosted,linux,x64,rocm,rocm-gpu"
             echo "- Benchmark artifacts: ${ARTIFACT_DIR}/benchmark-artifacts"
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } | tee "${ARTIFACT_DIR}/summary-rocm-runtime.md" >> "${GITHUB_STEP_SUMMARY}"

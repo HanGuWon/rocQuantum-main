@@ -40,22 +40,40 @@ if(ROCQUANTUM_ENABLE_SYNC_DEBUG)
     target_compile_definitions(hipStateVec PRIVATE ROCQUANTUM_ENABLE_SYNC_DEBUG=1)
 endif()
 
+set(ROCQUANTUM_RCCL_AVAILABLE OFF)
 find_package(rccl QUIET)
 if(rccl_FOUND AND TARGET rccl)
+    set(ROCQUANTUM_RCCL_AVAILABLE ON)
     target_compile_definitions(hipStateVec PRIVATE ROCQ_HAVE_RCCL=1)
     target_link_libraries(hipStateVec PUBLIC rccl)
 elseif(rccl_FOUND AND TARGET roc::rccl)
+    set(ROCQUANTUM_RCCL_AVAILABLE ON)
     target_compile_definitions(hipStateVec PRIVATE ROCQ_HAVE_RCCL=1)
     target_link_libraries(hipStateVec PUBLIC roc::rccl)
 elseif(rccl_FOUND AND TARGET rccl::rccl)
+    set(ROCQUANTUM_RCCL_AVAILABLE ON)
     target_compile_definitions(hipStateVec PRIVATE ROCQ_HAVE_RCCL=1)
     target_link_libraries(hipStateVec PUBLIC rccl::rccl)
 elseif(rccl_FOUND AND DEFINED rccl_LIBRARIES)
+    set(ROCQUANTUM_RCCL_AVAILABLE ON)
     target_compile_definitions(hipStateVec PRIVATE ROCQ_HAVE_RCCL=1)
     if(DEFINED rccl_INCLUDE_DIRS)
         target_include_directories(hipStateVec PRIVATE ${rccl_INCLUDE_DIRS})
     endif()
     target_link_libraries(hipStateVec PUBLIC ${rccl_LIBRARIES})
+endif()
+
+if(ROCQUANTUM_REQUIRE_RCCL AND NOT ROCQUANTUM_RCCL_AVAILABLE)
+    message(FATAL_ERROR
+        "ROCQUANTUM_REQUIRE_RCCL=ON, but no supported RCCL CMake package "
+        "target or library definition was found. Install the RCCL development "
+        "package and add its prefix to CMAKE_PREFIX_PATH.")
+endif()
+
+if(ROCQUANTUM_RCCL_AVAILABLE)
+    message(STATUS "RCCL support enabled for hipStateVec")
+else()
+    message(STATUS "RCCL support unavailable; distributed collectives use host fallback")
 endif()
 
 install(
