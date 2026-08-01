@@ -165,6 +165,7 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         self.assertIn("CompilerArtifacts.cpp", src)
         self.assertIn("rocqCompilerTooling", src)
         self.assertIn("ROCQ_COMPILER_FINGERPRINT", src)
+        self.assertIn('INSTALL_RPATH "${LLVM_LIBRARY_DIRS}"', src)
         self.assertIn("rocq.compiler.artifact-cli", src)
         self.assertIn("rocq.compiler.run-cli", src)
 

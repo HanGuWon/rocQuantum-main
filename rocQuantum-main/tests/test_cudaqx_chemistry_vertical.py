@@ -245,7 +245,9 @@ def test_optional_real_pyscf_h2_sto3g_known_energy_and_shapes():
     dense = operator_to_matrix(molecule.hamiltonian, num_qubits=4)
     np.testing.assert_allclose(dense, dense.conj().T, atol=1.0e-10)
     two_electron_basis = [
-        basis_state for basis_state in range(16) if basis_state.bit_count() == 2
+        basis_state
+        for basis_state in range(16)
+        if bin(basis_state).count("1") == 2
     ]
     sector = dense[np.ix_(two_electron_basis, two_electron_basis)]
     assert np.linalg.eigvalsh(sector)[0] == pytest.approx(
@@ -387,7 +389,7 @@ def test_uccsd_stateprep_preserves_particle_number_and_validates_parameters():
     outside_probability = sum(
         abs(amplitude) ** 2
         for basis_state, amplitude in enumerate(state)
-        if basis_state.bit_count() != 2
+        if bin(basis_state).count("1") != 2
     )
     assert outside_probability == pytest.approx(0.0, abs=1.0e-12)
     assert np.linalg.norm(state) == pytest.approx(1.0, abs=1.0e-12)

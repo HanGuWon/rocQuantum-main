@@ -264,6 +264,14 @@ target_compile_definitions(rocq-run PRIVATE
 )
 target_link_libraries(rocq-run PRIVATE rocqCompiler)
 
+# The compiler tools intentionally depend on the externally supplied, pinned
+# LLVM/MLIR 22.1 SDK. Preserve that SDK's library directory for installed
+# executables; otherwise CMake strips the build-tree RUNPATH at install time
+# and the tools cannot locate libMLIR.so/libLLVM.so.
+set_target_properties(rocq-opt rocq-translate rocq-run PROPERTIES
+  INSTALL_RPATH "${LLVM_LIBRARY_DIRS}"
+)
+
 include(GNUInstallDirs)
 install(TARGETS rocq-opt rocq-translate rocq-run
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
