@@ -22,10 +22,10 @@ static mlir::LLVM::LLVMFuncOp getOrInsertQirFunc(mlir::PatternRewriter &rewriter
 }
 
 // Lowering pattern for sim.apply_gate
-struct ApplyGateToQirLowering : public mlir::OpRewritePattern<rocq::mlir::sim::ApplyGateOp> {
-    using OpRewritePattern<rocq::mlir::sim::ApplyGateOp>::OpRewritePattern;
+struct ApplyGateToQirLowering : public mlir::OpRewritePattern<rocq::sim::ApplyGateOp> {
+    using OpRewritePattern<rocq::sim::ApplyGateOp>::OpRewritePattern;
 
-    mlir::LogicalResult matchAndRewrite(rocq::mlir::sim::ApplyGateOp op, mlir::PatternRewriter &rewriter) const override {
+    mlir::LogicalResult matchAndRewrite(rocq::sim::ApplyGateOp op, mlir::PatternRewriter &rewriter) const override {
         auto module = op->getParentOfType<mlir::ModuleOp>();
         std::string gate_name = op.getGateName().str();
         
@@ -54,7 +54,7 @@ struct SimulatorToQIRPass : public mlir::PassWrapper<SimulatorToQIRPass, mlir::O
     void runOnOperation() override {
         mlir::ConversionTarget target(getContext());
         target.addLegalDialect<mlir::LLVM::LLVMDialect>();
-        target.addIllegalDialect<rocq::mlir::sim::SimulatorDialect>();
+        target.addIllegalDialect<rocq::sim::SimulatorDialect>();
         target.addLegalOp<mlir::ModuleOp>(); // ModuleOp is always legal
 
         mlir::RewritePatternSet patterns(&getContext());

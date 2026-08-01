@@ -2,9 +2,12 @@
 
 #include <cmath>
 #include <iostream>
+#include <string>
 #include <vector>
 
 namespace {
+
+constexpr int kCtestSkipReturnCode = 77;
 
 bool nearly_equal(const rocComplex& a, const rocComplex& b, double tol = 1e-5) {
     return std::abs(static_cast<double>(a.x - b.x)) < tol &&
@@ -44,7 +47,14 @@ bool expect_state(rocsvHandle_t handle, unsigned num_qubits, const std::vector<r
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    const bool require_multi_gpu =
+        argc == 2 && std::string(argv[1]) == "--require-multi-gpu";
+    if (argc > 2 || (argc == 2 && !require_multi_gpu)) {
+        std::cerr << "Usage: " << argv[0] << " [--require-multi-gpu]\n";
+        return 2;
+    }
+
     rocsvHandle_t handle = nullptr;
     if (!check_status(rocsvCreate(&handle), "rocsvCreate")) {
         return 1;
@@ -55,13 +65,22 @@ int main() {
         rocsvDestroy(handle);
         return 1;
     }
-    if (visible_gpus < 1) {
-        std::cerr << "No visible GPU. Skipping.\n";
+    const int required_gpus = require_multi_gpu ? 2 : 1;
+    if (visible_gpus < required_gpus) {
+        std::cerr << "Need at least " << required_gpus << " visible GPU(s); skipping.\n";
         rocsvDestroy(handle);
-        return 0;
+        return kCtestSkipReturnCode;
     }
 
-    const unsigned num_qubits = 3;
+    int active_gpus = 1;
+    while ((active_gpus << 1) <= visible_gpus) {
+        active_gpus <<= 1;
+    }
+    unsigned global_slice_qubits = 0;
+    for (int count = active_gpus; count > 1; count >>= 1) {
+        ++global_slice_qubits;
+    }
+    const unsigned num_qubits = global_slice_qubits + 2;
     if (!check_status(rocsvAllocateDistributedState(handle, num_qubits), "rocsvAllocateDistributedState")) {
         rocsvDestroy(handle);
         return 1;
@@ -161,6 +180,50 @@ int main() {
     if (!expect_state(handle, num_qubits, expected)) {
         rocsvDestroy(handle);
         return 1;
+    }
+
+    if (require_multi_gpu) {
+        if (info.gpu_count < 2 || info.global_slice_qubits < 1) {
+            std::cerr << "Distributed allocation did not span multiple GPUs.\n";
+            rocsvDestroy(handle);
+            return 1;
+        }
+
+        rocsvDistributedBackend_t backend = ROCSV_DISTRIBUTED_BACKEND_NONE;
+        if (!check_status(rocsvGetDistributedBackend(handle, &backend),
+                          "rocsvGetDistributedBackend")) {
+            rocsvDestroy(handle);
+            return 1;
+        }
+        if (backend != ROCSV_DISTRIBUTED_BACKEND_RCCL) {
+            std::cerr << "Multi-GPU inter-rank regression requires the RCCL backend; got "
+                      << rocsvDistributedBackendName(backend) << ".\n";
+            rocsvDestroy(handle);
+            return 1;
+        }
+
+        if (!check_status(rocsvInitializeDistributedState(handle),
+                          "rocsvInitializeDistributedState(inter-rank reset)")) {
+            rocsvDestroy(handle);
+            return 1;
+        }
+        const unsigned inter_rank_target = info.local_num_qubits_per_gpu;
+        if (!check_status(rocsvApplyX(handle, nullptr, num_qubits, inter_rank_target),
+                          "rocsvApplyX(inter-rank target)")) {
+            rocsvDestroy(handle);
+            return 1;
+        }
+        if (!check_status(rocsvSynchronize(handle), "rocsvSynchronize(inter-rank X)")) {
+            rocsvDestroy(handle);
+            return 1;
+        }
+        expected.assign(size_t{1} << num_qubits, rocComplex{0.0f, 0.0f});
+        expected[size_t{1} << inter_rank_target] = {1.0f, 0.0f};
+        if (!expect_state(handle, num_qubits, expected)) {
+            std::cerr << "Inter-rank X did not move amplitude across the slice boundary.\n";
+            rocsvDestroy(handle);
+            return 1;
+        }
     }
 
     rocsvDestroy(handle);

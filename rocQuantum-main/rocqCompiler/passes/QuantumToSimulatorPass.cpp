@@ -18,7 +18,7 @@ struct GateLoweringPattern : public mlir::OpRewritePattern<SourceOp> {
         : mlir::OpRewritePattern<SourceOp>(context), gate_name(std::move(gate_name)) {}
 
     mlir::LogicalResult matchAndRewrite(SourceOp op, mlir::PatternRewriter &rewriter) const override {
-        rewriter.replaceOpWithNewOp<rocq::mlir::sim::ApplyGateOp>(
+        rewriter.replaceOpWithNewOp<rocq::sim::ApplyGateOp>(
             op, rewriter.getStringAttr(gate_name), op->getOperands());
         return mlir::LogicalResult::success();
     }
@@ -40,7 +40,7 @@ struct ParamGateLoweringPattern : public mlir::OpRewritePattern<SourceOp> {
             return mlir::LogicalResult::failure();
         }
 
-        rewriter.replaceOpWithNewOp<rocq::mlir::sim::ApplyParamGateOp>(
+        rewriter.replaceOpWithNewOp<rocq::sim::ApplyParamGateOp>(
             op,
             rewriter.getStringAttr(gate_name),
             angle_attr,
@@ -57,37 +57,37 @@ struct QuantumToSimulatorPass : public mlir::PassWrapper<QuantumToSimulatorPass,
     MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(QuantumToSimulatorPass)
 
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
-        registry.insert<rocq::mlir::quantum::QuantumDialect, rocq::mlir::sim::SimulatorDialect>();
+        registry.insert<rocq::quantum::QuantumDialect, rocq::sim::SimulatorDialect>();
     }
 
     void runOnOperation() override {
         mlir::ConversionTarget target(getContext());
-        target.addLegalDialect<mlir::func::FuncDialect, rocq::mlir::sim::SimulatorDialect>();
-        target.addIllegalDialect<rocq::mlir::quantum::QuantumDialect>();
+        target.addLegalDialect<mlir::func::FuncDialect, rocq::sim::SimulatorDialect>();
+        target.addIllegalDialect<rocq::quantum::QuantumDialect>();
 
         mlir::RewritePatternSet patterns(&getContext());
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::HOp>>(&getContext(), "h");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::XOp>>(&getContext(), "x");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::YOp>>(&getContext(), "y");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::CnotOp>>(&getContext(), "cnot");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::ZOp>>(&getContext(), "z");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::SOp>>(&getContext(), "s");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::SdgOp>>(&getContext(), "sdg");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::TOp>>(&getContext(), "t");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::TdgOp>>(&getContext(), "tdg");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::CzOp>>(&getContext(), "cz");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::SwapOp>>(&getContext(), "swap");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::CcxOp>>(&getContext(), "ccx");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::McxOp>>(&getContext(), "mcx");
-        patterns.add<GateLoweringPattern<rocq::mlir::quantum::CswapOp>>(&getContext(), "cswap");
-        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RxOp>>(&getContext(), "rx");
-        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RyOp>>(&getContext(), "ry");
-        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::RzOp>>(&getContext(), "rz");
-        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::POp>>(&getContext(), "p");
-        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::CrxOp>>(&getContext(), "crx");
-        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::CryOp>>(&getContext(), "cry");
-        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::CrzOp>>(&getContext(), "crz");
-        patterns.add<ParamGateLoweringPattern<rocq::mlir::quantum::CpOp>>(&getContext(), "cp");
+        patterns.add<GateLoweringPattern<rocq::quantum::HOp>>(&getContext(), "h");
+        patterns.add<GateLoweringPattern<rocq::quantum::XOp>>(&getContext(), "x");
+        patterns.add<GateLoweringPattern<rocq::quantum::YOp>>(&getContext(), "y");
+        patterns.add<GateLoweringPattern<rocq::quantum::CnotOp>>(&getContext(), "cnot");
+        patterns.add<GateLoweringPattern<rocq::quantum::ZOp>>(&getContext(), "z");
+        patterns.add<GateLoweringPattern<rocq::quantum::SOp>>(&getContext(), "s");
+        patterns.add<GateLoweringPattern<rocq::quantum::SdgOp>>(&getContext(), "sdg");
+        patterns.add<GateLoweringPattern<rocq::quantum::TOp>>(&getContext(), "t");
+        patterns.add<GateLoweringPattern<rocq::quantum::TdgOp>>(&getContext(), "tdg");
+        patterns.add<GateLoweringPattern<rocq::quantum::CzOp>>(&getContext(), "cz");
+        patterns.add<GateLoweringPattern<rocq::quantum::SwapOp>>(&getContext(), "swap");
+        patterns.add<GateLoweringPattern<rocq::quantum::CcxOp>>(&getContext(), "ccx");
+        patterns.add<GateLoweringPattern<rocq::quantum::McxOp>>(&getContext(), "mcx");
+        patterns.add<GateLoweringPattern<rocq::quantum::CswapOp>>(&getContext(), "cswap");
+        patterns.add<ParamGateLoweringPattern<rocq::quantum::RxOp>>(&getContext(), "rx");
+        patterns.add<ParamGateLoweringPattern<rocq::quantum::RyOp>>(&getContext(), "ry");
+        patterns.add<ParamGateLoweringPattern<rocq::quantum::RzOp>>(&getContext(), "rz");
+        patterns.add<ParamGateLoweringPattern<rocq::quantum::POp>>(&getContext(), "p");
+        patterns.add<ParamGateLoweringPattern<rocq::quantum::CrxOp>>(&getContext(), "crx");
+        patterns.add<ParamGateLoweringPattern<rocq::quantum::CryOp>>(&getContext(), "cry");
+        patterns.add<ParamGateLoweringPattern<rocq::quantum::CrzOp>>(&getContext(), "crz");
+        patterns.add<ParamGateLoweringPattern<rocq::quantum::CpOp>>(&getContext(), "cp");
 
         if (failed(applyPartialConversion(getOperation(), target, std::move(patterns)))) {
             signalPassFailure();

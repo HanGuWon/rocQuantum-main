@@ -10,6 +10,16 @@
       "output": "statevec-core-paths.json",
       "args": ["--qubits", "20", "--trials", "20", "--shots", "4096", "--output", "{output}"],
       "requires_rocm_device": true,
+      "require_all_cases_success": true,
+      "required_case_metrics": ["ms_per_trial"],
+      "timeout_seconds": 900,
+      "required_cases": [
+        "matrix_fastpath_1q",
+        "matrix_host_fallback_5q_identity",
+        "gate_unfused_cnot_rz",
+        "gate_fusion_cnot_rz",
+        "observe_z_and_sample"
+      ],
       "covers": [
         "statevec_fastpath_vs_fallback",
         "gate_fusion_vs_unfused",
@@ -24,6 +34,17 @@
       "output": "distributed-reductions.json",
       "args": ["--qubits", "24", "--trials", "20", "--shots", "4096", "--output", "{output}"],
       "requires_rocm_device": true,
+      "minimum_gpu_count": 2,
+      "require_all_cases_success": true,
+      "required_case_metrics": [
+        "expectation_ms",
+        "dense_expectation_ms",
+        "sparse_moments_ms",
+        "sampling_ms",
+        "generic_matrix_ms"
+      ],
+      "timeout_seconds": 1800,
+      "required_cases": ["rccl", "host_fallback"],
       "speedup_thresholds": {
         "expectation_ms": 1.0,
         "dense_expectation_ms": 1.0,
@@ -44,6 +65,10 @@
       "output": "tensornet-contraction.json",
       "args": ["--trials", "20", "--output", "{output}"],
       "requires_rocm_device": true,
+      "require_all_cases_success": true,
+      "required_case_metrics": ["ms_per_trial"],
+      "timeout_seconds": 900,
+      "required_cases": ["greedy_no_limit", "greedy_memory_limit_planning"],
       "covers": [
         "tensor_contraction",
         "optimizer_memory_limit_planning"
@@ -57,6 +82,15 @@
       "output": "densitymat-channel-sampling.json",
       "args": ["--qubits", "10", "--trials", "20", "--shots", "4096", "--output", "{output}"],
       "requires_rocm_device": true,
+      "require_all_cases_success": true,
+      "required_case_metrics": ["ms_per_trial"],
+      "timeout_seconds": 900,
+      "required_cases": [
+        "named_bit_flip_channel",
+        "generic_kraus_channel",
+        "density_observe_z",
+        "density_sample_host_correctness"
+      ],
       "covers": [
         "densitymat_channel",
         "densitymat_sampling",

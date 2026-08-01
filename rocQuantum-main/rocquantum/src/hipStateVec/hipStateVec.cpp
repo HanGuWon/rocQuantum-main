@@ -116,6 +116,8 @@ __global__ void apply_four_qubit_generic_matrix_kernel(rocComplex* state,
                                                        const unsigned* targetQubitIndices_gpu,
                                                        const rocComplex* matrixDevice);
 
+namespace {
+
 __global__ void reduce_expectation_z_kernel(const rocComplex* state,
                                             size_t numElements,
                                             unsigned targetQubit,
@@ -179,7 +181,9 @@ __global__ void collapse_and_renorm_measure_kernel(rocComplex* state,
 
 __global__ void renormalize_state_kernel(rocComplex* state,
                                          unsigned numQubits,
-                                         real_t d_sum_sq_mag_inv_sqrt);
+                                         rocqReal_t d_sum_sq_mag_inv_sqrt);
+
+} // namespace
 
 __global__ void local_bit_swap_permutation_kernel(rocComplex* d_local_slice,
                                                   rocComplex* d_temp_buffer_for_slice,
@@ -204,6 +208,7 @@ struct rocsvInternalHandle {
     unsigned numQubits = 0;
     rocComplex* d_state = nullptr;
     bool ownsState = false;
+    uint64_t stateGeneration = 0;
     void* pinnedBuffer = nullptr;
     size_t pinnedBufferBytes = 0;
     rocqDeviceMemHandler_t memHandler{nullptr, nullptr, nullptr};
@@ -494,7 +499,7 @@ inline double clamp_probability(double p) {
 }
 
 inline bool is_effectively_zero(double x) {
-    return std::abs(x) <= static_cast<double>(REAL_EPSILON);
+    return std::abs(x) <= static_cast<double>(ROCQ_REAL_EPSILON);
 }
 
 inline bool is_power_of_two_int(int value) {
@@ -3565,14 +3570,14 @@ __global__ void collapse_and_renorm_measure_kernel(rocComplex* state,
             state[idx] = make_complex(0.0, 0.0);
             continue;
         }
-        state[idx].x = static_cast<real_t>(static_cast<double>(state[idx].x) * invNorm);
-        state[idx].y = static_cast<real_t>(static_cast<double>(state[idx].y) * invNorm);
+        state[idx].x = static_cast<rocqReal_t>(static_cast<double>(state[idx].x) * invNorm);
+        state[idx].y = static_cast<rocqReal_t>(static_cast<double>(state[idx].y) * invNorm);
     }
 }
 
 __global__ void renormalize_state_kernel(rocComplex* state,
                                          unsigned numQubits,
-                                         real_t invNorm) {
+                                         rocqReal_t invNorm) {
     const size_t num_elements = size_t{1} << numQubits;
     const size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
@@ -5713,6 +5718,26 @@ rocqStatus_t rocsvDestroy(rocsvHandle_t handle) {
     return ROCQ_STATUS_SUCCESS;
 }
 
+rocqStatus_t rocsvGetStateInfo(rocsvHandle_t handle, rocsvStateInfo_t* info) {
+    if (!handle || !info || !handle->d_state || !handle->ownsState) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    size_t elements_per_state = 0;
+    size_t total_elements = 0;
+    if (!compute_state_element_count(handle->numQubits,
+                                     handle->batchSize,
+                                     &elements_per_state,
+                                     &total_elements)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    info->device_state = handle->d_state;
+    info->num_qubits = handle->numQubits;
+    info->batch_size = handle->batchSize;
+    info->element_count = total_elements;
+    info->allocation_generation = handle->stateGeneration;
+    return ROCQ_STATUS_SUCCESS;
+}
+
 rocqStatus_t rocsvSetStream(rocsvHandle_t handle, hipStream_t stream) {
     if (!handle) {
         return ROCQ_STATUS_INVALID_VALUE;
@@ -5858,6 +5883,7 @@ rocqStatus_t rocsvAllocateState(rocsvHandle_t handle,
         }
         handle->d_state = nullptr;
         handle->ownsState = false;
+        ++handle->stateGeneration;
     }
 
     void* allocated_ptr = nullptr;
@@ -5872,6 +5898,7 @@ rocqStatus_t rocsvAllocateState(rocsvHandle_t handle,
 
     handle->d_state = static_cast<rocComplex*>(allocated_ptr);
     handle->ownsState = true;
+    ++handle->stateGeneration;
     return ROCQ_STATUS_SUCCESS;
 }
 
@@ -5893,6 +5920,7 @@ rocqStatus_t rocsvFreeState(rocsvHandle_t handle) {
     handle->ownsState = false;
     handle->numQubits = 0;
     handle->batchSize = 1;
+    ++handle->stateGeneration;
     return ROCQ_STATUS_SUCCESS;
 }
 
@@ -7711,7 +7739,7 @@ rocqStatus_t rocsvMeasure(rocsvHandle_t handle,
                                        handle->distributedStreams[static_cast<size_t>(rank)],
                                        handle->distributedSlices[static_cast<size_t>(rank)],
                                        handle->numLocalQubitsPerGpu,
-                                       static_cast<real_t>(inv_norm));
+                                       static_cast<rocqReal_t>(inv_norm));
                     status = check_last_hip_error();
                     if (status != ROCQ_STATUS_SUCCESS) {
                         return status;

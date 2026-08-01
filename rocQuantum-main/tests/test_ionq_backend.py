@@ -23,6 +23,8 @@ import sys
 import time
 import os
 
+import pytest
+
 # Add the project root to the Python path to allow for direct imports
 # of the rocquantum modules.
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -30,10 +32,61 @@ sys.path.insert(0, project_root)
 
 from rocquantum.core import set_target, get_active_backend
 from rocquantum.backends.base import (
-    BackendAuthenticationError,
     JobSubmissionError,
     ResultRetrievalError,
 )
+from rocquantum.backends.ionq import IONQ_API_V0_3_ENDPOINT, IonQBackend
+
+
+def test_ionq_defaults_are_stable():
+    backend = IonQBackend()
+
+    assert backend.backend_name == "qpu"
+    assert backend.api_endpoint == IONQ_API_V0_3_ENDPOINT
+
+
+@pytest.mark.parametrize("api_key", [None, ""])
+def test_ionq_missing_api_key_fails_fast(monkeypatch, api_key):
+    from rocquantum.backends.base import BackendAuthenticationError
+
+    if api_key is None:
+        monkeypatch.delenv("IONQ_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("IONQ_API_KEY", api_key)
+    backend = IonQBackend()
+
+    with pytest.raises(BackendAuthenticationError) as error:
+        backend.authenticate()
+
+    assert str(error.value) == (
+        "Authentication failed: The 'IONQ_API_KEY' environment variable is not set. "
+        "Please set it to your IonQ API key."
+    )
+
+
+def test_ionq_authentication_builds_api_key_header(monkeypatch, capsys):
+    monkeypatch.setenv("IONQ_API_KEY", "ionq-secret")
+    backend = IonQBackend()
+
+    backend.authenticate()
+
+    assert backend._get_auth_headers() == {"Authorization": "ApiKey ionq-secret"}
+    assert capsys.readouterr().out == "Authentication successful.\n"
+
+
+def test_ionq_payload_shape_is_stable():
+    backend = IonQBackend(backend_name="simulator")
+
+    payload = backend._build_payload("OPENQASM 3.0;", shots=5)
+
+    assert payload == {
+        "target": "simulator",
+        "shots": 5,
+        "body": {
+            "language": "OPENQASM",
+            "program": "OPENQASM 3.0;",
+        },
+    }
 
 # A simple Bell State circuit in OpenQASM 3.0 format.
 # This circuit creates a maximally entangled state between two qubits.

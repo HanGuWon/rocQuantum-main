@@ -18,7 +18,7 @@ if _PROJECT_ROOT not in sys.path:
 
 
 class TestNamespaceConsistency(unittest.TestCase):
-    """Compiler dialect files must use canonical rocq::mlir namespaces."""
+    """Compiler dialect files must use canonical collision-free namespaces."""
 
     def _read(self, *parts):
         path = os.path.join(_PROJECT_ROOT, *parts)
@@ -27,7 +27,7 @@ class TestNamespaceConsistency(unittest.TestCase):
 
     def test_quantum_ops_td_namespace(self):
         src = self._read("rocqCompiler", "QuantumOps.td")
-        self.assertIn('cppNamespace = "rocq::mlir::quantum"', src)
+        self.assertIn('cppNamespace = "::rocq::quantum"', src)
 
     def test_quantum_dialect_cpp_namespace(self):
         src = self._read("rocqCompiler", "QuantumDialect.cpp")
@@ -36,37 +36,42 @@ class TestNamespaceConsistency(unittest.TestCase):
 
     def test_simulator_ops_td_namespace(self):
         src = self._read("rocqCompiler", "SimulatorOps.td")
-        self.assertIn('cppNamespace = "rocq::mlir::sim"', src)
+        self.assertIn('cppNamespace = "::rocq::sim"', src)
 
 
 class TestLoweringCoverage(unittest.TestCase):
-    def test_z_op_lowering_present(self):
-        path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "passes", "QuantumToSimulatorPass.cpp")
+    def _read_direct_pass(self):
+        path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "passes", "QuantumToQIRPass.cpp")
         with open(path, "r", encoding="utf-8") as f:
-            src = f.read()
-        self.assertIn("ZOp", src, "Z gate lowering missing from pass")
-        self.assertIn('"z"', src)
+            return f.read()
 
-    def test_param_gate_lowering_present(self):
-        path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "passes", "QuantumToSimulatorPass.cpp")
-        with open(path, "r", encoding="utf-8") as f:
-            src = f.read()
-        self.assertIn("RxOp", src)
-        self.assertIn("RyOp", src)
-        self.assertIn("RzOp", src)
-        self.assertIn("POp", src)
-        self.assertIn("CrxOp", src)
-        self.assertIn("CryOp", src)
-        self.assertIn("CrzOp", src)
-        self.assertIn("CpOp", src)
-        self.assertIn("ApplyParamGateOp", src)
+    def test_qalloc_lowers_to_static_qir_handles(self):
+        src = self._read_direct_pass()
+        self.assertIn("QallocLowering", src)
+        self.assertIn("LLVM::ConstantOp", src)
+        self.assertIn("LLVM::IntToPtrOp", src)
+        self.assertIn("applyFullConversion", src)
 
-    def test_extended_core_gate_lowering_present(self):
-        path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "passes", "QuantumToSimulatorPass.cpp")
-        with open(path, "r", encoding="utf-8") as f:
-            src = f.read()
-        for token in ["SOp", "SdgOp", "TOp", "TdgOp", "CzOp", "SwapOp", "CcxOp", "McxOp", "CswapOp"]:
+    def test_fixed_and_parametric_qir_gate_coverage(self):
+        src = self._read_direct_pass()
+        for token in [
+            "quantum.h", "quantum.z", "quantum.sdg", "quantum.tdg",
+            "quantum.cnot", "quantum.cz", "quantum.swap", "quantum.ccx",
+            "quantum.cswap", "quantum.rx", "quantum.ry", "quantum.rz",
+            "quantum.p", "quantum.crx", "quantum.cry", "quantum.crz", "quantum.cp",
+        ]:
             self.assertIn(token, src)
+        self.assertIn('"s__adj"', src)
+        self.assertIn('"t__adj"', src)
+        self.assertIn('"r1__body"', src)
+
+    def test_mcx_lowers_when_fixed_and_fails_closed_when_wide(self):
+        src = self._read_direct_pass()
+        self.assertIn("DecomposeMcx", src)
+        self.assertIn("operands.size() == 2", src)
+        self.assertIn("operands.size() == 3", src)
+        self.assertIn("more than two controls requires QIR", src)
+        self.assertIn("control-array lowering and runtime support", src)
 
 
 class TestCompileAndExecuteContract(unittest.TestCase):
@@ -75,40 +80,34 @@ class TestCompileAndExecuteContract(unittest.TestCase):
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
 
-    def test_compile_and_execute_dispatches_supported_subset(self):
-        path = os.path.join(_PROJECT_ROOT, "rocqCompiler", "MLIRCompiler.cpp")
-        with open(path, "r", encoding="utf-8") as f:
-            src = f.read()
+    def test_compile_and_execute_uses_qir_orc_jit(self):
+        compiler = self._read("rocqCompiler", "MLIRCompiler.cpp")
+        execution_engine = self._read(
+            "rocqCompiler", "QIRExecutionEngine.cpp"
+        )
+        cmake = self._read("rocqCompiler", "CMakeLists.txt")
 
-        self.assertNotIn("return {};", src)
-        self.assertNotIn("not yet implemented", src)
-        self.assertIn("extract_executable_ops", src)
-        self.assertIn("backend->initialize(num_qubits)", src)
-        self.assertIn("backend->apply_gate", src)
-        self.assertIn("backend->apply_parametrized_gate", src)
-        self.assertIn("backend->get_state_vector", src)
-        self.assertIn("unsupported quantum op", src)
-        self.assertIn("quantum.rx", src)
-        self.assertIn("quantum.ry", src)
-        self.assertIn("quantum.rz", src)
-        self.assertIn("quantum.p", src)
-        self.assertIn("quantum.crx", src)
-        self.assertIn("quantum.cry", src)
-        self.assertIn("quantum.crz", src)
-        self.assertIn("quantum.cp", src)
-        self.assertIn("quantum.cz", src)
-        self.assertIn("quantum.swap", src)
-        self.assertIn("quantum.cnot", src)
-        self.assertIn("quantum.ccx", src)
-        self.assertIn("quantum.mcx", src)
-        self.assertIn("quantum.cswap", src)
-        self.assertIn("quantum.tdg", src)
-        self.assertIn("std::isfinite(angle)", src)
-        self.assertIn("angle must be finite", src)
-        self.assertIn("std::numeric_limits<unsigned>::max()", src)
-        self.assertIn("qalloc size exceeds the supported compiler range", src)
-        self.assertIn("validate_distinct_targets", src)
-        self.assertIn("qubit operands must be distinct", src)
+        self.assertNotIn("extractExecutableOps", compiler)
+        self.assertNotIn("backend->apply_gate", compiler)
+        self.assertNotIn("backend->apply_parametrized_gate", compiler)
+        self.assertIn("analyzeQuantumModuleForQIR", compiler)
+        self.assertIn("buildQIRPipeline", compiler)
+        self.assertIn("QIRExecutionEngine::executeStatic", compiler)
+
+        self.assertIn("ExecutionEngine::create", execution_engine)
+        self.assertIn("translateModuleToLLVMIR", execution_engine)
+        self.assertIn("finalizeAndVerifyQIRModule", execution_engine)
+        self.assertIn("registerSymbols", execution_engine)
+        self.assertIn("__quantum__qis__h__body", execution_engine)
+        self.assertIn("__quantum__qis__cnot__body", execution_engine)
+        self.assertIn("__quantum__qis__rx__body", execution_engine)
+        self.assertIn("thread_local ActiveExecution", execution_engine)
+        self.assertIn("backend_.initialize", execution_engine)
+        self.assertIn("backend.get_state_vector", execution_engine)
+
+        self.assertIn("QIRExecutionEngine.cpp", cmake)
+        self.assertIn("MLIRExecutionEngine", cmake)
+        self.assertIn("orcjit", cmake)
 
     def test_binding_documents_compile_and_execute_mvp(self):
         path = os.path.join(_PROJECT_ROOT, "bindings.cpp")
@@ -117,24 +116,81 @@ class TestCompileAndExecuteContract(unittest.TestCase):
 
         self.assertIn("ROCQUANTUM_ENABLE_MLIR_COMPILER", src)
         self.assertIn("MLIR_COMPILER_ENABLED", src)
+        self.assertIn("MLIR_COMPILER_QIR_EMISSION_ENABLED", src)
+        self.assertIn("MLIR_COMPILER_ARTIFACT_EMISSION_ENABLED", src)
+        self.assertIn("MLIR_COMPILER_QIR_JIT_ENABLED", src)
+        self.assertIn("MLIR_COMPILER_CPU_EXECUTION_ENABLED", src)
+        self.assertIn("MLIR_COMPILER_GPU_EXECUTION_ENABLED", src)
+        self.assertIn("MLIR_COMPILER_QIR_PROFILE", src)
         self.assertIn("MLIR_COMPILER_RUNTIME_KIND", src)
-        self.assertIn("linked_runtime", src)
+        self.assertIn(
+            "qir_v2_static_jit_cpu_and_hip_execution_base_emission", src
+        )
+        self.assertIn("MLIR_COMPILER_ARTIFACT_KINDS", src)
+        self.assertIn('def("emit_artifact"', src)
         self.assertIn("disabled_runtime_guard", src)
         self.assertIn("DisabledRuntimeMLIRCompiler", src)
         self.assertIn("MLIR compiler support is disabled", src)
-        self.assertIn("qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP", src)
+        self.assertIn("supported measurement-free MLIR subset", src)
+        self.assertIn("in-process JIT", src)
+        self.assertIn("cpu_statevec or hip_statevec backend", src)
         self.assertIn("Unsupported ops raise actionable diagnostics", src)
         self.assertNotIn("Stub API", src)
 
-    def test_root_cmake_rejects_unwired_mlir_compiler_option(self):
+    def test_root_cmake_wires_cpu_only_and_native_compiler_modes(self):
         path = os.path.join(_PROJECT_ROOT, "CMakeLists.txt")
         with open(path, "r", encoding="utf-8") as f:
             src = f.read()
 
         self.assertIn("option(ROCQUANTUM_ENABLE_MLIR_COMPILER", src)
+        self.assertIn("option(ROCQUANTUM_ALLOW_UNSUPPORTED_MLIR", src)
+        self.assertIn("elseif(ROCQUANTUM_ENABLE_MLIR_COMPILER)", src)
         self.assertIn("if(ROCQUANTUM_ENABLE_MLIR_COMPILER)", src)
-        self.assertIn("FATAL_ERROR", src)
-        self.assertIn("fail-fast compiler guard", src)
+        self.assertIn("add_subdirectory(rocqCompiler)", src)
+        self.assertIn("target_link_libraries(rocquantum_bind PRIVATE rocqCompiler)", src)
+        self.assertIn("ROCQUANTUM_ENABLE_MLIR_COMPILER=1", src)
+        self.assertNotIn("not wired into the release CMake graph", src)
+
+    def test_compiler_cmake_pins_mlir_and_builds_tools(self):
+        src = self._read("rocqCompiler", "CMakeLists.txt")
+        self.assertIn("LLVM_VERSION_MAJOR EQUAL 22", src)
+        self.assertIn("LLVM_VERSION_MINOR EQUAL 1", src)
+        self.assertIn("RocqQuantumIncGen", src)
+        self.assertIn("RocqCompilerPassIncGen", src)
+        self.assertIn("add_mlir_conversion_library(RocqQuantumToQIR", src)
+        self.assertIn("add_library(rocqCompiler STATIC", src)
+        self.assertIn("add_executable(rocq-opt", src)
+        self.assertIn("add_executable(rocq-translate", src)
+        self.assertIn("add_executable(rocq-run", src)
+        self.assertIn("CompilerArtifacts.cpp", src)
+        self.assertIn("rocqCompilerTooling", src)
+        self.assertIn("ROCQ_COMPILER_FINGERPRINT", src)
+        self.assertIn('INSTALL_RPATH "${LLVM_LIBRARY_DIRS}"', src)
+        self.assertIn("rocq.compiler.artifact-cli", src)
+        self.assertIn("rocq.compiler.run-cli", src)
+
+    def test_cpu_ci_builds_release_pinned_compiler(self):
+        workflow_path = os.path.join(
+            os.path.dirname(_PROJECT_ROOT), ".github", "workflows", "rocm-ci.yml"
+        )
+        with open(workflow_path, "r", encoding="utf-8") as f:
+            workflow = f.read()
+
+        job = workflow.split("  mlir-compiler:", 1)[1].split(
+            "  rocm-runtime-self-hosted:", 1
+        )[0]
+        self.assertIn("apt.llvm.org", job)
+        self.assertIn("llvm-22-dev", job)
+        self.assertIn("libmlir-22-dev", job)
+        self.assertIn('= "22.1"', job)
+        self.assertIn("-DROCQUANTUM_BUILD_NATIVE=OFF", job)
+        self.assertIn("-DROCQUANTUM_ENABLE_MLIR_COMPILER=ON", job)
+        self.assertNotIn("ROCQUANTUM_ALLOW_UNSUPPORTED_MLIR", job)
+        self.assertIn("ctest --test-dir", job)
+        self.assertIn("cmake --install", job)
+        self.assertIn("installed-bell.qir.ll", job)
+        self.assertIn('qir_emission_kind"] == "rocq_translate_cli"', job)
+        self.assertIn("actions/upload-artifact@v4", job)
 
     def test_legacy_binding_uses_conceptual_mlir_holder(self):
         path = os.path.join(_PROJECT_ROOT, "python", "rocq", "bindings.cpp")
@@ -426,7 +482,12 @@ class TestKernelMlirEmission(unittest.TestCase):
         with open(td_path, "r", encoding="utf-8") as f:
             td_src = f.read()
 
-        defined_ops = set(re.findall(r'def\s+\w+\s*:\s*Quantum_Op<"([a-z_]+)"', td_src))
+        defined_ops = set(
+            re.findall(
+                r'def\s+\w+\s*:\s*(?:Quantum_Op|Quantum_StateOp)<"([a-z_]+)"',
+                td_src,
+            )
+        )
         emitted_ops = set(re.findall(r'"quantum\.([a-z_]+)"', mlir_str))
         self.assertTrue(emitted_ops.issubset(defined_ops))
 

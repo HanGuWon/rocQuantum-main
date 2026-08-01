@@ -4,9 +4,12 @@
 #include <vector>
 #include <string>
 #include <numeric>      // For std::accumulate
+#include <limits>
 #include <stdexcept>    // For std::runtime_error, std::invalid_argument
+#include <utility>
 #include <hip/hip_runtime.h> // For rocComplex definition if not already included via hipStateVec.h
                            // Assuming rocComplex is hipFloatComplex or hipDoubleComplex
+#include <rocblas/rocblas.h>
 #include "rocquantum/hipStateVec.h" // For rocqStatus_t and rocComplex (if not defined above)
 
 
@@ -43,29 +46,14 @@ struct rocTensor {
               bool mem_owned = false)
         : data_(data), dimensions_(dims), labels_(lbls), owned_(mem_owned) {
         if (calculate_strides_on_construct) {
-            if (!dimensions_.empty()) {
-                strides_.resize(dimensions_.size());
-                strides_[0] = 1;
-                for (size_t i = 1; i < dimensions_.size(); ++i) {
-                    strides_[i] = strides_[i-1] * dimensions_[i-1];
-                }
-            }
+            calculate_strides();
         }
     }
 
-    // Destructor: Only frees memory if owned_ is true.
+    // Owned tensor storage is always allocated with hipMalloc by rocTensorUtil.
+    // Explicit rocTensorFree remains supported and clears ownership before this runs.
     ~rocTensor() {
-        if (owned_ && data_) {
-            // hipFree might not be safe in a header-only destructor if not careful
-            // For now, this assumes if owned, it was allocated with hipMalloc
-            // Consider moving memory management to dedicated functions if issues arise
-            // hipFree(data_); // This can cause issues if header is included multiple times or if data_ was not from hipMalloc
-            // For a simple struct, it's often better to leave memory management external
-            // or use a dedicated manager class.
-            // Let's comment this out for now to avoid potential double-free or non-hipMalloc frees.
-            // The plan is for rocTensorUtil to provide alloc/free functions.
-            data_ = nullptr;
-        }
+        release_owned();
     }
 
     // Copy constructor (handle ownership carefully)
@@ -88,11 +76,7 @@ struct rocTensor {
     // Copy assignment (handle ownership carefully)
     rocTensor& operator=(const rocTensor& other) {
         if (this != &other) {
-            // If current instance owns memory, it should be freed before reassigning.
-            // This is complex for a simple struct. For now, assume assignment creates a view.
-            if (owned_ && data_) {
-                // hipFree(data_); // Potential issue as noted in destructor
-            }
+            release_owned();
             data_ = other.data_;
             dimensions_ = other.dimensions_;
             labels_ = other.labels_;
@@ -105,9 +89,7 @@ struct rocTensor {
     // Move assignment
     rocTensor& operator=(rocTensor&& other) noexcept {
         if (this != &other) {
-            if (owned_ && data_) {
-                // hipFree(data_); // Potential issue
-            }
+            release_owned();
             data_ = other.data_;
             dimensions_ = std::move(other.dimensions_);
             labels_ = std::move(other.labels_);
@@ -120,6 +102,17 @@ struct rocTensor {
         return *this;
     }
 
+private:
+    void release_owned() noexcept {
+        if (owned_ && data_) {
+            (void)hipFree(data_);
+        }
+        data_ = nullptr;
+        owned_ = false;
+    }
+
+public:
+
 
     /**
      * @brief Calculates the total number of elements in the tensor.
@@ -129,7 +122,17 @@ struct rocTensor {
         if (dimensions_.empty()) {
             return 0;
         }
-        return std::accumulate(dimensions_.begin(), dimensions_.end(), 1LL, std::multiplies<long long>());
+        long long count = 1;
+        for (const long long dimension : dimensions_) {
+            if (dimension < 0) {
+                throw std::invalid_argument("tensor dimensions must be non-negative");
+            }
+            if (dimension != 0 && count > std::numeric_limits<long long>::max() / dimension) {
+                throw std::overflow_error("tensor element count overflows signed 64-bit range");
+            }
+            count *= dimension;
+        }
+        return count;
     }
 
     /**
@@ -144,9 +147,20 @@ struct rocTensor {
             return;
         }
         strides_.resize(dimensions_.size());
-        strides_[0] = 1;
-        for (size_t i = 1; i < dimensions_.size(); ++i) {
-            strides_[i] = strides_[i-1] * dimensions_[i-1];
+        long long stride = 1;
+        for (size_t i = 0; i < dimensions_.size(); ++i) {
+            const long long dimension = dimensions_[i];
+            if (dimension < 0) {
+                throw std::invalid_argument("tensor dimensions must be non-negative");
+            }
+            strides_[i] = stride;
+            if (i + 1 < dimensions_.size()) {
+                if (dimension != 0 &&
+                    stride > std::numeric_limits<long long>::max() / dimension) {
+                    throw std::overflow_error("tensor stride overflows signed 64-bit range");
+                }
+                stride *= dimension;
+            }
         }
     }
 
@@ -196,7 +210,15 @@ inline rocqStatus_t rocTensorAllocate(rocTensor* tensor) {
     }
 
 
-    long long num_elements = tensor->get_element_count();
+    long long num_elements = 0;
+    try {
+        num_elements = tensor->get_element_count();
+        tensor->calculate_strides();
+    } catch (const std::invalid_argument&) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    } catch (const std::overflow_error&) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
     if (num_elements == 0 && !tensor->dimensions_.empty()) { // e.g. a dimension is zero
          tensor->data_ = nullptr; // No data to allocate
          tensor->owned_ = true; // Technically owns "nothing"
@@ -210,7 +232,11 @@ inline rocqStatus_t rocTensorAllocate(rocTensor* tensor) {
     }
 
 
-    size_t size_bytes = num_elements * sizeof(rocComplex);
+    if (static_cast<unsigned long long>(num_elements) >
+        std::numeric_limits<size_t>::max() / sizeof(rocComplex)) {
+        return ROCQ_STATUS_INVALID_VALUE;
+    }
+    size_t size_bytes = static_cast<size_t>(num_elements) * sizeof(rocComplex);
     if (size_bytes == 0) { // If truly 0 elements and 0 bytes (e.g. empty dimensions vector)
         tensor->data_ = nullptr;
         tensor->owned_ = true;
@@ -278,6 +304,21 @@ rocqStatus_t rocTensorPermute(
     const rocTensor* input_tensor,
     const std::vector<int>& host_permutation_map,
     hipStream_t stream = 0);
+
+/**
+ * @brief Parses the two-input einsum subset accepted by rocTensorContractWithRocBLAS.
+ *
+ * @return true when the specification and tensor dimensions are compatible.
+ */
+bool parse_simple_einsum_spec(
+    const std::string& spec,
+    const rocTensor* tensorA,
+    const rocTensor* tensorB,
+    std::vector<std::pair<int, int>>& contracted_pairs_A_B,
+    std::vector<int>& result_A_modes_order,
+    std::vector<int>& result_B_modes_order,
+    std::vector<long long>& result_dims,
+    std::vector<std::string>& result_labels);
 
 
 /**

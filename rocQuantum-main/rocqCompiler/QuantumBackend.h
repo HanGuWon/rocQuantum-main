@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <complex>
+#include <memory>
 #include <stdexcept>
 
 namespace rocq {

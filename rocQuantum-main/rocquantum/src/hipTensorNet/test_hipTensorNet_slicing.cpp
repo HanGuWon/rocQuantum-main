@@ -70,7 +70,7 @@ typedef bool (*TestFunc)();
 std::vector<std::pair<std::string, TestFunc>> tests;
 #define ADD_TEST(name) tests.push_back({#name, name})
 
-void RUN_ALL_TESTS() {
+int RUN_ALL_TESTS() {
     int passed_count = 0;
     int failed_count = 0;
     std::cout << "Running " << tests.size() << " tests from test_hipTensorNet_slicing..." << std::endl;
@@ -95,6 +95,7 @@ void RUN_ALL_TESTS() {
     std::cout << "----------------------------------------" << std::endl;
     std::cout << "All slicing tests completed." << std::endl;
     std::cout << "Passed: " << passed_count << ", Failed: " << failed_count << std::endl;
+    return failed_count;
 }
 
 rocblas_handle blas_handle = nullptr;
@@ -207,9 +208,15 @@ bool test_slicing_execution_correctness() {
 
 
 int main() {
+    int device_count = 0;
+    if (hipGetDeviceCount(&device_count) != hipSuccess || device_count < 1) {
+        std::cerr << "No visible HIP device; skipping TensorNet slicing regression.\n";
+        return 77;
+    }
+
     setup_global_test_resources();
     ADD_TEST(test_slicing_execution_correctness);
-    RUN_ALL_TESTS();
+    const int failed_count = RUN_ALL_TESTS();
     teardown_global_test_resources();
-    return 0;
+    return failed_count;
 }

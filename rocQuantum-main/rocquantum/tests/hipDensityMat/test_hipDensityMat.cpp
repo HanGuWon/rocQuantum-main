@@ -1,158 +1,131 @@
-#include <gtest/gtest.h>
-#include <hip/hip_runtime.h>
+#include "rocquantum/hipDensityMat.h"
+
 #include <hip/hip_complex.h>
+#include <hip/hip_runtime.h>
+
+#include <cmath>
+#include <cstdint>
+#include <iostream>
 #include <vector>
-#include "hipDensityMat.hpp"
-#include "hipDensityMat_internal.hpp" // For accessing internal state for verification
 
-// Helper function to copy density matrix from device to host for verification
-void get_density_matrix_from_device(hipDensityMatState_t state, std::vector<hipComplex>& host_matrix) {
-    hipDensityMatState* internal_state = static_cast<hipDensityMatState*>(state);
-    const int64_t num_elements = internal_state->num_elements_;
-    host_matrix.resize(num_elements);
-    hipMemcpy(host_matrix.data(), internal_state->device_data_, num_elements * sizeof(hipComplex), hipMemcpyDeviceToHost);
+namespace {
+
+constexpr int kCtestSkipReturnCode = 77;
+
+bool check_status(rocqStatus_t status, const char* operation) {
+    if (status == ROCQ_STATUS_SUCCESS) {
+        return true;
+    }
+    std::cerr << operation << " failed with status " << static_cast<int>(status) << '\n';
+    return false;
 }
 
-// Helper function to set the density matrix on the device from a host matrix
-void set_density_matrix_on_device(hipDensityMatState_t state, const std::vector<hipComplex>& host_matrix) {
-    hipDensityMatState* internal_state = static_cast<hipDensityMatState*>(state);
-    const int64_t num_elements = internal_state->num_elements_;
-    hipMemcpy(internal_state->device_data_, host_matrix.data(), num_elements * sizeof(hipComplex), hipMemcpyHostToDevice);
+bool expect_near(double actual, double expected, const char* label, double tolerance = 1e-5) {
+    if (std::abs(actual - expected) <= tolerance) {
+        return true;
+    }
+    std::cerr << label << " mismatch: got " << actual << ", expected " << expected << '\n';
+    return false;
 }
 
-TEST(HipDensityMatCNOT, CNOT_FlipsTargetWhenControlIsOne) {
-    const int num_qubits = 2;
-    const int64_t dim = 1 << num_qubits;
-    const int64_t num_elements = dim * dim;
-
-    hipDensityMatState_t state;
-    hipDensityMatStatus_t status = hipDensityMatCreateState(&state, num_qubits);
-    ASSERT_EQ(status, HIPDENSITYMAT_STATUS_SUCCESS);
-
-    // Initialize state to |10><10|
-    // |10> is basis state 2. The density matrix is rho[2][2] = 1.
-    std::vector<hipComplex> host_rho(num_elements, make_hipFloatComplex(0.0f, 0.0f));
-    host_rho[2 * dim + 2] = make_hipFloatComplex(1.0f, 0.0f);
-
-    set_density_matrix_on_device(state, host_rho);
-
-    // Apply CNOT(0, 1)
-    status = hipDensityMatApplyCNOT(state, 0, 1);
-    ASSERT_EQ(status, HIPDENSITYMAT_STATUS_SUCCESS);
-
-    // Get result back
-    std::vector<hipComplex> result_rho(num_elements);
-    get_density_matrix_from_device(state, result_rho);
-
-    // Expected state is |11><11|
-    // |11> is basis state 3. The density matrix should have rho[3][3] = 1.
-    for (int64_t i = 0; i < num_elements; ++i) {
-        if (i == (3 * dim + 3)) {
-            EXPECT_FLOAT_EQ(result_rho[i].x, 1.0f);
-            EXPECT_FLOAT_EQ(result_rho[i].y, 0.0f);
-        } else {
-            EXPECT_FLOAT_EQ(result_rho[i].x, 0.0f);
-            EXPECT_FLOAT_EQ(result_rho[i].y, 0.0f);
-        }
+bool test_cnot_and_sampling() {
+    rocdmHandle_t state = nullptr;
+    if (!check_status(rocdmCreateState(&state, 2), "rocdmCreateState(2)")) {
+        return false;
     }
 
-    hipDensityMatDestroyState(state);
-}
-
-TEST(HipDensityMatCNOT, CNOT_DoesNothingWhenControlIsZero) {
-    const int num_qubits = 2;
-    const int64_t dim = 1 << num_qubits;
-    const int64_t num_elements = dim * dim;
-
-    hipDensityMatState_t state;
-    hipDensityMatStatus_t status = hipDensityMatCreateState(&state, num_qubits);
-    ASSERT_EQ(status, HIPDENSITYMAT_STATUS_SUCCESS);
-
-    // Initialize state to |01><01|
-    // |01> is basis state 1. The density matrix is rho[1][1] = 1.
-    std::vector<hipComplex> host_rho(num_elements, make_hipFloatComplex(0.0f, 0.0f));
-    host_rho[1 * dim + 1] = make_hipFloatComplex(1.0f, 0.0f);
-
-    set_density_matrix_on_device(state, host_rho);
-
-    // Apply CNOT(0, 1)
-    status = hipDensityMatApplyCNOT(state, 0, 1);
-    ASSERT_EQ(status, HIPDENSITYMAT_STATUS_SUCCESS);
-
-    // Get result back
-    std::vector<hipComplex> result_rho(num_elements);
-    get_density_matrix_from_device(state, result_rho);
-
-    // Expected state is |01><01| (no change)
-    for (int64_t i = 0; i < num_elements; ++i) {
-        if (i == (1 * dim + 1)) {
-            EXPECT_FLOAT_EQ(result_rho[i].x, 1.0f);
-            EXPECT_FLOAT_EQ(result_rho[i].y, 0.0f);
-        } else {
-            EXPECT_FLOAT_EQ(result_rho[i].x, 0.0f);
-            EXPECT_FLOAT_EQ(result_rho[i].y, 0.0f);
-        }
-    }
-
-    hipDensityMatDestroyState(state);
-}
-
-TEST(HipDensityMatControlledGate, CZGateOnPlusPlusState) {
-    const int num_qubits = 2;
-    const int control_qubit = 0;
-    const int target_qubit = 1;
-    const int64_t dim = 1 << num_qubits;
-    const int64_t num_elements = dim * dim;
-
-    hipDensityMatState_t state;
-    hipDensityMatStatus_t status = hipDensityMatCreateState(&state, num_qubits);
-    ASSERT_EQ(status, HIPDENSITYMAT_STATUS_SUCCESS);
-
-    // Initialize state to |+>|+>
-    // |+> = 1/sqrt(2) * (|0> + |1>)
-    // |+>|+> = 0.5 * (|00> + |01> + |10> + |11>)
-    // The density matrix rho = |psi><psi| is a 4x4 matrix with all elements equal to 0.25
-    std::vector<hipComplex> host_rho(num_elements, make_hipFloatComplex(0.25f, 0.0f));
-    set_density_matrix_on_device(state, host_rho);
-
-    // Define Z gate matrix on host
-    hipComplex z_gate_host[4] = {
+    const hipComplex x_gate[4] = {
+        make_hipFloatComplex(0.0f, 0.0f), make_hipFloatComplex(1.0f, 0.0f),
         make_hipFloatComplex(1.0f, 0.0f), make_hipFloatComplex(0.0f, 0.0f),
-        make_hipFloatComplex(0.0f, 0.0f), make_hipFloatComplex(-1.0f, 0.0f)
     };
 
-    // Allocate and copy Z gate to device
-    hipComplex* z_gate_device;
-    hipError_t hip_err = hipMalloc(&z_gate_device, 4 * sizeof(hipComplex));
-    ASSERT_EQ(hip_err, hipSuccess);
-    hip_err = hipMemcpy(z_gate_device, z_gate_host, 4 * sizeof(hipComplex), hipMemcpyHostToDevice);
-    ASSERT_EQ(hip_err, hipSuccess);
+    bool ok = check_status(rocdmApplyGate(state, 0, x_gate), "rocdmApplyGate(X0)") &&
+              check_status(rocdmApplyCNOT(state, 0, 1), "rocdmApplyCNOT(0, 1)");
 
-    // Apply Controlled-Z gate
-    status = hipDensityMatApplyControlledGate(state, control_qubit, target_qubit, z_gate_device);
-    ASSERT_EQ(status, HIPDENSITYMAT_STATUS_SUCCESS);
+    double z0 = 0.0;
+    double z1 = 0.0;
+    double z0z1 = 0.0;
+    const int both_qubits[2] = {0, 1};
+    ok = check_status(rocdmComputeExpectation(state, 0, ROCDM_PAULI_Z, &z0),
+                      "rocdmComputeExpectation(Z0)") &&
+         check_status(rocdmComputeExpectation(state, 1, ROCDM_PAULI_Z, &z1),
+                      "rocdmComputeExpectation(Z1)") &&
+         check_status(rocdmComputePauliZProductExpectation(state, 2, both_qubits, &z0z1),
+                      "rocdmComputePauliZProductExpectation") &&
+         ok;
+    ok = expect_near(z0, -1.0, "<Z0>") &&
+         expect_near(z1, -1.0, "<Z1>") &&
+         expect_near(z0z1, 1.0, "<Z0 Z1>") &&
+         ok;
 
-    // Get result back
-    std::vector<hipComplex> result_rho(num_elements);
-    get_density_matrix_from_device(state, result_rho);
-
-    // Expected state after CZ on |+>|+> is 0.5 * (|00> + |01> + |10> - |11>)
-    // Expected rho' = |psi'><psi'| where |psi'> = 0.5 * (|0>+|1>+|2>-|3>).
-    // rho' = 0.25 * [[1, 1, 1, -1], [1, 1, 1, -1], [1, 1, 1, -1], [-1, -1, -1, 1]]
-    for (int i = 0; i < dim; ++i) {
-        for (int j = 0; j < dim; ++j) {
-            float expected_val = 0.25f;
-            bool i_is_11 = (i == 3);
-            bool j_is_11 = (j == 3);
-            if (i_is_11 != j_is_11) { // XOR logic for sign flip
-                expected_val = -0.25f;
-            }
-            EXPECT_NEAR(result_rho[i * dim + j].x, expected_val, 1e-6);
-            EXPECT_NEAR(result_rho[i * dim + j].y, 0.0f, 1e-6);
+    std::vector<std::uint64_t> outcomes(32, 0);
+    ok = check_status(rocdmSample(state,
+                                  both_qubits,
+                                  2,
+                                  static_cast<int>(outcomes.size()),
+                                  outcomes.data()),
+                      "rocdmSample") &&
+         ok;
+    for (std::uint64_t outcome : outcomes) {
+        if (outcome != 3) {
+            std::cerr << "Deterministic |11> sampling returned outcome " << outcome << '\n';
+            ok = false;
+            break;
         }
     }
 
-    // Cleanup
-    hipFree(z_gate_device);
-    hipDensityMatDestroyState(state);
+    ok = check_status(rocdmDestroyState(state), "rocdmDestroyState(2)") && ok;
+    return ok;
+}
+
+bool test_channels() {
+    rocdmHandle_t state = nullptr;
+    if (!check_status(rocdmCreateState(&state, 1), "rocdmCreateState(1)")) {
+        return false;
+    }
+
+    bool ok = check_status(rocdmApplyBitFlipChannel(state, 0, 1.0),
+                           "rocdmApplyBitFlipChannel(p=1)");
+    double expectation = 0.0;
+    ok = check_status(rocdmComputeExpectation(state, 0, ROCDM_PAULI_Z, &expectation),
+                      "rocdmComputeExpectation(after bit flip)") &&
+         expect_near(expectation, -1.0, "bit-flip <Z>") &&
+         ok;
+
+    ok = check_status(rocdmApplyAmplitudeDampingChannel(state, 0, 1.0),
+                      "rocdmApplyAmplitudeDampingChannel(gamma=1)") &&
+         ok;
+    ok = check_status(rocdmComputeExpectation(state, 0, ROCDM_PAULI_Z, &expectation),
+                      "rocdmComputeExpectation(after amplitude damping)") &&
+         expect_near(expectation, 1.0, "amplitude-damping <Z>") &&
+         ok;
+
+    ok = check_status(rocdmDestroyState(state), "rocdmDestroyState(1)") && ok;
+    return ok;
+}
+
+bool test_invalid_limits() {
+    rocdmHandle_t state = nullptr;
+    const rocqStatus_t status = rocdmCreateState(&state, ROCDM_MAX_QUBITS + 1);
+    if (status != ROCQ_STATUS_INVALID_VALUE || state != nullptr) {
+        std::cerr << "State creation beyond ROCDM_MAX_QUBITS must fail without allocating.\n";
+        if (state) {
+            (void)rocdmDestroyState(state);
+        }
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+int main() {
+    int device_count = 0;
+    if (hipGetDeviceCount(&device_count) != hipSuccess || device_count < 1) {
+        std::cerr << "No ROCm GPU is visible; skipping native hipDensityMat regression.\n";
+        return kCtestSkipReturnCode;
+    }
+
+    const bool ok = test_invalid_limits() && test_cnot_and_sampling() && test_channels();
+    return ok ? 0 : 1;
 }

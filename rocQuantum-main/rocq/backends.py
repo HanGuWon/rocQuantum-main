@@ -207,6 +207,23 @@ def _coerce_complex64_matrix(matrix: np.ndarray) -> np.ndarray:
     return np.asarray(matrix, dtype=np.complex64, order="C")
 
 
+def _statevector_complex_dtype() -> np.dtype:
+    raw_dtype = getattr(hip_backend, "COMPILED_COMPLEX_DTYPE", "complex64")
+    # Old bindings and lightweight test doubles may not expose the contract.
+    # Their historical ABI is C64; current bindings expose an exact string.
+    if not isinstance(raw_dtype, str):
+        raw_dtype = "complex64"
+    if raw_dtype not in {"complex64", "complex128"}:
+        raise RuntimeError(
+            "_rocq_hip_backend.COMPILED_COMPLEX_DTYPE must be complex64 or complex128."
+        )
+    return np.dtype(raw_dtype)
+
+
+def _coerce_statevector_complex_matrix(matrix: np.ndarray) -> np.ndarray:
+    return np.asarray(matrix, dtype=_statevector_complex_dtype(), order="C")
+
+
 def _format_sample_counts(
     raw_results: Iterable[int],
     width: int,
@@ -401,8 +418,9 @@ def _normalize_operation_matrix(
             raise ValueError(f"{op_name} matrix must contain finite numeric values.")
         normalized.append(scalar)
 
-    matrix_array = np.asarray(normalized, dtype=np.complex64).reshape(raw_matrix.shape)
-    return normalized_targets, np.ascontiguousarray(matrix_array, dtype=np.complex64)
+    compiled_dtype = _statevector_complex_dtype()
+    matrix_array = np.asarray(normalized, dtype=compiled_dtype).reshape(raw_matrix.shape)
+    return normalized_targets, np.ascontiguousarray(matrix_array, dtype=compiled_dtype)
 
 
 def _finalize_expectation(value: complex):
@@ -969,10 +987,12 @@ def _statevector_sparse_hamiltonian_moments(statevector, data, indices, indptr):
     return mean, second_moment
 
 
-class _MockStateVectorState:
+class _CpuStateVectorState:
+    """Double-precision NumPy state-vector implementation for CPU execution."""
+
     def __init__(self, n_qubits: int):
         self._num_qubits = n_qubits
-        self._state = np.zeros(_statevector_dimension(n_qubits), dtype=np.complex64)
+        self._state = np.zeros(_statevector_dimension(n_qubits), dtype=np.complex128)
         self._state[0] = 1.0 + 0.0j
 
     def _validate_qubit(self, qubit: int) -> int:
@@ -1038,7 +1058,7 @@ class _MockStateVectorState:
         if op in {"p", "phase"}:
             angle = self._angle(op_name, params, "phi", "theta")
             return np.array([[1, 0], [0, complex(math.cos(angle), math.sin(angle))]], dtype=np.complex128)
-        raise ValueError(f"Gate '{op_name}' is not supported by the mock state-vector backend.")
+        raise ValueError(f"Gate '{op_name}' is not supported by the CPU state-vector backend.")
 
     def _basis_parts(self, index: int, targets: Sequence[int]) -> tuple[int, int]:
         base_index = int(index)
@@ -1075,7 +1095,7 @@ class _MockStateVectorState:
             for row_target in range(target_dim):
                 output_index = self._embed_target_bits(base_index, row_target, targets)
                 new_state[output_index] += matrix[row_target, col_target] * amplitude
-        self._state = new_state.astype(np.complex64)
+        self._state = new_state
 
     def _apply_controlled_matrix_to_targets(
         self,
@@ -1104,7 +1124,7 @@ class _MockStateVectorState:
             for row_target in range(target_dim):
                 output_index = self._embed_target_bits(base_index, row_target, targets)
                 new_state[output_index] += matrix[row_target, col_target] * amplitude
-        self._state = new_state.astype(np.complex64)
+        self._state = new_state
 
     def _apply_mcx(self, controls: Sequence[int], target: int) -> None:
         controls = self._validate_qubits(controls, "control qubits")
@@ -1177,7 +1197,7 @@ class _MockStateVectorState:
                 raise ValueError(f"Gate '{op_name}' expects [control, target_a, target_b].")
             self._apply_cswap(targets[0], targets[1], targets[2])
             return None
-        raise ValueError(f"Gate '{op_name}' is not supported by the mock state-vector backend.")
+        raise ValueError(f"Gate '{op_name}' is not supported by the CPU state-vector backend.")
 
     def apply_matrix(self, targets: Sequence[int], matrix: np.ndarray):
         self._apply_matrix_to_targets(targets, matrix)
@@ -1502,7 +1522,7 @@ class _HipStateVectorState:
                 self._d_state,
                 self._num_qubits,
                 targets,
-                _coerce_complex64_matrix(matrix),
+                _coerce_statevector_complex_matrix(matrix),
             )
         else:
             value = _statevector_expectation_matrix(self.get_state_vector(), matrix, targets, self._num_qubits)
@@ -1516,7 +1536,7 @@ class _HipStateVectorState:
                 self._handle,
                 self._d_state,
                 self._num_qubits,
-                np.asarray(data, dtype=np.complex64, order="C"),
+                np.asarray(data, dtype=_statevector_complex_dtype(), order="C"),
                 [int(index) for index in indices],
                 [int(offset) for offset in indptr],
                 shape[0],
@@ -1954,6 +1974,55 @@ class StabilizerBackend(_BaseBackend):
         return _finalize_expectation(total)
 
 
+class CpuStateVectorBackend(_BaseBackend):
+    """Production CPU reference backend implemented with NumPy.
+
+    This backend is intentionally independent of ROCm and is exposed as the
+    ``qpp-cpu`` target. It provides a fail-closed reference execution path for
+    runtime and compiler conformance tests.
+    """
+
+    def __init__(self, num_qubits: int):
+        super().__init__(num_qubits)
+        _statevector_dimension(self.num_qubits)
+        self._state = _CpuStateVectorState(self.num_qubits)
+
+    def run_ops(self, ops, noise_model=None):
+        if noise_model is not None:
+            raise NotImplementedError(
+                "Noise models are only supported by the 'density_matrix' backend."
+            )
+        for op in ops:
+            self._state.apply_named_gate(op.name, op.targets, op.params)
+
+    def apply_noise(
+        self,
+        channel: str,
+        targets: List[int],
+        prob: float,
+        kraus_matrices=None,
+    ):
+        raise NotImplementedError(
+            "Noise models are only supported by the 'density_matrix' backend."
+        )
+
+    def get_state(self):
+        return _normalize_statevector_result(
+            self._state.get_state_vector(), self.num_qubits
+        )
+
+    def sample(self, shots: int, qubits: Optional[Sequence[int]] = None):
+        shots = _validate_positive_integer(shots, "shots")
+        measured_qubits = _normalize_sample_qubits(qubits, self.num_qubits)
+        raw_results = self._state.sample(measured_qubits, shots)
+        return _format_sample_counts(
+            raw_results, len(measured_qubits), shots
+        )
+
+    def expectation(self, operator):
+        return self._state.expectation(operator)
+
+
 class StateVectorBackend(_BaseBackend):
     """Simulates a quantum state vector by dispatching to hipStateVec."""
 
@@ -1968,7 +2037,7 @@ class StateVectorBackend(_BaseBackend):
             if not _mock_backends_enabled():
                 raise _native_backend_error("_rocq_hip_backend", "state_vector")
             _warn_mock_backend("state_vector")
-            self._state = _MockStateVectorState(self.num_qubits)
+            self._state = _CpuStateVectorState(self.num_qubits)
             self._uses_mock = True
         else:
             self._state = _HipStateVectorState(self.num_qubits, enable_fusion=enable_fusion)
@@ -2377,6 +2446,7 @@ def get_backend(backend_name: str, num_qubits: int, *, enable_fusion: Optional[b
 
     supported = {
         "state_vector": StateVectorBackend,
+        "qpp-cpu": CpuStateVectorBackend,
         "density_matrix": DensityMatrixBackend,
         "stabilizer": StabilizerBackend,
         "tableau": StabilizerBackend,

@@ -1,8 +1,30 @@
 #include "rocquantum/rocWorkspaceManager.h"
 #include "rocquantum/hipStateVec.h" // For checkHipError
 
+#include <limits>
+#include <string>
+
 namespace rocquantum {
 namespace util {
+
+namespace {
+
+size_t align_up(size_t value, size_t alignment) noexcept {
+    if (alignment == 0) {
+        return value;
+    }
+    const size_t remainder = value % alignment;
+    if (remainder == 0) {
+        return value;
+    }
+    const size_t padding = alignment - remainder;
+    if (value > std::numeric_limits<size_t>::max() - padding) {
+        return std::numeric_limits<size_t>::max();
+    }
+    return value + padding;
+}
+
+} // namespace
 
 WorkspaceManager::WorkspaceManager(size_t initial_size_bytes, hipStream_t stream)
     : d_workspace_ptr_(nullptr),
@@ -34,16 +56,17 @@ rocComplex* WorkspaceManager::allocate(size_t num_elements) {
         return nullptr;
     }
 
-    size_t requested_bytes = num_elements * sizeof(rocComplex);
+    if (num_elements > std::numeric_limits<size_t>::max() / sizeof(rocComplex)) {
+        return nullptr;
+    }
+    const size_t requested_bytes = num_elements * sizeof(rocComplex);
     if (requested_bytes == 0) return nullptr; // Should not happen if num_elements > 0
 
     // Align the current offset
-    size_t aligned_offset = current_offset_bytes_;
-    if (alignment_ > 0 && (current_offset_bytes_ % alignment_) != 0) {
-        aligned_offset = ((current_offset_bytes_ + alignment_ - 1) / alignment_) * alignment_;
-    }
+    const size_t aligned_offset = align_up(current_offset_bytes_, alignment_);
 
-    if (aligned_offset + requested_bytes <= total_size_bytes_) {
+    if (aligned_offset <= total_size_bytes_ &&
+        requested_bytes <= total_size_bytes_ - aligned_offset) {
         rocComplex* ptr = reinterpret_cast<rocComplex*>(
             reinterpret_cast<char*>(d_workspace_ptr_) + aligned_offset
         );
@@ -66,11 +89,7 @@ size_t WorkspaceManager::get_total_size_bytes() const {
 
 size_t WorkspaceManager::get_used_size_bytes() const {
     // Return the aligned offset as used, as that's the next allocation start
-    size_t aligned_offset = current_offset_bytes_;
-     if (alignment_ > 0 && (current_offset_bytes_ % alignment_) != 0) {
-        aligned_offset = ((current_offset_bytes_ + alignment_ - 1) / alignment_) * alignment_;
-    }
-    return aligned_offset; // Or current_offset_bytes_ if strict usage without alignment padding is preferred for "used"
+    return align_up(current_offset_bytes_, alignment_);
 }
 
 hipStream_t WorkspaceManager::get_stream() const {

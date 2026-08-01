@@ -17,7 +17,7 @@ setup(
     packages=find_packages(),
     python_requires=">=3.9",
     install_requires=[
-        "cirq-core>=1.0",
+        "cirq-core>=1.0,<2",
         "numpy",
     ],
     classifiers=[

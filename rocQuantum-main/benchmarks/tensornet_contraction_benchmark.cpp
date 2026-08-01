@@ -64,7 +64,8 @@ bool build_network(rocTensorNetworkHandle_t* tn,
                    rocquantum::util::rocTensor& a,
                    rocquantum::util::rocTensor& b,
                    hipStream_t stream) {
-    if (!check_status(rocTensorNetworkCreate(tn, ROC_DATATYPE_C64), "rocTensorNetworkCreate")) {
+    if (!check_status(rocTensorNetworkCreate(tn, ROC_TENSORNET_COMPILED_COMPLEX_DTYPE),
+                      "rocTensorNetworkCreate")) {
         return false;
     }
 
@@ -205,12 +206,12 @@ int main(int argc, char** argv) {
 
     write_json(*out, trials, results);
 
-    bool any_success = false;
+    bool all_success = true;
     for (const CaseResult& result : results) {
-        any_success = any_success || result.status == 0;
+        all_success = all_success && result.status == 0;
     }
 
     rocblas_destroy_handle(blas);
     hipStreamDestroy(stream);
-    return any_success ? 0 : 1;
+    return all_success ? 0 : 1;
 }

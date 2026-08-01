@@ -1,10 +1,32 @@
 # Experimental QEC Helpers
 
-This package contains a small, executable QEC subset over the canonical `rocq`
-runtime. It is not a full CUDA-QX QEC library.
+This package contains a correctness-oriented QEC subset over NumPy and the
+canonical `rocq` runtime. It is not a full CUDA-QX QEC library and makes no
+tensor-network, real-time-decoder, device-resident, or native ROCm performance
+parity claim.
 
 Current supported subset:
 
+- Official-style host code metadata and registry APIs: `Code`, `CodeMetadata`,
+  `@code()` / `register_code()`, `get_code()`, and `get_available_codes()`.
+  Built-ins are arbitrary odd-distance `get_code("repetition", distance=d)`
+  metadata and the `[[7, 1, 3]]` `get_code("steane")` CSS metadata. Dense
+  `uint8` `H`, `Hx`, `Hz`, logical-X, and logical-Z matrices are checked over
+  GF(2), including stabilizer commutation and complete logical-family pairing.
+  Basis-specific codes may expose only one logical-observable family: the
+  repetition code follows CUDA-QX with logical-X shape `(0, d)` and logical-Z
+  shape `(1, d)`. `Code.get_stabilizers()` returns `rocq` Pauli operators whose
+  `get_pauli_word()` preserves the full code width and trailing identities.
+- Official-style host decoder contracts: `DecoderResult`,
+  `BatchDecoderResult`, `AsyncDecoderResult.get()`, `Decoder`, decoder
+  registration/factories, `SingleErrorLUTDecoder`, and a pure-NumPy
+  `BeliefPropagationDecoder`. Scalar, batch, and asynchronous entry points
+  validate parity matrices, syndrome probabilities, and result probabilities.
+- Reproducible pure-NumPy `generate_random_bit_flips()` and
+  `sample_code_capacity()` helpers. Capacity sampling returns
+  `(syndromes, errors)` and guarantees `syndromes == errors @ H.T mod 2`.
+  A `Code` argument uses its full binary-symplectic `H`; pass `code.Hx` or
+  `code.Hz` explicitly to model only one Pauli error channel.
 - `rocquantum.qec.qec_capabilities()` and the package-level `capabilities()`
   alias expose the experimental supported/unsupported QEC contract, entry
   points, code-family scope, measurement-error model, execution scope,
@@ -57,6 +79,21 @@ print(result["logical_success_rate"])
 print(result["most_likely_corrected_data_bits"])
 ```
 
+Host code/decoder example:
+
+```python
+from rocquantum.qec import get_code, get_decoder, sample_code_capacity
+
+code = get_code("repetition", distance=5)
+decoder = get_decoder("single_error_lut", code.Hz)
+syndromes, errors = sample_code_capacity(
+    code, num_shots=16, error_probability=0.05, seed=7
+)
+decoded = decoder.decode_batch(syndromes)
+print(decoded.converged)
+print(decoded.result)
+```
+
 Repeated-round example:
 
 ```python
@@ -85,6 +122,9 @@ Limitations:
 - No in-circuit mid-circuit measurement or dynamic classical feedback.
 - Repeated rounds are sequential sampled helper calls with classical
   most-likely feed-forward, not an in-circuit dynamic-control workflow.
-- No general noise-aware decoder beyond deterministic single-X syndrome lookup
-  plus the independent syndrome readout-error mitigation helper above.
+- The belief-propagation decoder is a host correctness implementation, not a
+  performance-tuned production decoder and not CUDA-QX tensor-network decoder
+  parity.
 - No performance-tuned syndrome extraction.
+- No native ROCm execution evidence is claimed until AMD GPU hardware CI is
+  available.

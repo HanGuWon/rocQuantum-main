@@ -4,7 +4,7 @@ import math
 import re
 from abc import ABC, abstractmethod
 from numbers import Integral, Number
-from typing import TYPE_CHECKING, Iterable, List, Sequence, Tuple
+from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -251,10 +251,33 @@ class QuantumOperator(ABC):
 class PauliOperator(QuantumOperator):
     """Represents a single Pauli-string term, e.g. ``0.5 * X0 Y1 Z2``."""
 
-    def __init__(self, pauli_string: str, coefficient: Number = 1.0):
+    def __init__(
+        self,
+        pauli_string: str,
+        coefficient: Number = 1.0,
+        *,
+        num_qubits: Optional[int] = None,
+    ):
         super().__init__(coefficient)
         self.pauli_string = pauli_string
-        _parse_pauli_string(pauli_string)
+        parsed = _parse_pauli_string(pauli_string)
+        compact = pauli_string.replace(" ", "").replace(",", "")
+        token_indices = [
+            int(match.group(2)) for match in _PAULI_TOKEN_RE.finditer(compact)
+        ]
+        inferred_width = max(token_indices, default=-1) + 1
+        if inferred_width <= 0:
+            inferred_width = max((qubit for _, qubit in parsed), default=-1) + 1
+        inferred_width = max(1, inferred_width)
+        if num_qubits is None:
+            self.num_qubits = inferred_width
+        else:
+            width = _validate_positive_integer(num_qubits, "num_qubits")
+            if width < inferred_width:
+                raise ValueError(
+                    "num_qubits must include every Pauli-string qubit index."
+                )
+            self.num_qubits = width
 
     def __mul__(self, other):
         if isinstance(other, PauliOperator):
@@ -262,11 +285,28 @@ class PauliOperator(QuantumOperator):
                 _parse_pauli_string(self.pauli_string),
                 _parse_pauli_string(other.pauli_string),
             )
-            return PauliOperator(_format_pauli_string(paulis), self.coefficient * other.coefficient * phase)
+            return PauliOperator(
+                _format_pauli_string(paulis),
+                self.coefficient * other.coefficient * phase,
+                num_qubits=max(self.num_qubits, other.num_qubits),
+            )
         return super().__mul__(other)
 
     def to_string(self) -> str:
         return f"{self.coefficient} * {self.pauli_string}"
+
+    def get_pauli_word(self) -> str:
+        """Return the dense CUDA-Q-style I/X/Y/Z word for this term.
+
+        Character position ``i`` corresponds to qubit ``i``.  Explicit
+        ``num_qubits`` metadata preserves trailing identities, which is required
+        by CUDA-QX code metadata such as seven-qubit Steane stabilizers.
+        """
+
+        word = ["I"] * self.num_qubits
+        for pauli, qubit in _parse_pauli_string(self.pauli_string):
+            word[int(qubit)] = pauli
+        return "".join(word)
 
 
 def _identity_operator(coefficient: Number) -> PauliOperator:
@@ -448,10 +488,144 @@ def iter_pauli_terms(operator: QuantumOperator) -> List[Tuple[complex, List[Tupl
     raise TypeError(f"Unsupported quantum operator type: {type(operator)!r}")
 
 
+def _operator_num_qubits(operator: QuantumOperator) -> int:
+    """Infer the smallest full-register width required by ``operator``."""
+
+    if isinstance(operator, PauliOperator):
+        return operator.num_qubits
+
+    if isinstance(operator, SumOperator):
+        return max(
+            (_operator_num_qubits(term) for term in operator.terms),
+            default=1,
+        )
+
+    if isinstance(operator, HermitianOperator):
+        local_qubits = int(round(math.log2(operator.matrix.shape[0])))
+        if operator.targets is None:
+            return max(1, local_qubits)
+        if len(operator.targets) != local_qubits:
+            raise ValueError(
+                "HermitianOperator target count must match its matrix dimension."
+            )
+        return max(1, max(operator.targets, default=-1) + 1)
+
+    if isinstance(operator, SparseHamiltonianOperator):
+        return max(1, int(round(math.log2(operator.shape[0]))))
+
+    raise TypeError(f"Unsupported quantum operator type: {type(operator)!r}")
+
+
+def _embed_local_matrix(matrix: np.ndarray, targets: Sequence[int], num_qubits: int) -> np.ndarray:
+    """Embed a local matrix using rocQuantum's qubit-0-is-LSB convention."""
+
+    target_list = [int(target) for target in targets]
+    target_count = len(target_list)
+    local_dim = 1 << target_count
+    full_dim = 1 << int(num_qubits)
+    if matrix.shape != (local_dim, local_dim):
+        raise ValueError("Local operator matrix dimension must equal 2**len(targets).")
+
+    embedded = np.zeros((full_dim, full_dim), dtype=np.complex128)
+    target_mask = sum(1 << target for target in target_list)
+    for column in range(full_dim):
+        local_column = 0
+        for bit, target in enumerate(target_list):
+            if (column >> target) & 1:
+                local_column |= 1 << bit
+        base = column & ~target_mask
+        for local_row in range(local_dim):
+            row = base
+            for bit, target in enumerate(target_list):
+                if (local_row >> bit) & 1:
+                    row |= 1 << target
+            embedded[row, column] = matrix[local_row, local_column]
+    return embedded
+
+
+def operator_to_matrix(operator: QuantumOperator, num_qubits: int = None) -> np.ndarray:
+    """Return a dense matrix for a canonical quantum operator.
+
+    The conversion is a CPU reference utility intended for small exact-oracle
+    tests, solver construction, and dynamics.  Its basis ordering matches the
+    runtime: qubit 0 is the least-significant computational-basis bit.
+    """
+
+    if not isinstance(operator, QuantumOperator):
+        raise TypeError("operator_to_matrix() expects a QuantumOperator instance.")
+    inferred_qubits = _operator_num_qubits(operator)
+    if num_qubits is None:
+        resolved_qubits = inferred_qubits
+    else:
+        resolved_qubits = _validate_positive_integer(num_qubits, "num_qubits")
+        if resolved_qubits < inferred_qubits:
+            raise ValueError(
+                f"num_qubits={resolved_qubits} is too small for an operator requiring "
+                f"{inferred_qubits} qubits."
+            )
+
+    dimension = 1 << resolved_qubits
+    if isinstance(operator, SumOperator):
+        result = np.zeros((dimension, dimension), dtype=np.complex128)
+        for term in operator.terms:
+            result += operator_to_matrix(term, resolved_qubits)
+        return complex(operator.coefficient) * result
+
+    if isinstance(operator, PauliOperator):
+        result = np.zeros((dimension, dimension), dtype=np.complex128)
+        local_matrices = {
+            "X": np.array([[0, 1], [1, 0]], dtype=np.complex128),
+            "Y": np.array([[0, -1j], [1j, 0]], dtype=np.complex128),
+            "Z": np.array([[1, 0], [0, -1]], dtype=np.complex128),
+        }
+        for coefficient, paulis in iter_pauli_terms(operator):
+            term = np.array([[1.0 + 0.0j]], dtype=np.complex128)
+            by_qubit = {int(qubit): pauli for pauli, qubit in paulis}
+            for qubit in reversed(range(resolved_qubits)):
+                term = np.kron(
+                    term,
+                    local_matrices.get(
+                        by_qubit.get(qubit),
+                        np.eye(2, dtype=np.complex128),
+                    ),
+                )
+            result += complex(coefficient) * term
+        return result
+
+    if isinstance(operator, HermitianOperator):
+        matrix = np.asarray(operator.matrix, dtype=np.complex128)
+        local_qubits = int(round(math.log2(matrix.shape[0])))
+        targets = (
+            list(range(local_qubits))
+            if operator.targets is None
+            else list(operator.targets)
+        )
+        return complex(operator.coefficient) * _embed_local_matrix(
+            matrix,
+            targets,
+            resolved_qubits,
+        )
+
+    if isinstance(operator, SparseHamiltonianOperator):
+        if operator.shape != (dimension, dimension):
+            raise ValueError(
+                "SparseHamiltonianOperator spans a fixed full register and cannot "
+                "be embedded into a different num_qubits value."
+            )
+        dense = np.zeros(operator.shape, dtype=np.complex128)
+        for row in range(operator.shape[0]):
+            start = int(operator.indptr[row])
+            end = int(operator.indptr[row + 1])
+            dense[row, operator.indices[start:end]] = operator.data[start:end]
+        return complex(operator.coefficient) * dense
+
+    raise TypeError(f"Unsupported quantum operator type: {type(operator)!r}")
+
+
 def get_expectation_value(
     kernel: "QuantumKernel",
     operator: QuantumOperator,
-    backend: str = "state_vector",
+    backend: Optional[str] = None,
     **kwargs,
 ):
     """Compute the expectation value of an operator via the canonical runtime."""

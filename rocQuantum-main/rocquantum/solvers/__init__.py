@@ -1,18 +1,47 @@
 """Experimental higher-level solver helpers for rocQuantum."""
 
 from .qaoa import (
+    QAOAResult,
     get_num_qaoa_parameters,
     make_maxcut_qaoa_kernel,
     maxcut_cost_operator,
+    qaoa,
     solve_maxcut_qaoa,
 )
-from .vqe_solver import Optimizer, SciPyOptimizer, VQE_Solver
+from .adapt import adapt_vqe
+from .chemistry import MolecularHamiltonian, create_molecule, jordan_wigner
+from . import stateprep
+from .operator_pools import (
+    get_available_operator_pools,
+    get_operator_pool,
+    operator_pool,
+    register_operator_pool,
+)
+from .vqe_solver import (
+    ObserveExecutionType,
+    ObserveIteration,
+    Optimizer,
+    SciPyOptimizer,
+    VQE_Solver,
+    vqe,
+)
 from .vqe_solver import _supported_backend_names as _runtime_supported_backend_names
 
 _SOLVER_ENTRY_POINTS = (
     "VQE_Solver.evaluate_energy",
     "VQE_Solver.estimate_gradient",
     "VQE_Solver.solve",
+    "vqe",
+    "adapt_vqe",
+    "qaoa",
+    "get_operator_pool",
+    "get_available_operator_pools",
+    "jordan_wigner",
+    "MolecularHamiltonian.from_integrals",
+    "create_molecule",
+    "stateprep.uccsd",
+    "stateprep.get_num_uccsd_parameters",
+    "stateprep.get_uccsd_excitations",
     "make_maxcut_qaoa_kernel",
     "get_num_qaoa_parameters",
     "maxcut_cost_operator",
@@ -22,7 +51,18 @@ _SOLVER_ENTRY_POINTS = (
 _SOLVER_SUPPORTED_FEATURES = (
     "VQE one-shot energy evaluation through rocq.observe()",
     "VQE solve loop with a pluggable Optimizer interface",
-    "parameter-shift and finite-difference gradient estimates",
+    "CUDA-QX-style functional VQE result and immutable observe trace",
+    "CUDA-QX parameter-vector callable ansatz adaptation and kernel composition",
+    "documented SciPy method, jac, callback, and options keyword forwarding",
+    "registered cobyla/lbfgs and SciPy-compatible optimizer normalization",
+    "recorder-proven exact parameter-shift with precision-safe finite-difference fallback",
+    "generic real Pauli-sum QAOA with custom mixer, full and counterdiabatic parameterizations",
+    "tuple-unpackable QAOA result with canonical SampleResult final configuration",
+    "single-process finite-difference ADAPT-VQE reference workflow",
+    "registry-backed CUDA-QX QAOA and UCCSD operator pool generation",
+    "Jordan-Wigner transformation from precomputed one- and two-body integrals",
+    "optional PySCF restricted full-space RHF/ROHF molecular construction",
+    "CUDA-QX-ordered UCCSD excitation enumeration and CPU-reference state preparation",
     "MaxCut QAOA H/CNOT/RZ/RX ansatz construction",
     "CUDA-QX-style QAOA parameter-count helper for the supported gamma/beta ansatz",
     "weighted MaxCut cost operator construction",
@@ -33,7 +73,9 @@ _SOLVER_SUPPORTED_FEATURES = (
 )
 
 _SOLVER_UNSUPPORTED_FEATURES = (
-    "chemistry-specific Hamiltonian builders",
+    "active-space, unrestricted-integral, correlated-orbital, and non-PySCF chemistry workflows",
+    "Bravyi-Kitaev and generalized or production-optimized UCC state-preparation families",
+    "shot-based VQE and ADAPT-VQE expectation estimation",
     "production optimizer suite or hybrid workflow scheduler",
     "GPU-resident native adjoint differentiation",
     "distributed or multi-QPU solver execution",
@@ -43,6 +85,7 @@ _SOLVER_EXECUTION_SCOPE = {
     "quantum_runtime": "canonical_rocq_observe_local_backends",
     "classical_optimizer": "host_python_optimizer_loop",
     "gradients": "host_parameter_shift_or_finite_difference",
+    "gradient_safety": "exact_two_point_shift_only_for_proven_direct_single_rotations",
     "native_adjoint": "unsupported",
     "distributed_solver_execution": "unsupported",
     "workflow_scheduler": "unsupported",
@@ -51,6 +94,19 @@ _SOLVER_HARDWARE_EVIDENCE = {
     "probe_performed": False,
     "native_rocm_device_required_for_performance_claim": True,
     "capability_query_is_runtime_proof": False,
+}
+
+_SOLVER_FEATURE_STATUS = {
+    "functional_vqe": "host_reference_verified",
+    "generic_qaoa": "host_reference_verified",
+    "adapt_vqe": "host_reference_verified_single_process",
+    "jordan_wigner_precomputed_integrals": "host_reference_verified",
+    "geometry_pyscf_driver": "optional_dependency_restricted_full_space_reference",
+    "uccsd_operator_pool": "host_reference_verified",
+    "uccsd_stateprep": "host_reference_verified",
+    "mqpu_mpi": "unimplemented",
+    "native_rocm_performance": "rocm_accelerated_unverified",
+    "cuda_vendor_specific_workflows": "unsupported_vendor_specific",
 }
 
 
@@ -67,8 +123,10 @@ def solver_capabilities():
         "runtime": "canonical rocq.observe() over supported local backends",
         "execution_scope": dict(_SOLVER_EXECUTION_SCOPE),
         "hardware_evidence": dict(_SOLVER_HARDWARE_EVIDENCE),
+        "feature_status": dict(_SOLVER_FEATURE_STATUS),
         "optional_dependencies": {
             "scipy": "required only when using the default SciPyOptimizer",
+            "pyscf": "required only by create_molecule()",
         },
         "docs": "rocquantum/solvers/README.md",
         "performance_note": (
@@ -85,13 +143,27 @@ def capabilities():
 
 
 __all__ = [
+    "MolecularHamiltonian",
+    "ObserveExecutionType",
+    "ObserveIteration",
     "Optimizer",
+    "QAOAResult",
     "SciPyOptimizer",
     "VQE_Solver",
+    "adapt_vqe",
     "capabilities",
+    "create_molecule",
+    "get_available_operator_pools",
+    "get_operator_pool",
     "get_num_qaoa_parameters",
+    "jordan_wigner",
     "make_maxcut_qaoa_kernel",
     "maxcut_cost_operator",
+    "operator_pool",
+    "qaoa",
+    "register_operator_pool",
     "solver_capabilities",
     "solve_maxcut_qaoa",
+    "stateprep",
+    "vqe",
 ]

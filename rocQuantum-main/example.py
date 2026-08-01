@@ -1,27 +1,25 @@
+"""Small canonical rocq Bell-state example.
+
+Set ``ROCQ_ENABLE_MOCK_BACKENDS=1`` to use the CPU correctness fallback when
+the native ROCm bindings are not installed.
+"""
+
 import rocq
 
-# 1. Define a simple quantum kernel
+
 @rocq.kernel
-def simple_kernel():
+def bell_state():
     q = rocq.qvec(2)
     rocq.h(q[0])
     rocq.cnot(q[0], q[1])
 
-# 2. Instantiate the kernel
-kernel_instance = simple_kernel()
 
-# 3. Compile the kernel to QIR and print the result
-qir_output = kernel_instance.qir()
+def main():
+    counts = rocq.sample(bell_state, 100, backend="state_vector")
+    print("Bell-state counts:", counts)
+    assert sum(counts.values()) == 100
+    assert set(counts).issubset({"00", "11"})
 
-print("\n--- Generated QIR (LLVM IR) ---")
-print(qir_output)
-print("---------------------------------")
 
-# --- Verification ---
-print("\n--- Verifying QIR Output ---")
-if "__quantum__qis__h__body" in qir_output and \
-   "__quantum__qis__cnot__body" in qir_output and \
-   "call void @__quantum__qis__h__body" in qir_output:
-    print("Verification PASSED: QIR contains the correct function calls.")
-else:
-    print("Verification FAILED: QIR output is missing expected content.")
+if __name__ == "__main__":
+    main()

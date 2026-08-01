@@ -2,6 +2,8 @@
 
 Audit date: 2026-04-05
 
+Historical-plan notice (updated 2026-07-31): this is the original low-blast-radius implementation plan, not the current backlog. `TOP_GAPS_AND_PRIORITIES.md` is the current priority list. The host-only packaging gate, example canonicalization, evidence-stage documentation, and measurement-free static-QIR ORC JIT/CPU reference path have since been completed; Base/adaptive runtime breadth and native ROCm validation remain pending.
+
 ## 1. Compiler/runtime MVP execution path
 
 - Change: keep compiler/runtime parity claims narrow while wiring `rocqCompiler::MLIRCompiler::compile_and_execute()` for the supported qalloc/H/X/Y/Z/CNOT/RX/RY/RZ MLIR subset
@@ -45,9 +47,9 @@ Audit date: 2026-04-05
   - `python -m unittest tests.test_p0_fixes tests.test_cpp_expectation -v`
 - Risk: Low
 
-## 4. Collapse the packaging truth gap
+## 4. Collapse the packaging truth gap — completed for the host-only boundary
 
-- Change: make the build-system requirements honest now, then follow with a larger unification pass later
+- Completed change: scikit-build-core uses `cmake.version`; the default PEP 517 path produces a pure `py3-none-any` host wheel without native sources/binaries, while `ROCQ_BUILD_NATIVE=1` atomically selects native CMake mode and platform wheel tags.
 - Files:
   - `pyproject.toml`
   - `setup.py`
@@ -56,10 +58,11 @@ Audit date: 2026-04-05
 - Tests to add or update:
   - `tests/test_p2_packaging.py`
 - Validation:
-  - `pip install -e .`
-  - `python -c "import rocq; import rocquantum"`
-  - `python -m rocq_cli --help`
-- Risk: Low for the immediate truth fix, Medium for the later full unification
+  - clean `python -m pip wheel --no-deps --no-cache-dir --wheel-dir dist .`
+  - install into a fresh environment and import `rocq`, `rocquantum`, and `rocq_cli` outside the source tree
+  - run installed `rocq --help`
+  - copy and run all 19 examples outside the repository with `PYTHONPATH` removed
+- Result: host-only wheel/install/import/CLI/example checks pass on Python 3.9, 3.12, and 3.13. Native wheel/install gates now include relative RPATH, `readelf`/`ldd`, external fresh-environment imports for separate C64/C128 wheels, dtype/itemsize/device-free round-trip assertions, installed symbol execution, and C64 plus C128/METIS consumer ABI/capability checks in ROCm CI; they remain unverified locally without a retained ROCm artifact.
 
 ## 5. Replace placeholder advanced-gate tests with honest status
 
@@ -88,5 +91,4 @@ Audit date: 2026-04-05
 
 ## Notes
 
-- A later phase should also repair install/export completeness, unify Python binding names, and add install-tree consumption tests.
-- Those follow-up items are intentionally not bundled into this first pass because the current goal is a safe audit plus low-blast-radius credibility recovery.
+- Remaining follow-up: validate native install/export on ROCm hardware and unify the remaining Python binding/runtime names.

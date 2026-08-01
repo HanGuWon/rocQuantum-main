@@ -6,33 +6,46 @@
 - `hipTensorNet`
 - `hipDensityMat`
 
-The repo also contains partially implemented compiler, Python, provider, and framework-integration surfaces inspired by CUDA-Q, cuQuantum, and CUDA-QX. It does not yet provide end-to-end parity with those NVIDIA stacks.
+The repo also contains partially implemented compiler, Python, provider, and framework-integration surfaces inspired by CUDA-Q, cuQuantum, and CUDA-QX. Its current product position is **a ROCm-native simulation SDK with a CUDA-Q-inspired Python API**. It is not a drop-in replacement for, or an end-to-end equivalent of, those NVIDIA stacks.
+
+## Comparison Baseline And Evidence Policy
+
+This capability summary was refreshed on 2026-07-31 against the released baselines below:
+
+- cuQuantum SDK `26.06.0`: cuStateVec `1.14.0`, cuTensorNet `2.13.0`, cuDensityMat `0.6.0`, cuPauliProp `0.4.0`, and cuStabilizer `0.4.0`
+- CUDA-Q `0.15.0`
+- CUDA-QX `0.6.0` (whose 0.6 release line targets CUDA-Q 0.14 rather than CUDA-Q 0.15)
+
+Capability claims use ordered evidence stages: `source-present`, `host-contract-tested`, `native-single-GPU-verified`, `native-multi-GPU-verified`, and `performance-verified`. This workstation has no AMD GPU or ROCm runtime, so this refresh makes **no** claim at any of the three native/performance stages. Source inspection and passing CPU/mock tests must not be interpreted as HIP correctness or performance evidence.
 
 ## Current Reality
 
-Implemented today:
+Source-present today (not locally GPU-verified):
 
 - Native HIP state-vector simulation for core named gates, sampling, measurement, and several expectation-value primitives
 - Native tensor-network contraction core
 - Native density-matrix core with named noise channels, generic single- and multi-qubit Kraus channel APIs, decomposed CCX/CSWAP helpers in the canonical backend, and density sampling with GPU-side marginal probability reduction
 - Direct simulator execution through the active local runtime path
-- CUDA-Q-style `get_state()` alias for canonical state readback plus host-side `Future` wrappers for `get_state_async()`, `execute_async()`, `sample_async()`, `observe_async()`, and `compile_and_execute_async()`
+- A CPU-buildable native TableGen/MLIR/LLVM compiler path with generated `!quantum.qubit` / `!quantum.result` types, terminal `quantum.mz`, explicit `rocq-qir-static-pipeline` / `rocq-qir-base-pipeline` registrations, `rocq-opt`, a strict `rocq-translate` CLI, an installed `rocq-run` CPU state-vector runner, QIR 2 static-custom and labeled terminal-MZ Base Profile output, LLVM verification, LLVM IR/bitcode/generic-host relocatable-object emission, an opt-in content-addressed artifact cache, and measurement-free static-QIR execution through MLIR's LLVM ORC JIT and registered QIS callbacks
+- CUDA-Q-style local target/result APIs, `get_state()` alias, and context-preserving host-side `AsyncResult` wrappers for `get_state_async()`, `execute_async()`, `sample_async()`, `observe_async()`, `evolve_async()`, and `compile_and_execute_async()`
 
 Only partial today:
 
-- MLIR/QIR compiler flow
-- `compile_and_execute()` for a narrow MLIR subset: qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, CRX/CRY/CRZ/CP
+- Compiler breadth beyond host-specialized Python composition and straight-line QIR: native typed SSA arguments/results/helper functions, mid-circuit measurement/reset/`read_result`, branches/loops, adaptive or dynamic-resource execution, a general target/runtime plugin layer, arbitrary multi-control synthesis, and a reusable installed compiler SDK/pass-plugin surface remain absent
+- `compile_and_execute()` covers a measurement-free `qir-v2-static` subset—qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/one- or two-control MCX/CSWAP, RX/RY/RZ/P, and CRX/CRY/CRZ/CP—through the native QIR JIT. Base Profile remains emission-only, and MCX with three or more controls fails closed
 - Generic matrix and controlled-unitary coverage
 - Multi-GPU / distributed execution
 - Observable breadth and density-matrix GPU-fast sampling coverage
-- Release wheel and native install-tree validation
+- Native wheel and native install-tree validation; the clean host-only wheel path is validated separately
 - PennyLane, Cirq, and Qiskit adapter maturity
 
-Not implemented today:
+Not implemented as NVIDIA-equivalent components today:
 
 - End-to-end compiler-driven execution parity with CUDA-Q beyond the supported MVP subset
 - Release-grade distributed multi-GPU support
-- CUDA-QX-style higher-level libraries beyond the experimental VQE/QAOA/repetition-code subset with narrow readout-error mitigation; `rocquantum.solvers.solver_capabilities()` and `rocquantum.qec.qec_capabilities()` expose the current supported/unsupported contracts
+- Production CUDA-QX parity beyond the expanded host reference layer: GPU-native gradients/optimizers, GQE/state preparation, broad chemistry drivers, surface-code/DEM/tensor-network/realtime QEC, and distributed workflows remain absent; `rocquantum.solvers.solver_capabilities()` and `rocquantum.qec.qec_capabilities()` expose the exact boundary
+- A dedicated cuPauliProp analogue; Pauli expectations and the CPU Clifford helper do not implement cuPauliProp's propagation, truncation, view, noise, and reverse-AD contract
+- A dedicated GPU cuStabilizer analogue; the Python `stabilizer` / `tableau` / `clifford` aliases are a CPU-only, Clifford-only behavioral prototype without the noisy many-shot, detector-error-model, GPU GF(2), or JAX surface of cuStabilizer
 
 ## Audit Documents
 
@@ -44,8 +57,10 @@ This repo now includes an audit-first truth set in the inner repo root:
 - `TOP_GAPS_AND_PRIORITIES.md`
 - `FINAL_GAP_REPORT.md`
 - `IMPLEMENT_NOW_PLAN.md`
+- `CUDA_Q_CUDAQX_IMPLEMENTATION_REPORT.md`
+- `NATIVE_COMPILER_STATUS.md`
 
-Use those files as the authoritative capability summary for the current codebase.
+Use those files as a review snapshot. Code, clean build results, executed tests, and native runner artifacts take precedence; `FEATURE_TRUTH_MATRIX.md` records the conservative evidence stage for each area.
 
 ## Repo Layout
 
@@ -53,8 +68,8 @@ Use those files as the authoritative capability summary for the current codebase
 - `rocquantum/src/hipTensorNet`: tensor-network contraction core
 - `rocquantum/src/hipDensityMat`: density-matrix and limited noise support
 - `rocquantum/src/simulator.cpp`: public C++ simulator wrapper
-- `rocqCompiler/`: partial MLIR/QIR source pipeline; the default Python binding does not link it and fails fast for compiler execution
-- `rocq/`: top-level Python surface with direct native execution plus `observe()` / `sample()`
+- `rocqCompiler/`: optional LLVM/MLIR 22.1.x native compiler, generated qubit/result dialect, direct static-custom and terminal-MZ Base Profile QIR 2 lowering, in-process static-QIR LLVM ORC JIT with registered QIS callbacks, deterministic CPU reference execution, verified IR/bitcode/host-object artifacts, content-addressed CLI cache, CPU-only tools/tests, and optional HIP execution bridge
+- `rocq/`: canonical Python runtime with direct execution, target/result/noise APIs, typed `make_kernel`, inspection/translation tools, and small-system CPU reference dynamics
 - `python/rocq/`: separate legacy-style Python surface whose `_rocq_hip_backend` extension is built from the top-level CMake graph
 - `integrations/`: PennyLane, Cirq, and Qiskit adapters
 
@@ -62,7 +77,7 @@ Use those files as the authoritative capability summary for the current codebase
 
 - Primary release target: Linux x86_64
 - Latest production ROCm target verified on 2026-06-10: `7.2.4`
-- Native ROCm CMake minimum: CMake `3.21`
+- Native ROCm/packaging CMake minimum: CMake `3.21`; optional MLIR compiler minimum: CMake `3.24`
 - Recommended Tier 1 GPU targets: `gfx950`, `gfx942`, `gfx90a`
 - Recommended future minimum release-grade GPU target: `gfx90a`
 - Recommended future minimum ROCm target: `6.4.0`
@@ -79,15 +94,18 @@ Use those files as the authoritative capability summary for the current codebase
 | `hipStateVec` | Real and useful, with local batched state allocation/readback, batch-specific RX/RY/RZ/P and CRX/CRY/CRZ/CP, batched probabilities, batched Pauli expectations, batched dense-matrix expectations, and active parallel measurement/probability kernels exposed through `QuantumSimulator`; stale single-thread measurement scaffolding is not built; not yet fully surfaced through every framework adapter |
 | `hipTensorNet` | Real contraction core with explicit optimizer/dtype/slicing/permutation-rank capabilities; Python TensorNet contractions use the simulator stream and a reused rocBLAS handle, stale unwired Pathfinder scaffold is not shipped, and >16-mode tensor permutations fail fast before the fixed-local-array HIP kernel; still narrower than a full cuTensorNet analogue |
 | `hipDensityMat` | Real but limited; `rocq.density_matrix_capabilities()` exposes generic channels, decomposed canonical CCX/CSWAP helpers, device-marginal sampling, dense-observable scope, and cuDensityMat descriptor/sampling boundaries |
-| `rocqCompiler` | Partial source-level codegen path plus a narrow compile-and-execute MVP for qalloc/H/X/Y/Z/S/Sdg/T/Tdg/CNOT/CZ/SWAP/CCX/MCX/CSWAP/RX/RY/RZ/P/CRX/CRY/CRZ/CP; `rocq.compiler_capabilities()` exposes that partial subset plus `mlir_runtime_available` / `mlir_runtime_kind`, the dialect-definition boundary, and the transform-pipeline boundary, and the default `rocquantum_bind` build now exposes a fail-fast compiler guard instead of unresolved MLIR symbols |
+| `rocqCompiler` | Release-wired optional compiler graph: TableGen `!quantum.qubit` / `!quantum.result`; direct Quantum-to-LLVM/QIR conversion; explicit static/base pipelines; `rocq-opt`; strict `rocq-translate`; QIR 2 static-custom and labeled terminal-MZ Base Profile shaping; LLVM verification; in-process MLIR ExecutionEngine/LLVM ORC execution of measurement-free static QIR through registered QIS callbacks; deterministic `cpu_statevec` reference execution; deterministic LLVM IR, bitcode, and generic-host PIC relocatable objects; and a self-validating content-addressed CLI cache. Base Profile remains emission-only and its LLVM IR/bitcode is restricted to `-O0`; host objects permit `-O0` through `-O3` and retain unresolved QIS/runtime symbols. `hip_statevec` uses the same static JIT bridge but still needs actual ROCm/device validation. MCX supports one or two controls; wider control arrays fail closed. LLVM/MLIR 22.1.x is pinned; only the command-line tools are installed, while compiler libraries/headers remain build-tree-only. |
 | Top-level `rocq` | Canonical runtime path with native execute/sample/observe wiring, `rocq.runtime_capabilities()` metadata for the canonical/legacy runtime boundary, explicit bool-safe state-vector `enable_fusion=` execution option, canonical backend-name validation, top-level phase-gate exports (`tdg`/`tdag`, `p`/`phase`, `cp`/`cphase`), strict positive-integer `qvec` allocation, direct backend size, shot, selected-qubit, spin-factory target, finite square power-of-two dense observable matrix/target, square power-of-two sparse shape/CSR payload, finite observable-coefficient, quiet noise-channel target/probability validation, and direct density-noise target/probability validation, integer in-range, duplicate multi-qubit, and arity-invalid gate-target validation plus finite real gate-parameter validation during kernel recording and direct backend gate dispatch, duplicate-combined Pauli expectations including inside mixed sums, coefficient-aware duplicate dense-Hermitian/CSR sum readout reuse, zero-coefficient matrix/sparse sum-term elision, coefficient-preserving composite observable sums, numeric identity constants, CUDA-Q-style `rocq.spin.x/y/z/i` Pauli factories, Pauli sum/product terms and scalar division in operator arithmetic, density-matrix correctness fallback for dense Hermitian / full-state CSR observables, an explicit CPU mock state-vector fallback for local named-gate statevector contract tests, and an experimental Clifford-only `stabilizer` / `tableau` / `clifford` backend for Pauli propagation |
-| Higher-level helpers | Experimental VQE public energy evaluation, objective/gradient, VQE-compatible MaxCut-style QAOA kernel/cost/solve helper that accepts edge lists or edge-weight mappings and maximizes cut value via a negated-cost VQE objective, and 3-qubit repetition-code single/repeated-round helpers with syndrome/correction analysis plus independent syndrome readout-error mitigation; solver/QEC capability metadata exposes the current CUDA-QX comparison boundary, host-loop execution scope, sequential sampled feedback scope, and hardware-evidence boundary |
+| Higher-level helpers | Experimental host reference layer with legacy VQE/MaxCut helpers plus functional VQE trace/results, generic real-Pauli QAOA and pools, ADAPT-VQE, limited precomputed-integral/Jordan-Wigner chemistry, QEC Code/Decoder registries, odd-distance repetition and Steane metadata, LUT/BP decoders, and seeded code-capacity sampling; capability metadata exposes unsupported GPU/distributed/production boundaries |
 | `python/rocq` | Top-level CMake-built legacy compatibility surface; Pauli expectations, batched state allocation/readback, same-target single-qubit plus CNOT-adjacent GateFusion spans, and bool-safe finite input validation for circuit sizes, gate targets/angles, samples, and Pauli coefficients now use explicit Python contracts; legacy `build()` records whether execution is conceptual MLIR or Python circuit replay and warns when replay is used, while broader fusion and runtime unification still need consolidation |
 
 ## Important Limitations
 
-- `rocqCompiler::MLIRCompiler::compile_and_execute()` has a source-level MVP subset for qalloc, H/X/Y/Z/S/Sdg/T/Tdg, CNOT/CZ/SWAP/CCX/MCX/CSWAP, RX/RY/RZ/P, and CRX/CRY/CRZ/CP. The same partial scope is available through `rocq.compiler_capabilities()` without invoking MLIR; `binding_available` is separated from `mlir_runtime_available` / `mlir_runtime_kind`, `dialect_definition` marks release-wired TableGen op generation as absent, and `transform_pipeline` marks the old adjoint-generation pass as a legacy scaffold, so a default fail-fast `disabled_runtime_guard` binding or the older `rocquantum/Dialect` / adjoint scaffold is not confused with a release-linked compiler runtime. The default `rocquantum_bind` build does not link the experimental MLIR compiler stack; `ROCQUANTUM_ENABLE_MLIR_COMPILER=ON` currently fails at CMake configure time until that target is release-wired, and `rocq.compile_and_execute()` / `QuantumKernel.compile_and_execute()` validate boolean `strict` options and fail fast with an actionable diagnostic. Canonical MLIR emission and raw MLIR execution reject duplicate gate operands, non-positive or out-of-range `qalloc` sizes, and non-finite parametric gate angles before backend dispatch.
-- Canonical `rocq.QuantumKernel.qir()` requires `rocquantum_bind`; if the binding is missing, `emit_qir()` returns a compiler error sentinel, or the default binding was built without MLIR compiler support, the Python API raises an actionable `RuntimeError` instead of returning an `"Error:"` string as if it were QIR.
+- `rocq.make_kernel()` is a typed host-specialized dynamic builder. In addition to scalar/sequence expressions, fixed qalloc, canonical gates, and CUDA-Q-sign-compatible `exp_pauli`, it supports device-style `QuakeValue` arguments, `call` / `apply_call` through static inlining, exact gate-level adjoint synthesis for the supported canonical operations, a fail-closed subset of canonical controlled synthesis, and terminal `mz` / `mx` / `my` declarations. Terminal measurements select sampling qubits and emit labeled `quantum.mz` / `!quantum.result` MLIR; X/Y measurements are represented by exact basis changes followed by Z measurement. Its typed composition is still host gate-IR specialization: a measurement-free, fully specialized module may feed the optional static QIR JIT, but typed runtime arguments/returns, measurement-bearing callee composition, `read_result`, mid-circuit reset/feedback, branches, and loops are unsupported, and arbitrary multi-control synthesis fails closed.
+- `rocq.set_target()` / `rocq.target()` select one context-local backend, `SampleResult` / `ObserveResult` retain dict/float compatibility, and `AsyncResult.get()` preserves the submission context. `sample()` / `sample_async()` accept CUDA-Q-style `shots_count` and default to 1000 shots when no legacy shot count is supplied. Async APIs accept only `qpu_id=0`; this is an explicit single-logical-QPU contract, not a multi-QPU scheduler.
+- `rocq.operator_to_matrix()`, `Schedule`, `evolve()`, and `evolve_async()` are small-system CPU correctness utilities. Closed-system unitary and Lindblad RK4 paths are host-contract-tested, but they are not distributed/GPU dynamics or performance implementations.
+- `rocqCompiler::MLIRCompiler::compile_and_execute()` accepts one straight-line, no-argument/no-result source function with one static qalloc, lowers it through the same `qir-v2-static` pipeline used for emission, translates and verifies LLVM QIR, executes the entry through MLIR's LLVM ORC JIT, and forwards registered primitive QIS callbacks to `cpu_statevec` or `hip_statevec`. CZ/SWAP/CCX/CSWAP and controlled rotations/phases execute through their QIR decompositions rather than source replay; one-control MCX lowers to CNOT and two-control MCX to CCX. The CPU reference path verifies Bell and bounded-MCX state vectors without an AMD GPU. Independently, the one-argument compiler constructor performs offline artifact emission without constructing a backend. `qir-v2-base` requires labeled terminal `quantum.mz`, shapes and verifies Base Profile output, but remains emission-only. Native typed SSA/functions, adaptive control, dynamic resources, extra source functions, bad arity/types, duplicate operands, non-finite angles, and MCX with three or more controls remain fail-closed boundaries. `rocq.compiler_capabilities()` reports offline artifacts, static JIT, CPU execution, and GPU execution separately.
+- Canonical `rocq.QuantumKernel.qir(qir_profile=...)` and `emit_artifact(kind=..., optimization_level=..., cache_dir=...)` do not require an AMD GPU. They prefer the offline compiler-enabled binding where applicable and otherwise invoke an installed `rocq-translate` by argument vector and standard input without a shell. LLVM IR and bitcode support `-O0` through `-O3` for `qir-v2-static`; Base Profile IR/bitcode requires `-O0` so generic LLVM optimization cannot erase the required four-block shape. Generic-CPU PIC objects for the build host support `-O0` through `-O3`, are not executables, and intentionally leave QIS/runtime symbols unresolved. Missing tools, unsupported combinations, corrupt cache entries, and compiler failures raise actionable exceptions rather than returning an `"Error:"` artifact.
 - `rocq.get_state()` aliases the canonical state readback path, and `rocq.get_state_async()`, `rocq.execute_async()`, `rocq.sample_async()`, `rocq.observe_async()`, and `rocq.compile_and_execute_async()` are host-side `concurrent.futures.Future` wrappers around the canonical synchronous paths. They improve CUDA-Q-style Python ergonomics and preserve the same validation/backend contracts, but they are not yet native HIP-stream, multi-QPU, or distributed scheduler futures.
 - `rocq.runtime_capabilities()` exposes the canonical runtime entry points, supported backends, host-threadpool async execution scope, runtime options, environment switches, legacy `python/rocq` compatibility note, and unsupported native-HIP-stream / multi-QPU / unified-compiler boundaries without running a kernel.
 - Canonical `rocq.execute()`, `get_state()`, `sample()`, `observe()`, their host-side async wrappers, and direct `StateVectorBackend` construction accept only boolean `enable_fusion=` for the `state_vector` backend, giving users an explicit performance/debug switch in addition to `ROCQ_DISABLE_GATE_FUSION`; passing that option to non-state-vector backends raises `ValueError` instead of being ignored.
@@ -98,10 +116,14 @@ Use those files as the authoritative capability summary for the current codebase
 - RCCL-backed distributed expectation and sampling reductions are limited to local-domain qubits; set `ROCQ_DISTRIBUTED_COMM=rccl` or `ROCQ_REQUIRE_RCCL=1` to require RCCL on a ROCm runner. The installed CMake package probes RCCL with optional `find_package(rccl QUIET)` so exported targets can resolve RCCL when the build linked it without making non-RCCL consumers fail.
 - Generic matrix/control-matrix cases outside HIP fast paths return `NOT_IMPLEMENTED` by default; current controlled-matrix fast paths cover one or more all-one controls over a single 2x2 target matrix, while broader controlled dense matrices still require `ROCQ_ALLOW_HOST_MATRIX_FALLBACK=1` for explicit slow/debug host fallback.
 - Dense matrix moments for supported local single-state and batched paths use fused HIP reductions through `rocsvGetExpectationMatrixMoments` / `rocsvGetExpectationMatrixMomentsBatch`; unsupported fused paths fall back to the existing dense expectation hooks or explicit slow/debug host fallback rules.
-- TensorNet supports the build's compiled complex dtype (`C64` by default, `C128` in `ROCQ_PRECISION_DOUBLE` builds); METIS is optional behind `ROCQUANTUM_TENSORNET_ENABLE_METIS`, `ROCQUANTUM_TENSORNET_ENABLE_KAHYPAR=ON` fails fast because KaHyPar is not release-wired, unavailable pathfinders fall back to greedy with warnings, and `memory_limit_bytes` / `num_slices` now drive deterministic runtime K-sliced GEMM accumulation for pair contractions. `get_tensornet_capabilities()` reports that runtime slicing kind as `limited_pair_contraction_k_sliced_gemm`, reports the hard 16-mode tensor permutation limit, and marks open-index slicing, mixed precision, and simultaneous runtime C64/C128 support as unsupported. Python TensorNet contract calls retrieve the active simulator stream and reuse a rocBLAS handle owned by the TensorNet wrapper instead of passing placeholder handles. This is still narrower than cuTensorNet-style open-index slicing and high-rank permutation coverage, and mixed precision remains a documented future lane rather than simultaneous runtime C64/C128 execution.
+- StateVec and TensorNet support a build-selected complex dtype (`C64` by default, `C128` with the real CMake option `-DROCQ_PRECISION_DOUBLE=ON`). The precision definition is PUBLIC on their installed targets so downstream headers use the same ABI; the legacy `_rocq_hip_backend` exposes `COMPILED_COMPLEX_DTYPE` and `COMPILED_COMPLEX_ITEMSIZE`, and its Python readback/matrix paths preserve the selected precision through explicit `std::complex<float>` / `std::complex<double>` conversion rather than relying on a HIP complex NumPy ABI. DensityMat remains a separate C64/`hipComplex` implementation and is not covered by this option. The ROCm 6.2.2 workflow contains a C128 compile plus C128/METIS install-consumer gate and builds separate C64/C128 native wheels; fresh external environments assert each wheel's dtype/itemsize and run a device-free complex round trip before native import is accepted. Those gates are source-defined but have not been run on this host. METIS is optional behind `ROCQUANTUM_TENSORNET_ENABLE_METIS`; enabled exports reference the relocatable `METIS::METIS` target and the installed package rediscovers headers/library before loading its targets. The same stable workflow combines METIS with its C128 install-consumer lane. `ROCQUANTUM_TENSORNET_ENABLE_KAHYPAR=ON` fails fast because KaHyPar is not release-wired, unavailable pathfinders fall back to greedy with warnings, and `memory_limit_bytes` / `num_slices` now drive deterministic runtime K-sliced GEMM accumulation for pair contractions. `get_tensornet_capabilities()` reports that runtime slicing kind as `limited_pair_contraction_k_sliced_gemm`, reports the hard 16-mode tensor permutation limit, and marks open-index slicing, mixed precision, and simultaneous runtime C64/C128 support as unsupported. Python TensorNet contract calls retrieve the active simulator stream and reuse a rocBLAS handle owned by the TensorNet wrapper instead of passing placeholder handles. This is still narrower than cuTensorNet-style open-index slicing and high-rank permutation coverage, and mixed precision remains a documented future lane rather than simultaneous runtime C64/C128 execution.
+- The native Python boundary now fails closed on host-auditable lifetime and size contracts. State `DeviceBuffer` views carry their owning handle plus allocation generation and are rejected after free/reallocation, across handles, or for the wrong qubit count; device matrices must have the exact overflow-checked `2^targets × 2^targets × sizeof(rocComplex)` byte size; and `GateFusion.process_queue()` revalidates the retained state before invoking a native object that stores a raw pointer. TensorNet keeps added tensors alive and snapshots pointer/shape/label/stride metadata, tensor storage uses RAII, permutation maps/strides/capacity/aliasing are validated before kernels, and DensityMat Python holders and temporary device matrices use single-owner exception-safe cleanup. These are source and host-contract checks; they are not a substitute for HIP sanitizer or device execution.
 - `rocq.density_matrix_capabilities()` exposes the canonical density-matrix boundary without running a kernel: `hipDensityMatApplyChannel` accepts generic single- and multi-qubit Kraus channels, but uses correctness-first per-Kraus kernels rather than GPU-resident cuDensityMat-style channel descriptors; canonical `DensityMatrixBackend` decomposes `CCX` / two-control `MCX` / `CSWAP` through supported density-matrix primitive gates while larger `MCX` still needs an explicit ancilla policy; density-matrix sampling reduces measured-qubit marginal probabilities on the GPU before drawing shots on host, and dense Hermitian density-matrix expectations now use a native HIP reduction for up to four target qubits, while larger dense observables and full-state CSR density-matrix expectations still use host correctness fallback rather than cuDensityMat-style descriptor reductions.
 - Higher-level CUDA-QX-style helpers are explicitly experimental: VQE supports public one-shot energy evaluation, canonical `QuantumOperator` objective validation, ansatz-kernel validation, Pauli-observable objectives, coefficient-preserving composite sums, numeric identity constants, CUDA-Q-style `rocq.spin.x/y/z/i` Pauli factories, Pauli sum/product terms and scalar division in operator arithmetic, `TypeError` diagnostics for unsupported observable arithmetic operand types, scalar single-parameter gradient/optimizer inputs, bool-safe finite real parameter and finite-difference step validation, supported gradient-method validation, canonical runtime backend-name validation, bool-safe verbose-option validation, ansatz positional parameter-count validation, optimizer-trace-preserving gradient probes, finite-real observed energy and optimizer `fun`/`x` result value/count validation, custom optimizer `minimize()` validation, string-keyed `SciPyOptimizer` option validation/copying, and dense Hermitian / full-state CSR observables through the state-vector native/fallback path or density-matrix correctness fallback; vector-parameter QAOA and one-element vector ansatz evaluation goes through `rocq.observe()`, QAOA is a MaxCut-style kernel/cost/solve helper with edge-list or edge-weight mapping normalization, duplicate/reversed undirected edges aggregated into weighted `0.5 * w * (I - Zi Zj)` edge terms, validated edge containers/shapes, integer endpoints, and bool-safe finite real weights/parameters, and `solve_maxcut_qaoa()` now minimizes the negated cost operator while reporting `optimal_cut_value` for the maximized cut objective; QEC covers generic sampled stabilizer-fragment orchestration plus a 3-qubit repetition-code syndrome subset with canonical backend-name, bool-safe verbose-option, code/decoder callable-interface, non-empty non-mapping stabilizer-fragment sequence, callable-or-None initial-state kernel, logical-operator result, and decoder-correction result validation, positive-integer shot/round/num_qubits and ancilla-index validation, minimum-5-qubit circuit generation, bool-safe one- or two-bit count keys and syndrome-bit validation, single-round sampling, sequential repeated-round histogram/correction aggregation, and independent syndrome readout-error mitigation. `rocquantum.solvers.solver_capabilities()` and `rocquantum.qec.qec_capabilities()` expose those supported and unsupported subsets plus the current canonical `supported_backends`, execution scopes, and hardware-evidence boundaries for programmatic CUDA-QX comparison. This is not a native-adjoint solver stack, distributed hybrid workflow scheduler, fault-tolerant decoder stack, or general noise-aware QEC library.
-- `pyproject.toml` declares `numpy>=1.21` as a base runtime dependency for the canonical Python package and a `solvers` extra with `scipy>=1.10` for the experimental VQE optimizer path. Adapter-local `setup.py` files are compatibility installers only; they read the root project version and keep their adapter dependency floor aligned with the matching root optional extra, while the supported project install path remains the repository root.
+- `pyproject.toml` declares `numpy>=1.21` as a base runtime dependency for the canonical Python package and a `solvers` extra with `scipy>=1.10` for the experimental VQE optimizer path. The tested adapter ranges are Cirq 1.x on Python 3.9+, Qiskit `>=2.4,<3` on Python 3.10+, and PennyLane `>=0.45,<0.46` on Python 3.11+. Older PennyLane versions are deliberately not advertised: import-only checks were insufficient, and their device/template behavior did not satisfy the current adapter contract; untested future major/minor APIs are capped until their contract suite passes. Adapter-local `setup.py` files are compatibility installers only and mirror these ranges, while the supported project install path remains the repository root.
+- Clean PEP 517 host-only builds now produce a source-only `py3-none-any` wheel with no native sources or binaries. The 2026-07-31 current-host Python 3.11 regression reports `991 passed, 10 skipped, 22 warnings, 512 subtests passed`; the skips are AMD-device, native-binding, optional-dependency, or external-credential dependent and do not count as hardware evidence. The warnings are the explicitly opted-in Python mock state-vector path, not native ROCm evidence. The CI definitions continue to cover Python 3.9 through 3.13, while isolated installation, `rocq` / `rocquantum` / `rocq_cli` import, installed `rocq --help`, and copied-example execution are separate package gates rather than inferred from that one host count. Native scikit-build wheels must opt in with `ROCQ_BUILD_NATIVE=1`. Their three extension modules use a wheel-relative `$ORIGIN/<libdir>` install RPATH, and the stable ROCm build workflow builds C64 and C128 wheels, checks `readelf`/`ldd`, installs each in a fresh environment, and imports it outside the source/build tree. This is a source-defined CI gate; native compile, link, install, and import remain unverified on this non-ROCm host until a retained green artifact exists.
+- The supported examples use the canonical `rocq` API. `tests/test_examples_contract.py` executes all 19 example scripts in isolated subprocesses with explicit mock/capability handling; hardware-only features report their boundary rather than presenting CPU execution as ROCm proof.
+- Native CTest definitions now register labeled single-GPU StateVec, DensityMat, TensorNet contraction/SVD, and RCCL-required multi-GPU inter-rank regressions. Topology-optional single-GPU tests return skip code 77 when no device is visible; `StateVecSingleGpuSmoke` is isolated with `HIP_VISIBLE_DEVICES=0`. The required multi-GPU evidence test does not treat code 77 as a skip, so missing two-GPU/RCCL topology fails the nightly evidence gate. These definitions are `source-present`; they have not been executed on this host.
 - The canonical `stabilizer` backend is experimental and Clifford-only: H/X/Y/Z/S/Sdg/CNOT/CZ/SWAP circuits can use tableau Pauli expectation membership, while non-Clifford gates, noise, and GPU-accelerated stabilizer execution remain unsupported.
 - `rocquantum_bind.QuantumSimulator` can allocate `batch_size > 1` local state batches, read one state slice or the full `(batch_size, 2**num_qubits)` host array, apply batch-specific RX/RY/RZ/P and CRX/CRY/CRZ/CP angles, return native batch-major probability matrices, Pauli-string expectation vectors, dense-matrix expectation vectors, and dense-matrix moment vectors, with shared-runtime statevector correctness fallback for single dense expectations and single-read batched dense moments when bindings lack native dense hooks, and expose `measure_batch()` as a batch-major sampling hook over the existing `rocsvSample()` primitive. Qiskit backend sampling-only circuit lists and global-phase-corrected statevector-only circuit lists, including fixed Pauli/unitary operations, two-qubit Pauli-rotation, and `PauliEvolutionGate` sweeps with identity terms, Qiskit Estimator, and PennyLane `batch_execute` can route simple Pauli-observable parameter batches through this batch surface, including Qiskit and PennyLane full-wire initial state preparation, Qiskit `u` / `r`, fixed native Qiskit `PauliGate` plus fixed Qiskit `unitary` / generic controlled-unitary operations, Qiskit open-control controlled rotation/phase sweeps, Qiskit `rxx` / `ryy` / `rzz` / `rzx` / `xx_plus_yy` / `xx_minus_yy` sweeps, supported Qiskit `PauliEvolutionGate` time sweeps, identical PennyLane `BasisState` initializers, fixed PennyLane `QubitUnitary` / `ControlledQubitUnitary` / dense `BlockEncode` plus sparse-`BlockEncode` public sparse-apply dispatch, PennyLane `Rot` / `CRot` / `ControlledSequence` / `Select` / `MultiRZ` / `PauliRot` / `SelectPauliRot` / `DiagonalQubitUnitary` / Ising / `PSWAP` / open-control phase / excitation plus-minus / fermionic-orbital sweeps, measurement-only PennyLane `GlobalPhase` sweeps, and fixed native PennyLane decompositions such as `QFT`, `QubitSum`, `QubitCarry`, `GroverOperator`, `BasisEmbedding`, `Permute`, and PennyLane-expanded `QROM` selected basis-loader blocks that appear alongside the swept parameters; Qiskit Sampler and PennyLane also route simple batched probability readout through native batch probabilities, Qiskit dense scalar or identity `Operator` readouts fold to constants and small non-identity diagonal dense `Operator` readouts lower to Pauli-Z payloads before dense hooks, PennyLane Hermitian and scalar-scaled Hermitian readouts can use dense-matrix expectation and moment hooks, small diagonal Hermitian and SparseHamiltonian readouts lower to Pauli-Z payloads before dense/CSR hooks, PennyLane SparseHamiltonian and scalar-scaled SparseHamiltonian readouts can use native CSR moments, PennyLane-expanded signed/complex-coefficient `PrepSelPrep` and `FABLE` lower through native controlled-Pauli, controlled-phase, rotation, and swap decompositions for tested shapes, and PennyLane finite-shot `sample`/`counts` parameter batches use the shared batched measurement hook. Broader broadcasted framework workloads still need more adapter coverage. `python/rocq/api.py::Circuit` exposes batched state readback.
 - Qiskit native Estimator folds dense scalar `Operator([[c]])` and dense identity `Operator(c*I)` observables into constant expectation values for single and batched pubs, lowers small diagonal dense `Operator` observables to Pauli-Z payloads, and reuses normalized Pauli and dense readouts for scalar-multiple `SparsePauliOp` and dense `Operator` observables within single and batched pubs, avoiding unnecessary expectation hooks or statevector readout work.
@@ -119,7 +141,7 @@ Use those files as the authoritative capability summary for the current codebase
 - `python/rocq/api.py::Circuit.expval()` now uses native Pauli expectation helpers, legacy `Circuit` now rejects bool/non-integral qubit indices, non-finite gate angles, ambiguous sample shots, and non-finite Pauli coefficients before backend dispatch, legacy `build()` now warns/marks Python replay execution instead of implying compiler execution, and `multi_gpu=True` construction warns/records its partial distributed contract, but the legacy surface remains separate from canonical `rocq`.
 - Canonical `rocq.backends` mock state-vector and density-matrix fallbacks now emit `MockBackendWarning` when `ROCQ_ENABLE_MOCK_BACKENDS=1` is used without native ROCm bindings; the state-vector mock performs CPU statevector semantics for canonical named-gate contract tests, but local smoke tests are still not native ROCm/cuQuantum-style execution or performance validation.
 - Qiskit, PennyLane, and Cirq adapters now prefer `QuantumSimulator.measure()` for sampling, shared framework dispatch rejects bool, string, complex, and non-finite gate parameters plus bool/string/non-integral qubit targets and non-positive/non-integral shot counts before native single or batched gate calls, framework statevector upload plus matrix/control-matrix/dense-expectation/sparse-CSR payload paths reject non-finite values before native binding dispatch or statevector fallback, framework probability readout/sampling fallback rejects non-finite probability vectors, and public native `QuantumSimulator` dispatch rejects non-finite single/batched angle parameters, statevector payloads, dense matrix/control-matrix/expectation payloads, and sparse CSR data values before HIP kernels, host fallback, or device uploads are invoked; host-side fallback paths still remain where needed for older bindings that do not expose `measure`.
-- The self-hosted ROCm runtime workflow builds native Python bindings and runs `scripts/native_framework_smoke.py`, a Bell-state smoke check through `rocquantum_bind`, PennyLane, Qiskit, and Cirq. It passes `--require-native-rocm-evidence`, uploads `native-framework-smoke.log`, machine-readable `native-framework-smoke.json`, and `native-framework-smoke.md`, appends the Markdown to the GitHub step summary, and records `native_rocm_evidence` / `evidence_kind` from the actual `/dev/kfd` device probe, so local source/mock tests, assumed-device runs, or locally skipped smoke JSON do not prove AMD GPU execution.
+- The self-hosted ROCm runtime workflow is configured to build native Python bindings and run `scripts/native_framework_smoke.py`, a Bell-state smoke check through `rocquantum_bind`, PennyLane, Qiskit, and Cirq. It requires `--require-native-rocm-evidence` and records the `/dev/kfd` probe in uploaded artifacts. The job is opt-in while no persistent GPU runner is attached: set the repository variable `ROCQ_ENABLE_SELF_HOSTED_GPU=true`, or manually dispatch `ROCm CI` with `run_rocm_gpu=true`. The workflow definition is not itself native evidence; only a retained successful actual-device artifact qualifies.
 - Qiskit direct `prepare_state()` and untouched-qubit `initialize()` are mapped to matrix state-preparation fallback; `reset` after prior operations plus simple `if_test` / `if_else`, finite `for_loop`, bounded `while_loop`, loop-local `break_loop` / `continue_loop`, and `switch_case` are supported only in `backend.run(..., sampling=True)` through shot-by-shot `QuantumSimulator` trajectories. Later `initialize()`, statevector/estimator output for runtime-reset or dynamic-control circuits, and broader Qiskit control-flow semantics remain explicit unsupported boundaries.
 - `rocquantum.core.list_backends()` hides unsupported skeleton providers by default, while `list_backends(include_experimental=True)` reports their `unsupported_stub` status, disabled job-submission flag, unsupported reason, and missing authentication/payload/submission/status/result capabilities. `rocq list-backends` prints the same status metadata before target selection, and `set_target()` blocks those skeleton providers unless `allow_experimental=True` or `ROCQ_ENABLE_EXPERIMENTAL_PROVIDERS=1` is set for contract tests or integration development.
 - The Qristal bridge now checks for the real local Qristal SDK CLI (`qristal`, or `ROCQ_QRISTAL_CLI`) and invokes it through `subprocess.run()` instead of returning a mocked local histogram; missing SDK/CLI and failed executions raise explicit backend errors.
@@ -127,18 +149,71 @@ Use those files as the authoritative capability summary for the current codebase
 
 ## Build
 
-Use an out-of-tree build directory:
+The default Python artifact is the host-only universal wheel. The native wheel selector also switches its compatibility tags and must only be used on a Linux ROCm build host:
+
+```bash
+python -m build --wheel
+ROCQ_BUILD_NATIVE=1 python -m build --wheel  # native path; not validated on this host
+```
+
+For a direct native CMake build, use an out-of-tree build directory:
 
 ```bash
 cmake -S . -B build-ci -G Ninja \
   -DBUILD_TESTING=ON \
   -DROCQUANTUM_BUILD_BINDINGS=ON \
-  -DCMAKE_HIP_COMPILER=/opt/rocm/bin/hipcc
+  -DROCQUANTUM_BUILD_NATIVE=ON \
+  -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
+  -DCMAKE_PREFIX_PATH=/opt/rocm
 cmake --build build-ci --parallel
 ```
 
-To validate the installed CMake package shape on a ROCm build host, install the build tree and
-configure a downstream consumer smoke project:
+The compiler can be built and tested without ROCm or an AMD GPU. It intentionally pins the
+same LLVM/MLIR 22.1 API line used by the current CUDA-Q compiler; arbitrary MLIR versions fail
+at configure time:
+
+```bash
+cmake -S . -B build-compiler -G Ninja \
+  -DROCQUANTUM_BUILD_NATIVE=OFF \
+  -DROCQUANTUM_ENABLE_MLIR_COMPILER=ON \
+  -DMLIR_DIR=/opt/llvm-22.1/lib/cmake/mlir \
+  -DLLVM_DIR=/opt/llvm-22.1/lib/cmake/llvm \
+  -DBUILD_TESTING=ON
+cmake --build build-compiler --parallel
+ctest --test-dir build-compiler --output-on-failure
+build-compiler/rocqCompiler/rocq-run rocqCompiler/tests/bell_state.mlir
+build-compiler/rocqCompiler/rocq-translate rocqCompiler/tests/bell.mlir
+build-compiler/rocqCompiler/rocq-translate --profile=qir-v2-base \
+  --emit=llvm-bc -O0 -o bell-base.bc rocqCompiler/tests/base_profile.mlir
+build-compiler/rocqCompiler/rocq-translate --emit=object -O2 \
+  --cache-dir .rocq-cache -o bell.o rocqCompiler/tests/bell.mlir
+cmake --install build-compiler --prefix "$HOME/.local/rocq-compiler"
+```
+
+`ROCQUANTUM_ALLOW_UNSUPPORTED_MLIR=ON` exists only for development smoke tests; it is not a
+release compatibility claim. `rocq-translate` accepts exactly one file or `-` input, strict profile,
+format, `-O0`-`-O3`, output, and cache options, writes file outputs atomically, uses exit status 2
+for usage errors and 1 for compilation/cache/I/O failures, and never writes binary bitcode/object
+payloads to stdout. Its cache key includes the source, profile, qubit constraint, artifact kind,
+optimization level, target contract, LLVM version, and compiler-source fingerprint; entries use a
+self-validating envelope and fail closed when corrupt. This cache is an integrity/determinism
+mechanism for an explicitly trusted directory, not an authenticity boundary. When a
+compiler-enabled Python binding is unavailable,
+`QuantumKernel.qir()` automatically uses an installed `rocq-translate` from `PATH`; set
+`ROCQ_TRANSLATE_EXECUTABLE` to an explicit executable path to override discovery. This fallback
+passes MLIR over stdin without invoking a shell and still does not require ROCm or an AMD GPU.
+
+Select the StateVec/TensorNet C128 ABI with `-DROCQ_PRECISION_DOUBLE=ON`; consumers of those
+exported targets inherit the same compile definition. C64 and C128 are separate build artifacts,
+not simultaneously selectable runtime dtypes. DensityMat remains C64-only.
+
+To validate the installed CMake package on a ROCm build host, install the build tree and configure
+a downstream consumer that resolves core, StateVec, TensorNet, and DensityMat symbols and runs
+device-free destroy/capability calls. The optional compiler tools install only when their build
+option is enabled. The compiler's static libraries, headers, aliases, cache API, and pass pipeline
+API are intentionally build-tree-only and are not a supported installed/exported C++ SDK; only
+`rocq-opt`, `rocq-translate`, and the CPU-reference `rocq-run` are installed. Compiler internals remain private to avoid forcing
+LLVM/MLIR on core SDK consumers:
 
 ```bash
 bash scripts/validate_cmake_install_consumer.sh build-ci
@@ -156,7 +231,14 @@ evidence, including the actual `/dev/kfd` device probe, so skipped, CPU-only, mo
 assumed-device benchmark runs cannot be mistaken for ROCm timing proof. If a native binary or ROCm device is unavailable, it writes an explicit skipped artifact
 instead of pretending a result exists. If a benchmark executable runs but fails to write valid JSON,
 the runner marks that benchmark failed so `--fail-on-error` cannot publish an empty performance
-proof. Passing `--require-native-performance-evidence` makes self-hosted ROCm jobs fail unless at
+proof. Every manifest entry declares an exact nonempty required case set, per-case required metrics,
+and a subprocess timeout. Duplicate, missing, or unexpected cases; boolean, negative, or non-finite
+metrics; missing required metrics; stale output; and timeout all fail closed even when the process
+exits zero. Every declared `cases[].status` must also be integer zero. The distributed executable
+independently queries its distributed backend, requires at least two GPUs, and emits the exact RCCL
+or host-fallback backend, so visibility variables or a one-GPU `/dev/kfd` probe cannot become
+distributed evidence.
+Passing `--require-native-performance-evidence` makes self-hosted ROCm jobs fail unless at
 least one benchmark produces a passed native ROCm timing result, while
 `--require-all-native-benchmark-evidence` fails unless every ROCm-required benchmark declared in the
 manifest produces passed native evidence. Passing `--history-path` also updates a bounded
@@ -182,11 +264,11 @@ python3 benchmarks/run_release_benchmarks.py \
   --fail-on-error
 ```
 
-The self-hosted ROCm workflows restore the previous benchmark summary and bounded history from the
-GitHub Actions cache, pass the summary as a baseline automatically when one is available, require
-native performance evidence for every declared native benchmark, and save the current
-summary/history back to the cache for the next run only when the summary contains successful native
-performance evidence and no native-evidence gate failure.
+The self-hosted ROCm runtime workflow restores the previous benchmark summary and bounded history,
+passes the summary as a baseline when available, and requires at least one passed native benchmark;
+its one-GPU topology may truthfully skip the distributed entry. The two-or-more-GPU nightly adds
+`--require-all-native-benchmark-evidence`, so every declared native benchmark must pass there.
+Each workflow saves a new baseline only when its applicable native-evidence gates succeed.
 
 `benchmarks/run_benchmark.py` provides a smaller QFT comparison through the PennyLane and Qiskit
 adapters. It uses the current `lightning.rocq` PennyLane entry point, falls back from `qiskit-aer`
@@ -209,10 +291,11 @@ For a release-grade Linux ROCm build, set explicit GPU targets:
 
 ## Comparison Baselines
 
-- CUDA-Q: `https://nvidia.github.io/cuda-quantum/latest/`
-- cuQuantum: `https://docs.nvidia.com/cuda/cuquantum/latest/`
-- CUDA-QX: `https://nvidia.github.io/cudaqx`
+- CUDA-Q `0.15.0`: `https://github.com/NVIDIA/cuda-quantum/releases/tag/0.15.0`
+- cuQuantum SDK `26.06.0`: `https://github.com/NVIDIA/cuQuantum/releases/tag/v26.06.0`
+- cuQuantum component documentation: `https://docs.nvidia.com/cuda/cuquantum/latest/`
+- CUDA-QX `0.6.0`: `https://github.com/NVIDIA/cudaqx/releases/tag/0.6.0`
 
-This repo is currently closest to a ROCm-native simulator project with partial higher-level surfaces, not to a finished CUDA-Q/CUDA-QX equivalent.
+This repo is currently a ROCm-native simulation SDK with a CUDA-Q-inspired Python API, not a finished cuQuantum/CUDA-Q/CUDA-QX equivalent.
 `rocq.runtime_capabilities()["limits"]` exposes the current state-vector and density-matrix size boundaries, including the 60-qubit state-vector size-arithmetic ceiling used by canonical, framework, and legacy Python runtime validation.
 `rocq.density_matrix_capabilities()["limits"]` exposes the current native density-matrix hard bounds, including the 30-qubit dense-size arithmetic ceiling and four-target native dense-observable/Kraus-channel paths.

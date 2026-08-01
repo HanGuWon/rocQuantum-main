@@ -136,6 +136,8 @@ std::vector<rocComplex> identity_matrix_col_major(unsigned dim) {
 struct CaseResult {
     std::string name;
     int status = 0;
+    int gpu_count = 0;
+    std::string backend = "none";
     double expectation_ms = 0.0;
     double dense_expectation_ms = 0.0;
     double sparse_moments_ms = 0.0;
@@ -173,8 +175,36 @@ CaseResult run_case(const std::string& name,
         return result;
     }
     if (!ok(rocsvAllocateDistributedState(handle, qubits), "rocsvAllocateDistributedState") ||
-        !ok(rocsvInitializeDistributedState(handle), "rocsvInitializeDistributedState") ||
-        !ok(rocsvApplyH(handle, nullptr, qubits, 0), "rocsvApplyH") ||
+        !ok(rocsvInitializeDistributedState(handle), "rocsvInitializeDistributedState")) {
+        result.status = 1;
+        rocsvDestroy(handle);
+        return result;
+    }
+
+    rocsvDistributedInfo_t info{};
+    rocsvDistributedBackend_t backend = ROCSV_DISTRIBUTED_BACKEND_NONE;
+    if (!ok(rocsvGetDistributedInfo(handle, &info), "rocsvGetDistributedInfo") ||
+        !ok(rocsvGetDistributedBackend(handle, &backend), "rocsvGetDistributedBackend")) {
+        result.status = 1;
+        rocsvDestroy(handle);
+        return result;
+    }
+    result.gpu_count = info.gpu_count;
+    result.backend = rocsvDistributedBackendName(backend);
+    const rocsvDistributedBackend_t expected_backend =
+        force_rccl ? ROCSV_DISTRIBUTED_BACKEND_RCCL
+                   : ROCSV_DISTRIBUTED_BACKEND_HOST_FALLBACK;
+    if (!info.distributed_mode || info.gpu_count < 2 || backend != expected_backend) {
+        std::cerr << name << " requires distributed mode on at least two GPUs with backend "
+                  << rocsvDistributedBackendName(expected_backend) << "; got distributed_mode="
+                  << info.distributed_mode << ", gpu_count=" << info.gpu_count
+                  << ", backend=" << rocsvDistributedBackendName(backend) << ".\n";
+        result.status = 1;
+        rocsvDestroy(handle);
+        return result;
+    }
+
+    if (!ok(rocsvApplyH(handle, nullptr, qubits, 0), "rocsvApplyH") ||
         !ok(rocsvSynchronize(handle), "rocsvSynchronize")) {
         result.status = 1;
         rocsvDestroy(handle);
@@ -367,6 +397,8 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < results.size(); ++i) {
         const CaseResult& r = results[i];
         *out << "    {\"name\": \"" << r.name << "\", \"status\": " << r.status
+             << ", \"gpu_count\": " << r.gpu_count
+             << ", \"backend\": \"" << r.backend << "\""
              << ", \"expectation_ms\": " << r.expectation_ms
              << ", \"dense_expectation_ms\": " << r.dense_expectation_ms
              << ", \"sparse_moments_ms\": " << r.sparse_moments_ms
@@ -376,5 +408,5 @@ int main(int argc, char** argv) {
     }
     *out << "  ]\n}\n";
 
-    return (results[0].status == 0 || results[1].status == 0) ? 0 : 1;
+    return (results[0].status == 0 && results[1].status == 0) ? 0 : 1;
 }

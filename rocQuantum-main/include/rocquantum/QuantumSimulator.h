@@ -43,11 +43,11 @@ public:
     std::vector<double> probabilities_batch(const std::vector<unsigned>& qubits) const;
     std::vector<long long> measure(const std::vector<unsigned>& qubits, int shots);
     std::vector<long long> measure_batch(const std::vector<unsigned>& qubits, int shots);
-    double expectation_value(const std::string& pauli, unsigned target);
+    double expectation_value(const std::string& pauli, unsigned target) const;
     double expectation_pauli_string(const std::string& pauli_string,
-                                    const std::vector<unsigned>& targets);
+                                    const std::vector<unsigned>& targets) const;
     std::vector<double> expectation_pauli_string_batch(const std::string& pauli_string,
-                                                       const std::vector<unsigned>& targets);
+                                                       const std::vector<unsigned>& targets) const;
     std::complex<double> expectation_matrix(const std::vector<std::complex<double>>& matrix,
                                             const std::vector<unsigned>& targets) const;
     std::pair<std::complex<double>, std::complex<double>> expectation_matrix_moments(
@@ -98,11 +98,11 @@ public:
     std::vector<double> Probabilities(const std::vector<unsigned>& qubits) const;
     std::vector<double> ProbabilitiesBatch(const std::vector<unsigned>& qubits) const;
     std::vector<long long> MeasureBatch(const std::vector<unsigned>& qubits, int shots);
-    double GetExpectationValue(const std::string& pauli, int target_qubit);
+    double GetExpectationValue(const std::string& pauli, int target_qubit) const;
     double GetExpectationPauliString(const std::string& pauli_string,
-                                     const std::vector<unsigned>& targets);
+                                     const std::vector<unsigned>& targets) const;
     std::vector<double> GetExpectationPauliStringBatch(const std::string& pauli_string,
-                                                       const std::vector<unsigned>& targets);
+                                                       const std::vector<unsigned>& targets) const;
     std::complex<double> ExpectationMatrix(const std::vector<std::complex<double>>& matrix,
                                            const std::vector<unsigned>& targets) const;
     std::pair<std::complex<double>, std::complex<double>> ExpectationMatrixMoments(

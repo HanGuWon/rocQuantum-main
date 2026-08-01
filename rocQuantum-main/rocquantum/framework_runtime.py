@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from collections import Counter
 import math
 from numbers import Integral, Number, Real
+import re
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -68,6 +69,47 @@ SINGLE_QUBIT_GATES = {
 TWO_QUBIT_GATES = {"CNOT", "CZ", "SWAP", "CRX", "CRY", "CRZ", "CP"}
 PARAMETRIC_GATES = {"RX", "RY", "RZ", "P", "CRX", "CRY", "CRZ", "CP"}
 STATEVECTOR_MAX_QUBITS_BEFORE_SIZE_OVERFLOW = 60
+
+
+def parameter_value_matches(left: object, right: object) -> bool:
+    """Return whether two scalar or array-like adapter parameters match."""
+    try:
+        left_array = np.asarray(left)
+        right_array = np.asarray(right)
+        if left_array.shape or right_array.shape:
+            return left_array.shape == right_array.shape and np.array_equal(left_array, right_array)
+    except (TypeError, ValueError):
+        pass
+
+    comparison = left == right
+    if isinstance(comparison, np.ndarray):
+        return bool(np.all(comparison))
+    return bool(comparison)
+
+
+def parameter_lists_match(left: Sequence[object], right: Sequence[object]) -> bool:
+    """Return whether two ordered adapter parameter sequences match element-wise."""
+    if len(left) != len(right):
+        return False
+    return all(
+        parameter_value_matches(left_value, right_value)
+        for left_value, right_value in zip(left, right)
+    )
+
+
+def _native_binding_unavailable(
+    exc: Exception,
+    extra_message_markers: Sequence[str] = (),
+) -> bool:
+    """Classify only binding-unavailable failures that are safe to fall back from."""
+    if isinstance(exc, NotImplementedError):
+        return True
+    if not isinstance(exc, RuntimeError):
+        return False
+    message = str(exc)
+    return bool(re.search(r"\bstatus\s+5\b", message, re.IGNORECASE)) or any(
+        marker in message for marker in extra_message_markers
+    )
 
 
 def normalize_gate_name(name: str) -> str:
@@ -1681,10 +1723,6 @@ class RocQuantumRuntime:
         observables: Sequence[Sequence[dict]],
         trainable_params: Sequence[int],
     ):
-        def _native_adjoint_unavailable(exc: Exception) -> bool:
-            message = str(exc)
-            return isinstance(exc, NotImplementedError) or "status 5" in message
-
         unavailable_error = None
         normalized_trainable_params = normalize_trainable_params(trainable_params)
         num_qubits = self.num_qubits()
@@ -1700,7 +1738,7 @@ class RocQuantumRuntime:
                     len(normalized_trainable_params),
                 )
             except Exception as exc:
-                if not _native_adjoint_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
                 unavailable_error = exc
 
@@ -1713,7 +1751,7 @@ class RocQuantumRuntime:
                     len(normalized_trainable_params),
                 )
             except Exception as exc:
-                if not _native_adjoint_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
                 unavailable_error = exc
 
@@ -1853,10 +1891,6 @@ class RocQuantumRuntime:
         native_qubits = [] if normalized_qubits is None else normalized_qubits
         expected_outcomes = probability_outcome_count(normalized_qubits, num_qubits)
 
-        def _native_probabilities_unavailable(exc: Exception) -> bool:
-            message = str(exc)
-            return isinstance(exc, NotImplementedError) or "status 5" in message or "at most 20 target qubits" in message
-
         native = getattr(self.simulator, "probabilities", None)
         if callable(native):
             try:
@@ -1866,7 +1900,7 @@ class RocQuantumRuntime:
                     "Probability vector",
                 )
             except Exception as exc:
-                if not _native_probabilities_unavailable(exc):
+                if not _native_binding_unavailable(exc, ("at most 20 target qubits",)):
                     raise
 
         legacy = getattr(self.simulator, "Probabilities", None)
@@ -1878,7 +1912,7 @@ class RocQuantumRuntime:
                     "Probability vector",
                 )
             except Exception as exc:
-                if not _native_probabilities_unavailable(exc):
+                if not _native_binding_unavailable(exc, ("at most 20 target qubits",)):
                     raise
 
         return probabilities_from_statevector(self.statevector(), normalized_qubits)
@@ -1898,10 +1932,6 @@ class RocQuantumRuntime:
         native_qubits = [] if normalized_qubits is None else normalized_qubits
         expected_outcomes = probability_outcome_count(normalized_qubits, num_qubits)
 
-        def _native_probabilities_unavailable(exc: Exception) -> bool:
-            message = str(exc)
-            return isinstance(exc, NotImplementedError) or "status 5" in message or "at most 20 target qubits" in message
-
         native = getattr(self.simulator, "probabilities_batch", None)
         if callable(native):
             try:
@@ -1912,7 +1942,7 @@ class RocQuantumRuntime:
                     "Batched probability vector",
                 )
             except Exception as exc:
-                if not _native_probabilities_unavailable(exc):
+                if not _native_binding_unavailable(exc, ("at most 20 target qubits",)):
                     raise
 
         legacy = getattr(self.simulator, "ProbabilitiesBatch", None)
@@ -1925,7 +1955,7 @@ class RocQuantumRuntime:
                     "Batched probability vector",
                 )
             except Exception as exc:
-                if not _native_probabilities_unavailable(exc):
+                if not _native_binding_unavailable(exc, ("at most 20 target qubits",)):
                     raise
 
         if self.batch_size() == 1:
@@ -1987,10 +2017,6 @@ class RocQuantumRuntime:
             None if self.num_qubits() <= 0 else self.num_qubits(),
         )
 
-        def _native_expectation_unavailable(exc: Exception) -> bool:
-            message = str(exc)
-            return isinstance(exc, NotImplementedError) or "status 5" in message
-
         native = getattr(self.simulator, "expectation_pauli_string_batch", None)
         if callable(native):
             try:
@@ -2000,7 +2026,7 @@ class RocQuantumRuntime:
                     expected_count=self.batch_size(),
                 )
             except Exception as exc:
-                if not _native_expectation_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         legacy = getattr(self.simulator, "GetExpectationPauliStringBatch", None)
@@ -2012,7 +2038,7 @@ class RocQuantumRuntime:
                     expected_count=self.batch_size(),
                 )
             except Exception as exc:
-                if not _native_expectation_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         if self.batch_size() == 1:
@@ -2027,10 +2053,6 @@ class RocQuantumRuntime:
         )
 
     def _native_expectation_matrix(self, normalized_matrix, normalized_targets):
-        def _native_expectation_unavailable(exc: Exception) -> bool:
-            message = str(exc)
-            return isinstance(exc, NotImplementedError) or "status 5" in message
-
         native = getattr(self.simulator, "expectation_matrix", None)
         if callable(native):
             try:
@@ -2039,7 +2061,7 @@ class RocQuantumRuntime:
                     "Dense expectation value",
                 )
             except Exception as exc:
-                if not _native_expectation_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         legacy = getattr(self.simulator, "ExpectationMatrix", None)
@@ -2050,16 +2072,12 @@ class RocQuantumRuntime:
                     "Dense expectation value",
                 )
             except Exception as exc:
-                if not _native_expectation_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         return None
 
     def _native_expectation_matrix_moments(self, normalized_matrix, normalized_targets):
-        def _native_expectation_unavailable(exc: Exception) -> bool:
-            message = str(exc)
-            return isinstance(exc, NotImplementedError) or "status 5" in message
-
         native = getattr(self.simulator, "expectation_matrix_moments", None)
         if callable(native):
             try:
@@ -2069,7 +2087,7 @@ class RocQuantumRuntime:
                     normalize_complex_result_scalar(second_moment, "Dense expectation second moment"),
                 )
             except Exception as exc:
-                if not _native_expectation_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         legacy = getattr(self.simulator, "ExpectationMatrixMoments", None)
@@ -2081,7 +2099,7 @@ class RocQuantumRuntime:
                     normalize_complex_result_scalar(second_moment, "Dense expectation second moment"),
                 )
             except Exception as exc:
-                if not _native_expectation_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         return None
@@ -2131,10 +2149,6 @@ class RocQuantumRuntime:
         )
 
     def _native_expectation_matrix_batch(self, normalized_matrix, normalized_targets):
-        def _native_expectation_unavailable(exc: Exception) -> bool:
-            message = str(exc)
-            return isinstance(exc, NotImplementedError) or "status 5" in message
-
         native = getattr(self.simulator, "expectation_matrix_batch", None)
         if callable(native):
             try:
@@ -2144,7 +2158,7 @@ class RocQuantumRuntime:
                     expected_count=self.batch_size(),
                 )
             except Exception as exc:
-                if not _native_expectation_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         legacy = getattr(self.simulator, "ExpectationMatrixBatch", None)
@@ -2156,7 +2170,7 @@ class RocQuantumRuntime:
                     expected_count=self.batch_size(),
                 )
             except Exception as exc:
-                if not _native_expectation_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         return None
@@ -2190,10 +2204,6 @@ class RocQuantumRuntime:
             self.num_qubits(),
         )
 
-        def _native_expectation_unavailable(exc: Exception) -> bool:
-            message = str(exc)
-            return isinstance(exc, NotImplementedError) or "status 5" in message
-
         native = getattr(self.simulator, "expectation_matrix_moments_batch", None)
         if callable(native):
             try:
@@ -2211,7 +2221,7 @@ class RocQuantumRuntime:
                     ),
                 )
             except Exception as exc:
-                if not _native_expectation_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         legacy = getattr(self.simulator, "ExpectationMatrixMomentsBatch", None)
@@ -2231,7 +2241,7 @@ class RocQuantumRuntime:
                     ),
                 )
             except Exception as exc:
-                if not _native_expectation_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         squared_matrix = np.ascontiguousarray(normalized_matrix @ normalized_matrix)
@@ -2281,10 +2291,6 @@ class RocQuantumRuntime:
             None if num_qubits <= 0 else 1 << num_qubits,
         )
 
-        def _native_sparse_unavailable(exc: Exception) -> bool:
-            message = str(exc)
-            return isinstance(exc, NotImplementedError) or "status 5" in message
-
         native = getattr(self.simulator, "sparse_hamiltonian_moments", None)
         if callable(native):
             try:
@@ -2299,7 +2305,7 @@ class RocQuantumRuntime:
                     normalize_complex_result_scalar(second_moment, "Sparse Hamiltonian second moment"),
                 )
             except Exception as exc:
-                if not _native_sparse_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         legacy = getattr(self.simulator, "SparseHamiltonianMoments", None)
@@ -2316,7 +2322,7 @@ class RocQuantumRuntime:
                     normalize_complex_result_scalar(second_moment, "Sparse Hamiltonian second moment"),
                 )
             except Exception as exc:
-                if not _native_sparse_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         if self.batch_size() != 1:
@@ -2346,10 +2352,6 @@ class RocQuantumRuntime:
             None if num_qubits <= 0 else 1 << num_qubits,
         )
 
-        def _native_sparse_unavailable(exc: Exception) -> bool:
-            message = str(exc)
-            return isinstance(exc, NotImplementedError) or "status 5" in message
-
         native = getattr(self.simulator, "sparse_hamiltonian_moments_batch", None)
         if callable(native):
             try:
@@ -2372,7 +2374,7 @@ class RocQuantumRuntime:
                     ),
                 )
             except Exception as exc:
-                if not _native_sparse_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         legacy = getattr(self.simulator, "SparseHamiltonianMomentsBatch", None)
@@ -2397,7 +2399,7 @@ class RocQuantumRuntime:
                     ),
                 )
             except Exception as exc:
-                if not _native_sparse_unavailable(exc):
+                if not _native_binding_unavailable(exc):
                     raise
 
         means = []

@@ -8,6 +8,7 @@ No GPU / HIP / ROCm / requests / boto3 required.
 """
 
 import ast
+import importlib
 import inspect
 import io
 import json
@@ -272,7 +273,9 @@ class TestExpectationValue(unittest.TestCase):
 
         op = PauliOperator("Z0")
         sentinel = object()
-        with mock.patch("rocq.kernel.observe", return_value=sentinel) as patched_observe:
+        with mock.patch.object(
+            importlib.import_module("rocq.kernel"), "observe", return_value=sentinel
+        ) as patched_observe:
             result = get_expectation_value(None, op, backend="state_vector", tag="contract")
 
         self.assertIs(result, sentinel)

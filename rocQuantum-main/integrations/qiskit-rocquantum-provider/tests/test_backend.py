@@ -102,6 +102,16 @@ def _install_fake_binding_if_needed():
 @unittest.skipIf(not QISKIT_ROCQ_AVAILABLE, "qiskit-rocquantum-provider is not installed")
 class TestRocQuantumBackend(unittest.TestCase):
     def setUp(self):
+        binding_sentinel = object()
+        original_binding = sys.modules.get("rocquantum_bind", binding_sentinel)
+
+        def restore_binding():
+            if original_binding is binding_sentinel:
+                sys.modules.pop("rocquantum_bind", None)
+            else:
+                sys.modules["rocquantum_bind"] = original_binding
+
+        self.addCleanup(restore_binding)
         _install_fake_binding_if_needed()
         self.backend = RocQuantumBackend()
 

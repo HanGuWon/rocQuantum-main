@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import math
 import os
 import warnings
@@ -5,6 +7,12 @@ from numbers import Integral, Number, Real
 
 import numpy as np
 from . import _rocq_hip_backend as backend # Assuming the compiled module is named this
+
+COMPILED_COMPLEX_DTYPE = np.dtype(getattr(backend, "COMPILED_COMPLEX_DTYPE", "complex64"))
+if COMPILED_COMPLEX_DTYPE not in (np.dtype(np.complex64), np.dtype(np.complex128)):
+    raise RuntimeError(
+        "_rocq_hip_backend.COMPILED_COMPLEX_DTYPE must be complex64 or complex128."
+    )
 
 _DISABLE_FUSION_ENV_VAR = "ROCQ_DISABLE_GATE_FUSION"
 _FUSABLE_SINGLE_QUBIT_GATES = {"X", "Y", "Z", "H", "S", "T", "RX", "RY", "RZ"}
@@ -137,7 +145,9 @@ def _validate_statevector_readback(values, num_qubits: int) -> np.ndarray:
     expected_size = _statevector_dimension(num_qubits)
     if raw.size != expected_size:
         raise ValueError(f"{label} length must match the circuit qubit count.")
-    return np.ascontiguousarray(_normalize_statevector_values(raw, label), dtype=np.complex64)
+    return np.ascontiguousarray(
+        _normalize_statevector_values(raw, label), dtype=COMPILED_COMPLEX_DTYPE
+    )
 
 
 def _validate_statevector_batch_readback(values, batch_size: int, num_qubits: int) -> np.ndarray:
@@ -160,7 +170,9 @@ def _validate_statevector_batch_readback(values, batch_size: int, num_qubits: in
 
     normalized = _normalize_statevector_values(raw, label)
     return np.ascontiguousarray(
-        np.asarray(normalized, dtype=np.complex64).reshape(expected_batch, expected_width)
+        np.asarray(normalized, dtype=COMPILED_COMPLEX_DTYPE).reshape(
+            expected_batch, expected_width
+        )
     )
 
 
@@ -197,10 +209,12 @@ class Simulator:
     def create_device_matrix(self, numpy_matrix: np.ndarray) -> backend.DeviceBuffer:
         if not isinstance(numpy_matrix, np.ndarray):
             raise TypeError("Input matrix must be a NumPy array.")
-        if numpy_matrix.dtype != np.complex64:
-            numpy_matrix = numpy_matrix.astype(np.complex64, order='C')
+        if numpy_matrix.dtype != COMPILED_COMPLEX_DTYPE:
+            numpy_matrix = numpy_matrix.astype(COMPILED_COMPLEX_DTYPE, order='C')
         if not numpy_matrix.flags['C_CONTIGUOUS']:
-            numpy_matrix = np.ascontiguousarray(numpy_matrix, dtype=np.complex64)
+            numpy_matrix = np.ascontiguousarray(
+                numpy_matrix, dtype=COMPILED_COMPLEX_DTYPE
+            )
         return backend.create_device_matrix_from_numpy(numpy_matrix)
 
 
@@ -558,7 +572,7 @@ class Circuit:
         if len(set(qubit_indices)) != len(qubit_indices):
             raise ValueError("qubit_indices must be unique.")
 
-        matrix = np.asarray(matrix, dtype=np.complex64, order='C')
+        matrix = np.asarray(matrix, dtype=COMPILED_COMPLEX_DTYPE, order='C')
         dim = 1 << len(qubit_indices)
         if matrix.shape != (dim, dim):
             raise ValueError(f"Matrix shape must be ({dim}, {dim}) for {len(qubit_indices)} target qubits.")
@@ -594,7 +608,7 @@ class Circuit:
             for idx in target_qubits
         ]
 
-        matrix = np.asarray(matrix, dtype=np.complex64, order='C')
+        matrix = np.asarray(matrix, dtype=COMPILED_COMPLEX_DTYPE, order='C')
         dim = 1 << len(target_qubits)
         if matrix.shape != (dim, dim):
             raise ValueError(f"Matrix shape must be ({dim}, {dim}) for {len(target_qubits)} target qubits.")

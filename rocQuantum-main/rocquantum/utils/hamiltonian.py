@@ -1,13 +1,27 @@
-# rocquantum/utils/hamiltonian.py
+"""Legacy density-state Hamiltonian helpers without an import-time native dependency."""
+
+from __future__ import annotations
+
+from typing import Protocol
 
 import numpy as np
-import rocq_hip as rocq
+
+
+class DensityMatrixStateLike(Protocol):
+    """Minimal state contract used by the legacy expectation helper."""
+
+    def apply_gate(self, matrix: np.ndarray, qubit_idx: int, adjoint: bool = False) -> None: ...
+
+    def _compute_z_product_expectation(self, qubit_indices: list[int]) -> float: ...
 
 # Define basis-change gates
 H_GATE = (1 / np.sqrt(2)) * np.array([[1, 1], [1, -1]], dtype=np.complex64)
 S_GATE = np.array([[1, 0], [0, 1j]], dtype=np.complex64)
 
-def _compute_pauli_string_expectation(state: rocq.DensityMatrixState, pauli_string: str) -> float:
+def _compute_pauli_string_expectation(
+    state: DensityMatrixStateLike,
+    pauli_string: str,
+) -> float:
     """
     Computes the expectation value for a single multi-qubit Pauli string.
     
@@ -61,8 +75,8 @@ def _compute_pauli_string_expectation(state: rocq.DensityMatrixState, pauli_stri
     return expectation_value
 
 def compute_hamiltonian_expectation(
-    hamiltonian: list[tuple[str, float]], 
-    state: rocq.DensityMatrixState
+    hamiltonian: list[tuple[str, float]],
+    state: DensityMatrixStateLike,
 ) -> float:
     """
     Computes the total expectation value of a Hamiltonian for a given quantum state.

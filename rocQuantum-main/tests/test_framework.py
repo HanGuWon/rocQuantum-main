@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 import unittest
@@ -61,7 +62,9 @@ class TestRocqFramework(unittest.TestCase):
             "Noise models are only supported by the 'density_matrix' backend."
         )
 
-        with mock.patch("rocq.kernel.get_backend", return_value=fake_backend):
+        with mock.patch.object(
+            importlib.import_module("rocq.kernel"), "get_backend", return_value=fake_backend
+        ):
             with self.assertRaises(NotImplementedError) as cm:
                 rocq.execute(dummy_kernel, backend="state_vector", noise_model=noise)
 

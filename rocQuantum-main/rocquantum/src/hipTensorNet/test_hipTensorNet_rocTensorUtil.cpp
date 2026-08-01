@@ -88,7 +88,7 @@ std::vector<std::pair<std::string, TestFunc>> tests;
 
 #define ADD_TEST(name) tests.push_back({#name, name})
 
-void RUN_ALL_TESTS() {
+int RUN_ALL_TESTS() {
     int passed_count = 0;
     int failed_count = 0;
     std::cout << "Running " << tests.size() << " tests..." << std::endl;
@@ -117,10 +117,7 @@ void RUN_ALL_TESTS() {
     std::cout << "----------------------------------------" << std::endl;
     std::cout << "All tests completed." << std::endl;
     std::cout << "Passed: " << passed_count << ", Failed: " << failed_count << std::endl;
-    if (failed_count > 0) {
-        // Consider exiting with non-zero status for CI
-        // exit(1);
-    }
+    return failed_count;
 }
 
 // Global rocBLAS handle and stream for tests
@@ -748,13 +745,14 @@ bool test_TensorNetwork_contract_simple_chain_internal(bool use_external_workspa
         ext_ws = new rocquantum::util::WorkspaceManager(1024 * 1024 * 8, test_stream); // 8MB workspace
     }
 
-    rocquantum::TensorNetwork tn(ext_ws, test_stream); // Pass stream if constructor takes it
+    rocquantum::TensorNetwork<rocComplex> tn(ext_ws, test_stream);
     tn.add_tensor(tensorA); // tensorA is copied by value (metadata), data is view
     tn.add_tensor(tensorB);
     tn.add_tensor(tensorC);
 
     rocquantum::util::rocTensor result_tensor_gpu;
-    rocqStatus_t status = tn.contract(&result_tensor_gpu, blas_handle, test_stream);
+    hipTensorNetContractionOptimizerConfig_t config = {};
+    rocqStatus_t status = tn.contract(&config, &result_tensor_gpu, blas_handle, test_stream);
     ASSERT_EQ(status, ROCQ_STATUS_SUCCESS, "tn_chain.contract_status");
     HIP_ASSERT(hipStreamSynchronize(test_stream));
 
@@ -853,6 +851,12 @@ bool test_TensorNetwork_contract_simple_chain() {
 
 
 int main() {
+    int device_count = 0;
+    if (hipGetDeviceCount(&device_count) != hipSuccess || device_count < 1) {
+        std::cerr << "No visible HIP device; skipping rocTensorUtil regression.\n";
+        return 77;
+    }
+
     setup_global_test_resources();
 
     ADD_TEST(test_rocTensor_struct);
@@ -865,10 +869,10 @@ int main() {
     ADD_TEST(test_rocWorkspaceManager_basic);
     ADD_TEST(test_TensorNetwork_contract_simple_chain);
 
-    RUN_ALL_TESTS();
+    const int failed_count = RUN_ALL_TESTS();
 
     teardown_global_test_resources();
-    return 0;
+    return failed_count;
 }
 
 // Placeholder for rocquantum::checkHipError if not found in hipStateVec.h

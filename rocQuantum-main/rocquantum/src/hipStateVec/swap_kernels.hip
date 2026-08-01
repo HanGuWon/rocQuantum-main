@@ -67,7 +67,7 @@ __global__ void calculate_swap_counts_kernel(
         size_t current_global_idx = rocquant_kernel_reconstruct_global_idx(source_gpu_rank, current_local_idx, num_local_qubits_per_gpu);
         size_t new_global_idx = rocquant_kernel_swap_bits(current_global_idx, qubit_idx1_global, qubit_idx2_global);
         int target_gpu_rank = rocquant_kernel_get_target_rank_from_global_idx(new_global_idx, num_local_qubits_per_gpu);
-        hipAtomicAdd(&d_send_counts_for_source_gpu[target_gpu_rank], 1);
+        atomicAdd(&d_send_counts_for_source_gpu[target_gpu_rank], 1);
     }
 }
 
@@ -92,7 +92,7 @@ __global__ void shuffle_data_for_swap_kernel(
         size_t current_global_idx = rocquant_kernel_reconstruct_global_idx(source_gpu_rank, current_local_idx, num_local_qubits_per_gpu);
         size_t new_global_idx = rocquant_kernel_swap_bits(current_global_idx, qubit_idx1_global, qubit_idx2_global);
         int target_gpu_rank = rocquant_kernel_get_target_rank_from_global_idx(new_global_idx, num_local_qubits_per_gpu);
-        int write_offset_in_segment = hipAtomicAdd(&d_output_buffer_atomic_counters[target_gpu_rank], 1);
+        int write_offset_in_segment = atomicAdd(&d_output_buffer_atomic_counters[target_gpu_rank], 1);
         size_t final_buffer_idx = static_cast<size_t>(d_send_displacements_for_source_gpu[target_gpu_rank]) + write_offset_in_segment;
         d_packed_send_buffer_out[final_buffer_idx] = local_slice_data_in[current_local_idx];
     }

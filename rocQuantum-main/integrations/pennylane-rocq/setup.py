@@ -15,9 +15,9 @@ setup(
     long_description=compatibility_long_description("pennylane-rocq"),
     long_description_content_type="text/markdown",
     packages=find_packages(),
-    python_requires=">=3.9",
+    python_requires=">=3.11",
     install_requires=[
-        "pennylane>=0.30",
+        "pennylane>=0.45,<0.46",
         "numpy",
     ],
     classifiers=[

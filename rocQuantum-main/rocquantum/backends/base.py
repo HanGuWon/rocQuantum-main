@@ -6,6 +6,7 @@ third-party QPU backend implementations within the rocQuantum framework.
 """
 
 import abc
+import os
 import requests
 from typing import Dict, Any, Callable, Union
 
@@ -133,6 +134,44 @@ class RocqBackend(abc.ABC):
         if histogram is None:
             raise ResultRetrievalError(f"API response for job '{job_id}' did not contain a histogram.")
         return histogram
+
+
+class _ApiKeyOpenQasmBackend(RocqBackend):
+    """Shared API-key authentication and OpenQASM payload behavior."""
+
+    api_key_environment_variable = ""
+    api_key_provider_name = ""
+
+    def __init__(self, backend_name: str, api_endpoint: str):
+        super().__init__(backend_name=backend_name, api_endpoint=api_endpoint)
+        self.api_key = None
+
+    def authenticate(self) -> None:
+        api_key = os.getenv(self.api_key_environment_variable)
+        if not api_key:
+            raise BackendAuthenticationError(
+                f"Authentication failed: The '{self.api_key_environment_variable}' environment variable "
+                f"is not set. Please set it to your {self.api_key_provider_name} API key."
+            )
+        self.api_key = api_key
+        print("Authentication successful.")
+
+    def _get_auth_headers(self) -> Dict[str, str]:
+        if not self.api_key:
+            raise BackendAuthenticationError(
+                "Client is not authenticated. Please call authenticate() first."
+            )
+        return {"Authorization": f"ApiKey {self.api_key}"}
+
+    def _build_payload(self, circuit_representation: str, shots: int) -> Dict[str, Any]:
+        return {
+            "target": self.backend_name,
+            "shots": shots,
+            "body": {
+                "language": "OPENQASM",
+                "program": circuit_representation,
+            },
+        }
 
 
 class UnsupportedBackend(RocqBackend):

@@ -3,13 +3,16 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Concrete helpers for the 3-qubit bit-flip repetition code."""
+"""Repetition-code metadata plus legacy 3-qubit circuit helpers."""
 
 from typing import Callable, Dict, List
 
+import numpy as np
 import rocq
 from rocq.operator import PauliOperator
 
+from rocquantum.qec._gf2 import positive_integer
+from rocquantum.qec.codes.base import Code, CodeMetadata, register_code
 from rocquantum.qec.framework import (
     QuantumErrorCode,
     _validate_initial_state_kernel,
@@ -18,6 +21,46 @@ from rocquantum.qec.framework import (
 
 
 AnsatzKernel = Callable[..., None]
+
+
+@register_code("repetition")
+class RepetitionCode(Code):
+    """Odd-distance Z-basis bit-flip repetition code.
+
+    The dense ``Hz`` rows are adjacent ``Z_i Z_{i+1}`` checks.  The logical
+    Z observable is represented canonically by the first data-qubit Z.  Like
+    CUDA-QX's repetition code, this basis-specific code does not expose a
+    logical X observable.
+    """
+
+    def __init__(self, distance: int = 3) -> None:
+        normalized_distance = positive_integer(distance, "distance")
+        if normalized_distance < 3 or normalized_distance % 2 == 0:
+            raise ValueError("Repetition-code distance must be an odd integer >= 3.")
+
+        hz = np.zeros(
+            (normalized_distance - 1, normalized_distance), dtype=np.uint8
+        )
+        for row in range(normalized_distance - 1):
+            hz[row, row : row + 2] = 1
+        logical_x = np.zeros((0, normalized_distance), dtype=np.uint8)
+        logical_z = np.zeros((1, normalized_distance), dtype=np.uint8)
+        logical_z[0, 0] = 1
+
+        super().__init__(
+            CodeMetadata(
+                name="repetition",
+                num_data_qubits=normalized_distance,
+                num_logical_qubits=1,
+                distance=normalized_distance,
+                num_ancilla_qubits=normalized_distance - 1,
+                description="Odd-distance bit-flip repetition code.",
+            ),
+            Hx=np.zeros((0, normalized_distance), dtype=np.uint8),
+            Hz=hz,
+            logical_x=logical_x,
+            logical_z=logical_z,
+        )
 
 
 class ThreeQubitRepetitionCode(QuantumErrorCode):
@@ -64,3 +107,6 @@ class ThreeQubitRepetitionCode(QuantumErrorCode):
             "logical_Z": PauliOperator("Z0"),
             "logical_X": PauliOperator("X0 X1 X2"),
         }
+
+
+__all__ = ["RepetitionCode", "ThreeQubitRepetitionCode"]

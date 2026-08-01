@@ -4,6 +4,7 @@
 /rocQuantum-main/build-codex/
 /rocQuantum-main/build-ci/
 /rocQuantum-main/build-*/
+/rocQuantum-main/hardware-validation-artifacts/
 
 # CMake and build artifacts
 **/CMakeCache.txt
@@ -21,4 +22,7 @@
 *.egg-info/
 .pytest_cache/
 .pytest-tmp*/
+
+# Local structural-audit output
+/.audit/
 

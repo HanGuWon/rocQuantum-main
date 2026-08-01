@@ -3,7 +3,7 @@
 
 namespace {
 
-__device__ inline rocComplex rocq_make_complex(real_t real, real_t imag) {
+__device__ inline rocComplex rocq_make_complex(rocqReal_t real, rocqReal_t imag) {
 #ifdef ROCQ_PRECISION_DOUBLE
     return rocComplex{real, imag};
 #else
