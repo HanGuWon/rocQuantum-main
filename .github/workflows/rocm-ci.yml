@@ -7,6 +7,12 @@ on:
       - master
   pull_request:
   workflow_dispatch:
+    inputs:
+      run_rocm_gpu:
+        description: Run the self-hosted ROCm GPU evidence job
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -301,7 +307,11 @@ jobs:
   rocm-runtime-self-hosted:
     name: ROCm Runtime (Self-hosted GPU)
     needs: fast-checks
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.run_rocm_gpu) ||
+      (vars.ROCQ_ENABLE_SELF_HOSTED_GPU == 'true' &&
+       (github.event_name != 'pull_request' ||
+        github.event.pull_request.head.repo.fork == false))
     runs-on:
       - self-hosted
       - linux

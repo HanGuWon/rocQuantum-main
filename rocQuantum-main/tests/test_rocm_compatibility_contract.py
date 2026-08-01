@@ -481,12 +481,16 @@ class TestRocmCompatibilityContract(unittest.TestCase):
         self.assertIn("U * S * Vh", tensornet_header)
         self.assertIn("rocTensor* Vh", tensornet_header)
 
-    def test_self_hosted_rocm_runtime_workflow_is_mandatory_source_contract(self):
+    def test_self_hosted_rocm_runtime_workflow_is_opt_in_source_contract(self):
         workflow = _read(ROCM_CI_WORKFLOW)
 
         self.assertIn("pull_request:", workflow)
+        self.assertIn("run_rocm_gpu:", workflow)
+        self.assertIn("ROCQ_ENABLE_SELF_HOSTED_GPU", workflow)
         self.assertIn("rocm-runtime-self-hosted:", workflow)
         self.assertIn("needs: fast-checks", workflow)
+        self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
+        self.assertIn("inputs.run_rocm_gpu", workflow)
         self.assertIn("github.event.pull_request.head.repo.fork == false", workflow)
         for label in ["self-hosted", "linux", "x64", "rocm", "rocm-gpu"]:
             self.assertIn(f"- {label}", workflow)
